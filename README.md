@@ -548,11 +548,10 @@ SOFTWARE.
 
 ## 📞 Support & Community
 
-- 📧 **Email**: [support@mrc.org](mailto:support@mrc.org)
-- 💬 **Discord**: [Join our Discord](https://discord.gg/mrc)
-- 🐛 **Issues**: [Report bugs](https://github.com/your-org/mrc/issues)
+- 💁 **Helps**: Directly open an issue to ask for help is wellcome. Add a **Help** tag.
+- 🐛 **Issues**: [Report bugs](https://github.com/elemeng/mrc/issues)
 - 📖 **Documentation**: [Full docs](https://docs.rs/mrc)
-- 🏷️ **Releases**: [Changelog](https://github.com/your-org/mrc/releases)
+- 🏷️ **Releases**: [Changelog](https://github.com/elemeng/mrc/releases)
 
 ---
 
