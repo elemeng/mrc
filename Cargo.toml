@@ -1,0 +1,52 @@
+[package]
+name = "mrc"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "Zero-copy, zero-allocation MRC-2014 file format reader/writer for Rust"
+license = "MIT"
+repository = "https://github.com/your-org/mrc"
+homepage = "https://github.com/your-org/mrc"
+documentation = "https://docs.rs/mrc"
+keywords = ["mrc", "cryo-em", "microscopy", "bioinformatics", "scientific-computing"]
+categories = ["science", "data-structures", "no-std", "memory-management"]
+readme = "README.md"
+
+[dependencies]
+bytemuck = { version = "1.15", default-features = false, features = ["derive"] }
+memmap2 = { version = "0.9", optional = true }
+
+[dev-dependencies]
+tempfile = "3.8"
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[example]]
+name = "test_real_mrc"
+
+[[example]]
+name = "test_all_features"
+
+[[example]]
+name = "validate"
+path = "examples/validate.rs"
+
+[[example]]
+name = "generate_mrc_files"
+path = "examples/generate_mrc_files.rs"
+
+[[bench]]
+name = "benchmark"
+path = "test/benchmark.rs"
+harness = false
+
+[[bench]]
+name = "performance"
+path = "test/performance.rs"
+harness = false
+
+[features]
+default = ["std", "mmap"]
+mmap = ["std", "dep:memmap2"]
+file = ["std"]
+std = []
+f16 = []
