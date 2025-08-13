@@ -4,7 +4,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Crates.io](https://img.shields.io/crates/v/mrc.svg)](https://crates.io/crates/mrc)
 [![Docs.rs](https://img.shields.io/docsrs/mrc.svg)](https://docs.rs/mrc)
-[![Build Status](https://img.shields.io/github/actions/workflow/status/your-org/mrc/ci.yml?branch=main)](https://github.com/your-org/mrc/actions)
+[![Build Status](https://img.shields.io/github/actions/workflow/status/your-org/mrc/ci.yml?branch=main)](https://github.com/elemeng/mrc/actions)
 
 > **Zero-copy, zero-allocation, no_std-friendly MRC-2014 file format reader/writer for Rust**
 
