@@ -395,16 +395,16 @@ let floats = view.view::<f32>()?;
 - [x] Comprehensive documentation
 
 ### 🚧 **Next Release (v0.2.x)**
+- [x] **Validation utilities** for data integrity
 - [ ] **Streaming API** for large datasets
 - [ ] **Compression support** (gzip, zstd)
-- [ ] **Validation utilities** for data integrity
 - [ ] **Statistics functions** (histogram, moments)
 - [ ] **Image processing** (filters, transforms)
 - [ ] **Python bindings** via PyO3
 - [ ] **Extended header** for "CCP4, SERI, AGAR, FEI1, FEI2, HDF5"
 
-
-### 🚀 **Future Releases (v0.3.x+)**
+### 🚀 **Future Releases (v1)**
+- [ ] **implement 100% features of the official python lib mrcfile** 
 - [ ] **GPU acceleration** support
 - [ ] **WebAssembly** target
 - [ ] **Cloud storage** integration
