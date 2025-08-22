@@ -385,7 +385,7 @@ let floats = view.view::<f32>()?;
 
 ## 🛣️ Development Roadmap
 
-### ✅ **Current Release (v0.1.x)**
+### ✅ **Current Release (v0.1.x): Core ability**
 - [x] Complete MRC-2014 format support
 - [x] Zero-copy memory access
 - [x] All data types (modes 0-4, 6, 12)
@@ -394,7 +394,7 @@ let floats = view.view::<f32>()?;
 - [x] Memory-mapped I/O
 - [x] Comprehensive documentation
 
-### 🚧 **Next Release (v0.2.x)**
+### 🚧 **Next Release (v0.2.x): Rich features**
 - [x] **Validation utilities** for data integrity
 - [ ] **Streaming API** for large datasets
 - [ ] **Compression support** (gzip, zstd)
@@ -403,7 +403,7 @@ let floats = view.view::<f32>()?;
 - [ ] **Python bindings** via PyO3
 - [ ] **Extended header** for "CCP4, SERI, AGAR, FEI1, FEI2, HDF5"
 
-### 🚀 **Future Releases (v1)**
+### 🚀 **Future Releases (v1): Super features**
 - [ ] **implement 100% features of the official python lib mrcfile** 
 - [ ] **GPU acceleration** support
 - [ ] **WebAssembly** target
@@ -411,6 +411,8 @@ let floats = view.view::<f32>()?;
 - [ ] **Parallel processing** utilities
 - [ ] **Visualization helpers**
 - [ ] **Machine learning** integration
+- [ ] 
+**Awayls using only features that you need to minimize sizes of the package**
 
 ## 📊 Performance Benchmarks
 

@@ -1,3 +1,5 @@
+use core::f32;
+
 #[repr(C, align(4))]
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[non_exhaustive]
@@ -43,36 +45,37 @@ impl Default for Header {
 
 impl Header {
     #[inline]
+    // `const fn` is just a capability flag; do not worry, the header remains fully mutable and can be loaded from any MRC file at runtime. Evaluates at compile-time only when `self` is a `const`.
     pub const fn new() -> Self {
         Self {
             nx: 0,
             ny: 0,
             nz: 0,
-            mode: 0,
+            mode: 2, // 32-bit floating point
             nxstart: 0,
             nystart: 0,
             nzstart: 0,
             mx: 0,
             my: 0,
             mz: 0,
-            xlen: 0.0,
-            ylen: 0.0,
-            zlen: 0.0,
-            alpha: 0.0,
-            beta: 0.0,
-            gamma: 0.0,
-            mapc: 0,
-            mapr: 0,
-            maps: 0,
-            dmin: 0.0,
-            dmax: 0.0,
+            xlen: 1.0, // avoid divided by 0
+            ylen: 1.0,
+            zlen: 1.0,
+            alpha: 90.0,
+            beta: 90.0,
+            gamma: 90.0,
+            mapc: 1,                 // column → X (1-based)
+            mapr: 2,                 // row    → Y
+            maps: 3,                 // section→ Z
+            dmin: f32::NEG_INFINITY, // Any pixel value > NEG_INFINITY
+            dmax: f32::INFINITY,     // Any pixel value < INFINITY
             dmean: 0.0,
-            ispg: 0,
+            ispg: 1, // P1 spacegroup (default)
             nsymbt: 0,
             extra: [0; 100],
             origin: [0.0; 3],
             map: *b"MAP ",
-            machst: [0; 4],
+            machst: [0x44, 0x44, 0x00, 0x00], // little-endian x86/AMD64 marker
             rms: 0.0,
             nlabl: 0,
             label: [0; 800],
@@ -84,6 +87,9 @@ impl Header {
         1024 + self.nsymbt as usize
     }
 
+    /// Quickly return how many bytes the mrc have, e.g.: 10,000 bytes.
+    ///
+    /// Ensure mrc have dimmensions > 0, otherwise panic!
     #[inline]
     pub fn data_size(&self) -> usize {
         let n = (self.nx as usize) * (self.ny as usize) * (self.nz as usize);
