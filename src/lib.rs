@@ -1,5 +1,5 @@
 #![no_std]
-#![cfg_attr(feature = "f16", feature(f16))]
+#[cfg(feature = "std")]
 extern crate alloc;
 
 mod header;

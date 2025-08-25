@@ -365,7 +365,7 @@ fn calculate_statistics(data: &[f32]) -> Statistics {
 | `std` | Standard library support | ✅ | File I/O, Error trait |
 | `mmap` | Memory-mapped I/O | ✅ | Large file processing |
 | `file` | File operations | ✅ | `MrcFile::open()` |
-| `f16` | Half-precision support | ❌ | Requires nightly Rust |
+| `f16` | Half-precision support | ❌ |  |
 
 ### no_std Usage
 
@@ -491,10 +491,6 @@ We welcome contributions! Here's how to get started:
 # Clone repository
 git clone https://github.com/your-org/mrc.git
 cd mrc
-
-# Install nightly Rust (required for f16)
-rustup install nightly
-rustup override set nightly
 
 # Install dependencies
 cargo build --all-features
