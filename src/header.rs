@@ -2,7 +2,6 @@ use core::f32;
 
 #[repr(C, align(4))]
 #[derive(Debug, Clone, Copy, PartialEq)]
-#[non_exhaustive]
 pub struct Header {
     pub nx: i32,
     pub ny: i32,
