@@ -4,23 +4,31 @@ extern crate alloc;
 
 mod header;
 mod mode;
-#[cfg(feature = "std")]
-mod mrcfile;
-#[cfg(test)]
-#[cfg(feature = "std")]
-#[path = "../test/mrcfile_test.rs"]
-mod mrcfile_test;
+mod view;
+
 #[cfg(test)]
 #[path = "../test/tests.rs"]
 mod tests;
-mod view;
 
 pub use header::Header;
 pub use mode::Mode;
 pub use view::{MrcView, MrcViewMut};
 
-#[cfg(feature = "std")]
-pub use mrcfile::{MrcFile, MrcMmap, open_file, open_mmap};
+// Optional file features
+#[cfg(feature = "file")]
+mod mrcfile;
+#[cfg(test)]
+#[cfg(feature = "file")]
+#[path = "../test/mrcfile_test.rs"]
+mod mrcfile_test;
+
+#[cfg(feature = "mmap")]
+pub use mrcfile::{MrcMmap, open_mmap};
+
+#[cfg(feature = "file")]
+pub use mrcfile::{MrcFile, open_file};
+
+// Error type
 
 #[derive(Debug)]
 pub enum Error {
