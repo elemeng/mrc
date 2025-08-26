@@ -21,7 +21,7 @@ mod header_tests {
         assert_eq!(Mode::from_i32(2), Some(Mode::Float32));
         assert_eq!(Mode::from_i32(3), Some(Mode::Int16Complex));
         assert_eq!(Mode::from_i32(4), Some(Mode::Float32Complex));
-        assert_eq!(Mode::from_i32(6), Some(Mode::Uint8));
+        assert_eq!(Mode::from_i32(6), Some(Mode::Uint16));
         assert_eq!(Mode::from_i32(12), Some(Mode::Float16));
         assert_eq!(Mode::from_i32(5), None);
         assert_eq!(Mode::from_i32(-1), None);
@@ -34,7 +34,7 @@ mod header_tests {
         assert_eq!(Mode::Float32.byte_size(), 4);
         assert_eq!(Mode::Int16Complex.byte_size(), 2);
         assert_eq!(Mode::Float32Complex.byte_size(), 4);
-        assert_eq!(Mode::Uint8.byte_size(), 1);
+        assert_eq!(Mode::Uint16.byte_size(), 1);
         assert_eq!(Mode::Float16.byte_size(), 2);
     }
 
@@ -48,7 +48,7 @@ mod header_tests {
         assert!(Mode::Int8.is_integer());
         assert!(Mode::Int16.is_integer());
         assert!(Mode::Int16Complex.is_integer());
-        assert!(Mode::Uint8.is_integer());
+        assert!(Mode::Uint16.is_integer());
         assert!(!Mode::Float32.is_integer());
         assert!(!Mode::Float16.is_integer());
 
@@ -235,7 +235,7 @@ mod header_tests {
             (Mode::Float32, 2),
             (Mode::Int16Complex, 3),
             (Mode::Float32Complex, 4),
-            (Mode::Uint8, 6),
+            (Mode::Uint16, 6),
             (Mode::Float16, 12),
         ];
 

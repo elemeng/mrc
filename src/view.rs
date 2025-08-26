@@ -221,7 +221,7 @@ impl<'a> MrcViewMut<'a> {
 
         // Swap data bytes based on mode
         match Mode::from_i32(self.header.mode) {
-            Some(Mode::Int8) | Some(Mode::Uint8) => {
+            Some(Mode::Int8) | Some(Mode::Uint16) => {
                 // 1-byte types don't need swapping
                 Ok(())
             }

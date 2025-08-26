@@ -14,20 +14,20 @@ pub struct Header {
     pub mx: i32,
     pub my: i32,
     pub mz: i32,
-    pub xlen: f32,  // Unit cell edge length along X (Å).
-    pub ylen: f32,  // Unit cell edge length along Y (Å).
-    pub zlen: f32,  // Unit cell edge length along Z (Å).
-    pub alpha: f32, // Angle between Y and Z axes (degrees).
-    pub beta: f32,  // Angle between X and Z axes (degrees).
-    pub gamma: f32, // Angle between X and Y axes (degrees).
-    pub mapc: i32,  // 1-based index of column axis (1 = X, 2 = Y, 3 = Z).
-    pub mapr: i32,  // 1-based index of row axis.
-    pub maps: i32,  // 1-based index of section axis.
-    pub dmin: f32,  // Minimum density value.
-    pub dmax: f32,  // Maximum density value.
-    pub dmean: f32, // Mean density value.
-    pub ispg: i32,      // Space-group number (1 = P1).
-    pub nsymbt: i32,    // Bytes of symmetry data following the header.
+    pub xlen: f32,        // Unit cell edge length along X (Å).
+    pub ylen: f32,        // Unit cell edge length along Y (Å).
+    pub zlen: f32,        // Unit cell edge length along Z (Å).
+    pub alpha: f32,       // Angle between Y and Z axes (degrees).
+    pub beta: f32,        // Angle between X and Z axes (degrees).
+    pub gamma: f32,       // Angle between X and Y axes (degrees).
+    pub mapc: i32,        // 1-based index of column axis (1 = X, 2 = Y, 3 = Z).
+    pub mapr: i32,        // 1-based index of row axis.
+    pub maps: i32,        // 1-based index of section axis.
+    pub dmin: f32,        // Minimum density value.
+    pub dmax: f32,        // Maximum density value.
+    pub dmean: f32,       // Mean density value.
+    pub ispg: i32,        // Space-group number (1 = P1).
+    pub nsymbt: i32,      // Bytes of symmetry data following the header.
     pub extra: [u8; 100], // Reserved; bytes 8–11 hold EXTTYP, 12–15 NVERSION.
     pub origin: [f32; 3], // Volume origin in voxels.
     pub map: [u8; 4],     // Magic bytes “MAP ”.
@@ -98,11 +98,12 @@ impl Header {
     pub fn data_size(&self) -> usize {
         let n = (self.nx as usize) * (self.ny as usize) * (self.nz as usize);
         let bytes_per_pixel = match self.mode {
-            0 | 6 => 1, // i8 / u8
-            1 | 3 => 2, // i16 / complex i16
-            2 | 4 => 4, // f32 / complex f32
-            12 => 2,    // f16
-            _ => 0,
+            0 => 1,     // 8-bit signed integer
+            1 | 3 => 2, // 16-bit signed OR complex 16-bit
+            2 | 4 => 4, // 32-bit float OR complex 32-bit
+            6 => 2,     // 16-bit unsigned integer
+            12 => 2,    // 16-bit float (IEEE-754 half)
+            _ => 0,     // unknown/unsupported
         };
         n * bytes_per_pixel
     }
@@ -110,19 +111,13 @@ impl Header {
     #[inline]
     /// True when dimensions are positive and mode is supported.
     pub fn validate(&self) -> bool {
-        self.nx > 0 && self.ny > 0 && self.nz > 0
-            && matches!(self.mode, 0 | 1 | 2 | 3 | 4 | 6 | 12)
+        self.nx > 0 && self.ny > 0 && self.nz > 0 && matches!(self.mode, 0 | 1 | 2 | 3 | 4 | 6 | 12)
     }
 
     #[inline]
     /// Reads the 4-byte EXTTYP identifier stored in `extra[8..12]`.
     pub const fn exttyp(&self) -> i32 {
-        i32::from_le_bytes([
-            self.extra[8],
-            self.extra[9],
-            self.extra[10],
-            self.extra[11],
-        ])
+        i32::from_le_bytes([self.extra[8], self.extra[9], self.extra[10], self.extra[11]])
     }
 
     #[inline]

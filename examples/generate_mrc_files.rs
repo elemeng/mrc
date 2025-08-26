@@ -29,7 +29,7 @@ fn create_ball_data_2d(mode: Mode, width: usize, height: usize, diameter: f32) -
                 }
             }
         }
-        Mode::Uint8 => {
+        Mode::Uint16 => {
             for y in 0..height {
                 for x in 0..width {
                     let dx = x as f32 - center_x;
@@ -243,7 +243,7 @@ fn create_mrc_file(mode: i32, filename: &str) -> std::io::Result<()> {
                 count += 1;
             }
         }
-        Mode::Uint8 => {
+        Mode::Uint16 => {
             for chunk in data.chunks_exact(1) {
                 let val = u8::from_le_bytes([chunk[0]]) as f32;
                 min_val = min_val.min(val);

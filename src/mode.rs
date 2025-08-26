@@ -6,7 +6,7 @@ pub enum Mode {
     Float32 = 2,
     Int16Complex = 3,
     Float32Complex = 4,
-    Uint8 = 6,
+    Uint16 = 6,
     Float16 = 12,
 }
 
@@ -19,7 +19,7 @@ impl Mode {
             2 => Some(Self::Float32),
             3 => Some(Self::Int16Complex),
             4 => Some(Self::Float32Complex),
-            6 => Some(Self::Uint8),
+            6 => Some(Self::Uint16),
             12 => Some(Self::Float16),
             _ => None,
         }
@@ -33,7 +33,7 @@ impl Mode {
             Self::Float32 => 4,
             Self::Int16Complex => 2,
             Self::Float32Complex => 4,
-            Self::Uint8 => 1,
+            Self::Uint16 => 1,
             Self::Float16 => 2,
         }
     }
@@ -47,7 +47,7 @@ impl Mode {
     pub fn is_integer(&self) -> bool {
         matches!(
             self,
-            Self::Int8 | Self::Int16 | Self::Int16Complex | Self::Uint8
+            Self::Int8 | Self::Int16 | Self::Int16Complex | Self::Uint16
         )
     }
 
