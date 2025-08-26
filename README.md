@@ -181,7 +181,7 @@ header.rms = 0.1;        // RMS deviation
 | `Float32` | 2 | `f32` | 4 | 32-bit float | Standard density |
 | `Int16Complex` | 3 | `i16` | 2×2 | Complex 16-bit | Phase data |
 | `Float32Complex` | 4 | `f32` | 4×2 | Complex 32-bit | Fourier transforms |
-| `Uint8` | 6 | `u8` | 1 | Unsigned 8-bit | Segmentation |
+| `Uint16` | 6 | `u16` | 2 | Unsigned 16-bit | Segmentation |
 | `Float16` | 12 | `f16` | 2 | 16-bit float | Memory efficiency |
 
 ### 🔄 Data Access Patterns

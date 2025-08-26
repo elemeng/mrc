@@ -221,8 +221,16 @@ impl<'a> MrcViewMut<'a> {
 
         // Swap data bytes based on mode
         match Mode::from_i32(self.header.mode) {
-            Some(Mode::Int8) | Some(Mode::Uint16) => {
-                // 1-byte types don't need swapping
+            Some(Mode::Int8) => {
+                // 1-byte types don’t need swapping
+                Ok(())
+            }
+            Some(Mode::Uint16) => {
+                // 2-byte unsigned 16-bit → must swap
+                let data = self.view_mut::<u16>()?;
+                for val in data.iter_mut() {
+                    *val = val.swap_bytes();
+                }
                 Ok(())
             }
             Some(Mode::Int16) | Some(Mode::Int16Complex) => {

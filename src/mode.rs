@@ -33,7 +33,7 @@ impl Mode {
             Self::Float32 => 4,
             Self::Int16Complex => 2,
             Self::Float32Complex => 4,
-            Self::Uint16 => 1,
+            Self::Uint16 => 2,
             Self::Float16 => 2,
         }
     }

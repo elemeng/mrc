@@ -34,7 +34,7 @@ mod header_tests {
         assert_eq!(Mode::Float32.byte_size(), 4);
         assert_eq!(Mode::Int16Complex.byte_size(), 2);
         assert_eq!(Mode::Float32Complex.byte_size(), 4);
-        assert_eq!(Mode::Uint16.byte_size(), 1);
+        assert_eq!(Mode::Uint16.byte_size(), 2);
         assert_eq!(Mode::Float16.byte_size(), 2);
     }
 
