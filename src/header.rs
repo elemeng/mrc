@@ -14,27 +14,27 @@ pub struct Header {
     pub mx: i32,
     pub my: i32,
     pub mz: i32,
-    pub xlen: f32,  //CEELA: Cell dimensions in Angstroms (Å) along X axes
-    pub ylen: f32,  //CEELA: Cell dimensions in Angstroms (Å) along Y axes
-    pub zlen: f32,  //CEELA: Cell dimensions in Angstroms (Å) along Z axes
-    pub alpha: f32, //CELLB: Cell angles in degrees between the crystallographic axes Y and Z axes
-    pub beta: f32,  //CELLB: Cell angles in degrees between the crystallographic axes X and Z axes
-    pub gamma: f32, //CELLB: Cell angles in degrees between the crystallographic axes X and Y axes
-    pub mapc: i32,
-    pub mapr: i32,
-    pub maps: i32,
-    pub dmin: f32,
-    pub dmax: f32,
-    pub dmean: f32,
-    pub ispg: i32,
-    pub nsymbt: i32,
-    pub extra: [u8; 100],
-    pub origin: [f32; 3],
-    pub map: [u8; 4],
-    pub machst: [u8; 4],
-    pub rms: f32,
-    pub nlabl: i32,
-    pub label: [u8; 800],
+    pub xlen: f32,  // Unit cell edge length along X (Å).
+    pub ylen: f32,  // Unit cell edge length along Y (Å).
+    pub zlen: f32,  // Unit cell edge length along Z (Å).
+    pub alpha: f32, // Angle between Y and Z axes (degrees).
+    pub beta: f32,  // Angle between X and Z axes (degrees).
+    pub gamma: f32, // Angle between X and Y axes (degrees).
+    pub mapc: i32,  // 1-based index of column axis (1 = X, 2 = Y, 3 = Z).
+    pub mapr: i32,  // 1-based index of row axis.
+    pub maps: i32,  // 1-based index of section axis.
+    pub dmin: f32,  // Minimum density value.
+    pub dmax: f32,  // Maximum density value.
+    pub dmean: f32, // Mean density value.
+    pub ispg: i32,      // Space-group number (1 = P1).
+    pub nsymbt: i32,    // Bytes of symmetry data following the header.
+    pub extra: [u8; 100], // Reserved; bytes 8–11 hold EXTTYP, 12–15 NVERSION.
+    pub origin: [f32; 3], // Volume origin in voxels.
+    pub map: [u8; 4],     // Magic bytes “MAP ”.
+    pub machst: [u8; 4],  // Machine stamp (little-endian: 0x44 0x44 0x00 0x00).
+    pub rms: f32,         // RMS deviation of density values.
+    pub nlabl: i32,       // Number of valid labels (0–10).
+    pub label: [u8; 800], // Ten 80-byte text labels.
 }
 
 impl Default for Header {
@@ -45,7 +45,10 @@ impl Default for Header {
 
 impl Header {
     #[inline]
-    // `const fn` is just a capability flag; do not worry, the header remains fully mutable and can be loaded from any MRC file at runtime. Evaluates at compile-time only when `self` is a `const`.
+    /// Constructs a default header suitable for a new MRC file.
+    ///
+    /// All dimensions are zero, the mode is 32-bit float, and
+    /// cell angles are 90°. Other fields are set to safe neutral values.
     pub const fn new() -> Self {
         Self {
             nx: 0,
@@ -58,24 +61,24 @@ impl Header {
             mx: 0,
             my: 0,
             mz: 0,
-            xlen: 1.0, // avoid divided by 0
+            xlen: 1.0, // Avoid division by zero.
             ylen: 1.0,
             zlen: 1.0,
             alpha: 90.0,
             beta: 90.0,
             gamma: 90.0,
-            mapc: 1,                 // column → X (1-based)
-            mapr: 2,                 // row    → Y
-            maps: 3,                 // section→ Z
-            dmin: f32::NEG_INFINITY, // Any pixel value > NEG_INFINITY
-            dmax: f32::INFINITY,     // Any pixel value < INFINITY
+            mapc: 1, // Column → X
+            mapr: 2, // Row    → Y
+            maps: 3, // Section→ Z
+            dmin: f32::NEG_INFINITY,
+            dmax: f32::INFINITY,
             dmean: 0.0,
-            ispg: 1, // P1 spacegroup (default)
+            ispg: 1, // P1 space group.
             nsymbt: 0,
             extra: [0; 100],
             origin: [0.0; 3],
             map: *b"MAP ",
-            machst: [0x44, 0x44, 0x00, 0x00], // little-endian x86/AMD64 marker
+            machst: [0x44, 0x44, 0x00, 0x00], // Little-endian x86/AMD64.
             rms: 0.0,
             nlabl: 0,
             label: [0; 800],
@@ -83,59 +86,60 @@ impl Header {
     }
 
     #[inline]
+    /// Offset, in bytes, from file start to the first voxel value.
     pub const fn data_offset(&self) -> usize {
         1024 + self.nsymbt as usize
     }
 
-    /// Quickly return how many bytes the mrc have, e.g.: 10,000 bytes.
-    ///
-    /// Ensure mrc have dimmensions > 0, otherwise panic!
     #[inline]
+    /// Size, in bytes, of the voxel data block.
+    ///
+    /// Returns zero for invalid mode or zero dimensions.
     pub fn data_size(&self) -> usize {
         let n = (self.nx as usize) * (self.ny as usize) * (self.nz as usize);
         let bytes_per_pixel = match self.mode {
-            0 | 6 => 1, // Int8, Uint8
-            1 | 3 => 2, // Int16, Int16Complex
-            2 | 4 => 4, // Float32, Float32Complex
-            12 => 2,    // Float16
-            _ => return 0,
+            0 | 6 => 1, // i8 / u8
+            1 | 3 => 2, // i16 / complex i16
+            2 | 4 => 4, // f32 / complex f32
+            12 => 2,    // f16
+            _ => 0,
         };
         n * bytes_per_pixel
     }
 
     #[inline]
+    /// True when dimensions are positive and mode is supported.
     pub fn validate(&self) -> bool {
-        // Fast validation with early returns
-        if self.nx <= 0 || self.ny <= 0 || self.nz <= 0 {
-            return false;
-        }
-
-        // Use match for faster branch prediction
-        matches!(self.mode, 0 | 1 | 2 | 3 | 4 | 6 | 12)
+        self.nx > 0 && self.ny > 0 && self.nz > 0
+            && matches!(self.mode, 0 | 1 | 2 | 3 | 4 | 6 | 12)
     }
 
     #[inline]
+    /// Reads the 4-byte EXTTYP identifier stored in `extra[8..12]`.
     pub const fn exttyp(&self) -> i32 {
         i32::from_le_bytes([
-            self.extra[8],  // Byte 105
-            self.extra[9],  // Byte 106
-            self.extra[10], // Byte 107
-            self.extra[11], // Byte 108
+            self.extra[8],
+            self.extra[9],
+            self.extra[10],
+            self.extra[11],
         ])
     }
 
     #[inline]
+    /// Stores the 4-byte EXTTYP identifier into `extra[8..12]`.
     pub fn set_exttyp(&mut self, value: i32) {
         let bytes = value.to_le_bytes();
         self.extra[8..12].copy_from_slice(&bytes);
     }
 
     #[inline]
+    /// Interprets EXTTYP as an ASCII string.
     pub fn exttyp_str(&self) -> Result<&str, core::str::Utf8Error> {
         core::str::from_utf8(&self.extra[8..12])
     }
 
     #[inline]
+    /// Sets EXTTYP from a 4-character ASCII string.
     pub fn set_exttyp_str(&mut self, value: &str) -> Result<(), &'static str> {
         if value.len() != 4 {
             return Err("EXTTYP must be exactly 4 characters");
@@ -147,9 +151,10 @@ impl Header {
     }
 
     #[inline]
+    /// Reads the 4-byte NVERSION number stored in `extra[12..16]`.
     pub const fn nversion(&self) -> i32 {
         i32::from_le_bytes([
-            self.extra[12], // NVERSION at byte 109-112 (index 12-15 in extra[100])
+            self.extra[12],
             self.extra[13],
             self.extra[14],
             self.extra[15],
@@ -157,12 +162,17 @@ impl Header {
     }
 
     #[inline]
+    /// Stores the 4-byte NVERSION number into `extra[12..16]`.
     pub fn set_nversion(&mut self, value: i32) {
         let bytes = value.to_le_bytes();
         self.extra[12..16].copy_from_slice(&bytes);
     }
 
     #[inline]
+    /// Swaps the endianness of every multi-byte field.
+    ///
+    /// Call this after reading a big-endian MRC file on a little-endian
+    /// machine (or vice-versa).
     pub fn swap_endian(&mut self) {
         macro_rules! swap_field {
             ($field:ident) => {
@@ -180,36 +190,36 @@ impl Header {
         swap_field!(mx);
         swap_field!(my);
         swap_field!(mz);
-        // Float fields use to_bits/swap_bytes/from_bits
+
         self.xlen = f32::from_bits(self.xlen.to_bits().swap_bytes());
         self.ylen = f32::from_bits(self.ylen.to_bits().swap_bytes());
         self.zlen = f32::from_bits(self.zlen.to_bits().swap_bytes());
         self.alpha = f32::from_bits(self.alpha.to_bits().swap_bytes());
         self.beta = f32::from_bits(self.beta.to_bits().swap_bytes());
         self.gamma = f32::from_bits(self.gamma.to_bits().swap_bytes());
+
         swap_field!(mapc);
         swap_field!(mapr);
         swap_field!(maps);
+
         self.dmin = f32::from_bits(self.dmin.to_bits().swap_bytes());
         self.dmax = f32::from_bits(self.dmax.to_bits().swap_bytes());
         self.dmean = f32::from_bits(self.dmean.to_bits().swap_bytes());
+
         swap_field!(ispg);
         swap_field!(nsymbt);
 
-        // Swap EXTTYP (i32 at offset 8 in extra)
         let exttyp = self.exttyp().swap_bytes();
         self.set_exttyp(exttyp);
 
-        // Swap NVERSION (i32 at offset 12 in extra)
         let nversion = self.nversion().swap_bytes();
         self.set_nversion(nversion);
 
-        // Swap origin floats
         for val in &mut self.origin {
             *val = f32::from_bits(val.to_bits().swap_bytes());
         }
-        swap_field!(nlabl);
 
+        swap_field!(nlabl);
         self.rms = f32::from_bits(self.rms.to_bits().swap_bytes());
     }
 }
