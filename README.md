@@ -399,30 +399,21 @@ let floats = view.view::<f32>()?;
 - [ ] **Streaming API** for large datasets
 - [ ] **Compression support** (gzip, zstd)
 - [ ] **Statistics functions** (histogram, moments)
-- [ ] **Image processing** (filters, transforms)
 - [ ] **Python bindings** via PyO3
 - [ ] **Extended header** for "CCP4, SERI, AGAR, FEI1, FEI2, HDF5"
 
 ### 🚀 **Future Releases (v1): Super features**
 - [ ] **implement 100% features of the official python lib mrcfile** 
+- [ ] **Image processing** (filters, transforms)
 - [ ] **GPU acceleration** support
 - [ ] **WebAssembly** target
 - [ ] **Cloud storage** integration
 - [ ] **Parallel processing** utilities
 - [ ] **Visualization helpers**
-- [ ] **Machine learning** integration
-- [ ] 
+
 **Awayls using only features that you need to minimize sizes of the package**
 
 ## 📊 Performance Benchmarks
-
-### 🔥 Throughput
-| Operation | Throughput | Notes |
-|-----------|------------|--------|
-| **Header parsing** | 1.2M ops/sec | Zero-copy |
-| **Memory mapping** | 3.5GB/s | NVMe SSD |
-| **Sequential reads** | 1.2GB/s | SATA SSD |
-| **Batch processing** | 2.8GB/s | 8-core CPU |
 
 ### 💾 Memory Efficiency
 - **Header**: Fixed 1024 bytes (no heap allocation)
