@@ -46,7 +46,7 @@ path = "test/performance.rs"
 harness = false
 
 [features]
-default = ["std", "mmap"]
+default = ["std", "mmap", "file"]
 mmap = ["std", "dep:memmap2"]
 file = ["std"]
 std = []
