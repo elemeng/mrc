@@ -15,6 +15,7 @@ readme = "README.md"
 [dependencies]
 bytemuck = { version = "1.15", default-features = false, features = ["derive"] }
 memmap2 = { version = "0.9", optional = true }
+thiserror = { version = "2.0.16", default-features = false }
 half = { version = "2.6", optional = true, default-features = false, features = [
     "bytemuck",
 ] }
@@ -53,4 +54,4 @@ default = ["std", "mmap", "file", "f16"]
 mmap = ["std", "dep:memmap2"]
 file = ["std"]
 std = []
-f16 = ["dep:half", "std"]
+f16 = []

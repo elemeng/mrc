@@ -32,30 +32,19 @@ pub use mrcfile::{MrcFile, open_file};
 
 // Error type
 
-#[derive(Debug)]
+#[derive(thiserror::Error, Debug)]
 pub enum Error {
+    #[error("IO error")]
     Io,
+    #[error("Invalid MRC header")]
     InvalidHeader,
+    #[error("Invalid MRC mode")]
     InvalidMode,
+    #[error("Invalid dimensions")]
     InvalidDimensions,
+    #[error("Type mismatch")]
     TypeMismatch,
     #[cfg(feature = "mmap")]
+    #[error("Memory mapping error")]
     Mmap,
 }
-
-impl core::fmt::Display for Error {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            Error::Io => write!(f, "IO error"),
-            Error::InvalidHeader => write!(f, "Invalid MRC header"),
-            Error::InvalidMode => write!(f, "Invalid MRC mode"),
-            Error::InvalidDimensions => write!(f, "Invalid dimensions"),
-            Error::TypeMismatch => write!(f, "Type mismatch"),
-            #[cfg(feature = "mmap")]
-            Error::Mmap => write!(f, "Memory mapping error"),
-        }
-    }
-}
-
-#[cfg(feature = "std")]
-impl core::error::Error for Error {}

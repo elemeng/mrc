@@ -1,40 +1,72 @@
-use core::f32;
-
 #[repr(C, align(4))]
 #[derive(Debug, Clone, Copy, PartialEq)]
-#[non_exhaustive]
 pub struct Header {
+    /// number of columns in 3D data array (fast axis)
     pub nx: i32,
+    /// Number of rows in 3D data array (medium axis)
     pub ny: i32,
+    /// Number of sections in 3D data array (slow axis)
     pub nz: i32,
+    /// Mode value (see `Mode` enum)
     pub mode: i32,
+    /// Location of first column in unit cell
     pub nxstart: i32,
+    /// Location of first row in unit cell
     pub nystart: i32,
+    /// Location of first section in unit cell
     pub nzstart: i32,
+    /// Sampling along X axis of unit cell
     pub mx: i32,
+    /// Sampling along Y axis of unit cell
     pub my: i32,
+    /// Sampling along Z axis of unit cell
     pub mz: i32,
-    pub xlen: f32,        // Unit cell edge length along X (Å).
-    pub ylen: f32,        // Unit cell edge length along Y (Å).
-    pub zlen: f32,        // Unit cell edge length along Z (Å).
-    pub alpha: f32,       // Angle between Y and Z axes (degrees).
-    pub beta: f32,        // Angle between X and Z axes (degrees).
-    pub gamma: f32,       // Angle between X and Y axes (degrees).
-    pub mapc: i32,        // 1-based index of column axis (1 = X, 2 = Y, 3 = Z).
-    pub mapr: i32,        // 1-based index of row axis.
-    pub maps: i32,        // 1-based index of section axis.
-    pub dmin: f32,        // Minimum density value.
-    pub dmax: f32,        // Maximum density value.
-    pub dmean: f32,       // Mean density value.
-    pub ispg: i32,        // Space-group number (1 = P1).
-    pub nsymbt: i32,      // Bytes of symmetry data following the header.
-    pub extra: [u8; 100], // Reserved; bytes 8–11 hold EXTTYP, 12–15 NVERSION.
-    pub origin: [f32; 3], // Volume origin in voxels.
-    pub map: [u8; 4],     // Magic bytes “MAP ”.
-    pub machst: [u8; 4],  // Machine stamp (little-endian: 0x44 0x44 0x00 0x00).
-    pub rms: f32,         // RMS deviation of density values.
-    pub nlabl: i32,       // Number of valid labels (0–10).
-    pub label: [u8; 800], // Ten 80-byte text labels.
+    /// CELLA: Cell dimensions (unit cell edge length) in Angstroms (Å) along X axis
+    pub xlen: f32,
+    /// CELLA: Cell dimensions (unit cell edge length) in Angstroms (Å) along Y axis
+    pub ylen: f32,
+    /// CELLA: Cell dimensions (unit cell edge length) in Angstroms (Å) along Z axis
+    pub zlen: f32,
+    /// CELLB: Cell angles in degrees between the crystallographic axes Y and Z axes
+    pub alpha: f32,
+    /// CELLB: Cell angles in degrees between the crystallographic axes X and Z axes
+    pub beta: f32,
+    /// CELLB: Cell angles in degrees between the crystallographic axes X and Y axes
+    pub gamma: f32,
+    /// 1-based index of column axis (1,2,3 for X,Y,Z)
+    pub mapc: i32,
+    /// 1-based index of row axis (1,2,3 for X,Y,Z)
+    pub mapr: i32,
+    /// 1-based index of section axis (1,2,3 for X,Y,Z)
+    pub maps: i32,
+    /// Minimum density value
+    pub dmin: f32,
+    /// Maximum density value
+    pub dmax: f32,
+    /// Mean density value
+    pub dmean: f32,
+    /// Space group number; 0 implies 2D image or image stack.
+    /// For crystallography, represents the actual spacegroup.
+    /// For volume stacks, conventionally ISPG = spacegroup number + 400.
+    pub ispg: i32,
+    /// Size of extended header record ("symmetry data") in bytes.
+    pub nsymbt: i32,
+    /// Extra space used for anything.
+    /// Bytes 8–11 hold EXTTYP, 12–15 NVERSION.
+    pub extra: [u8; 100],
+    /// Volume/phase origin (pixels/voxels) or origin of subvolume
+    pub origin: [f32; 3],
+    /// Must contain "MAP " to identify file type
+    pub map: [u8; 4],
+    /// Machine stamp that encodes byte order of data
+    /// (little-endian: 0x44 0x44 0x00 0x00)
+    pub machst: [u8; 4],
+    /// RMS deviation of map from mean density
+    pub rms: f32,
+    /// Number of valid labels in `label` field (0–10)
+    pub nlabl: i32,
+    /// 10 text labels of 80 bytes each
+    pub label: [u8; 800],
 }
 
 impl Default for Header {
