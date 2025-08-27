@@ -454,6 +454,7 @@ cargo test --all-features
 cargo test test_header_validation
 
 # Run with coverage
+# install tarpaulin if not existed: cargo install cargo-tarpaulin
 cargo tarpaulin --all-features
 ```
 
