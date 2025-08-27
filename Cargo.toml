@@ -15,6 +15,7 @@ readme = "README.md"
 [dependencies]
 bytemuck = { version = "1.15", default-features = false, features = ["derive"] }
 memmap2 = { version = "0.9", optional = true }
+thiserror = { version = "2.0.16", default-features = false }
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
@@ -49,5 +50,5 @@ harness = false
 default = ["std", "mmap", "file"]
 mmap = ["std", "dep:memmap2"]
 file = ["std"]
-std = []
+std = ["thiserror/std"]
 f16 = []
