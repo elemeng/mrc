@@ -252,6 +252,7 @@ impl<'a> MrcViewMut<'a> {
             }
             Some(Mode::Float16) => {
                 // 2-byte f16 types - use u16 for bytemuck compatibility
+                // TODO: this should return f16s when the f16 feature is enabled
                 let data = self.view_mut::<u16>()?;
                 for val in data.iter_mut() {
                     let bytes = bytemuck::bytes_of_mut(val);
