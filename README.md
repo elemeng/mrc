@@ -16,9 +16,8 @@ A high-performance, memory-efficient library for reading and writing MRC (Medica
 - **🦀 no_std**: Works in embedded environments and WebAssembly
 - **⚡ Blazing fast**: Optimized for cache locality and branch prediction
 - **🔒 100% safe**: No unsafe blocks in public API
-- **📊 Complete**: All MRC-2014 data types and header fields
-- **🧪 Production ready**: Used in cryo-EM processing pipelines
 
+**Note: This crate is currently under active development. While most features are functional, occasional bugs and API changes are possible. Contributions are welcome—please report issues and share your ideas!**
 
 ## 📦 Installation
 
@@ -388,7 +387,7 @@ let floats = view.view::<f32>()?;
 ### ✅ **Current Release (v0.1.x): Core ability**
 - [x] Complete MRC-2014 format support
 - [x] Zero-copy memory access
-- [x] All data types (modes 0-4, 6, 12)
+- [x] Most data types (modes 0-4, 6, 12); only mode **101** (4-bit data packed two per byte) is not yet implemented.
 - [x] Header manipulation
 - [x] File I/O operations
 - [x] Memory-mapped I/O
