@@ -1,6 +1,6 @@
 [package]
 name = "mrc"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 rust-version = "1.85"
 description = "Zero-copy, zero-allocation MRC-2014 file format reader/writer for Rust"
@@ -8,7 +8,7 @@ license = "MIT"
 repository = "https://github.com/elemeng/mrc"
 homepage = "https://github.com/elemeng/mrc"
 documentation = "https://docs.rs/mrc"
-keywords = ["mrc", "cryo-em", "microscopy", "bioinformatics", "scientific-computing"]
+keywords = ["mrc", "cryo-em", "cryo-ET", "microscopy", "scientific-computing"]
 categories = ["science", "data-structures", "no-std", "memory-management"]
 readme = "README.md"
 
