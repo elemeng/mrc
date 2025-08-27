@@ -32,8 +32,8 @@ mod header_tests {
         assert_eq!(Mode::Int8.byte_size(), 1);
         assert_eq!(Mode::Int16.byte_size(), 2);
         assert_eq!(Mode::Float32.byte_size(), 4);
-        assert_eq!(Mode::Int16Complex.byte_size(), 2);
-        assert_eq!(Mode::Float32Complex.byte_size(), 4);
+        assert_eq!(Mode::Int16Complex.byte_size(), 4); // 2 + 2 bytes
+        assert_eq!(Mode::Float32Complex.byte_size(), 8); // 4 + 4 bytes
         assert_eq!(Mode::Uint16.byte_size(), 2);
         assert_eq!(Mode::Float16.byte_size(), 2);
     }
@@ -76,10 +76,10 @@ mod header_tests {
         assert_eq!(header.data_size(), 10 * 20 * 30 * 4);
 
         header.mode = 3;
-        assert_eq!(header.data_size(), 10 * 20 * 30 * 2);
+        assert_eq!(header.data_size(), 10 * 20 * 30 * 4); // Complex 16-bit: 2+2 bytes
 
         header.mode = 4;
-        assert_eq!(header.data_size(), 10 * 20 * 30 * 4);
+        assert_eq!(header.data_size(), 10 * 20 * 30 * 8); // Complex 32-bit: 4+4 bytes
 
         header.mode = 6;
         assert_eq!(header.data_size(), (10 * 20 * 30 * 2));
@@ -794,8 +794,8 @@ mod view_tests {
             (Mode::Int8, 0, 1, false, true, false),
             (Mode::Int16, 1, 2, false, true, false),
             (Mode::Float32, 2, 4, false, false, true),
-            (Mode::Int16Complex, 3, 2, true, true, false),
-            (Mode::Float32Complex, 4, 4, true, false, true),
+            (Mode::Int16Complex, 3, 4, true, true, false),
+            (Mode::Float32Complex, 4, 8, true, false, true),
             (Mode::Uint16, 6, 2, false, true, false),
             (Mode::Float16, 12, 2, false, false, true),
         ];

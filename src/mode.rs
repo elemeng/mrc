@@ -31,8 +31,8 @@ impl Mode {
             Self::Int8 => 1,
             Self::Int16 => 2,
             Self::Float32 => 4,
-            Self::Int16Complex => 2,
-            Self::Float32Complex => 4,
+            Self::Int16Complex => 4, // 2 bytes real + 2 bytes imaginary
+            Self::Float32Complex => 8, // 4 bytes real + 4 bytes imaginary
             Self::Uint16 => 2,
             Self::Float16 => 2,
         }
