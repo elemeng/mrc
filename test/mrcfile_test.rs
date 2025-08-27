@@ -264,7 +264,7 @@ mod backend_tests {
 
         for (mode, mode_id) in modes {
             let temp_file = NamedTempFile::new().unwrap();
-            
+
             let mut header = Header::new();
             header.nx = 3;
             header.ny = 3;
@@ -317,7 +317,7 @@ mod backend_tests {
         assert_eq!(view.ext_header().len(), 1024);
         assert_eq!(view.ext_header(), ext_data);
         assert_eq!(view.data().len(), 4); // 1 float = 4 bytes
-        
+
         let float_data: &[f32] = view.view().unwrap();
         assert_eq!(float_data[0], 42.0);
     }
@@ -360,14 +360,14 @@ mod backend_tests {
         header.mode = 1; // Int16
 
         let mut file = MrcFile::create(temp_file.path(), header).unwrap();
-        
+
         // Test header access
         let read_header = file.header();
         assert_eq!(read_header.nx, 4);
         assert_eq!(read_header.ny, 4);
         assert_eq!(read_header.nz, 4);
         assert_eq!(read_header.mode, 1);
-        
+
         // Test header_mut access
         let mut_header = file.header_mut();
         mut_header.nx = 8;
@@ -414,7 +414,9 @@ mod backend_tests {
         header.mode = 2;
         header.nsymbt = 0;
 
-        let data = vec![1.0f32, 2.0f32, 3.0f32, 4.0f32, 5.0f32, 6.0f32, 7.0f32, 8.0f32];
+        let data = vec![
+            1.0f32, 2.0f32, 3.0f32, 4.0f32, 5.0f32, 6.0f32, 7.0f32, 8.0f32,
+        ];
 
         // Create file
         {
@@ -426,7 +428,7 @@ mod backend_tests {
         let file = MrcFile::open(temp_file.path()).unwrap();
         let read_data = file.read_data().unwrap();
         assert_eq!(read_data.len(), 32); // 8 floats * 4 bytes
-        
+
         let floats: &[f32] = bytemuck::cast_slice(read_data);
         assert_eq!(floats, data);
     }
@@ -443,7 +445,9 @@ mod backend_tests {
         header.nsymbt = 32; // 32-byte extended header
 
         let ext_data = vec![0xBBu8; 32];
-        let data = vec![1.0f32, 2.0f32, 3.0f32, 4.0f32, 5.0f32, 6.0f32, 7.0f32, 8.0f32];
+        let data = vec![
+            1.0f32, 2.0f32, 3.0f32, 4.0f32, 5.0f32, 6.0f32, 7.0f32, 8.0f32,
+        ];
         let full_data = [&ext_data[..], bytemuck::cast_slice(&data)].concat();
 
         // Create view
@@ -459,7 +463,7 @@ mod backend_tests {
         let file = MrcFile::open(temp_file.path()).unwrap();
         let read_view = file.read_view().unwrap();
         assert_eq!(read_view.ext_header(), ext_data);
-        
+
         let floats: &[f32] = read_view.view().unwrap();
         assert_eq!(floats, data);
     }
@@ -531,7 +535,9 @@ mod backend_tests {
         header.mode = 2;
         header.nsymbt = 0;
 
-        let data = vec![1.1f32, 2.2f32, 3.3f32, 4.4f32, 5.5f32, 6.6f32, 7.7f32, 8.8f32];
+        let data = vec![
+            1.1f32, 2.2f32, 3.3f32, 4.4f32, 5.5f32, 6.6f32, 7.7f32, 8.8f32,
+        ];
 
         // Create file
         {

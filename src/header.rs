@@ -130,14 +130,15 @@ impl Header {
     pub fn data_size(&self) -> usize {
         let n = (self.nx as usize) * (self.ny as usize) * (self.nz as usize);
         let bytes_per_pixel = match self.mode {
-            0 => 1,     // 8-bit signed integer
-            1 => 2,     // 16-bit signed integer
-            2 => 4,     // 32-bit float
-            3 => 4,     // Complex 16-bit (2 bytes real + 2 bytes imaginary)
-            4 => 8,     // Complex 32-bit (4 bytes real + 4 bytes imaginary)
-            6 => 2,     // 16-bit unsigned integer
-            12 => 2,    // 16-bit float (IEEE-754 half)
-            _ => 0,     // unknown/unsupported
+            0 => 1,   // 8-bit signed integer
+            1 => 2,   // 16-bit signed integer
+            2 => 4,   // 32-bit float
+            3 => 4,   // Complex 16-bit (2 bytes real + 2 bytes imaginary)
+            4 => 8,   // Complex 32-bit (4 bytes real + 4 bytes imaginary)
+            6 => 2,   // 16-bit unsigned integer
+            12 => 2,  // 16-bit float (IEEE-754 half)
+            101 => 1, // 4-bit data packed two per byte
+            _ => 0,   // unknown/unsupported
         };
         n * bytes_per_pixel
     }
@@ -145,7 +146,10 @@ impl Header {
     #[inline]
     /// True when dimensions are positive and mode is supported.
     pub fn validate(&self) -> bool {
-        self.nx > 0 && self.ny > 0 && self.nz > 0 && matches!(self.mode, 0 | 1 | 2 | 3 | 4 | 6 | 12)
+        self.nx > 0
+            && self.ny > 0
+            && self.nz > 0
+            && matches!(self.mode, 0 | 1 | 2 | 3 | 4 | 6 | 12 | 101)
     }
 
     #[inline]
@@ -250,7 +254,7 @@ impl Header {
 
         swap_field!(nlabl);
         self.rms = f32::from_bits(self.rms.to_bits().swap_bytes());
-        
+
         // Machine stamp should also be swapped for proper cross-platform compatibility
         // Swap the 4 bytes of the machine stamp
         let machst = u32::from_le_bytes(self.machst);

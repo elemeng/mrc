@@ -8,6 +8,8 @@ pub enum Mode {
     Float32Complex = 4,
     Uint16 = 6,
     Float16 = 12,
+    /// 4-bit data packed two values per byte (mode 101)
+    Packed4Bit = 101,
 }
 
 impl Mode {
@@ -21,6 +23,7 @@ impl Mode {
             4 => Some(Self::Float32Complex),
             6 => Some(Self::Uint16),
             12 => Some(Self::Float16),
+            101 => Some(Self::Packed4Bit),
             _ => None,
         }
     }
@@ -31,10 +34,11 @@ impl Mode {
             Self::Int8 => 1,
             Self::Int16 => 2,
             Self::Float32 => 4,
-            Self::Int16Complex => 4, // 2 bytes real + 2 bytes imaginary
+            Self::Int16Complex => 4,   // 2 bytes real + 2 bytes imaginary
             Self::Float32Complex => 8, // 4 bytes real + 4 bytes imaginary
             Self::Uint16 => 2,
             Self::Float16 => 2,
+            Self::Packed4Bit => 1, // 4 bits per value, 2 values per byte
         }
     }
 
@@ -47,7 +51,7 @@ impl Mode {
     pub fn is_integer(&self) -> bool {
         matches!(
             self,
-            Self::Int8 | Self::Int16 | Self::Int16Complex | Self::Uint16
+            Self::Int8 | Self::Int16 | Self::Int16Complex | Self::Uint16 | Self::Packed4Bit
         )
     }
 

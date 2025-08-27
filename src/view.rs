@@ -252,20 +252,26 @@ impl<'a> MrcViewMut<'a> {
             }
             Some(Mode::Float16) => {
                 // 2-byte f16 types
-                #[cfg(feature = "f16")] {
+                #[cfg(feature = "f16")]
+                {
                     let data = self.view_mut::<half::f16>()?;
                     for val in data.iter_mut() {
                         let bytes = bytemuck::bytes_of_mut(val);
                         bytes.reverse();
                     }
                 }
-                #[cfg(not(feature = "f16"))] {
+                #[cfg(not(feature = "f16"))]
+                {
                     // Fallback to u16 when f16 feature is disabled
                     let data = self.view_mut::<u16>()?;
                     for val in data.iter_mut() {
                         *val = val.swap_bytes();
                     }
                 }
+                Ok(())
+            }
+            Some(Mode::Packed4Bit) => {
+                // 4-bit packed data - no endian swapping needed for individual nibbles
                 Ok(())
             }
             None => Err(Error::InvalidMode),

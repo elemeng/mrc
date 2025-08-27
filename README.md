@@ -412,7 +412,7 @@ let sum: f32 = floats.iter().sum();
 ### ✅ **Current Release (v0.1.x): Core ability**
 - [x] Complete MRC-2014 format support
 - [x] Zero-copy memory access
-- [ ] Most data types (modes 0-4, 6, 12); only mode **101** (4-bit data packed two per byte) is not yet implemented.
+- [x] All data types (modes 0-4, 6, 12, 101) including mode **101** (4-bit data packed two per byte)
 - [x] Header manipulation
 - [x] File I/O operations
 - [x] Memory-mapped I/O
