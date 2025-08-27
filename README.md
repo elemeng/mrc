@@ -26,7 +26,7 @@ A high-performance, memory-efficient library for reading and writing MRC (Medica
 mrc = "0.1"
 
 # For full features
-mrc = { version = "0.1", features = ["std", "mmap", "f16"] }
+mrc = { version = "0.1", features = ["std", "mmap", "file", "f16"] }
 ```
 
 ## 🚀 Quick Start
@@ -98,14 +98,14 @@ Built with ❤️ for every cryo-EM enthusiast.
 
 ### Core Types Overview
 
-| Type | Purpose | Example |
-|------|---------|---------|
-| [`Header`] | 1024-byte MRC header | `let header = Header::new();` |
-| [`Mode`] | Data type enumeration | `Mode::Float32` |
-| [`MrcView`] | Read-only data view | `MrcView::new(data)?` |
-| [`MrcViewMut`] | Mutable data view | `MrcViewMut::new(data)?` |
-| [`MrcFile`] | File-backed access | `MrcFile::open("file.mrc")?` |
-| [`MrcMmap`] | Memory-mapped access | `MrcMmap::open("large.mrc")?` |
+| Type           | Purpose               | Example                       |
+| -------------- | --------------------- | ----------------------------- |
+| [`Header`]     | 1024-byte MRC header  | `let header = Header::new();` |
+| [`Mode`]       | Data type enumeration | `Mode::Float32`               |
+| [`MrcView`]    | Read-only data view   | `MrcView::new(data)?`         |
+| [`MrcViewMut`] | Mutable data view     | `MrcViewMut::new(data)?`      |
+| [`MrcFile`]    | File-backed access    | `MrcFile::open("file.mrc")?`  |
+| [`MrcMmap`]    | Memory-mapped access  | `MrcMmap::open("large.mrc")?` |
 
 ## 📚 Detailed API Reference
 
@@ -152,36 +152,36 @@ header.rms = 0.1;        // RMS deviation
 
 #### Header Fields Reference
 
-| Field | Type | Description | Range |
-|-------|------|-------------|--------|
-| `nx, ny, nz` | `i32` | Image dimensions | > 0 |
-| `mode` | `i32` | Data type | 0-4, 6, 12, 101 |
-| `mx, my, mz` | `i32` | Map dimensions | Usually same as nx/ny/nz |
-| `xlen, ylen, zlen` | `f32` | Cell dimensions (Å) | > 0 |
-| `alpha, beta, gamma` | `f32` | Cell angles (°) | 0-180 |
-| `mapc, mapr, maps` | `i32` | Axis mapping | 1, 2, 3 |
-| `amin, amax, amean` | `f32` | Origin coordinates | -∞ to ∞ |
-| `ispg` | `i32` | Space group number | 0-230 |
-| `nsymbt` | `i32` | Extended header size | ≥ 0 |
-| `extra` | `[u8; 100]` | Extra space | - |
-| `origin` | `[i32; 3]` | Origin coordinates | - |
-| `map` | `[u8; 4]` | Map string | "MAP " |
-| `machst` | `[u8; 4]` | Machine stamp | - |
-| `rms` | `f32` | RMS deviation | ≥ 0 |
-| `nlabl` | `i32` | Number of labels | 0-10 |
-| `label` | `[[u8; 80]; 10]` | Text labels | - |
+| Field                | Type             | Description          | Range                    |
+| -------------------- | ---------------- | -------------------- | ------------------------ |
+| `nx, ny, nz`         | `i32`            | Image dimensions     | > 0                      |
+| `mode`               | `i32`            | Data type            | 0-4, 6, 12, 101          |
+| `mx, my, mz`         | `i32`            | Map dimensions       | Usually same as nx/ny/nz |
+| `xlen, ylen, zlen`   | `f32`            | Cell dimensions (Å)  | > 0                      |
+| `alpha, beta, gamma` | `f32`            | Cell angles (°)      | 0-180                    |
+| `mapc, mapr, maps`   | `i32`            | Axis mapping         | 1, 2, 3                  |
+| `amin, amax, amean`  | `f32`            | Origin coordinates   | -∞ to ∞                  |
+| `ispg`               | `i32`            | Space group number   | 0-230                    |
+| `nsymbt`             | `i32`            | Extended header size | ≥ 0                      |
+| `extra`              | `[u8; 100]`      | Extra space          | -                        |
+| `origin`             | `[i32; 3]`       | Origin coordinates   | -                        |
+| `map`                | `[u8; 4]`        | Map string           | "MAP "                   |
+| `machst`             | `[u8; 4]`        | Machine stamp        | -                        |
+| `rms`                | `f32`            | RMS deviation        | ≥ 0                      |
+| `nlabl`              | `i32`            | Number of labels     | 0-10                     |
+| `label`              | `[[u8; 80]; 10]` | Text labels          | -                        |
 
 ### 📊 Data Type Support
 
-| [`Mode`] | Value | Rust Type | Bytes | Description | Use Case |
-|----------|-------|-----------|--------|-------------|----------|
-| `Int8` | 0 | `i8` | 1 | Signed 8-bit integer | Binary masks |
-| `Int16` | 1 | `i16` | 2 | Signed 16-bit integer | Cryo-EM density |
-| `Float32` | 2 | `f32` | 4 | 32-bit float | Standard density |
-| `Int16Complex` | 3 | `i16` | 2×2 | Complex 16-bit | Phase data |
-| `Float32Complex` | 4 | `f32` | 4×2 | Complex 32-bit | Fourier transforms |
-| `Uint16` | 6 | `u16` | 2 | Unsigned 16-bit | Segmentation |
-| `Float16` | 12 | `f16` | 2 | 16-bit float | Memory efficiency |
+| [`Mode`]         | Value | Rust Type | Bytes | Description           | Use Case           |
+| ---------------- | ----- | --------- | ----- | --------------------- | ------------------ |
+| `Int8`           | 0     | `i8`      | 1     | Signed 8-bit integer  | Binary masks       |
+| `Int16`          | 1     | `i16`     | 2     | Signed 16-bit integer | Cryo-EM density    |
+| `Float32`        | 2     | `f32`     | 4     | 32-bit float          | Standard density   |
+| `Int16Complex`   | 3     | `i16`     | 2×2   | Complex 16-bit        | Phase data         |
+| `Float32Complex` | 4     | `f32`     | 4×2   | Complex 32-bit        | Fourier transforms |
+| `Uint16`         | 6     | `u16`     | 2     | Unsigned 16-bit       | Segmentation       |
+| `Float16`        | 12    | `f16`[^1] | 2     | 16-bit float          | Memory efficiency  |
 
 ### 🔄 Data Access Patterns
 
@@ -359,14 +359,16 @@ fn calculate_statistics(data: &[f32]) -> Statistics {
 
 ## 🎯 Feature Flags
 
-| Feature | Description | Default | Example |
-|---------|-------------|---------|---------|
-| `std` | Standard library support | ✅ | File I/O, Error trait |
-| `mmap` | Memory-mapped I/O | ✅ | Large file processing |
-| `file` | File operations | ✅ | `MrcFile::open()` |
-| `f16` | Half-precision support | ❌ |  |
+| Feature | Description              | Default | no_std Compatible | Example                                 |
+| ------- | ------------------------ | ------- | ----------------- | --------------------------------------- |
+| `std`   | Standard library support | ✅       | ❌                | File I/O, Error trait                   |
+| `mmap`  | Memory-mapped I/O        | ✅       | ❌                | Large file processing                   |
+| `file`  | File operations          | ✅       | ❌                | `MrcFile::open()`                       |
+| `f16`   | Half-precision support   | ✅       | ❌                | `view::<f16>()` with IEEE 754-2008 half |
 
 ### no_std Usage
+
+**For embedded systems, WebAssembly, and RTOS environments:**
 
 ```toml
 [dependencies]
@@ -376,11 +378,34 @@ mrc = { version = "0.1", default-features = false }
 ```rust
 use mrc::{Header, MrcView, Mode};
 
-// Works without std library
+// Pure no_std usage - works in embedded/WebAssembly
+let mut header = Header::new();
+header.nx = 256;
+header.ny = 256;
+header.nz = 100;
+header.mode = Mode::Float32 as i32;
+
+// Your byte buffer (from flash, network, etc.)
+let data = &[your_byte_data];
 let view = MrcView::new(header, data)?;
 let floats = view.view::<f32>()?;
-// Process data in embedded/RTOS environments
+
+// Process without any file system dependencies
+let sum: f32 = floats.iter().sum();
 ```
+
+### no_std Compatible APIs
+
+| API | Available in no_std | Description |
+| --- | ------------------- | ----------- |
+| `Header` | ✅ | 1024-byte MRC header structure |
+| `Mode` | ✅ | Data type enumeration |
+| `MrcView` | ✅ | Zero-copy read-only data access |
+| `MrcViewMut` | ✅ | Zero-copy mutable data access |
+| `Error` | ✅ | Comprehensive error handling |
+| `MrcFile` | ❌ | Requires file system (std) |
+| `MrcMmap` | ❌ | Requires memory mapping (std) |
+| `f16` support | ❌ | Requires half crate (std) | 
 
 ## 🛣️ Development Roadmap
 

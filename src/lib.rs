@@ -1,6 +1,8 @@
 #![no_std]
 #[cfg(feature = "std")]
 extern crate alloc;
+#[cfg(feature = "f16")]
+extern crate half;
 
 mod header;
 mod mode;

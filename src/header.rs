@@ -218,5 +218,10 @@ impl Header {
 
         swap_field!(nlabl);
         self.rms = f32::from_bits(self.rms.to_bits().swap_bytes());
+        
+        // Machine stamp should also be swapped for proper cross-platform compatibility
+        // Swap the 4 bytes of the machine stamp
+        let machst = u32::from_le_bytes(self.machst);
+        self.machst = machst.swap_bytes().to_le_bytes();
     }
 }
