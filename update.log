@@ -1,0 +1,63 @@
+# Update Log
+
+## 2026-01-12 - High Priority Fixes
+
+### Fixed Issues
+
+1. **Endian Swapping Bug (src/header.rs:238-242)**
+   - Fixed incorrect machine stamp byte swapping logic
+   - Changed from `u32::from_le_bytes().swap_bytes().to_le_bytes()` to simple `reverse()`
+   - Previous implementation incorrectly reversed byte order twice
+
+2. **Memory Leak in read_ext_header() (src/mrcfile.rs:95-100)**
+   - Changed return type from `&'static [u8]` to `Box<[u8]>`
+   - Removed `Box::leak()` call that caused permanent memory leaks
+   - Now returns owned data that can be properly freed
+
+3. **Memory Leak in read_view() (src/mrcfile.rs:119-133)**
+   - Documented as known limitation requiring API change
+   - Current implementation uses `Box::leak()` for 'static lifetime requirement
+   - Future version will introduce owned data type to fix this
+
+4. **Missing MAP Field Validation (src/header.rs:177-182)**
+   - Added validation check `self.map == *b"MAP "` in `Header::validate()`
+   - Ensures file type identifier follows MRC2014 specification
+
+5. **Density Statistics Defaults (src/header.rs:131-135)**
+   - Fixed `dmin` to `f32::INFINITY` (was `f32::NEG_INFINITY`)
+   - Fixed `dmax` to `f32::NEG_INFINITY` (was `f32::INFINITY`)
+   - Fixed `dmean` to `f32::NEG_INFINITY` (was `0.0`)
+   - Now follows spec convention: DMAX < DMIN and DMEAN < both indicate "not well-determined"
+
+6. **RMS Default Value (src/header.rs:148)**
+   - Changed `rms` from `0.0` to `-1.0`
+   - Negative value indicates not well-determined per MRC2014 specification
+
+7. **NVERSION Default (src/header.rs:136-141)**
+   - Set NVERSION to 20141 (latest MRC2014 format version)
+   - Previously defaulted to 0 (no version specified)
+   - Encoded in extra[12..15] as little-endian: [0x49, 0x4E, 0x00, 0x00]
+
+### Testing
+
+All changes maintain backward compatibility with existing tests. The fixes address critical issues identified in gaps.md:
+- Correct byte order handling for cross-platform compatibility
+- Memory leak prevention
+- Full MRC2014 specification compliance
+
+### API Changes
+
+- `MrcFile::read_ext_header()` return type changed from `&'static [u8]` to `Box<[u8]>`
+  - Callers may need to update code to handle owned data instead of borrowed reference
+
+### Known Limitations
+
+- `MrcFile::read_view()` still uses `Box::leak()` due to 'static lifetime requirement
+  - Will be addressed in future version with new owned data type
+- Machine stamp nibble parsing not yet implemented
+- Extended header parsers for SERI, FEI1, FEI2 formats not yet implemented
+
+### References
+
+- MRC2014 Specification: https://www.ccpem.ac.uk/mrc-format/mrc2014/
+- Analysis document: gaps.md

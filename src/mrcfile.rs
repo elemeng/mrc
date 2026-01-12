@@ -168,9 +168,9 @@ impl MrcFile {
 
     #[inline]
     #[allow(dead_code)] // Public API, may not be used in tests
-    pub fn read_ext_header(&self) -> Result<&'static [u8], Error> {
+    pub fn read_ext_header(&self) -> Result<Box<[u8]>, Error> {
         if self.ext_header_size == 0 {
-            return Ok(&[]);
+            return Ok(Box::new([]));
         }
 
         let mut buffer = alloc::vec![0u8; self.ext_header_size];
@@ -178,8 +178,7 @@ impl MrcFile {
             .read_exact_at(&mut buffer, 1024)
             .map_err(|_| Error::Io)?;
 
-        let buffer_slice = Box::leak(buffer.into_boxed_slice());
-        Ok(buffer_slice)
+        Ok(buffer.into_boxed_slice())
     }
 
     #[inline]

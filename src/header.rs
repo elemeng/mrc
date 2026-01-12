@@ -102,16 +102,25 @@ impl Header {
             mapc: 1, // Column → X
             mapr: 2, // Row    → Y
             maps: 3, // Section→ Z
-            dmin: f32::NEG_INFINITY,
-            dmax: f32::INFINITY,
-            dmean: 0.0,
+            dmin: f32::INFINITY,       // Set higher than dmax to indicate not well-determined
+            dmax: f32::NEG_INFINITY,   // Set lower than dmin to indicate not well-determined
+            dmean: f32::NEG_INFINITY,  // Less than both to indicate not well-determined
             ispg: 1, // P1 space group.
             nsymbt: 0,
-            extra: [0; 100],
+            extra: {
+                let mut arr = [0u8; 100];
+                // Set NVERSION to 20141 (latest MRC2014 format version)
+                // Bytes 12-15 of extra array hold NVERSION
+                arr[12] = 0x49; // 20141 in little-endian
+                arr[13] = 0x4E;
+                arr[14] = 0x00;
+                arr[15] = 0x00;
+                arr
+            },
             origin: [0.0; 3],
             map: *b"MAP ",
             machst: [0x44, 0x44, 0x00, 0x00], // Little-endian x86/AMD64.
-            rms: 0.0,
+            rms: -1.0,  // Negative indicates not well-determined
             nlabl: 0,
             label: [0; 800],
         }
@@ -150,6 +159,7 @@ impl Header {
             && self.ny > 0
             && self.nz > 0
             && matches!(self.mode, 0 | 1 | 2 | 3 | 4 | 6 | 12 | 101)
+            && self.map == *b"MAP "
     }
 
     #[inline]
@@ -256,8 +266,7 @@ impl Header {
         self.rms = f32::from_bits(self.rms.to_bits().swap_bytes());
 
         // Machine stamp should also be swapped for proper cross-platform compatibility
-        // Swap the 4 bytes of the machine stamp
-        let machst = u32::from_le_bytes(self.machst);
-        self.machst = machst.swap_bytes().to_le_bytes();
+        // Simply reverse the 4 bytes
+        self.machst.reverse();
     }
 }
