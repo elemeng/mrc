@@ -111,7 +111,8 @@ impl Header {
                 let mut arr = [0u8; 100];
                 // Set NVERSION to 20141 (latest MRC2014 format version)
                 // Bytes 12-15 of extra array hold NVERSION
-                arr[12] = 0x49; // 20141 in little-endian
+                // 20141 = 0x4EAD, little-endian: [0xAD, 0x4E, 0x00, 0x00]
+                arr[12] = 0xAD;
                 arr[13] = 0x4E;
                 arr[14] = 0x00;
                 arr[15] = 0x00;

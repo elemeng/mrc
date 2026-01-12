@@ -57,10 +57,8 @@ mod backend_tests {
 
         #[cfg(feature = "mmap")]
         {
-            let mmap_map = MrcMmap::open(temp_file.path())
-                .unwrap()
-                .read_view()
-                .unwrap();
+            let mmap = MrcMmap::open(temp_file.path()).unwrap();
+            let mmap_map = mmap.read_view().unwrap();
 
             // Verify identical headers
             assert_eq!(io_map.header(), mmap_map.header());
@@ -101,10 +99,8 @@ mod backend_tests {
         }
 
         // Read back
-        let map = MrcFile::open(temp_file.path())
-            .unwrap()
-            .read_view()
-            .unwrap();
+        let file = MrcFile::open(temp_file.path()).unwrap();
+        let map = file.read_view().unwrap();
 
         // Verify
         let read_data: &[f32] = map.view().unwrap();
@@ -136,10 +132,8 @@ mod backend_tests {
         }
 
         // Read back
-        let map = MrcFile::open(temp_file.path())
-            .unwrap()
-            .read_view()
-            .unwrap();
+        let file = MrcFile::open(temp_file.path()).unwrap();
+        let map = file.read_view().unwrap();
 
         assert_eq!(map.ext_header(), &ext_data[..]);
         assert_eq!(map.data().len(), 16);

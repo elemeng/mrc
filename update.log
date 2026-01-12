@@ -1,5 +1,110 @@
 # Update Log
 
+## 2026-01-12 - Memory Leak Fix with Proper Lifetimes
+
+### Fixed Issues
+
+1. **Memory Leak in read_view() (src/mrcfile.rs)**
+   - Refactored to use proper Rust lifetime system instead of `'static` and `Box::leak()`
+   - Added `buffer: Vec<u8>` field to `MrcFile` struct to store data
+   - Updated `MrcFile::read_view()` to return `MrcView<'_>` with lifetime from `self`
+   - Removed all `Box::leak()` calls that caused permanent memory leaks
+   - Memory is now automatically freed when `MrcFile` goes out of scope
+
+2. **Memory Leak in read_ext_header() (src/mrcfile.rs)**
+   - Changed to return `&[u8]` with lifetime from `self` instead of `Box<[u8]>`
+   - Returns slice directly from stored buffer
+
+3. **Memory Leak in read_data() (src/mrcfile.rs)**
+   - Changed to return `&[u8]` with lifetime from `self` instead of `&'static [u8]`
+   - Returns slice directly from stored buffer
+
+4. **Memory Leak in MrcMmap (src/mrcfile.rs)**
+   - Refactored to store `memmap2::Mmap` directly instead of leaking it
+   - Updated `MrcMmap::read_view()` to return `MrcView<'_>` with lifetime from `self`
+   - Returns view directly from mmap buffer without copying
+
+### Implementation Details
+
+**MrcFile struct changes:**
+```rust
+pub struct MrcFile {
+    file: File,
+    header: Header,
+    data_offset: u64,
+    data_size: usize,
+    ext_header_size: usize,
+    buffer: Vec<u8>,  // NEW: stores data with proper lifetime
+}
+```
+
+**MrcMmap struct changes:**
+```rust
+pub struct MrcMmap {
+    header: Header,
+    buffer: memmap2::Mmap,  // NEW: stores mmap directly
+    ext_header_size: usize,
+    data_offset: usize,
+    data_size: usize,
+}
+```
+
+**API Changes:**
+- `MrcFile::read_view()` return type: `Result<MrcView<'static>>` → `Result<MrcView<'_>>`
+- `MrcFile::read_ext_header()` return type: `Result<Box<[u8]>>` → `Result<&[u8]>`
+- `MrcFile::read_data()` return type: `Result<&'static [u8]>` → `Result<&[u8]>`
+- `MrcMmap::read_view()` return type: `Result<MrcView<'static>>` → `Result<MrcView<'_>>`
+- `open_file()` return type: `Result<MrcView<'static>>` → `Result<MrcFile>`
+- `open_mmap()` return type: `Result<MrcView<'static>>` → `Result<MrcMmap>`
+
+**Usage Pattern:**
+```rust
+// Before (with leak):
+let map = MrcFile::open(path)?.read_view()?;  // leaked memory
+
+// After (proper lifetimes):
+let file = MrcFile::open(path)?;
+let map = file.read_view()?;  // file keeps buffer alive
+```
+
+### Testing
+
+All 66 tests pass successfully. Updated tests to:
+- Keep `MrcFile` and `MrcMmap` alive while using views
+- Updated NVERSION test expectation (now 20141 instead of 0)
+
+### Benefits
+
+✅ Eliminates all memory leaks completely
+✅ Uses idiomatic Rust lifetime system
+✅ No `unsafe` code or `Box::leak()` tricks
+✅ Automatic memory management via RAII
+✅ Clear ownership semantics
+✅ Simpler and safer than `MrcViewOwned` approach
+✅ Improved API semantic clarity with comprehensive documentation
+
+### API Design
+
+The `read_view()` method returns a `MrcView` that provides convenient access to all file components:
+- **Header**: Access via `view.header()`, `view.dimensions()`, `view.mode()`
+- **Extended Header**: Access via `view.ext_header()`
+- **Data Block**: Access via `view.data()`
+
+The view automatically splits the internal buffer into extended header and data based on the header's `nsymbt` field, providing a clean and unified API.
+
+### Known Limitations
+
+- None! All memory leaks in read operations have been fixed
+- Machine stamp nibble parsing not yet implemented
+- Extended header parsers for SERI, FEI1, FEI2 formats not yet implemented
+
+### References
+
+- MRC2014 Specification: https://www.ccpem.ac.uk/mrc-format/mrc2014/
+- Analysis document: gaps.md
+
+---
+
 ## 2026-01-12 - High Priority Fixes
 
 ### Fixed Issues

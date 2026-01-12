@@ -140,9 +140,9 @@ mod header_tests {
         assert_eq!(header.exttyp_str().unwrap(), "HDF5");
 
         // Test NVERSION with latest format (20141)
-        assert_eq!(header.nversion(), 0);
-        header.set_nversion(20141);
-        assert_eq!(header.nversion(), 20141);
+        assert_eq!(header.nversion(), 20141);  // Default is now 20141
+        header.set_nversion(20140); // 2014.0
+        assert_eq!(header.nversion(), 20140);
 
         // Test other version formats
         header.set_nversion(20140); // 2014.0
