@@ -31,6 +31,20 @@ mrc = { version = "0.1", features = ["std", "mmap", "file", "f16"] }
 
 ## 🚀 Quick Start
 
+### Component Architecture
+
+```
+┌─────────────────┐     ┌──────────────────┐     ┌────────────────┐
+│   File System   │───▶|  Header Parsing  │───▶ │   View Layer   │
+│   (.mrc file)   │     │   (1024 bytes)   │     │   (Zero-copy)  │
+└─────────────────┘     └──────────────────┘     └────────────────┘
+         │                       │                       │
+    ┌─────────┐              ┌────────┐              ┌─────────┐
+    │ MrcFile │              │ Header │              │ MrcView │
+    │ MrcMmap │              │        │              │         │
+    └─────────┘              └────────┘              └─────────┘
+```
+
 ### 📖 Reading MRC Files
 
 ```rust
@@ -92,7 +106,6 @@ Tag your issue with `[Feature request]` — the community helps shape the roadma
 Ready to code? See **Contributing** below. Fork → branch → PR. All skill levels welcome; CI and review keep quality high.
 
 Built with ❤️ for every cryo-EM enthusiast.
-
 
 ## 🗺️ API Architecture
 
@@ -361,10 +374,10 @@ fn calculate_statistics(data: &[f32]) -> Statistics {
 
 | Feature | Description              | Default | no_std Compatible | Example                                 |
 | ------- | ------------------------ | ------- | ----------------- | --------------------------------------- |
-| `std`   | Standard library support | ✅       | ❌                | File I/O, Error trait                   |
-| `mmap`  | Memory-mapped I/O        | ✅       | ❌                | Large file processing                   |
-| `file`  | File operations          | ✅       | ❌                | `MrcFile::open()`                       |
-| `f16`   | Half-precision support   | ✅       | ❌                | `view::<f16>()` with IEEE 754-2008 half |
+| `std`   | Standard library support | ✅       | ❌                 | File I/O, Error trait                   |
+| `mmap`  | Memory-mapped I/O        | ✅       | ❌                 | Large file processing                   |
+| `file`  | File operations          | ✅       | ❌                 | `MrcFile::open()`                       |
+| `f16`   | Half-precision support   | ✅       | ❌                 | `view::<f16>()` with IEEE 754-2008 half |
 
 ### no_std Usage
 
@@ -396,20 +409,21 @@ let sum: f32 = floats.iter().sum();
 
 ### no_std Compatible APIs
 
-| API | Available in no_std | Description |
-| --- | ------------------- | ----------- |
-| `Header` | ✅ | 1024-byte MRC header structure |
-| `Mode` | ✅ | Data type enumeration |
-| `MrcView` | ✅ | Zero-copy read-only data access |
-| `MrcViewMut` | ✅ | Zero-copy mutable data access |
-| `Error` | ✅ | Comprehensive error handling |
-| `MrcFile` | ❌ | Requires file system (std) |
-| `MrcMmap` | ❌ | Requires memory mapping (std) |
-| `f16` support | ❌ | Requires half crate (std) | 
+| API           | Available in no_std | Description                     |
+| ------------- | ------------------- | ------------------------------- |
+| `Header`      | ✅                  | 1024-byte MRC header structure  |
+| `Mode`        | ✅                  | Data type enumeration           |
+| `MrcView`     | ✅                  | Zero-copy read-only data access |
+| `MrcViewMut`  | ✅                  | Zero-copy mutable data access   |
+| `Error`       | ✅                  | Comprehensive error handling    |
+| `MrcFile`     | ❌                  | Requires file system (std)      |
+| `MrcMmap`     | ❌                  | Requires memory mapping (std)   |
+| `f16` support | ❌                  | Requires half crate (std)       |
 
 ## 🛣️ Development Roadmap
 
 ### ✅ **Current Release (v0.1.x): Core ability**
+
 - [x] Complete MRC-2014 format support
 - [x] Zero-copy memory access
 - [x] All data types (modes 0-4, 6, 12, 101) including mode **101** (4-bit data packed two per byte)
@@ -419,6 +433,7 @@ let sum: f32 = floats.iter().sum();
 - [x] Comprehensive documentation
 
 ### 🚧 **Next Release (v0.2.x): Rich features**
+
 - [x] **Validation utilities** for data integrity
 - [ ] **Streaming API** for large datasets
 - [ ] **Compression support** (gzip, zstd)
@@ -427,7 +442,8 @@ let sum: f32 = floats.iter().sum();
 - [ ] **Extended header** for "CCP4, SERI, AGAR, FEI1, FEI2, HDF5"
 
 ### 🚀 **Future Releases (v1): Super features**
-- [ ] **implement 100% features of the official python lib mrcfile** 
+
+- [ ] **implement 100% features of the official python lib mrcfile**
 - [ ] **Image processing** (filters, transforms)
 - [ ] **GPU acceleration** support
 - [ ] **WebAssembly** target
@@ -440,12 +456,14 @@ let sum: f32 = floats.iter().sum();
 ## 📊 Performance Benchmarks
 
 ### 💾 Memory Efficiency
+
 - **Header**: Fixed 1024 bytes (no heap allocation)
 - **Data views**: Zero-copy slices
 - **Extended headers**: Lazy loaded
 - **File handles**: Minimal overhead
 
 ### ⚡ Optimization Tips
+
 ```rust
 // Use memory mapping for large files
 #[cfg(feature = "mmap")]
@@ -461,6 +479,7 @@ let aligned = view.data_aligned::<f32>()?;
 ## 🧪 Testing Examples
 
 ### Unit Tests
+
 ```bash
 # Run all tests
 cargo test --all-features
@@ -474,6 +493,7 @@ cargo tarpaulin --all-features
 ```
 
 ### Integration Tests
+
 ```bash
 # Test with real MRC files
 cargo test --test real_mrc_files
@@ -483,6 +503,7 @@ cargo bench
 ```
 
 ### Example Programs
+
 ```bash
 # Generate test MRC files
 cargo run --example generate_mrc_files
@@ -496,6 +517,7 @@ cargo run --example validate -- data/*.mrc
 We welcome contributions! Here's how to get started:
 
 ### 📋 Contribution Guide
+
 1. **Fork** the repository
 2. **Create** a feature branch: `git checkout -b feature/amazing-feature`
 3. **Commit** your changes: `git commit -m 'Add amazing feature'`
@@ -503,6 +525,7 @@ We welcome contributions! Here's how to get started:
 5. **Open** a Pull Request
 
 ### 🏗️ Development Setup
+
 ```bash
 # Clone repository
 git clone https://github.com/your-org/mrc.git
@@ -522,6 +545,7 @@ cargo clippy --all-features
 ```
 
 ### 📄 Code Standards
+
 - **100% safe Rust** (no unsafe blocks)
 - **Comprehensive tests** for all functionality
 - **Documentation** for all public APIs
@@ -575,4 +599,4 @@ SOFTWARE.
 
 *[Zero-copy • Zero-allocation • 100% safe Rust]*
 
-</div> 
+</div>

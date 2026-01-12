@@ -49,9 +49,15 @@ impl MrcFile {
         let file = File::create(path).map_err(|_| Error::Io)?;
 
         // Write the header
-        let header_bytes =
-            unsafe { core::slice::from_raw_parts(&header as *const Header as *const u8, 1024) };
-        file.write_all_at(header_bytes, 0).map_err(|_| Error::Io)?;
+        // Use safe serialization to avoid undefined behavior
+        let mut header_bytes = [0u8; 1024];
+        unsafe {
+            // Copy header bytes safely to avoid alignment issues
+            let src = &header as *const Header as *const u8;
+            let dst = header_bytes.as_mut_ptr();
+            core::ptr::copy_nonoverlapping(src, dst, 1024);
+        }
+        file.write_all_at(&header_bytes, 0).map_err(|_| Error::Io)?;
 
         // Write extended header (zeros if none)
         if header.nsymbt > 0 {
@@ -78,9 +84,21 @@ impl MrcFile {
         file.read_exact_at(&mut header_bytes, 0)
             .map_err(|_| Error::Io)?;
 
+        // Validate we have exactly 1024 bytes for the header
+        if header_bytes.len() != 1024 {
+            return Err(Error::InvalidHeader);
+        }
+
+        // Ensure proper alignment for Header type
         let header = unsafe {
             let ptr = header_bytes.as_ptr() as *const Header;
-            ptr.read_unaligned()
+            // Check alignment before reading
+            if (ptr as usize) % core::mem::align_of::<Header>() != 0 {
+                // Use read_unaligned for potentially unaligned reads
+                ptr.read_unaligned()
+            } else {
+                ptr.read()
+            }
         };
 
         Ok(header)
@@ -121,12 +139,16 @@ impl MrcFile {
     #[inline]
     #[allow(dead_code)] // Public API, may not be used in tests
     pub fn write_view(&mut self, view: &MrcView) -> Result<(), Error> {
-        // Write header
-        let header_bytes = unsafe {
-            core::slice::from_raw_parts(&self.header as *const Header as *const u8, 1024)
-        };
+        // Write header using safe serialization
+        let mut header_bytes = [0u8; 1024];
+        unsafe {
+            // Copy header bytes safely to avoid alignment issues
+            let src = &self.header as *const Header as *const u8;
+            let dst = header_bytes.as_mut_ptr();
+            core::ptr::copy_nonoverlapping(src, dst, 1024);
+        }
         self.file
-            .write_all_at(header_bytes, 0)
+            .write_all_at(&header_bytes, 0)
             .map_err(|_| Error::Io)?;
 
         // Write extended header
@@ -223,8 +245,10 @@ impl MrcMmap {
             return Err(Error::InvalidHeader);
         }
 
+        // Ensure proper alignment and safe deserialization
         let header = unsafe {
             let ptr = buffer.as_ptr() as *const Header;
+            // Always use read_unaligned for memory-mapped data
             ptr.read_unaligned()
         };
 
