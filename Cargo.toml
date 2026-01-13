@@ -47,6 +47,11 @@ name = "performance"
 path = "test/performance.rs"
 harness = false
 
+[[bench]]
+name = "encode_decode_bench"
+path = "test/encode_decode_bench.rs"
+harness = false
+
 [features]
 default = ["std", "mmap", "file", "f16"]
 mmap = ["std", "dep:memmap2"]

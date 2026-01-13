@@ -4,138 +4,6 @@ use mrc::Mode;
 use std::fs::File;
 use std::io::Write;
 
-fn create_ball_data_2d(mode: Mode, width: usize, height: usize, diameter: f32) -> Vec<u8> {
-    let center_x = width as f32 / 2.0;
-    let center_y = height as f32 / 2.0;
-    let radius = diameter / 2.0;
-    let mut data = Vec::new();
-
-    // Mode is already enum
-    match mode {
-        Mode::Int8 => {
-            for y in 0..height {
-                for x in 0..width {
-                    let dx = x as f32 - center_x;
-                    let dy = y as f32 - center_y;
-                    let distance = (dx * dx + dy * dy).sqrt();
-
-                    let value = if distance <= radius {
-                        (127.0 * (1.0 - distance / radius)) as i8
-                    } else {
-                        0i8
-                    };
-                    data.extend_from_slice(&value.to_le_bytes());
-                }
-            }
-        }
-        Mode::Uint16 => {
-            for y in 0..height {
-                for x in 0..width {
-                    let dx = x as f32 - center_x;
-                    let dy = y as f32 - center_y;
-                    let distance = (dx * dx + dy * dy).sqrt();
-
-                    let value = if distance <= radius {
-                        (255.0 * (1.0 - distance / radius)) as u8
-                    } else {
-                        0u8
-                    };
-                    data.extend_from_slice(&value.to_le_bytes());
-                }
-            }
-        }
-        Mode::Int16 => {
-            for y in 0..height {
-                for x in 0..width {
-                    let dx = x as f32 - center_x;
-                    let dy = y as f32 - center_y;
-                    let distance = (dx * dx + dy * dy).sqrt();
-
-                    let value = if distance <= radius {
-                        (32767.0 * (1.0 - distance / radius)) as i16
-                    } else {
-                        0i16
-                    };
-                    data.extend_from_slice(&value.to_le_bytes());
-                }
-            }
-        }
-        Mode::Float32 => {
-            for y in 0..height {
-                for x in 0..width {
-                    let dx = x as f32 - center_x;
-                    let dy = y as f32 - center_y;
-                    let distance = (dx * dx + dy * dy).sqrt();
-
-                    let value = if distance <= radius {
-                        1.0 * (1.0 - distance / radius)
-                    } else {
-                        0.0f32
-                    };
-                    data.extend_from_slice(&value.to_le_bytes());
-                }
-            }
-        }
-
-        Mode::Float16 => {
-            for y in 0..height {
-                for x in 0..width {
-                    let dx = x as f32 - center_x;
-                    let dy = y as f32 - center_y;
-                    let distance = (dx * dx + dy * dy).sqrt();
-
-                    let value = if distance <= radius {
-                        1.0 * (1.0 - distance / radius)
-                    } else {
-                        0.0f32
-                    };
-                    let f16_value = f16::from_f32(value);
-                    data.extend_from_slice(&f16_value.to_le_bytes());
-                }
-            }
-        }
-        Mode::Int16Complex => {
-            for y in 0..height {
-                for x in 0..width {
-                    let dx = x as f32 - center_x;
-                    let dy = y as f32 - center_y;
-                    let distance = (dx * dx + dy * dy).sqrt();
-
-                    let real = if distance <= radius {
-                        (32767.0 * (1.0 - distance / radius)) as i16
-                    } else {
-                        0i16
-                    };
-                    let imag = 0i16;
-                    data.extend_from_slice(&real.to_le_bytes());
-                    data.extend_from_slice(&imag.to_le_bytes());
-                }
-            }
-        }
-        Mode::Float32Complex => {
-            for y in 0..height {
-                for x in 0..width {
-                    let dx = x as f32 - center_x;
-                    let dy = y as f32 - center_y;
-                    let distance = (dx * dx + dy * dy).sqrt();
-
-                    let real = if distance <= radius {
-                        1.0 * (1.0 - distance / radius)
-                    } else {
-                        0.0f32
-                    };
-                    let imag = 0.0f32;
-                    data.extend_from_slice(&real.to_le_bytes());
-                    data.extend_from_slice(&imag.to_le_bytes());
-                }
-            }
-        }
-        _ => unreachable!(), // All modes are handled above
-    }
-
-    data
-}
-
 fn create_ball_data_3d(
     mode: Mode,
     width: usize,
@@ -150,6 +18,82 @@ fn create_ball_data_3d(
     let mut data = Vec::new();
 
     match mode {
+        Mode::Int8 => {
+            for z in 0..depth {
+                for y in 0..height {
+                    for x in 0..width {
+                        let dx = x as f32 - center_x;
+                        let dy = y as f32 - center_y;
+                        let dz = z as f32 - center_z;
+                        let distance = (dx * dx + dy * dy + dz * dz).sqrt();
+
+                        let value = if distance <= radius {
+                            (127.0 * (1.0 - distance / radius)) as i8
+                        } else {
+                            0i8
+                        };
+                        data.extend_from_slice(&value.to_le_bytes());
+                    }
+                }
+            }
+        }
+        Mode::Uint16 => {
+            for z in 0..depth {
+                for y in 0..height {
+                    for x in 0..width {
+                        let dx = x as f32 - center_x;
+                        let dy = y as f32 - center_y;
+                        let dz = z as f32 - center_z;
+                        let distance = (dx * dx + dy * dy + dz * dz).sqrt();
+
+                        let value = if distance <= radius {
+                            (65535.0 * (1.0 - distance / radius)) as u16
+                        } else {
+                            0u16
+                        };
+                        data.extend_from_slice(&value.to_le_bytes());
+                    }
+                }
+            }
+        }
+        Mode::Int16 => {
+            for z in 0..depth {
+                for y in 0..height {
+                    for x in 0..width {
+                        let dx = x as f32 - center_x;
+                        let dy = y as f32 - center_y;
+                        let dz = z as f32 - center_z;
+                        let distance = (dx * dx + dy * dy + dz * dz).sqrt();
+
+                        let value = if distance <= radius {
+                            (32767.0 * (1.0 - distance / radius)) as i16
+                        } else {
+                            0i16
+                        };
+                        data.extend_from_slice(&value.to_le_bytes());
+                    }
+                }
+            }
+        }
+        Mode::Float32 => {
+            for z in 0..depth {
+                for y in 0..height {
+                    for x in 0..width {
+                        let dx = x as f32 - center_x;
+                        let dy = y as f32 - center_y;
+                        let dz = z as f32 - center_z;
+                        let distance = (dx * dx + dy * dy + dz * dz).sqrt();
+
+                        let value = if distance <= radius {
+                            1.0 * (1.0 - distance / radius)
+                        } else {
+                            0.0f32
+                        };
+                        data.extend_from_slice(&value.to_le_bytes());
+                    }
+                }
+            }
+        }
         Mode::Float16 => {
             for z in 0..depth {
                 for y in 0..height {
@@ -170,14 +114,49 @@ fn create_ball_data_3d(
                 }
             }
         }
-        _ => {
-            // For other modes, use 2D approach for simplicity
-            let _slice_size = width * height;
-            for _ in 0..depth {
-                let mut slice_data = create_ball_data_2d(mode, width, height, diameter);
-                data.append(&mut slice_data);
+        Mode::Int16Complex => {
+            for z in 0..depth {
+                for y in 0..height {
+                    for x in 0..width {
+                        let dx = x as f32 - center_x;
+                        let dy = y as f32 - center_y;
+                        let dz = z as f32 - center_z;
+                        let distance = (dx * dx + dy * dy + dz * dz).sqrt();
+
+                        let real = if distance <= radius {
+                            (32767.0 * (1.0 - distance / radius)) as i16
+                        } else {
+                            0i16
+                        };
+                        let imag = 0i16;
+                        data.extend_from_slice(&real.to_le_bytes());
+                        data.extend_from_slice(&imag.to_le_bytes());
+                    }
+                }
             }
         }
+        Mode::Float32Complex => {
+            for z in 0..depth {
+                for y in 0..height {
+                    for x in 0..width {
+                        let dx = x as f32 - center_x;
+                        let dy = y as f32 - center_y;
+                        let dz = z as f32 - center_z;
+                        let distance = (dx * dx + dy * dy + dz *dz).sqrt();
+
+                        let real = if distance <= radius {
+                            1.0 * (1.0 - distance / radius)
+                        } else {
+                            0.0f32
+                        };
+                        let imag = 0.0f32;
+                        data.extend_from_slice(&real.to_le_bytes());
+                        data.extend_from_slice(&imag.to_le_bytes());
+                    }
+                }
+            }
+        }
+        _ => unreachable!(), // All modes are handled above
     }
 
     data
@@ -189,13 +168,13 @@ fn create_mrc_file(mode: i32, filename: &str) -> std::io::Result<()> {
     // Set dimensions and basic parameters
     header.nx = 64;
     header.ny = 64;
-    header.nz = if mode == 12 { 64 } else { 1 }; // 3D for mode 12, 2D for others
+    header.nz = 64; // 3D for all modes
     header.mode = mode;
 
     // Set cell dimensions (64 pixels = 64 Ångströms)
     header.xlen = 64.0;
     header.ylen = 64.0;
-    header.zlen = if mode == 12 { 64.0 } else { 1.0 };
+    header.zlen = 64.0;
 
     // Set cell angles to 90 degrees
     header.alpha = 90.0;
@@ -217,11 +196,7 @@ fn create_mrc_file(mode: i32, filename: &str) -> std::io::Result<()> {
     header.set_nversion(20141);
 
     // Calculate data statistics
-    let data = if mode == 12 {
-        create_ball_data_3d(Mode::from_i32(mode).unwrap(), 64, 64, 64, 40.0)
-    } else {
-        create_ball_data_2d(Mode::from_i32(mode).unwrap(), 64, 64, 40.0)
-    };
+    let data = create_ball_data_3d(Mode::from_i32(mode).unwrap(), 64, 64, 64, 40.0);
 
     // Calculate min, max, mean, rms
     let mut min_val = f32::MAX;
@@ -243,8 +218,8 @@ fn create_mrc_file(mode: i32, filename: &str) -> std::io::Result<()> {
             }
         }
         Mode::Uint16 => {
-            for chunk in data.chunks_exact(1) {
-                let val = u8::from_le_bytes([chunk[0]]) as f32;
+            for chunk in data.chunks_exact(2) {
+                let val = u16::from_le_bytes([chunk[0], chunk[1]]) as f32;
                 min_val = min_val.min(val);
                 max_val = max_val.max(val);
                 sum += val as f64;

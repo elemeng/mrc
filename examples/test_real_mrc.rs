@@ -3,7 +3,11 @@ use mrc::{MrcFile, MrcMmap};
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Testing real MRC files...");
 
-    let mrc_files = ["mrcs/2D_img.mrc", "mrcs/map.mrc", "mrcs/movie.mrc"];
+    let mrc_files = [
+        "mrcs/ball_mode_0.mrc",
+        "mrcs/ball_mode_2.mrc",
+        "mrcs/ball_mode_12.mrc",
+    ];
 
     for file_path in mrc_files {
         println!("\n=== Testing {} ===", file_path);
