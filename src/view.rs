@@ -1,4 +1,4 @@
-use crate::{Error, Header, Mode};
+use crate::{EncodeToFile, Error, Header, Mode};
 
 #[cfg(feature = "std")]
 extern crate alloc;
@@ -98,11 +98,7 @@ impl<'a> MrcView<'a> {
         let chunks: Vec<_> = data.chunks_exact(4).collect();
 
         for chunk in chunks {
-            let arr: [u8; 4] = chunk.try_into().unwrap();
-            let value = match file_endian {
-                crate::FileEndian::LittleEndian => f32::from_le_bytes(arr),
-                crate::FileEndian::BigEndian => f32::from_be_bytes(arr),
-            };
+            let value = crate::DecodeFromFile::decode(file_endian, chunk);
             result.push(value);
         }
 
@@ -133,11 +129,7 @@ impl<'a> MrcView<'a> {
         let chunks: Vec<_> = data.chunks_exact(2).collect();
 
         for chunk in chunks {
-            let arr: [u8; 2] = chunk.try_into().unwrap();
-            let value = match file_endian {
-                crate::FileEndian::LittleEndian => i16::from_le_bytes(arr),
-                crate::FileEndian::BigEndian => i16::from_be_bytes(arr),
-            };
+            let value = crate::DecodeFromFile::decode(file_endian, chunk);
             result.push(value);
         }
 
@@ -168,11 +160,7 @@ impl<'a> MrcView<'a> {
         let chunks: Vec<_> = data.chunks_exact(2).collect();
 
         for chunk in chunks {
-            let arr: [u8; 2] = chunk.try_into().unwrap();
-            let value = match file_endian {
-                crate::FileEndian::LittleEndian => u16::from_le_bytes(arr),
-                crate::FileEndian::BigEndian => u16::from_be_bytes(arr),
-            };
+            let value = crate::DecodeFromFile::decode(file_endian, chunk);
             result.push(value);
         }
 
@@ -191,41 +179,20 @@ impl<'a> MrcView<'a> {
             return Err(Error::InvalidMode);
         }
 
+        let file_endian = self.header.detect_endian();
         let expected_size = self.header.data_size();
         let data = self
             .data
             .get(..expected_size)
             .ok_or(Error::InvalidDimensions)?;
 
-        Ok(data.to_vec().into_iter().map(|b| b as i8).collect())
-    }
-
-    #[inline]
-    pub fn data_aligned<T: bytemuck::Pod>(&self) -> Result<&[T], Error> {
-        let expected_size = self.header.data_size();
-        let data = self
-            .data
-            .get(..expected_size)
-            .ok_or(Error::InvalidDimensions)?;
-
-        // Check alignment for SIMD operations (cache-line aligned for 64-byte boundaries)
-        let ptr = data.as_ptr() as usize;
-        let align = core::mem::align_of::<T>();
-        let cache_line_align = 64;
-        let effective_align = align.max(cache_line_align);
-
-        if ptr % effective_align != 0 {
-            return Err(Error::TypeMismatch);
+        let mut result = Vec::with_capacity(data.len());
+        for byte in data {
+            let value = crate::DecodeFromFile::decode(file_endian, &[*byte]);
+            result.push(value);
         }
 
-        if data.len() % core::mem::size_of::<T>() != 0 {
-            return Err(Error::TypeMismatch);
-        }
-
-        let num_elements = data.len() / core::mem::size_of::<T>();
-        let ptr = data.as_ptr() as *const T;
-        // SAFETY: We validated alignment and size
-        Ok(unsafe { core::slice::from_raw_parts(ptr, num_elements) })
+        Ok(result)
     }
 
     #[inline]
@@ -302,21 +269,108 @@ impl<'a> MrcViewMut<'a> {
         self.data
     }
 
-    #[inline]
-    pub fn view_mut<T: bytemuck::Pod>(&mut self) -> Result<&mut [T], Error> {
-        let expected_size = self.header.data_size();
-        let data = self
-            .data
-            .get_mut(..expected_size)
-            .ok_or(Error::InvalidDimensions)?;
-
-        if data.len() % core::mem::size_of::<T>() != 0 {
-            return Err(Error::TypeMismatch);
+    /// Encode f32 values to data, handling endianness conversion
+    ///
+    /// This method writes f32 values to the data buffer, converting from native
+    /// endian to the file's endianness.
+    ///
+    /// # Errors
+    /// Returns Error::InvalidMode if the file mode is not Float32 (mode 2)
+    /// Returns Error::InvalidDimensions if the data size doesn't match the input length
+    pub fn write_f32(&mut self, values: &[f32]) -> Result<(), Error> {
+        if self.header.mode != 2 {
+            return Err(Error::InvalidMode);
         }
 
-        let num_elements = data.len() / core::mem::size_of::<T>();
-        let ptr = data.as_mut_ptr() as *mut T;
-        Ok(unsafe { core::slice::from_raw_parts_mut(ptr, num_elements) })
+        let expected_size = self.header.data_size();
+        if self.data.len() != expected_size || values.len() * 4 != expected_size {
+            return Err(Error::InvalidDimensions);
+        }
+
+        let file_endian = self.header.detect_endian();
+        for (i, &value) in values.iter().enumerate() {
+            value.encode(file_endian, &mut self.data[i * 4..i * 4 + 4]);
+        }
+
+        Ok(())
+    }
+
+    /// Encode i16 values to data, handling endianness conversion
+    ///
+    /// This method writes i16 values to the data buffer, converting from native
+    /// endian to the file's endianness.
+    ///
+    /// # Errors
+    /// Returns Error::InvalidMode if the file mode is not Int16 (mode 1)
+    /// Returns Error::InvalidDimensions if the data size doesn't match the input length
+    pub fn write_i16(&mut self, values: &[i16]) -> Result<(), Error> {
+        if self.header.mode != 1 {
+            return Err(Error::InvalidMode);
+        }
+
+        let expected_size = self.header.data_size();
+        if self.data.len() != expected_size || values.len() * 2 != expected_size {
+            return Err(Error::InvalidDimensions);
+        }
+
+        let file_endian = self.header.detect_endian();
+        for (i, &value) in values.iter().enumerate() {
+            value.encode(file_endian, &mut self.data[i * 2..i * 2 + 2]);
+        }
+
+        Ok(())
+    }
+
+    /// Encode u16 values to data, handling endianness conversion
+    ///
+    /// This method writes u16 values to the data buffer, converting from native
+    /// endian to the file's endianness.
+    ///
+    /// # Errors
+    /// Returns Error::InvalidMode if the file mode is not Uint16 (mode 6)
+    /// Returns Error::InvalidDimensions if the data size doesn't match the input length
+    pub fn write_u16(&mut self, values: &[u16]) -> Result<(), Error> {
+        if self.header.mode != 6 {
+            return Err(Error::InvalidMode);
+        }
+
+        let expected_size = self.header.data_size();
+        if self.data.len() != expected_size || values.len() * 2 != expected_size {
+            return Err(Error::InvalidDimensions);
+        }
+
+        let file_endian = self.header.detect_endian();
+        for (i, &value) in values.iter().enumerate() {
+            value.encode(file_endian, &mut self.data[i * 2..i * 2 + 2]);
+        }
+
+        Ok(())
+    }
+
+    /// Encode i8 values to data
+    ///
+    /// This method writes i8 values to the data buffer. No endianness conversion
+    /// is needed for 1-byte values.
+    ///
+    /// # Errors
+    /// Returns Error::InvalidMode if the file mode is not Int8 (mode 0)
+    /// Returns Error::InvalidDimensions if the data size doesn't match the input length
+    pub fn write_i8(&mut self, values: &[i8]) -> Result<(), Error> {
+        if self.header.mode != 0 {
+            return Err(Error::InvalidMode);
+        }
+
+        let expected_size = self.header.data_size();
+        if self.data.len() != expected_size || values.len() != expected_size {
+            return Err(Error::InvalidDimensions);
+        }
+
+        let file_endian = self.header.detect_endian();
+        for (i, &value) in values.iter().enumerate() {
+            value.encode(file_endian, &mut self.data[i..i + 1]);
+        }
+
+        Ok(())
     }
 }
 
@@ -458,10 +512,14 @@ mod tests {
         let mut buffer = vec![0u8; 16]; // 2×2×1×4 bytes
         let mut map = MrcViewMut::new(header, &mut buffer).unwrap();
 
-        let floats = map.view_mut::<f32>().unwrap();
-        floats[0] = 42.0;
+        // Test data_mut for byte-level access
+        let data = map.data_mut();
+        data[0] = 0x00; // First byte of first float
+        data[1] = 0x00;
+        data[2] = 0x28;
+        data[3] = 0x42; // IEEE 754 representation of 42.0 (little-endian)
 
-        assert_eq!(floats[0], 42.0);
+        assert_eq!(data[3], 0x42);
     }
 
     #[test]

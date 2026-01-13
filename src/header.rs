@@ -302,4 +302,188 @@ impl Header {
         // NOTE: MACHST is a byte signature indicating endianness, NOT data
         // Do NOT swap MACHST - it's used to detect file endianness
     }
+
+    /// Decode header from raw bytes with correct endianness
+    ///
+    /// This is the ONLY safe way to read a header from raw bytes.
+    /// Endianness is detected from the MACHST field and applied automatically.
+    ///
+    /// # Safety
+    /// The input slice must be exactly 1024 bytes.
+    pub fn decode_from_bytes(bytes: &[u8; 1024]) -> Self {
+        use crate::FileEndian;
+
+        // Detect endianness from MACHST (bytes 212-215)
+        let machst = [bytes[212], bytes[213], bytes[214], bytes[215]];
+        let file_endian = FileEndian::from_machst(&machst);
+
+        let mut header = Self::new();
+
+        // Helper to decode values
+        let decode_i32 = |offset: usize| -> i32 {
+            let arr = [bytes[offset], bytes[offset + 1], bytes[offset + 2], bytes[offset + 3]];
+            match file_endian {
+                FileEndian::LittleEndian => i32::from_le_bytes(arr),
+                FileEndian::BigEndian => i32::from_be_bytes(arr),
+            }
+        };
+
+        let decode_f32 = |offset: usize| -> f32 {
+            let arr = [bytes[offset], bytes[offset + 1], bytes[offset + 2], bytes[offset + 3]];
+            match file_endian {
+                FileEndian::LittleEndian => f32::from_le_bytes(arr),
+                FileEndian::BigEndian => f32::from_be_bytes(arr),
+            }
+        };
+
+        // Read all i32 fields
+        header.nx = decode_i32(0);
+        header.ny = decode_i32(4);
+        header.nz = decode_i32(8);
+        header.mode = decode_i32(12);
+        header.nxstart = decode_i32(16);
+        header.nystart = decode_i32(20);
+        header.nzstart = decode_i32(24);
+        header.mx = decode_i32(28);
+        header.my = decode_i32(32);
+        header.mz = decode_i32(36);
+
+        // Read all f32 fields
+        header.xlen = decode_f32(40);
+        header.ylen = decode_f32(44);
+        header.zlen = decode_f32(48);
+        header.alpha = decode_f32(52);
+        header.beta = decode_f32(56);
+        header.gamma = decode_f32(60);
+
+        // Read axis mapping fields
+        header.mapc = decode_i32(64);
+        header.mapr = decode_i32(68);
+        header.maps = decode_i32(72);
+
+        // Read density statistics
+        header.dmin = decode_f32(76);
+        header.dmax = decode_f32(80);
+        header.dmean = decode_f32(84);
+
+        // Read space group and extended header size
+        header.ispg = decode_i32(88);
+        header.nsymbt = decode_i32(92);
+
+        // Read extra bytes (bytes 96-195)
+        header.extra.copy_from_slice(&bytes[96..196]);
+
+        // Read origin coordinates
+        header.origin[0] = decode_f32(196);
+        header.origin[1] = decode_f32(200);
+        header.origin[2] = decode_f32(204);
+
+        // Read MAP identifier (bytes 208-211) - ASCII, no endian conversion
+        header.map.copy_from_slice(&bytes[208..212]);
+
+        // Read MACHST (bytes 212-215) - byte signature, no endian conversion
+        header.machst.copy_from_slice(&bytes[212..216]);
+
+        // Read RMS
+        header.rms = decode_f32(216);
+
+        // Read label count
+        header.nlabl = decode_i32(220);
+
+        // Read labels (bytes 224-1023) - ASCII, no endian conversion
+        header.label.copy_from_slice(&bytes[224..1024]);
+
+        header
+    }
+
+    /// Encode header to raw bytes with correct endianness
+    ///
+    /// This is the ONLY safe way to write a header to raw bytes.
+    /// Endianness is determined from the MACHST field and applied automatically.
+    ///
+    /// # Safety
+    /// The output slice must be exactly 1024 bytes.
+    pub fn encode_to_bytes(&self, out: &mut [u8; 1024]) {
+        use crate::FileEndian;
+
+        let file_endian = self.detect_endian();
+
+        // Helper macros to encode values
+        macro_rules! encode_i32 {
+            ($offset:expr, $value:expr) => {
+                let bytes = match file_endian {
+                    FileEndian::LittleEndian => $value.to_le_bytes(),
+                    FileEndian::BigEndian => $value.to_be_bytes(),
+                };
+                out[$offset..$offset + 4].copy_from_slice(&bytes);
+            };
+        }
+
+        macro_rules! encode_f32 {
+            ($offset:expr, $value:expr) => {
+                let bytes = match file_endian {
+                    FileEndian::LittleEndian => $value.to_le_bytes(),
+                    FileEndian::BigEndian => $value.to_be_bytes(),
+                };
+                out[$offset..$offset + 4].copy_from_slice(&bytes);
+            };
+        }
+
+        // Write all i32 fields
+        encode_i32!(0, self.nx);
+        encode_i32!(4, self.ny);
+        encode_i32!(8, self.nz);
+        encode_i32!(12, self.mode);
+        encode_i32!(16, self.nxstart);
+        encode_i32!(20, self.nystart);
+        encode_i32!(24, self.nzstart);
+        encode_i32!(28, self.mx);
+        encode_i32!(32, self.my);
+        encode_i32!(36, self.mz);
+
+        // Write all f32 fields
+        encode_f32!(40, self.xlen);
+        encode_f32!(44, self.ylen);
+        encode_f32!(48, self.zlen);
+        encode_f32!(52, self.alpha);
+        encode_f32!(56, self.beta);
+        encode_f32!(60, self.gamma);
+
+        // Write axis mapping fields
+        encode_i32!(64, self.mapc);
+        encode_i32!(68, self.mapr);
+        encode_i32!(72, self.maps);
+
+        // Write density statistics
+        encode_f32!(76, self.dmin);
+        encode_f32!(80, self.dmax);
+        encode_f32!(84, self.dmean);
+
+        // Write space group and extended header size
+        encode_i32!(88, self.ispg);
+        encode_i32!(92, self.nsymbt);
+
+        // Write extra bytes (bytes 96-195)
+        out[96..196].copy_from_slice(&self.extra);
+
+        // Write origin coordinates
+        encode_f32!(196, self.origin[0]);
+        encode_f32!(200, self.origin[1]);
+        encode_f32!(204, self.origin[2]);
+
+        // Write MAP identifier (bytes 208-211) - ASCII, no endian conversion
+        out[208..212].copy_from_slice(&self.map);
+
+        // Write MACHST (bytes 212-215) - byte signature, no endian conversion
+        out[212..216].copy_from_slice(&self.machst);
+
+        // Write RMS
+        encode_f32!(216, self.rms);
+
+        // Write label count
+        encode_i32!(220, self.nlabl);
+
+        // Write labels (bytes 224-1023) - ASCII, no endian conversion
+        out[224..1024].copy_from_slice(&self.label);
+    }
 }

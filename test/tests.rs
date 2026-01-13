@@ -393,9 +393,6 @@ mod view_tests {
         // Test slice_bytes with different ranges
         let slice = view.slice_bytes(16..32).unwrap();
         assert_eq!(slice.len(), 16);
-
-        // Test data_aligned (may succeed or fail based on alignment)
-        let _ = view.data_aligned::<f32>();
     }
 
     #[test]
@@ -467,10 +464,9 @@ mod view_tests {
         // Test ext_header access (read-only)
         assert_eq!(view.ext_header().len(), 8);
 
-        // Test view_mut access
-        let floats: &mut [f32] = view.view_mut().unwrap();
-        assert_eq!(floats.len(), 16);
-        floats[0] = 99.9;
+        // Test data_mut access for byte-level operations
+        let data_bytes = view.data_mut();
+        assert_eq!(data_bytes.len(), 64);
 
         // Test write_ext_header
         let new_ext = vec![0xDDu8; 8];
@@ -482,23 +478,121 @@ mod view_tests {
     }
 
     #[test]
-    fn test_view_aligned_access_errors() {
-        let mut header = Header::new();
-        header.nx = 4;
-        header.ny = 4;
-        header.nz = 4;
-        header.mode = 2; // Float32
+    fn test_view_mut_encode_decode_roundtrip() {
+        // Test f32 encode/decode roundtrip
+        {
+            let mut header = Header::new();
+            header.nx = 4;
+            header.ny = 4;
+            header.nz = 4;
+            header.mode = 2; // Float32
 
-        let data = vec![0u8; 64];
-        match MrcView::new(header, &data) {
-            Ok(view) => {
-                // Test aligned access - may fail due to alignment issues
-                let result = view.data_aligned::<f32>();
-                assert!(matches!(result, Ok(_) | Err(Error::TypeMismatch)));
-            }
-            Err(_) => {
-                // Skip test if view creation fails
-            }
+            let mut buffer = vec![0u8; 256]; // 4x4x4x4 bytes
+            let mut view = MrcViewMut::new(header, &mut buffer).unwrap();
+
+            let original_data = vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0,
+                                    9.0, 10.0, 11.0, 12.0, 13.0, 14.0, 15.0, 16.0,
+                                    17.0, 18.0, 19.0, 20.0, 21.0, 22.0, 23.0, 24.0,
+                                    25.0, 26.0, 27.0, 28.0, 29.0, 30.0, 31.0, 32.0,
+                                    33.0, 34.0, 35.0, 36.0, 37.0, 38.0, 39.0, 40.0,
+                                    41.0, 42.0, 43.0, 44.0, 45.0, 46.0, 47.0, 48.0,
+                                    49.0, 50.0, 51.0, 52.0, 53.0, 54.0, 55.0, 56.0,
+                                    57.0, 58.0, 59.0, 60.0, 61.0, 62.0, 63.0, 64.0];
+
+            // Write data using encode method
+            view.write_f32(&original_data).unwrap();
+
+            // Read data back using decode method
+            let header_clone = view.header().clone();
+            let data_slice = view.data_mut();
+            let read_only_view = MrcView::new(header_clone, data_slice).unwrap();
+            let decoded_data = read_only_view.data_as_f32().unwrap();
+
+            assert_eq!(original_data, decoded_data);
+        }
+
+        // Test i16 encode/decode roundtrip
+        {
+            let mut header = Header::new();
+            header.nx = 4;
+            header.ny = 4;
+            header.nz = 4;
+            header.mode = 1; // Int16
+
+            let mut buffer = vec![0u8; 128]; // 4x4x4x2 bytes
+            let mut view = MrcViewMut::new(header, &mut buffer).unwrap();
+
+            let original_data = vec![1i16, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
+                                    17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32,
+                                    33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48,
+                                    49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64];
+
+            // Write data using encode method
+            view.write_i16(&original_data).unwrap();
+
+            // Read data back using decode method
+            let header_clone = view.header().clone();
+            let data_slice = view.data_mut();
+            let read_only_view = MrcView::new(header_clone, data_slice).unwrap();
+            let decoded_data = read_only_view.data_as_i16().unwrap();
+
+            assert_eq!(original_data, decoded_data);
+        }
+
+        // Test u16 encode/decode roundtrip
+        {
+            let mut header = Header::new();
+            header.nx = 4;
+            header.ny = 4;
+            header.nz = 4;
+            header.mode = 6; // Uint16
+
+            let mut buffer = vec![0u8; 128]; // 4x4x4x2 bytes
+            let mut view = MrcViewMut::new(header, &mut buffer).unwrap();
+
+            let original_data = vec![1u16, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
+                                    17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32,
+                                    33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48,
+                                    49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64];
+
+            // Write data using encode method
+            view.write_u16(&original_data).unwrap();
+
+            // Read data back using decode method
+            let header_clone = view.header().clone();
+            let data_slice = view.data_mut();
+            let read_only_view = MrcView::new(header_clone, data_slice).unwrap();
+            let decoded_data = read_only_view.data_as_u16().unwrap();
+
+            assert_eq!(original_data, decoded_data);
+        }
+
+        // Test i8 encode/decode roundtrip
+        {
+            let mut header = Header::new();
+            header.nx = 4;
+            header.ny = 4;
+            header.nz = 4;
+            header.mode = 0; // Int8
+
+            let mut buffer = vec![0u8; 64]; // 4x4x4x1 bytes
+            let mut view = MrcViewMut::new(header, &mut buffer).unwrap();
+
+            let original_data = vec![1i8, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
+                                    17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32,
+                                    33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48,
+                                    49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64];
+
+            // Write data using encode method
+            view.write_i8(&original_data).unwrap();
+
+            // Read data back using decode method
+            let header_clone = view.header().clone();
+            let data_slice = view.data_mut();
+            let read_only_view = MrcView::new(header_clone, data_slice).unwrap();
+            let decoded_data = read_only_view.data_as_i8().unwrap();
+
+            assert_eq!(original_data, decoded_data);
         }
     }
 
@@ -526,30 +620,6 @@ mod view_tests {
                     view.slice_bytes(64..65),
                     Err(Error::InvalidDimensions)
                 ));
-            }
-            Err(_) => {
-                // Skip test if view creation fails
-            }
-        }
-    }
-
-    #[test]
-    fn test_view_mut_type_mismatch_errors() {
-        let mut header = Header::new();
-        header.nx = 4;
-        header.ny = 4;
-        header.nz = 4;
-        header.mode = 2; // Float32
-
-        let mut data = vec![0u8; 64];
-        match MrcViewMut::new(header, &mut data) {
-            Ok(mut view) => {
-                // Test type mismatch errors
-                let result: Result<&mut [i16], Error> = view.view_mut();
-                assert!(matches!(result, Err(Error::TypeMismatch)));
-
-                let result: Result<&mut [u8], Error> = view.view_mut();
-                assert!(matches!(result, Err(Error::TypeMismatch)));
             }
             Err(_) => {
                 // Skip test if view creation fails

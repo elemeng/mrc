@@ -118,13 +118,13 @@ fn run_test() -> Result<(), mrc::Error> {
         let mut mut_view = MrcViewMut::new(header, &mut mut_buffer)?;
         println!("   ✅ MrcViewMut creation");
 
-        // Test mutating data
-        let typed_mut: &mut [f32] = mut_view.view_mut().unwrap();
-        typed_mut[0] = 42.0;
-        println!(
-            "   ✅ Mutable view: modified first element to {}",
-            typed_mut[0]
-        );
+        // Test mutating data at byte level
+        let data_bytes = mut_view.data_mut();
+        data_bytes[0] = 0x00; // First byte of first float
+        data_bytes[1] = 0x00;
+        data_bytes[2] = 0x28;
+        data_bytes[3] = 0x42; // IEEE 754 representation of 42.0 (little-endian)
+        println!("   ✅ Mutable view: modified first element at byte level");
     }
 
     // 8. Test high-level convenience functions

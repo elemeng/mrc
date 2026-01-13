@@ -4,7 +4,7 @@ use crate::{Error, Header, MrcView};
 #[cfg(feature = "std")]
 extern crate std;
 #[cfg(feature = "std")]
-use std::{boxed::Box, fs::File, os::unix::fs::FileExt};
+use std::{fs::File, os::unix::fs::FileExt};
 
 #[cfg(feature = "std")]
 /// MrcFile for file I/O operations with pread/pwrite
@@ -60,15 +60,9 @@ impl MrcFile {
 
         let file = File::create(path).map_err(|_| Error::Io)?;
 
-        // Write the header
-        // Use safe serialization to avoid undefined behavior
+        // Write the header using safe encode method
         let mut header_bytes = [0u8; 1024];
-        unsafe {
-            // Copy header bytes safely to avoid alignment issues
-            let src = &header as *const Header as *const u8;
-            let dst = header_bytes.as_mut_ptr();
-            core::ptr::copy_nonoverlapping(src, dst, 1024);
-        }
+        header.encode_to_bytes(&mut header_bytes);
         file.write_all_at(&header_bytes, 0).map_err(|_| Error::Io)?;
 
         // Write extended header (zeros if none)
@@ -101,22 +95,8 @@ impl MrcFile {
         file.read_exact_at(&mut header_bytes, 0)
             .map_err(|_| Error::Io)?;
 
-        // Validate we have exactly 1024 bytes for the header
-        if header_bytes.len() != 1024 {
-            return Err(Error::InvalidHeader);
-        }
-
-        // Ensure proper alignment for Header type
-        let header = unsafe {
-            let ptr = header_bytes.as_ptr() as *const Header;
-            // Check alignment before reading
-            if (ptr as usize) % core::mem::align_of::<Header>() != 0 {
-                // Use read_unaligned for potentially unaligned reads
-                ptr.read_unaligned()
-            } else {
-                ptr.read()
-            }
-        };
+        // Use safe decode method that handles endianness automatically
+        let header = Header::decode_from_bytes(&header_bytes);
 
         Ok(header)
     }
@@ -161,14 +141,9 @@ impl MrcFile {
     #[inline]
     #[allow(dead_code)] // Public API, may not be used in tests
     pub fn write_view(&mut self, view: &MrcView) -> Result<(), Error> {
-        // Write header using safe serialization
+        // Write header using safe encode method
         let mut header_bytes = [0u8; 1024];
-        unsafe {
-            // Copy header bytes safely to avoid alignment issues
-            let src = &self.header as *const Header as *const u8;
-            let dst = header_bytes.as_mut_ptr();
-            core::ptr::copy_nonoverlapping(src, dst, 1024);
-        }
+        self.header.encode_to_bytes(&mut header_bytes);
         self.file
             .write_all_at(&header_bytes, 0)
             .map_err(|_| Error::Io)?;
@@ -259,22 +234,13 @@ impl MrcMmap {
             return Err(Error::InvalidHeader);
         }
 
-        // Ensure proper alignment and safe deserialization
-        let mut header = unsafe {
-            let ptr = buffer.as_ptr() as *const Header;
-            // Always use read_unaligned for memory-mapped data
-            ptr.read_unaligned()
-        };
+        // Use safe decode method that handles endianness automatically
+        let mut header_bytes = [0u8; 1024];
+        header_bytes.copy_from_slice(&buffer[..1024]);
+        let header = Header::decode_from_bytes(&header_bytes);
 
         if !header.validate() {
             return Err(Error::InvalidHeader);
-        }
-
-        // Automatically normalize header to native endianness
-        // This is the single decision point for endianness handling (Layer 1)
-        let file_endian = header.detect_endian();
-        if !file_endian.is_native() {
-            header.swap_endian();
         }
 
         let ext_header_size = header.nsymbt as usize;
