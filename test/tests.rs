@@ -154,33 +154,6 @@ mod header_tests {
     }
 
     #[test]
-    fn test_header_endian_swap_includes_exttyp_and_nversion() {
-        let mut header = Header::new();
-
-        // Test simple integer values first
-        header.set_exttyp(42);
-        header.set_nversion(20141);
-
-        let original_exttyp = header.exttyp();
-        let original_nversion = header.nversion();
-
-        assert_eq!(original_exttyp, 42);
-        assert_eq!(original_nversion, 20141);
-
-        header.swap_endian();
-
-        // EXTTYP should NOT be swapped (it's ASCII bytes, a byte signature)
-        assert_eq!(header.exttyp(), original_exttyp);
-        // NVERSION should be swapped (it's numeric i32)
-        assert_eq!(header.nversion(), 20141_i32.swap_bytes());
-
-        // Swap back to verify
-        header.swap_endian();
-        assert_eq!(header.exttyp(), original_exttyp);
-        assert_eq!(header.nversion(), original_nversion);
-    }
-
-    #[test]
     fn test_header_field_positions() {
         // Verify byte positions match MRC 2014 specification
         let header = Header::new();
@@ -927,128 +900,163 @@ mod view_tests {
     }
 
     #[test]
-    fn test_header_endian_swap_comprehensive() {
+    fn test_header_decode_encode_little_endian() {
+        let mut original = Header::new();
+        original.nx = 64;
+        original.ny = 64;
+        original.nz = 64;
+        original.mode = 2;
+        original.xlen = 100.0;
+        original.ylen = 100.0;
+        original.zlen = 100.0;
+        original.dmin = -1.0;
+        original.dmax = 1.0;
+        original.dmean = 0.0;
+        original.set_nversion(20141);
+
+        // Encode to bytes (little-endian by default)
+        let mut bytes = [0u8; 1024];
+        original.encode_to_bytes(&mut bytes);
+
+        // Verify MACHST is little-endian
+        assert_eq!(&bytes[212..216], &[0x44, 0x44, 0x00, 0x00]);
+
+        // Decode back
+        let decoded = Header::decode_from_bytes(&bytes);
+
+        // Verify all fields match
+        assert_eq!(decoded.nx, original.nx);
+        assert_eq!(decoded.ny, original.ny);
+        assert_eq!(decoded.nz, original.nz);
+        assert_eq!(decoded.mode, original.mode);
+        assert_eq!(decoded.xlen, original.xlen);
+        assert_eq!(decoded.ylen, original.ylen);
+        assert_eq!(decoded.zlen, original.zlen);
+        assert_eq!(decoded.dmin, original.dmin);
+        assert_eq!(decoded.dmax, original.dmax);
+        assert_eq!(decoded.dmean, original.dmean);
+        assert_eq!(decoded.nversion(), original.nversion());
+    }
+
+    #[test]
+    fn test_header_decode_encode_big_endian() {
+        let mut original = Header::new();
+        original.nx = 64;
+        original.ny = 64;
+        original.nz = 64;
+        original.mode = 2;
+        original.xlen = 100.0;
+        original.ylen = 100.0;
+        original.zlen = 100.0;
+        original.dmin = -1.0;
+        original.dmax = 1.0;
+        original.dmean = 0.0;
+        original.set_nversion(20141);
+
+        // Manually create big-endian bytes
+        let mut bytes = [0u8; 1024];
+
+        // Set MACHST to big-endian
+        bytes[212] = 0x11;
+        bytes[213] = 0x11;
+        bytes[214] = 0x00;
+        bytes[215] = 0x00;
+
+        // Encode nx as big-endian
+        let nx_bytes = 64i32.to_be_bytes();
+        bytes[0] = nx_bytes[0];
+        bytes[1] = nx_bytes[1];
+        bytes[2] = nx_bytes[2];
+        bytes[3] = nx_bytes[3];
+
+        // Encode ny as big-endian
+        let ny_bytes = 64i32.to_be_bytes();
+        bytes[4] = ny_bytes[0];
+        bytes[5] = ny_bytes[1];
+        bytes[6] = ny_bytes[2];
+        bytes[7] = ny_bytes[3];
+
+        // Encode nz as big-endian
+        let nz_bytes = 64i32.to_be_bytes();
+        bytes[8] = nz_bytes[0];
+        bytes[9] = nz_bytes[1];
+        bytes[10] = nz_bytes[2];
+        bytes[11] = nz_bytes[3];
+
+        // Encode mode as big-endian
+        let mode_bytes = 2i32.to_be_bytes();
+        bytes[12] = mode_bytes[0];
+        bytes[13] = mode_bytes[1];
+        bytes[14] = mode_bytes[2];
+        bytes[15] = mode_bytes[3];
+
+        // Encode xlen as big-endian
+        let xlen_bytes = 100.0f32.to_be_bytes();
+        bytes[40] = xlen_bytes[0];
+        bytes[41] = xlen_bytes[1];
+        bytes[42] = xlen_bytes[2];
+        bytes[43] = xlen_bytes[3];
+
+        // Encode nversion as big-endian in extra bytes (bytes 108-111)
+        let nversion_bytes = 20141i32.to_be_bytes();
+        bytes[108] = nversion_bytes[0];
+        bytes[109] = nversion_bytes[1];
+        bytes[110] = nversion_bytes[2];
+        bytes[111] = nversion_bytes[3];
+
+        // Set MAP identifier
+        bytes[208] = b'M';
+        bytes[209] = b'A';
+        bytes[210] = b'P';
+        bytes[211] = b' ';
+
+        // Decode from big-endian bytes
+        let decoded = Header::decode_from_bytes(&bytes);
+
+        // Verify all fields are correctly converted to native endian
+        assert_eq!(decoded.nx, 64);
+        assert_eq!(decoded.ny, 64);
+        assert_eq!(decoded.nz, 64);
+        assert_eq!(decoded.mode, 2);
+        assert_eq!(decoded.xlen, 100.0);
+        assert_eq!(decoded.nversion(), 20141);
+        assert_eq!(decoded.map, *b"MAP ");
+
+        // Verify it detects as big-endian
+        assert!(decoded.is_big_endian());
+    }
+
+    #[test]
+    fn test_header_nversion_respects_endianness() {
         let mut header = Header::new();
+        header.set_nversion(20141);
 
-        // Set various values to test endian swapping
-        header.nx = 0x12345678;
-        header.ny = 0x7ABCDEF0u32 as i32;
-        header.nz = 0x13579BDFu32 as i32;
-        header.mode = 0x2468ACE0;
-        header.nxstart = 0x11111111;
-        header.nystart = 0x22222222;
-        header.nzstart = 0x33333333;
-        header.mx = 0x44444444;
-        header.my = 0x55555555;
-        header.mz = 0x66666666;
-        header.xlen = 123.456;
-        header.ylen = 789.012;
-        header.zlen = 345.678;
-        header.alpha = 60.0;
-        header.beta = 120.0;
-        header.gamma = 90.0;
-        header.mapc = 0x77777777u32 as i32;
-        header.mapr = 0x88888888u32 as i32;
-        header.maps = 0x99999999u32 as i32;
-        header.dmin = -1000.0;
-        header.dmax = 1000.0;
-        header.dmean = 0.0;
-        header.ispg = 0xAAAAAAAAu32 as i32;
-        header.nsymbt = 0xBBBBBBBBu32 as i32;
-        header.nlabl = 0xCCCCCCCCu32 as i32;
-        header.rms = 42.0;
-        header.origin = [1.0, 2.0, 3.0];
-        header.set_exttyp(0x44434241); // "ABCD" in little-endian
-        header.set_nversion(0x20141);
+        // Little-endian encoding
+        let mut le_bytes = [0u8; 1024];
+        le_bytes[212] = 0x44;
+        le_bytes[213] = 0x44;
+        le_bytes[214] = 0x00;
+        le_bytes[215] = 0x00;
+        le_bytes[108] = 0xAD;
+        le_bytes[109] = 0x4E;
+        le_bytes[110] = 0x00;
+        le_bytes[111] = 0x00;
 
-        let original = header.clone();
-        header.swap_endian();
+        let le_header = Header::decode_from_bytes(&le_bytes);
+        assert_eq!(le_header.nversion(), 20141);
 
-        // Verify each field was swapped
-        assert_eq!(header.nx, original.nx.swap_bytes());
-        assert_eq!(header.ny, original.ny.swap_bytes());
-        assert_eq!(header.nz, original.nz.swap_bytes());
-        assert_eq!(header.mode, original.mode.swap_bytes());
-        assert_eq!(header.nxstart, original.nxstart.swap_bytes());
-        assert_eq!(header.nystart, original.nystart.swap_bytes());
-        assert_eq!(header.nzstart, original.nzstart.swap_bytes());
-        assert_eq!(header.mx, original.mx.swap_bytes());
-        assert_eq!(header.my, original.my.swap_bytes());
-        assert_eq!(header.mz, original.mz.swap_bytes());
-        assert_eq!(
-            f32::from_bits(header.xlen.to_bits().swap_bytes()),
-            original.xlen
-        );
-        assert_eq!(
-            f32::from_bits(header.ylen.to_bits().swap_bytes()),
-            original.ylen
-        );
-        assert_eq!(
-            f32::from_bits(header.zlen.to_bits().swap_bytes()),
-            original.zlen
-        );
-        assert_eq!(
-            f32::from_bits(header.alpha.to_bits().swap_bytes()),
-            original.alpha
-        );
-        assert_eq!(
-            f32::from_bits(header.beta.to_bits().swap_bytes()),
-            original.beta
-        );
-        assert_eq!(
-            f32::from_bits(header.gamma.to_bits().swap_bytes()),
-            original.gamma
-        );
-        assert_eq!(header.mapc, original.mapc.swap_bytes());
-        assert_eq!(header.mapr, original.mapr.swap_bytes());
-        assert_eq!(header.maps, original.maps.swap_bytes());
-        assert_eq!(
-            f32::from_bits(header.dmin.to_bits().swap_bytes()),
-            original.dmin
-        );
-        assert_eq!(
-            f32::from_bits(header.dmax.to_bits().swap_bytes()),
-            original.dmax
-        );
-        assert_eq!(
-            f32::from_bits(header.dmean.to_bits().swap_bytes()),
-            original.dmean
-        );
-        assert_eq!(header.ispg, original.ispg.swap_bytes());
-        assert_eq!(header.nsymbt, original.nsymbt.swap_bytes());
-        // EXTTYP should NOT be swapped (it's ASCII bytes, a byte signature)
-        assert_eq!(header.exttyp(), original.exttyp());
-        // NVERSION should be swapped (it's numeric i32)
-        assert_eq!(header.nversion(), original.nversion().swap_bytes());
-        assert_eq!(header.nlabl, original.nlabl.swap_bytes());
-        assert_eq!(
-            f32::from_bits(header.rms.to_bits().swap_bytes()),
-            original.rms
-        );
-        assert_eq!(
-            header.origin[0],
-            f32::from_bits(original.origin[0].to_bits().swap_bytes())
-        );
-        assert_eq!(
-            header.origin[1],
-            f32::from_bits(original.origin[1].to_bits().swap_bytes())
-        );
-        assert_eq!(
-            header.origin[2],
-            f32::from_bits(original.origin[2].to_bits().swap_bytes())
-        );
+        // Big-endian encoding
+        let mut be_bytes = [0u8; 1024];
+        be_bytes[212] = 0x11;
+        be_bytes[213] = 0x11;
+        be_bytes[214] = 0x00;
+        be_bytes[215] = 0x00;
+        be_bytes[108] = 0x00;
+        be_bytes[109] = 0x00;
+        be_bytes[110] = 0x4E;
+        be_bytes[111] = 0xAD;
 
-        // Swap back to verify
-        header.swap_endian();
-        assert_eq!(header.nx, original.nx);
-        assert_eq!(header.ny, original.ny);
-        assert_eq!(header.nz, original.nz);
-        assert_eq!(header.mode, original.mode);
-        assert_eq!(header.xlen, original.xlen);
-        assert_eq!(header.ylen, original.ylen);
-        assert_eq!(header.zlen, original.zlen);
-        assert_eq!(header.alpha, original.alpha);
-        assert_eq!(header.beta, original.beta);
-        assert_eq!(header.gamma, original.gamma);
+        let be_header = Header::decode_from_bytes(&be_bytes);
+        assert_eq!(be_header.nversion(), 20141);
     }
 }

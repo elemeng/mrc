@@ -55,8 +55,8 @@ fn bench_view_access(c: &mut Criterion) {
 
     c.bench_function("view_access_f32", |b| {
         b.iter(|| {
-            let view: &[f32] = map.view().unwrap();
-            black_box(view.len())
+            let data = black_box(map.data_as_f32().unwrap());
+            black_box(data.len())
         })
     });
 }

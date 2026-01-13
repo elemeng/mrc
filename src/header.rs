@@ -197,19 +197,27 @@ impl Header {
 
     #[inline]
     /// Reads the 4-byte NVERSION number stored in `extra[12..16]`.
-    pub const fn nversion(&self) -> i32 {
-        i32::from_le_bytes([
-            self.extra[12],
-            self.extra[13],
-            self.extra[14],
-            self.extra[15],
-        ])
+    ///
+    /// This value is a numeric i32 and respects the file's endianness.
+    pub fn nversion(&self) -> i32 {
+        let file_endian = self.detect_endian();
+        let arr = [self.extra[12], self.extra[13], self.extra[14], self.extra[15]];
+        match file_endian {
+            crate::FileEndian::LittleEndian => i32::from_le_bytes(arr),
+            crate::FileEndian::BigEndian => i32::from_be_bytes(arr),
+        }
     }
 
     #[inline]
     /// Stores the 4-byte NVERSION number into `extra[12..16]`.
+    ///
+    /// This value is a numeric i32 and respects the file's endianness.
     pub fn set_nversion(&mut self, value: i32) {
-        let bytes = value.to_le_bytes();
+        let file_endian = self.detect_endian();
+        let bytes = match file_endian {
+            crate::FileEndian::LittleEndian => value.to_le_bytes(),
+            crate::FileEndian::BigEndian => value.to_be_bytes(),
+        };
         self.extra[12..16].copy_from_slice(&bytes);
     }
 
@@ -229,78 +237,6 @@ impl Header {
     /// Check if the file is big-endian
     pub fn is_big_endian(&self) -> bool {
         self.detect_endian() == crate::FileEndian::BigEndian
-    }
-
-    #[inline]
-    /// Swaps the endianness of every multi-byte field.
-    ///
-    /// This method swaps numeric fields (i32, f32) but does NOT touch:
-    /// - ASCII fields (MAP, EXTTYP) - these are byte-signatures
-    /// - MACHST - this is an endianness indicator, not data
-    ///
-    /// Call this after reading a big-endian MRC file on a little-endian
-    /// machine (or vice-versa).
-    ///
-    /// After calling this method, all numeric fields will be in native endianness.
-    pub fn swap_endian(&mut self) {
-        macro_rules! swap_field {
-            ($field:ident) => {
-                self.$field = self.$field.swap_bytes();
-            };
-        }
-
-        // Swap all i32 fields
-        swap_field!(nx);
-        swap_field!(ny);
-        swap_field!(nz);
-        swap_field!(mode);
-        swap_field!(nxstart);
-        swap_field!(nystart);
-        swap_field!(nzstart);
-        swap_field!(mx);
-        swap_field!(my);
-        swap_field!(mz);
-
-        // Swap all f32 fields
-        self.xlen = f32::from_bits(self.xlen.to_bits().swap_bytes());
-        self.ylen = f32::from_bits(self.ylen.to_bits().swap_bytes());
-        self.zlen = f32::from_bits(self.zlen.to_bits().swap_bytes());
-        self.alpha = f32::from_bits(self.alpha.to_bits().swap_bytes());
-        self.beta = f32::from_bits(self.beta.to_bits().swap_bytes());
-        self.gamma = f32::from_bits(self.gamma.to_bits().swap_bytes());
-
-        // Swap axis mapping fields
-        swap_field!(mapc);
-        swap_field!(mapr);
-        swap_field!(maps);
-
-        // Swap density statistics
-        self.dmin = f32::from_bits(self.dmin.to_bits().swap_bytes());
-        self.dmax = f32::from_bits(self.dmax.to_bits().swap_bytes());
-        self.dmean = f32::from_bits(self.dmean.to_bits().swap_bytes());
-
-        // Swap space group and extended header size
-        swap_field!(ispg);
-        swap_field!(nsymbt);
-
-        // NOTE: EXTTYP is ASCII bytes (e.g., "CCP4", "MRCO"), NOT numeric
-        // Do NOT swap EXTTYP - it's a byte signature
-
-        // NVERSION is numeric (i32), so it MUST be swapped
-        let nversion = self.nversion().swap_bytes();
-        self.set_nversion(nversion);
-
-        // Swap origin coordinates
-        for val in &mut self.origin {
-            *val = f32::from_bits(val.to_bits().swap_bytes());
-        }
-
-        // Swap label count and RMS
-        swap_field!(nlabl);
-        self.rms = f32::from_bits(self.rms.to_bits().swap_bytes());
-
-        // NOTE: MACHST is a byte signature indicating endianness, NOT data
-        // Do NOT swap MACHST - it's used to detect file endianness
     }
 
     /// Decode header from raw bytes with correct endianness

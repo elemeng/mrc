@@ -522,16 +522,4 @@ mod tests {
         assert_eq!(data[3], 0x42);
     }
 
-    #[test]
-    fn test_endian_swap_header() {
-        let mut header = Header::new();
-        header.nx = 0x12345678;
-        header.ny = 0x12345678u32 as i32; // Use valid i32 range
-        header.mode = 2;
-
-        header.swap_endian();
-
-        assert_eq!(header.nx, 0x78563412);
-        assert_eq!(header.ny, 0x78563412u32 as i32);
     }
-}

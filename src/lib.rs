@@ -22,6 +22,10 @@
 //! - Users never see endian concerns
 //! - Developers cannot accidentally corrupt data
 //!
+//! **Note:** Only typed numeric values (i32, f32, i16, u16, i8) need endianness awareness.
+//! Raw byte data (extended headers, labels, etc.) is treated as opaque and passed through
+//! without conversion.
+//!
 //! ## Architecture
 //!
 //! The crate enforces endian safety through three layers:

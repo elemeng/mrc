@@ -131,28 +131,55 @@ fn bench_mmap_sequential_read_1gb(c: &mut Criterion) {
 }
 
 fn bench_cache_line_alignment(c: &mut Criterion) {
+
     let temp_file = NamedTempFile::new().unwrap();
+
+
+
     let mut header = Header::new();
+
     header.nx = 1024;
+
     header.ny = 1024;
+
     header.nz = 1;
+
     header.mode = 2;
 
+
+
     // Create test file
+
     {
+
         let data = vec![0u8; header.data_size()];
+
         let mut file = MrcFile::create(temp_file.path(), header).unwrap();
+
         file.write_data(&data).unwrap();
+
     }
 
+
+
     c.bench_function("cache_line_aligned_access", |b| {
+
         b.iter(|| {
+
             let file = MrcFile::open(temp_file.path()).unwrap();
+
             let data = file.read_data().unwrap().to_vec();
-            let typed: &[f32] = bytemuck::cast_slice(&data);
+
+            let view = MrcView::new(file.header().clone(), &data).unwrap();
+
+            let typed = black_box(view.data_as_f32().unwrap());
+
             black_box(typed.len())
+
         })
+
     });
+
 }
 
 criterion_group!(
