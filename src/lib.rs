@@ -44,6 +44,8 @@ extern crate std;
 #[cfg(feature = "f16")]
 extern crate half;
 
+use alloc::vec::Vec;
+
 mod header;
 mod mode;
 mod view;
@@ -153,6 +155,563 @@ impl OutputEndian {
             FileEndian::LittleEndian => [0x44, 0x44, 0x00, 0x00],
             FileEndian::BigEndian => [0x11, 0x11, 0x00, 0x00],
         }
+    }
+}
+
+/// Extended header - opaque metadata blob
+///
+/// This type provides read-only access to the extended header bytes.
+/// No interpretation or endianness conversion is performed - it is
+/// treated as an opaque byte sequence.
+///
+/// # API
+/// - `len()` - length in bytes
+/// - `is_empty()` - check if empty
+/// - `as_bytes()` - read-only byte access
+#[derive(Debug, Clone, Copy)]
+pub struct ExtHeader<'a> {
+    bytes: &'a [u8],
+}
+
+impl<'a> ExtHeader<'a> {
+    /// Create a new ExtHeader from a byte slice
+    #[inline]
+    pub fn new(bytes: &'a [u8]) -> Self {
+        Self { bytes }
+    }
+
+    /// Length of the extended header in bytes
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.bytes.len()
+    }
+
+    /// Check if the extended header is empty
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.bytes.is_empty()
+    }
+
+    /// Get read-only access to the raw bytes
+    #[inline]
+    pub fn as_bytes(&self) -> &'a [u8] {
+        self.bytes
+    }
+}
+
+/// Data block - voxel data with endianness-aware decoding
+///
+/// This type provides typed access to voxel data while maintaining
+/// the raw file-endian bytes internally. All endianness conversion
+/// happens only when decoding values.
+///
+/// # API
+/// - `mode()` - data mode (type of voxels)
+/// - `len_voxels()` - number of voxels
+/// - `len_bytes()` - size in bytes
+/// - `file_endian()` - file endianness
+/// - `as_*()` - bulk decoding methods (e.g., as_f32(), as_i16())
+/// - `as_bytes()` - read-only raw byte access
+#[derive(Debug, Clone, Copy)]
+pub struct DataBlock<'a> {
+    bytes: &'a [u8],
+    mode: Mode,
+    file_endian: FileEndian,
+}
+
+impl<'a> DataBlock<'a> {
+    /// Create a new DataBlock
+    ///
+    /// # Arguments
+    /// * `bytes` - raw voxel data bytes (file-endian)
+    /// * `mode` - data mode
+    /// * `file_endian` - file endianness
+    #[inline]
+    pub fn new(bytes: &'a [u8], mode: Mode, file_endian: FileEndian) -> Self {
+        Self {
+            bytes,
+            mode,
+            file_endian,
+        }
+    }
+
+    /// Get the data mode
+    #[inline]
+    pub fn mode(&self) -> Mode {
+        self.mode
+    }
+
+    /// Get the number of voxels
+    #[inline]
+    pub fn len_voxels(&self) -> usize {
+        match self.mode {
+            Mode::Packed4Bit => self.bytes.len() * 2, // 2 voxels per byte (4 bits each)
+            _ => {
+                let byte_size = self.mode.byte_size();
+                if byte_size == 0 {
+                    return 0;
+                }
+                self.bytes.len() / byte_size
+            }
+        }
+    }
+
+    /// Get the size in bytes
+    #[inline]
+    pub fn len_bytes(&self) -> usize {
+        self.bytes.len()
+    }
+
+    /// Get the file endianness
+    #[inline]
+    pub fn file_endian(&self) -> FileEndian {
+        self.file_endian
+    }
+
+    /// Get read-only access to the raw bytes
+    #[inline]
+    pub fn as_bytes(&self) -> &'a [u8] {
+        self.bytes
+    }
+
+    /// Decode data as f32 values
+    ///
+    /// # Errors
+    /// Returns Error::InvalidMode if the file mode is not Float32 (mode 2)
+    /// Returns Error::InvalidDimensions if the byte length is not divisible by 4
+    pub fn as_f32(&self) -> Result<Vec<f32>, Error> {
+        if self.mode != Mode::Float32 {
+            return Err(Error::InvalidMode);
+        }
+
+        if self.bytes.len() % 4 != 0 {
+            return Err(Error::InvalidDimensions);
+        }
+
+        let mut result = Vec::with_capacity(self.bytes.len() / 4);
+        let chunks: Vec<_> = self.bytes.chunks_exact(4).collect();
+
+        for chunk in chunks {
+            let value = f32::decode(self.file_endian, chunk);
+            result.push(value);
+        }
+
+        Ok(result)
+    }
+
+    /// Decode data as i16 values
+    ///
+    /// # Errors
+    /// Returns Error::InvalidMode if the file mode is not Int16 (mode 1)
+    /// Returns Error::InvalidDimensions if the byte length is not divisible by 2
+    pub fn as_i16(&self) -> Result<Vec<i16>, Error> {
+        if self.mode != Mode::Int16 {
+            return Err(Error::InvalidMode);
+        }
+
+        if self.bytes.len() % 2 != 0 {
+            return Err(Error::InvalidDimensions);
+        }
+
+        let mut result = Vec::with_capacity(self.bytes.len() / 2);
+        let chunks: Vec<_> = self.bytes.chunks_exact(2).collect();
+
+        for chunk in chunks {
+            let value = i16::decode(self.file_endian, chunk);
+            result.push(value);
+        }
+
+        Ok(result)
+    }
+
+    /// Decode data as u16 values
+    ///
+    /// # Errors
+    /// Returns Error::InvalidMode if the file mode is not Uint16 (mode 6)
+    /// Returns Error::InvalidDimensions if the byte length is not divisible by 2
+    pub fn as_u16(&self) -> Result<Vec<u16>, Error> {
+        if self.mode != Mode::Uint16 {
+            return Err(Error::InvalidMode);
+        }
+
+        if self.bytes.len() % 2 != 0 {
+            return Err(Error::InvalidDimensions);
+        }
+
+        let mut result = Vec::with_capacity(self.bytes.len() / 2);
+        let chunks: Vec<_> = self.bytes.chunks_exact(2).collect();
+
+        for chunk in chunks {
+            let value = u16::decode(self.file_endian, chunk);
+            result.push(value);
+        }
+
+        Ok(result)
+    }
+
+    /// Decode data as i8 values
+    ///
+    /// # Errors
+    /// Returns Error::InvalidMode if the file mode is not Int8 (mode 0)
+    pub fn as_i8(&self) -> Result<Vec<i8>, Error> {
+        if self.mode != Mode::Int8 {
+            return Err(Error::InvalidMode);
+        }
+
+        let mut result = Vec::with_capacity(self.bytes.len());
+        for byte in self.bytes {
+            let value = i8::decode(self.file_endian, &[*byte]);
+            result.push(value);
+        }
+
+        Ok(result)
+    }
+
+    /// Decode data as Int16Complex values
+    ///
+    /// # Errors
+    /// Returns Error::InvalidMode if the file mode is not Int16Complex (mode 3)
+    /// Returns Error::InvalidDimensions if the byte length is not divisible by 4
+    pub fn as_int16_complex(&self) -> Result<Vec<Int16Complex>, Error> {
+        if self.mode != Mode::Int16Complex {
+            return Err(Error::InvalidMode);
+        }
+
+        if self.bytes.len() % 4 != 0 {
+            return Err(Error::InvalidDimensions);
+        }
+
+        let mut result = Vec::with_capacity(self.bytes.len() / 4);
+        let chunks: Vec<_> = self.bytes.chunks_exact(4).collect();
+
+        for chunk in chunks {
+            let value = Int16Complex::decode(self.file_endian, chunk);
+            result.push(value);
+        }
+
+        Ok(result)
+    }
+
+    /// Decode data as Float32Complex values
+    ///
+    /// # Errors
+    /// Returns Error::InvalidMode if the file mode is not Float32Complex (mode 4)
+    /// Returns Error::InvalidDimensions if the byte length is not divisible by 8
+    pub fn as_float32_complex(&self) -> Result<Vec<Float32Complex>, Error> {
+        if self.mode != Mode::Float32Complex {
+            return Err(Error::InvalidMode);
+        }
+
+        if self.bytes.len() % 8 != 0 {
+            return Err(Error::InvalidDimensions);
+        }
+
+        let mut result = Vec::with_capacity(self.bytes.len() / 8);
+        let chunks: Vec<_> = self.bytes.chunks_exact(8).collect();
+
+        for chunk in chunks {
+            let value = Float32Complex::decode(self.file_endian, chunk);
+            result.push(value);
+        }
+
+        Ok(result)
+    }
+
+    /// Decode data as Packed4Bit values
+    ///
+    /// # Errors
+    /// Returns Error::InvalidMode if the file mode is not Packed4Bit (mode 101)
+    pub fn as_packed4bit(&self) -> Result<Vec<Packed4Bit>, Error> {
+        if self.mode != Mode::Packed4Bit {
+            return Err(Error::InvalidMode);
+        }
+
+        let mut result = Vec::with_capacity(self.bytes.len() * 2);
+        for byte in self.bytes {
+            let value = Packed4Bit::decode(self.file_endian, &[*byte]);
+            result.push(value);
+        }
+
+        Ok(result)
+    }
+
+    /// Decode data as f16 values
+    ///
+    /// # Errors
+    /// Returns Error::InvalidMode if the file mode is not Float16 (mode 12)
+    /// Returns Error::InvalidDimensions if the byte length is not divisible by 2
+    /// Returns Error::UnsupportedMode if the f16 feature is not enabled
+    #[cfg(feature = "f16")]
+    pub fn as_f16(&self) -> Result<Vec<half::f16>, Error> {
+        if self.mode != Mode::Float16 {
+            return Err(Error::InvalidMode);
+        }
+
+        if self.bytes.len() % 2 != 0 {
+            return Err(Error::InvalidDimensions);
+        }
+
+        let mut result = Vec::with_capacity(self.bytes.len() / 2);
+        let chunks: Vec<_> = self.bytes.chunks_exact(2).collect();
+
+        for chunk in chunks {
+            let value = half::f16::decode(self.file_endian, chunk);
+            result.push(value);
+        }
+
+        Ok(result)
+    }
+}
+
+/// Mutable data block - voxel data with endianness-aware encoding
+///
+/// This type provides typed write access to voxel data while maintaining
+/// the raw file-endian bytes internally. All endianness conversion
+/// happens only when encoding values.
+///
+/// # API
+/// - `mode()` - data mode (type of voxels)
+/// - `len_voxels()` - number of voxels
+/// - `len_bytes()` - size in bytes
+/// - `file_endian()` - file endianness
+/// - `set_*()` - bulk encoding methods (e.g., set_f32(), set_i16())
+/// - `as_bytes()` - read-only raw byte access
+/// - `as_bytes_mut()` - mutable raw byte access
+#[derive(Debug)]
+pub struct DataBlockMut<'a> {
+    bytes: &'a mut [u8],
+    mode: Mode,
+    file_endian: FileEndian,
+}
+
+impl<'a> DataBlockMut<'a> {
+    /// Create a new DataBlockMut
+    ///
+    /// # Arguments
+    /// * `bytes` - mutable voxel data bytes (file-endian)
+    /// * `mode` - data mode
+    /// * `file_endian` - file endianness
+    #[inline]
+    pub fn new(bytes: &'a mut [u8], mode: Mode, file_endian: FileEndian) -> Self {
+        Self {
+            bytes,
+            mode,
+            file_endian,
+        }
+    }
+
+    /// Get the data mode
+    #[inline]
+    pub fn mode(&self) -> Mode {
+        self.mode
+    }
+
+    /// Get the number of voxels
+    #[inline]
+    pub fn len_voxels(&self) -> usize {
+        match self.mode {
+            Mode::Packed4Bit => self.bytes.len() * 2, // 2 voxels per byte (4 bits each)
+            _ => {
+                let byte_size = self.mode.byte_size();
+                if byte_size == 0 {
+                    return 0;
+                }
+                self.bytes.len() / byte_size
+            }
+        }
+    }
+
+    /// Get the size in bytes
+    #[inline]
+    pub fn len_bytes(&self) -> usize {
+        self.bytes.len()
+    }
+
+    /// Get the file endianness
+    #[inline]
+    pub fn file_endian(&self) -> FileEndian {
+        self.file_endian
+    }
+
+    /// Get read-only access to the raw bytes
+    #[inline]
+    pub fn as_bytes(&self) -> &[u8] {
+        self.bytes
+    }
+
+    /// Get mutable access to the raw bytes
+    #[inline]
+    pub fn as_bytes_mut(&mut self) -> &mut [u8] {
+        self.bytes
+    }
+
+    /// Encode f32 values to data
+    ///
+    /// # Errors
+    /// Returns Error::InvalidMode if the file mode is not Float32 (mode 2)
+    /// Returns Error::InvalidDimensions if the data size doesn't match the input length
+    pub fn set_f32(&mut self, values: &[f32]) -> Result<(), Error> {
+        if self.mode != Mode::Float32 {
+            return Err(Error::InvalidMode);
+        }
+
+        if values.len() * 4 != self.bytes.len() {
+            return Err(Error::InvalidDimensions);
+        }
+
+        for (i, &value) in values.iter().enumerate() {
+            value.encode(self.file_endian, &mut self.bytes[i * 4..i * 4 + 4]);
+        }
+
+        Ok(())
+    }
+
+    /// Encode i16 values to data
+    ///
+    /// # Errors
+    /// Returns Error::InvalidMode if the file mode is not Int16 (mode 1)
+    /// Returns Error::InvalidDimensions if the data size doesn't match the input length
+    pub fn set_i16(&mut self, values: &[i16]) -> Result<(), Error> {
+        if self.mode != Mode::Int16 {
+            return Err(Error::InvalidMode);
+        }
+
+        if values.len() * 2 != self.bytes.len() {
+            return Err(Error::InvalidDimensions);
+        }
+
+        for (i, &value) in values.iter().enumerate() {
+            value.encode(self.file_endian, &mut self.bytes[i * 2..i * 2 + 2]);
+        }
+
+        Ok(())
+    }
+
+    /// Encode u16 values to data
+    ///
+    /// # Errors
+    /// Returns Error::InvalidMode if the file mode is not Uint16 (mode 6)
+    /// Returns Error::InvalidDimensions if the data size doesn't match the input length
+    pub fn set_u16(&mut self, values: &[u16]) -> Result<(), Error> {
+        if self.mode != Mode::Uint16 {
+            return Err(Error::InvalidMode);
+        }
+
+        if values.len() * 2 != self.bytes.len() {
+            return Err(Error::InvalidDimensions);
+        }
+
+        for (i, &value) in values.iter().enumerate() {
+            value.encode(self.file_endian, &mut self.bytes[i * 2..i * 2 + 2]);
+        }
+
+        Ok(())
+    }
+
+    /// Encode i8 values to data
+    ///
+    /// # Errors
+    /// Returns Error::InvalidMode if the file mode is not Int8 (mode 0)
+    /// Returns Error::InvalidDimensions if the data size doesn't match the input length
+    pub fn set_i8(&mut self, values: &[i8]) -> Result<(), Error> {
+        if self.mode != Mode::Int8 {
+            return Err(Error::InvalidMode);
+        }
+
+        if values.len() != self.bytes.len() {
+            return Err(Error::InvalidDimensions);
+        }
+
+        for (i, &value) in values.iter().enumerate() {
+            value.encode(self.file_endian, &mut self.bytes[i..i + 1]);
+        }
+
+        Ok(())
+    }
+
+    /// Encode Int16Complex values to data
+    ///
+    /// # Errors
+    /// Returns Error::InvalidMode if the file mode is not Int16Complex (mode 3)
+    /// Returns Error::InvalidDimensions if the data size doesn't match the input length
+    pub fn set_int16_complex(&mut self, values: &[Int16Complex]) -> Result<(), Error> {
+        if self.mode != Mode::Int16Complex {
+            return Err(Error::InvalidMode);
+        }
+
+        if values.len() * 4 != self.bytes.len() {
+            return Err(Error::InvalidDimensions);
+        }
+
+        for (i, &value) in values.iter().enumerate() {
+            value.encode(self.file_endian, &mut self.bytes[i * 4..i * 4 + 4]);
+        }
+
+        Ok(())
+    }
+
+    /// Encode Float32Complex values to data
+    ///
+    /// # Errors
+    /// Returns Error::InvalidMode if the file mode is not Float32Complex (mode 4)
+    /// Returns Error::InvalidDimensions if the data size doesn't match the input length
+    pub fn set_float32_complex(&mut self, values: &[Float32Complex]) -> Result<(), Error> {
+        if self.mode != Mode::Float32Complex {
+            return Err(Error::InvalidMode);
+        }
+
+        if values.len() * 8 != self.bytes.len() {
+            return Err(Error::InvalidDimensions);
+        }
+
+        for (i, &value) in values.iter().enumerate() {
+            value.encode(self.file_endian, &mut self.bytes[i * 8..i * 8 + 8]);
+        }
+
+        Ok(())
+    }
+
+    /// Encode Packed4Bit values to data
+    ///
+    /// # Errors
+    /// Returns Error::InvalidMode if the file mode is not Packed4Bit (mode 101)
+    /// Returns Error::InvalidDimensions if the data size doesn't match the input length
+    pub fn set_packed4bit(&mut self, values: &[Packed4Bit]) -> Result<(), Error> {
+        if self.mode != Mode::Packed4Bit {
+            return Err(Error::InvalidMode);
+        }
+
+        if values.len() != self.bytes.len() {
+            return Err(Error::InvalidDimensions);
+        }
+
+        for (i, &value) in values.iter().enumerate() {
+            value.encode(self.file_endian, &mut self.bytes[i..i + 1]);
+        }
+
+        Ok(())
+    }
+
+    #[cfg(feature = "f16")]
+    /// Encode f16 values to data
+    ///
+    /// # Errors
+    /// Returns Error::InvalidMode if the file mode is not Float16 (mode 12)
+    /// Returns Error::InvalidDimensions if the data size doesn't match the input length
+    pub fn set_f16(&mut self, values: &[half::f16]) -> Result<(), Error> {
+        if self.mode != Mode::Float16 {
+            return Err(Error::InvalidMode);
+        }
+
+        if values.len() * 2 != self.bytes.len() {
+            return Err(Error::InvalidDimensions);
+        }
+
+        for (i, &value) in values.iter().enumerate() {
+            value.encode(self.file_endian, &mut self.bytes[i * 2..i * 2 + 2]);
+        }
+
+        Ok(())
     }
 }
 

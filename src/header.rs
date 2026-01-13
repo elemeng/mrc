@@ -141,14 +141,14 @@ impl Header {
     pub fn data_size(&self) -> usize {
         let n = (self.nx as usize) * (self.ny as usize) * (self.nz as usize);
         match self.mode {
-            0 => n * 1,         // 8-bit signed integer
+            0 => n,         // 8-bit signed integer
             1 => n * 2,         // 16-bit signed integer
             2 => n * 4,         // 32-bit float
             3 => n * 4,         // Complex 16-bit (2 bytes real + 2 bytes imaginary)
             4 => n * 8,         // Complex 32-bit (4 bytes real + 4 bytes imaginary)
             6 => n * 2,         // 16-bit unsigned integer
             12 => n * 2,        // 16-bit float (IEEE-754 half)
-            101 => (n + 1) / 2, // 4-bit packed data (two voxels stored per byte)
+            101 => n.div_ceil(2), // 4-bit packed data (two voxels stored per byte)
             _ => 0,             // unknown/unsupported
         }
     }
@@ -161,6 +161,15 @@ impl Header {
             && self.nz > 0
             && matches!(self.mode, 0 | 1 | 2 | 3 | 4 | 6 | 12 | 101)
             && self.map == *b"MAP "
+            // Validate ISPG: 0 (2D/stack), 1 (single volume), 1-230 (crystallographic), or 400-630 (volume stacks)
+            && (self.ispg == 0 || self.ispg == 1 || (self.ispg >= 1 && self.ispg <= 230) || (self.ispg >= 400 && self.ispg <= 630))
+            // Validate axis mapping: MAPC, MAPR, MAPS must be a permutation of (1, 2, 3)
+            && matches!(self.mapc, 1 | 2 | 3)
+            && matches!(self.mapr, 1 | 2 | 3)
+            && matches!(self.maps, 1 | 2 | 3)
+            && self.mapc != self.mapr
+            && self.mapc != self.maps
+            && self.mapr != self.maps
     }
 
     #[inline]

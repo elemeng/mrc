@@ -163,9 +163,9 @@ fn bench_cache_line_alignment(c: &mut Criterion) {
 
             let data = file.read_data().unwrap().to_vec();
 
-            let view = MrcView::new(file.header().clone(), &data).unwrap();
+            let view = MrcView::from_parts(file.header().clone(), &[], &data).unwrap();
 
-            let typed = black_box(view.data_as_f32().unwrap());
+            let typed = black_box(view.data.as_f32().unwrap());
 
             black_box(typed.len())
         })

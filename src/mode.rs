@@ -4,7 +4,19 @@ pub enum Mode {
     Int8 = 0,
     Int16 = 1,
     Float32 = 2,
+    /// Complex number with 16-bit integer components (Mode 3)
+    ///
+    /// # Byte Order
+    /// The layout is `[real i16 (2 bytes), imag i16 (2 bytes)]` which matches the
+    /// de facto standard used by CCP4, IMOD, and other MRC implementations.
+    /// This is not explicitly specified in MRC2014 but is universally adopted.
     Int16Complex = 3,
+    /// Complex number with 32-bit float components (Mode 4)
+    ///
+    /// # Byte Order
+    /// The layout is `[real f32 (4 bytes), imag f32 (4 bytes)]` which matches the
+    /// de facto standard used by CCP4, IMOD, and other MRC implementations.
+    /// This is not explicitly specified in MRC2014 but is universally adopted.
     Float32Complex = 4,
     Uint16 = 6,
     Float16 = 12,

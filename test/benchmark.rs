@@ -39,7 +39,7 @@ fn bench_map_creation(c: &mut Criterion) {
     let data = vec![0u8; 64 * 64 * 64 * 4];
 
     c.bench_function("map_creation", |b| {
-        b.iter(|| MrcView::new(header.clone(), &data).unwrap())
+        b.iter(|| MrcView::from_parts(header.clone(), &[], &data).unwrap())
     });
 }
 
@@ -51,11 +51,11 @@ fn bench_view_access(c: &mut Criterion) {
     header.mode = 2;
 
     let data = vec![0u8; 64 * 64 * 64 * 4];
-    let map = MrcView::new(header, &data).unwrap();
+    let view = MrcView::from_parts(header, &[], &data).unwrap();
 
     c.bench_function("view_access_f32", |b| {
         b.iter(|| {
-            let data = black_box(map.data_as_f32().unwrap());
+            let data = black_box(view.data.as_f32().unwrap());
             black_box(data.len())
         })
     });
@@ -69,11 +69,11 @@ fn bench_slice_access(c: &mut Criterion) {
     header.mode = 2;
 
     let data = vec![0u8; 64 * 64 * 64 * 4];
-    let map = MrcView::new(header, &data).unwrap();
+    let view = MrcView::from_parts(header, &[], &data).unwrap();
 
     c.bench_function("slice_bytes_access", |b| {
         b.iter(|| {
-            let slice = map.slice_bytes(0..1024).unwrap();
+            let slice = black_box(&view.data.as_bytes()[0..1024]);
             black_box(slice.len())
         })
     });

@@ -81,7 +81,7 @@ fn run_test() -> Result<(), mrc::Error> {
         println!("   ✅ Dimensions tuple: {:?}", dims);
 
         // Test typed access
-        let typed_data = view.data_as_f32().unwrap();
+        let typed_data = view.data.as_f32().unwrap();
         println!("   ✅ Typed view: {} f32 values", typed_data.len());
     }
 
@@ -97,25 +97,27 @@ fn run_test() -> Result<(), mrc::Error> {
 
         // Test memory-mapped view
         let view = mmap.read_view()?;
-        let typed_data = view.data_as_f32().unwrap();
+        let typed_data = view.data.as_f32().unwrap();
         println!("   ✅ Mmap view: {} f32 values", typed_data.len());
     }
 
     // 7. Test MrcView and MrcViewMut
     println!("\n7. Testing MrcView and MrcViewMut:");
     {
-        let buffer = vec![0u8; header.data_size() + 128];
+        let ext_header = vec![0u8; 128];
+        let data = vec![0u8; header.data_size()];
 
-        // Create view from buffer
-        let view = MrcView::new(header.clone(), &buffer)?;
+        // Create view from separate ext_header and data
+        let view = MrcView::from_parts(header.clone(), &ext_header, &data)?;
         println!("   ✅ MrcView creation");
 
         let dims = view.dimensions();
         println!("   ✅ Dimensions tuple: {:?}", dims);
 
         // Test MrcViewMut
-        let mut mut_buffer = vec![0u8; header.data_size() + 128];
-        let mut mut_view = MrcViewMut::new(header, &mut mut_buffer)?;
+        let mut mut_ext_header = vec![0u8; 128];
+        let mut mut_data = vec![0u8; header.data_size()];
+        let mut mut_view = MrcViewMut::from_parts(header, &mut mut_ext_header, &mut mut_data)?;
         println!("   ✅ MrcViewMut creation");
 
         // Test mutating data at byte level

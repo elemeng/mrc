@@ -8,6 +8,7 @@ use std::{fs::File, os::unix::fs::FileExt};
 
 #[cfg(feature = "std")]
 /// MrcFile for file I/O operations with pread/pwrite
+#[derive(Debug)]
 pub struct MrcFile {
     file: File,
     header: Header,
@@ -136,7 +137,7 @@ impl MrcFile {
     pub fn read_view(&self) -> Result<MrcView<'_>, Error> {
         let ext_header = &self.buffer[..self.ext_header_size];
         let data = &self.buffer[self.ext_header_size..];
-        MrcView::from_parts(self.header.clone(), ext_header, data)
+        MrcView::from_parts(self.header, ext_header, data)
     }
 
     #[inline]
@@ -158,7 +159,7 @@ impl MrcFile {
 
         // Write data
         self.file
-            .write_all_at(view.data(), self.data_offset)
+            .write_all_at(view.data.as_bytes(), self.data_offset)
             .map_err(|_| Error::Io)?;
 
         // Update buffer with new data
@@ -166,7 +167,7 @@ impl MrcFile {
         self.buffer.clear();
         self.buffer.resize(total_size, 0);
         self.buffer[..self.ext_header_size].copy_from_slice(view.ext_header());
-        self.buffer[self.ext_header_size..].copy_from_slice(view.data());
+        self.buffer[self.ext_header_size..].copy_from_slice(view.data.as_bytes());
 
         Ok(())
     }
@@ -212,6 +213,7 @@ impl MrcFile {
 
 #[cfg(feature = "mmap")]
 /// MrcMmap for memory-mapped file access
+#[derive(Debug)]
 pub struct MrcMmap {
     header: Header,
     buffer: memmap2::Mmap,
@@ -288,7 +290,7 @@ impl MrcMmap {
             &[]
         };
         let data = &self.buffer[self.data_offset..self.data_offset + self.data_size];
-        MrcView::from_parts(self.header.clone(), ext_header, data)
+        MrcView::from_parts(self.header, ext_header, data)
     }
 
     #[inline]
@@ -317,7 +319,7 @@ pub fn open_file(path: &str) -> Result<MrcFile, Error> {
 #[cfg(feature = "std")]
 #[allow(dead_code)] // Public API, may not be used in tests
 pub fn save_file(path: &str, header: &Header, data: &[u8]) -> Result<(), Error> {
-    let mut file = MrcFile::create(path, header.clone())?;
+    let mut file = MrcFile::create(path, *header)?;
     file.write_data(data)?;
     Ok(())
 }
