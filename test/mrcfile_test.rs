@@ -445,7 +445,7 @@ mod backend_tests {
         let full_data = [&ext_data[..], bytemuck::cast_slice(&data)].concat();
 
         // Create view
-        let view = MrcView::new(header, &full_data).unwrap();
+        let view = MrcView::new(header.clone(), &full_data).unwrap();
 
         // Test write_view
         {

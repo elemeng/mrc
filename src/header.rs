@@ -100,13 +100,13 @@ impl Header {
             alpha: 90.0,
             beta: 90.0,
             gamma: 90.0,
-            mapc: 1, // Column → X
-            mapr: 2, // Row    → Y
-            maps: 3, // Section→ Z
-            dmin: f32::INFINITY,       // Set higher than dmax to indicate not well-determined
-            dmax: f32::NEG_INFINITY,   // Set lower than dmin to indicate not well-determined
-            dmean: f32::NEG_INFINITY,  // Less than both to indicate not well-determined
-            ispg: 1, // P1 space group.
+            mapc: 1,                  // Column → X
+            mapr: 2,                  // Row    → Y
+            maps: 3,                  // Section→ Z
+            dmin: f32::INFINITY,      // Set higher than dmax to indicate not well-determined
+            dmax: f32::NEG_INFINITY,  // Set lower than dmin to indicate not well-determined
+            dmean: f32::NEG_INFINITY, // Less than both to indicate not well-determined
+            ispg: 1,                  // P1 space group.
             nsymbt: 0,
             extra: {
                 let mut arr = [0u8; 100];
@@ -122,7 +122,7 @@ impl Header {
             origin: [0.0; 3],
             map: *b"MAP ",
             machst: [0x44, 0x44, 0x00, 0x00], // Little-endian x86/AMD64.
-            rms: -1.0,  // Negative indicates not well-determined
+            rms: -1.0,                        // Negative indicates not well-determined
             nlabl: 0,
             label: [0; 800],
         }
@@ -140,18 +140,17 @@ impl Header {
     /// Returns zero for invalid mode or zero dimensions.
     pub fn data_size(&self) -> usize {
         let n = (self.nx as usize) * (self.ny as usize) * (self.nz as usize);
-        let bytes_per_pixel = match self.mode {
-            0 => 1,   // 8-bit signed integer
-            1 => 2,   // 16-bit signed integer
-            2 => 4,   // 32-bit float
-            3 => 4,   // Complex 16-bit (2 bytes real + 2 bytes imaginary)
-            4 => 8,   // Complex 32-bit (4 bytes real + 4 bytes imaginary)
-            6 => 2,   // 16-bit unsigned integer
-            12 => 2,  // 16-bit float (IEEE-754 half)
-            101 => 1, // 4-bit data packed two per byte
-            _ => 0,   // unknown/unsupported
-        };
-        n * bytes_per_pixel
+        match self.mode {
+            0 => n * 1,         // 8-bit signed integer
+            1 => n * 2,         // 16-bit signed integer
+            2 => n * 4,         // 32-bit float
+            3 => n * 4,         // Complex 16-bit (2 bytes real + 2 bytes imaginary)
+            4 => n * 8,         // Complex 32-bit (4 bytes real + 4 bytes imaginary)
+            6 => n * 2,         // 16-bit unsigned integer
+            12 => n * 2,        // 16-bit float (IEEE-754 half)
+            101 => (n + 1) / 2, // 4-bit packed data (two voxels stored per byte)
+            _ => 0,             // unknown/unsupported
+        }
     }
 
     #[inline]
@@ -204,7 +203,12 @@ impl Header {
     /// This value is a numeric i32 and respects the file's endianness.
     pub fn nversion(&self) -> i32 {
         let file_endian = self.detect_endian();
-        let arr = [self.extra[12], self.extra[13], self.extra[14], self.extra[15]];
+        let arr = [
+            self.extra[12],
+            self.extra[13],
+            self.extra[14],
+            self.extra[15],
+        ];
         match file_endian {
             crate::FileEndian::LittleEndian => i32::from_le_bytes(arr),
             crate::FileEndian::BigEndian => i32::from_be_bytes(arr),
@@ -260,7 +264,12 @@ impl Header {
 
         // Helper to decode values
         let decode_i32 = |offset: usize| -> i32 {
-            let arr = [bytes[offset], bytes[offset + 1], bytes[offset + 2], bytes[offset + 3]];
+            let arr = [
+                bytes[offset],
+                bytes[offset + 1],
+                bytes[offset + 2],
+                bytes[offset + 3],
+            ];
             match file_endian {
                 FileEndian::LittleEndian => i32::from_le_bytes(arr),
                 FileEndian::BigEndian => i32::from_be_bytes(arr),
@@ -268,7 +277,12 @@ impl Header {
         };
 
         let decode_f32 = |offset: usize| -> f32 {
-            let arr = [bytes[offset], bytes[offset + 1], bytes[offset + 2], bytes[offset + 3]];
+            let arr = [
+                bytes[offset],
+                bytes[offset + 1],
+                bytes[offset + 2],
+                bytes[offset + 3],
+            ];
             match file_endian {
                 FileEndian::LittleEndian => f32::from_le_bytes(arr),
                 FileEndian::BigEndian => f32::from_be_bytes(arr),

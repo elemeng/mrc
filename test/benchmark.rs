@@ -39,7 +39,7 @@ fn bench_map_creation(c: &mut Criterion) {
     let data = vec![0u8; 64 * 64 * 64 * 4];
 
     c.bench_function("map_creation", |b| {
-        b.iter(|| MrcView::new(header, &data).unwrap())
+        b.iter(|| MrcView::new(header.clone(), &data).unwrap())
     });
 }
 

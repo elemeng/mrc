@@ -195,6 +195,129 @@ impl<'a> MrcView<'a> {
         Ok(result)
     }
 
+    /// Decode data as Int16Complex values, handling endianness conversion
+    ///
+    /// This method allocates a new Vec<crate::Int16Complex> and converts bytes according to the file's endianness.
+    /// The result is always native-endian and safe for mathematical operations.
+    ///
+    /// # Errors
+    /// Returns Error::InvalidMode if the file mode is not Int16Complex (mode 3)
+    /// Returns Error::InvalidDimensions if the data size doesn't match expected dimensions
+    pub fn data_as_int16_complex(&self) -> Result<Vec<crate::Int16Complex>, Error> {
+        if self.header.mode != 3 {
+            return Err(Error::InvalidMode);
+        }
+
+        let file_endian = self.header.detect_endian();
+        let expected_size = self.header.data_size();
+        let data = self
+            .data
+            .get(..expected_size)
+            .ok_or(Error::InvalidDimensions)?;
+
+        let mut result = Vec::with_capacity(data.len() / 4);
+        let chunks: Vec<_> = data.chunks_exact(4).collect();
+
+        for chunk in chunks {
+            let value = crate::DecodeFromFile::decode(file_endian, chunk);
+            result.push(value);
+        }
+
+        Ok(result)
+    }
+
+    /// Decode data as Float32Complex values, handling endianness conversion
+    ///
+    /// This method allocates a new Vec<crate::Float32Complex> and converts bytes according to the file's endianness.
+    /// The result is always native-endian and safe for mathematical operations.
+    ///
+    /// # Errors
+    /// Returns Error::InvalidMode if the file mode is not Float32Complex (mode 4)
+    /// Returns Error::InvalidDimensions if the data size doesn't match expected dimensions
+    pub fn data_as_float32_complex(&self) -> Result<Vec<crate::Float32Complex>, Error> {
+        if self.header.mode != 4 {
+            return Err(Error::InvalidMode);
+        }
+
+        let file_endian = self.header.detect_endian();
+        let expected_size = self.header.data_size();
+        let data = self
+            .data
+            .get(..expected_size)
+            .ok_or(Error::InvalidDimensions)?;
+
+        let mut result = Vec::with_capacity(data.len() / 8);
+        let chunks: Vec<_> = data.chunks_exact(8).collect();
+
+        for chunk in chunks {
+            let value = crate::DecodeFromFile::decode(file_endian, chunk);
+            result.push(value);
+        }
+
+        Ok(result)
+    }
+
+    /// Decode data as Packed4Bit values
+    ///
+    /// This method allocates a new Vec<crate::Packed4Bit>. Two 4-bit values are packed into each byte.
+    /// No endianness conversion is needed for 1-byte values.
+    ///
+    /// # Errors
+    /// Returns Error::InvalidMode if the file mode is not Packed4Bit (mode 101)
+    /// Returns Error::InvalidDimensions if the data size doesn't match expected dimensions
+    pub fn data_as_packed4bit(&self) -> Result<Vec<crate::Packed4Bit>, Error> {
+        if self.header.mode != 101 {
+            return Err(Error::InvalidMode);
+        }
+
+        let file_endian = self.header.detect_endian();
+        let expected_size = self.header.data_size();
+        let data = self
+            .data
+            .get(..expected_size)
+            .ok_or(Error::InvalidDimensions)?;
+
+        let mut result = Vec::with_capacity(data.len());
+        for byte in data {
+            let value = crate::DecodeFromFile::decode(file_endian, &[*byte]);
+            result.push(value);
+        }
+
+        Ok(result)
+    }
+
+    #[cfg(feature = "f16")]
+    /// Decode data as f16 values, handling endianness conversion
+    ///
+    /// This method allocates a new Vec<half::f16> and converts bytes according to the file's endianness.
+    /// The result is always native-endian and safe for mathematical operations.
+    ///
+    /// # Errors
+    /// Returns Error::InvalidMode if the file mode is not Float16 (mode 12)
+    /// Returns Error::InvalidDimensions if the data size doesn't match expected dimensions
+    pub fn data_as_f16(&self) -> Result<Vec<half::f16>, Error> {
+        if self.header.mode != 12 {
+            return Err(Error::InvalidMode);
+        }
+
+        let file_endian = self.header.detect_endian();
+        let expected_size = self.header.data_size();
+        let data = self
+            .data
+            .get(..expected_size)
+            .ok_or(Error::InvalidDimensions)?;
+
+        let mut result = Vec::with_capacity(data.len() / 2);
+        let chunks: Vec<_> = data.chunks_exact(2).collect();
+
+        for chunk in chunks {
+            let value = crate::DecodeFromFile::decode(file_endian, chunk);
+            result.push(value);
+        }
+
+        Ok(result)
+    }
+
     #[inline]
     pub fn ext_header(&self) -> &[u8] {
         self.ext_header
@@ -368,6 +491,111 @@ impl<'a> MrcViewMut<'a> {
         let file_endian = self.header.detect_endian();
         for (i, &value) in values.iter().enumerate() {
             value.encode(file_endian, &mut self.data[i..i + 1]);
+        }
+
+        Ok(())
+    }
+
+    /// Encode Int16Complex values to data, handling endianness conversion
+    ///
+    /// This method writes Int16Complex values to the data buffer, converting from native
+    /// endian to the file's endianness.
+    ///
+    /// # Errors
+    /// Returns Error::InvalidMode if the file mode is not Int16Complex (mode 3)
+    /// Returns Error::InvalidDimensions if the data size doesn't match the input length
+    pub fn write_int16_complex(&mut self, values: &[crate::Int16Complex]) -> Result<(), Error> {
+        if self.header.mode != 3 {
+            return Err(Error::InvalidMode);
+        }
+
+        let expected_size = self.header.data_size();
+        if self.data.len() != expected_size || values.len() * 4 != expected_size {
+            return Err(Error::InvalidDimensions);
+        }
+
+        let file_endian = self.header.detect_endian();
+        for (i, &value) in values.iter().enumerate() {
+            value.encode(file_endian, &mut self.data[i * 4..i * 4 + 4]);
+        }
+
+        Ok(())
+    }
+
+    /// Encode Float32Complex values to data, handling endianness conversion
+    ///
+    /// This method writes Float32Complex values to the data buffer, converting from native
+    /// endian to the file's endianness.
+    ///
+    /// # Errors
+    /// Returns Error::InvalidMode if the file mode is not Float32Complex (mode 4)
+    /// Returns Error::InvalidDimensions if the data size doesn't match the input length
+    pub fn write_float32_complex(&mut self, values: &[crate::Float32Complex]) -> Result<(), Error> {
+        if self.header.mode != 4 {
+            return Err(Error::InvalidMode);
+        }
+
+        let expected_size = self.header.data_size();
+        if self.data.len() != expected_size || values.len() * 8 != expected_size {
+            return Err(Error::InvalidDimensions);
+        }
+
+        let file_endian = self.header.detect_endian();
+        for (i, &value) in values.iter().enumerate() {
+            value.encode(file_endian, &mut self.data[i * 8..i * 8 + 8]);
+        }
+
+        Ok(())
+    }
+
+    /// Encode Packed4Bit values to data
+    ///
+    /// This method writes Packed4Bit values to the data buffer. Two 4-bit values are packed into each byte.
+    /// No endianness conversion is needed for 1-byte values.
+    ///
+    /// # Errors
+    /// Returns Error::InvalidMode if the file mode is not Packed4Bit (mode 101)
+    /// Returns Error::InvalidDimensions if the data size doesn't match the input length
+    pub fn write_packed4bit(&mut self, values: &[crate::Packed4Bit]) -> Result<(), Error> {
+        if self.header.mode != 101 {
+            return Err(Error::InvalidMode);
+        }
+
+        let expected_size = self.header.data_size();
+        if self.data.len() != expected_size || values.len() != expected_size {
+            return Err(Error::InvalidDimensions);
+        }
+
+        let file_endian = self.header.detect_endian();
+        for (i, &value) in values.iter().enumerate() {
+            value.encode(file_endian, &mut self.data[i..i + 1]);
+        }
+
+        Ok(())
+    }
+
+    #[cfg(feature = "f16")]
+    /// Encode f16 values to data, handling endianness conversion
+    ///
+    /// This method writes f16 values to the data buffer, converting from native
+    /// endian to the file's endianness.
+    ///
+    /// # Errors
+    /// Returns Error::InvalidMode if the file mode is not Float16 (mode 12)
+    /// Returns Error::InvalidDimensions if the data size doesn't match the input length
+    pub fn write_f16(&mut self, values: &[half::f16]) -> Result<(), Error> {
+        if self.header.mode != 12 {
+            return Err(Error::InvalidMode);
+        }
+
+        let expected_size = self.header.data_size();
+        if self.data.len() != expected_size || values.len() * 2 != expected_size {
+            return Err(Error::InvalidDimensions);
+        }
+
+        let file_endian = self.header.detect_endian();
+        for (i, &value) in values.iter().enumerate() {
+            value.encode(file_endian, &mut self.data[i * 2..i * 2 + 2]);
         }
 
         Ok(())

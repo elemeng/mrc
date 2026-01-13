@@ -4,6 +4,7 @@ use mrc::Header;
 use mrc::MrcFile;
 #[cfg(feature = "mmap")]
 use mrc::MrcMmap;
+use mrc::MrcView;
 use tempfile::NamedTempFile;
 
 fn bench_header_creation(c: &mut Criterion) {
@@ -43,9 +44,12 @@ fn bench_header_read_write(c: &mut Criterion) {
     header.mode = 2;
 
     // Create test file
+
     {
         let data = vec![0u8; header.data_size()];
-        let mut file = MrcFile::create(temp_file.path(), header).unwrap();
+
+        let mut file = MrcFile::create(temp_file.path(), header.clone()).unwrap();
+
         file.write_data(&data).unwrap();
     }
 
@@ -53,7 +57,7 @@ fn bench_header_read_write(c: &mut Criterion) {
         b.iter(|| {
             let file = MrcFile::open(temp_file.path()).unwrap();
             let _data = file.read_data().unwrap().to_vec();
-            black_box(*file.header())
+            black_box(file.header().clone())
         })
     });
 }
@@ -131,10 +135,7 @@ fn bench_mmap_sequential_read_1gb(c: &mut Criterion) {
 }
 
 fn bench_cache_line_alignment(c: &mut Criterion) {
-
     let temp_file = NamedTempFile::new().unwrap();
-
-
 
     let mut header = Header::new();
 
@@ -146,26 +147,18 @@ fn bench_cache_line_alignment(c: &mut Criterion) {
 
     header.mode = 2;
 
-
-
     // Create test file
 
     {
-
         let data = vec![0u8; header.data_size()];
 
         let mut file = MrcFile::create(temp_file.path(), header).unwrap();
 
         file.write_data(&data).unwrap();
-
     }
 
-
-
     c.bench_function("cache_line_aligned_access", |b| {
-
         b.iter(|| {
-
             let file = MrcFile::open(temp_file.path()).unwrap();
 
             let data = file.read_data().unwrap().to_vec();
@@ -175,11 +168,8 @@ fn bench_cache_line_alignment(c: &mut Criterion) {
             let typed = black_box(view.data_as_f32().unwrap());
 
             black_box(typed.len())
-
         })
-
     });
-
 }
 
 criterion_group!(

@@ -4,62 +4,6 @@
 //! and writing MRC (Medical Research Council) files, which are commonly used in
 //! cryo-electron microscopy and structural biology.
 //!
-//! ## Endianness Guarantee
-//!
-//! **This crate guarantees that all raw byte ↔ typed value conversions are endian-correct.**
-//!
-//! Endianness handling is fully contained within the decode/encode layer and never leaks
-//! into user code. The core invariant is:
-//!
-//! - **Raw bytes always represent file endian**
-//! - **Typed values are always native endian**
-//! - **The only place endian logic exists is at decode/encode boundaries**
-//!
-//! This design ensures:
-//! - No full data swaps required
-//! - Partial writes remain cheap
-//! - Memory-mapped files remain viable
-//! - Users never see endian concerns
-//! - Developers cannot accidentally corrupt data
-//!
-//! **Note:** Only typed numeric values (i32, f32, i16, u16, i8) need endianness awareness.
-//! Raw byte data (extended headers, labels, etc.) is treated as opaque and passed through
-//! without conversion.
-//!
-//! ## Architecture
-//!
-//! The crate enforces endian safety through three layers:
-//!
-//! 1. **Codec Traits** (`DecodeFromFile`, `EncodeToFile`): The only place where endian
-//!    conversion happens. All typed values must pass through these traits when converting
-//!    to/from raw bytes.
-//!
-//! 2. **RawBuffer Wrapper**: Prevents misuse of raw bytes by only exposing value-level
-//!    access through read/write methods that use the codec traits.
-//!
-//! 3. **Type-Safe Views**: `MrcView` and `MrcViewMut` provide safe access to file data
-//!    with automatic endian conversion.
-//!
-//! ## Example
-//!
-//! ```ignore
-//! use mrc::{MrcFile, Mode};
-//!
-//! // Open a file - endianness is handled automatically
-//! let file = MrcFile::open("example.mrc")?;
-//!
-//! // Get a view of the data
-//! let view = file.read_view()?;
-//!
-//! // Access data as native-endian f32 values
-//! let data = view.data_as_f32()?;
-//!
-//! // Work with data in native endianness
-//! for value in &data {
-//!     println!("{}", value);
-//! }
-//! ```
-//!
 //! ## Features
 //!
 //! - `std`: Standard library support for file I/O
@@ -306,6 +250,176 @@ impl EncodeToFile for i8 {
 
     fn encode(self, _e: FileEndian, out: &mut [u8]) {
         out[0] = self as u8;
+    }
+}
+
+// Complex number types for MRC modes 3 and 4
+
+/// Complex number with 16-bit integer components (Mode 3)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Int16Complex {
+    pub real: i16,
+    pub imag: i16,
+}
+
+impl DecodeFromFile for Int16Complex {
+    const SIZE: usize = 4;
+
+    fn decode(e: FileEndian, b: &[u8]) -> Self {
+        let real_arr: [u8; 2] = b[0..2].try_into().unwrap();
+        let imag_arr: [u8; 2] = b[2..4].try_into().unwrap();
+        Self {
+            real: match e {
+                FileEndian::LittleEndian => i16::from_le_bytes(real_arr),
+                FileEndian::BigEndian => i16::from_be_bytes(real_arr),
+            },
+            imag: match e {
+                FileEndian::LittleEndian => i16::from_le_bytes(imag_arr),
+                FileEndian::BigEndian => i16::from_be_bytes(imag_arr),
+            },
+        }
+    }
+}
+
+impl EncodeToFile for Int16Complex {
+    const SIZE: usize = 4;
+
+    fn encode(self, e: FileEndian, out: &mut [u8]) {
+        let real_bytes = match e {
+            FileEndian::LittleEndian => self.real.to_le_bytes(),
+            FileEndian::BigEndian => self.real.to_be_bytes(),
+        };
+        let imag_bytes = match e {
+            FileEndian::LittleEndian => self.imag.to_le_bytes(),
+            FileEndian::BigEndian => self.imag.to_be_bytes(),
+        };
+        out[0..2].copy_from_slice(&real_bytes);
+        out[2..4].copy_from_slice(&imag_bytes);
+    }
+}
+
+/// Complex number with 32-bit float components (Mode 4)
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Float32Complex {
+    pub real: f32,
+    pub imag: f32,
+}
+
+impl DecodeFromFile for Float32Complex {
+    const SIZE: usize = 8;
+
+    fn decode(e: FileEndian, b: &[u8]) -> Self {
+        let real_arr: [u8; 4] = b[0..4].try_into().unwrap();
+        let imag_arr: [u8; 4] = b[4..8].try_into().unwrap();
+        Self {
+            real: match e {
+                FileEndian::LittleEndian => f32::from_le_bytes(real_arr),
+                FileEndian::BigEndian => f32::from_be_bytes(real_arr),
+            },
+            imag: match e {
+                FileEndian::LittleEndian => f32::from_le_bytes(imag_arr),
+                FileEndian::BigEndian => f32::from_be_bytes(imag_arr),
+            },
+        }
+    }
+}
+
+impl EncodeToFile for Float32Complex {
+    const SIZE: usize = 8;
+
+    fn encode(self, e: FileEndian, out: &mut [u8]) {
+        let real_bytes = match e {
+            FileEndian::LittleEndian => self.real.to_le_bytes(),
+            FileEndian::BigEndian => self.real.to_be_bytes(),
+        };
+        let imag_bytes = match e {
+            FileEndian::LittleEndian => self.imag.to_le_bytes(),
+            FileEndian::BigEndian => self.imag.to_be_bytes(),
+        };
+        out[0..4].copy_from_slice(&real_bytes);
+        out[4..8].copy_from_slice(&imag_bytes);
+    }
+}
+
+// Packed 4-bit data (Mode 101)
+// Two 4-bit values are packed into a single byte
+
+/// Packed 4-bit values (Mode 101)
+///
+/// Two 4-bit values (0-15) are packed into a single byte.
+/// The lower 4 bits contain the first value, the upper 4 bits contain the second.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Packed4Bit {
+    pub values: [u8; 2], // Each value is 0-15
+}
+
+impl Packed4Bit {
+    /// Create a new packed 4-bit value
+    pub fn new(first: u8, second: u8) -> Self {
+        debug_assert!(first <= 15, "First value must be 0-15");
+        debug_assert!(second <= 15, "Second value must be 0-15");
+        Self {
+            values: [first, second],
+        }
+    }
+
+    /// Get the first (lower) 4-bit value
+    pub fn first(&self) -> u8 {
+        self.values[0]
+    }
+
+    /// Get the second (upper) 4-bit value
+    pub fn second(&self) -> u8 {
+        self.values[1]
+    }
+}
+
+impl DecodeFromFile for Packed4Bit {
+    const SIZE: usize = 1;
+
+    fn decode(_e: FileEndian, b: &[u8]) -> Self {
+        let byte = b[0];
+        Self {
+            values: [byte & 0x0F, (byte >> 4) & 0x0F],
+        }
+    }
+}
+
+impl EncodeToFile for Packed4Bit {
+    const SIZE: usize = 1;
+
+    fn encode(self, _e: FileEndian, out: &mut [u8]) {
+        out[0] = self.values[0] | (self.values[1] << 4);
+    }
+}
+
+// Optional f16 support (Mode 12)
+
+#[cfg(feature = "f16")]
+impl DecodeFromFile for half::f16 {
+    const SIZE: usize = 2;
+
+    fn decode(e: FileEndian, b: &[u8]) -> Self {
+        let arr: [u8; 2] = b.try_into().unwrap();
+        let bits = match e {
+            FileEndian::LittleEndian => u16::from_le_bytes(arr),
+            FileEndian::BigEndian => u16::from_be_bytes(arr),
+        };
+        half::f16::from_bits(bits)
+    }
+}
+
+#[cfg(feature = "f16")]
+impl EncodeToFile for half::f16 {
+    const SIZE: usize = 2;
+
+    fn encode(self, e: FileEndian, out: &mut [u8]) {
+        let bits = self.to_bits();
+        let bytes = match e {
+            FileEndian::LittleEndian => bits.to_le_bytes(),
+            FileEndian::BigEndian => bits.to_be_bytes(),
+        };
+        out.copy_from_slice(&bytes);
     }
 }
 

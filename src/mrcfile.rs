@@ -135,7 +135,7 @@ impl MrcFile {
     /// let data = view.data();
     /// ```
     pub fn read_view(&self) -> Result<MrcView<'_>, Error> {
-        MrcView::new(self.header, &self.buffer)
+        MrcView::new(self.header.clone(), &self.buffer)
     }
 
     #[inline]
@@ -277,7 +277,7 @@ impl MrcMmap {
         // For mmap, we can return a view that spans both regions
         let start = 1024;
         let end = self.data_offset + self.data_size;
-        MrcView::new(self.header, &self.buffer[start..end])
+        MrcView::new(self.header.clone(), &self.buffer[start..end])
     }
 
     #[inline]
@@ -306,7 +306,7 @@ pub fn open_file(path: &str) -> Result<MrcFile, Error> {
 #[cfg(feature = "std")]
 #[allow(dead_code)] // Public API, may not be used in tests
 pub fn save_file(path: &str, header: &Header, data: &[u8]) -> Result<(), Error> {
-    let mut file = MrcFile::create(path, *header)?;
+    let mut file = MrcFile::create(path, header.clone())?;
     file.write_data(data)?;
     Ok(())
 }

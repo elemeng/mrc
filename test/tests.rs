@@ -87,6 +87,9 @@ mod header_tests {
         header.mode = 12;
         assert_eq!(header.data_size(), 10 * 20 * 30 * 2);
 
+        header.mode = 101; // Packed 4-bit: two values per byte
+        assert_eq!(header.data_size(), (10 * 20 * 30 + 1) / 2);
+
         header.mode = 5; // Invalid mode
         assert_eq!(header.data_size(), 0);
 
@@ -251,28 +254,28 @@ mod header_tests {
         // Test i8 - use new explicit decoding method
         header.mode = 0;
         let data = vec![0i8; 64];
-        let map = MrcView::new(header, bytemuck::cast_slice(&data)).unwrap();
+        let map = MrcView::new(header.clone(), bytemuck::cast_slice(&data)).unwrap();
         let view = map.data_as_i8().unwrap();
         assert_eq!(view.len(), 64);
 
         // Test i16 - use new explicit decoding method
         header.mode = 1;
         let data = vec![0i16; 64];
-        let map = MrcView::new(header, bytemuck::cast_slice(&data)).unwrap();
+        let map = MrcView::new(header.clone(), bytemuck::cast_slice(&data)).unwrap();
         let view = map.data_as_i16().unwrap();
         assert_eq!(view.len(), 64);
 
         // Test f32 - use new explicit decoding method
         header.mode = 2;
         let data = vec![0f32; 64];
-        let map = MrcView::new(header, bytemuck::cast_slice(&data)).unwrap();
+        let map = MrcView::new(header.clone(), bytemuck::cast_slice(&data)).unwrap();
         let view = map.data_as_f32().unwrap();
         assert_eq!(view.len(), 64);
 
         // Test u16 - use new explicit decoding method
         header.mode = 6;
         let data = vec![0u16; 64];
-        let map = MrcView::new(header, bytemuck::cast_slice(&data)).unwrap();
+        let map = MrcView::new(header.clone(), bytemuck::cast_slice(&data)).unwrap();
         let view = map.data_as_u16().unwrap();
         assert_eq!(view.len(), 64);
     }
@@ -654,7 +657,7 @@ mod view_tests {
 
         // Test with insufficient data
         let data = vec![0u8; 100];
-        let result = MrcView::new(header, &data);
+        let result = MrcView::new(header.clone(), &data);
         assert!(matches!(result, Err(Error::InvalidDimensions)));
 
         // Test edge case - exactly enough data

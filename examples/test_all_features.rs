@@ -44,7 +44,7 @@ fn run_test() -> Result<(), mrc::Error> {
     let temp_path = "test_all_features.mrc";
 
     {
-        let mut file = MrcFile::create(temp_path, header)?;
+        let mut file = MrcFile::create(temp_path, header.clone())?;
 
         // Create test data
         let data_size = header.data_size();
@@ -107,7 +107,7 @@ fn run_test() -> Result<(), mrc::Error> {
         let buffer = vec![0u8; header.data_size() + 128];
 
         // Create view from buffer
-        let view = MrcView::new(header, &buffer)?;
+        let view = MrcView::new(header.clone(), &buffer)?;
         println!("   ✅ MrcView creation");
 
         let dims = view.dimensions();
