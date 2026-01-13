@@ -260,7 +260,7 @@ impl MrcMmap {
         }
 
         // Ensure proper alignment and safe deserialization
-        let header = unsafe {
+        let mut header = unsafe {
             let ptr = buffer.as_ptr() as *const Header;
             // Always use read_unaligned for memory-mapped data
             ptr.read_unaligned()
@@ -268,6 +268,13 @@ impl MrcMmap {
 
         if !header.validate() {
             return Err(Error::InvalidHeader);
+        }
+
+        // Automatically normalize header to native endianness
+        // This is the single decision point for endianness handling (Layer 1)
+        let file_endian = header.detect_endian();
+        if !file_endian.is_native() {
+            header.swap_endian();
         }
 
         let ext_header_size = header.nsymbt as usize;

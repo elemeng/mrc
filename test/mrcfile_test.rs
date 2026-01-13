@@ -103,7 +103,7 @@ mod backend_tests {
         let map = file.read_view().unwrap();
 
         // Verify
-        let read_data: &[f32] = map.view().unwrap();
+        let read_data = map.data_as_f32().unwrap();
         assert_eq!(read_data, original_data);
         assert_eq!(map.header().nx, 3);
         assert_eq!(map.header().ny, 3);
@@ -312,7 +312,7 @@ mod backend_tests {
         assert_eq!(view.ext_header(), ext_data);
         assert_eq!(view.data().len(), 4); // 1 float = 4 bytes
 
-        let float_data: &[f32] = view.view().unwrap();
+        let float_data = view.data_as_f32().unwrap();
         assert_eq!(float_data[0], 42.0);
     }
 
@@ -458,7 +458,7 @@ mod backend_tests {
         let read_view = file.read_view().unwrap();
         assert_eq!(read_view.ext_header(), ext_data);
 
-        let floats: &[f32] = read_view.view().unwrap();
+        let floats = read_view.data_as_f32().unwrap();
         assert_eq!(floats, data);
     }
 

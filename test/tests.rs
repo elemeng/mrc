@@ -140,7 +140,7 @@ mod header_tests {
         assert_eq!(header.exttyp_str().unwrap(), "HDF5");
 
         // Test NVERSION with latest format (20141)
-        assert_eq!(header.nversion(), 20141);  // Default is now 20141
+        assert_eq!(header.nversion(), 20141); // Default is now 20141
         header.set_nversion(20140); // 2014.0
         assert_eq!(header.nversion(), 20140);
 
@@ -169,8 +169,9 @@ mod header_tests {
 
         header.swap_endian();
 
-        // Both should be swapped
-        assert_eq!(header.exttyp(), 42_i32.swap_bytes());
+        // EXTTYP should NOT be swapped (it's ASCII bytes, a byte signature)
+        assert_eq!(header.exttyp(), original_exttyp);
+        // NVERSION should be swapped (it's numeric i32)
         assert_eq!(header.nversion(), 20141_i32.swap_bytes());
 
         // Swap back to verify
@@ -271,32 +272,32 @@ mod header_tests {
         header.ny = 4;
         header.nz = 4;
 
-        // Test i8
+        // Test i8 - use new explicit decoding method
         header.mode = 0;
         let data = vec![0i8; 64];
         let map = MrcView::new(header, bytemuck::cast_slice(&data)).unwrap();
-        let view: &[i8] = map.view().unwrap();
+        let view = map.data_as_i8().unwrap();
         assert_eq!(view.len(), 64);
 
-        // Test i16
+        // Test i16 - use new explicit decoding method
         header.mode = 1;
         let data = vec![0i16; 64];
         let map = MrcView::new(header, bytemuck::cast_slice(&data)).unwrap();
-        let view: &[i16] = map.view().unwrap();
+        let view = map.data_as_i16().unwrap();
         assert_eq!(view.len(), 64);
 
-        // Test f32
+        // Test f32 - use new explicit decoding method
         header.mode = 2;
         let data = vec![0f32; 64];
         let map = MrcView::new(header, bytemuck::cast_slice(&data)).unwrap();
-        let view: &[f32] = map.view().unwrap();
+        let view = map.data_as_f32().unwrap();
         assert_eq!(view.len(), 64);
 
-        // Test f16 (mode 12)
-        header.mode = 12;
-        let data = vec![0u16; 64]; // f16 backed by u16
+        // Test u16 - use new explicit decoding method
+        header.mode = 6;
+        let data = vec![0u16; 64];
         let map = MrcView::new(header, bytemuck::cast_slice(&data)).unwrap();
-        let view: &[u16] = map.view().unwrap();
+        let view = map.data_as_u16().unwrap();
         assert_eq!(view.len(), 64);
     }
 
@@ -335,7 +336,7 @@ mod header_tests {
         let data = vec![0f32; 64 * 64 * 64];
         let map = MrcView::new(header, bytemuck::cast_slice(&data)).unwrap();
 
-        let volume: &[f32] = map.view().unwrap();
+        let volume = map.data_as_f32().unwrap();
         assert_eq!(volume.len(), 64 * 64 * 64);
     }
 }
@@ -381,7 +382,7 @@ mod view_tests {
         assert_eq!(view.ext_header(), ext_header);
 
         // Test valid view access
-        let floats: &[f32] = view.view().unwrap();
+        let floats = view.data_as_f32().unwrap();
         assert_eq!(floats.len(), 8);
         assert_eq!(floats, data);
 
@@ -415,7 +416,7 @@ mod view_tests {
         assert_eq!(view.ext_header().len(), 0);
         assert_eq!(view.data().len(), 32);
 
-        let floats: &[f32] = view.view().unwrap();
+        let floats = view.data_as_f32().unwrap();
         assert_eq!(floats.len(), 8);
     }
 
@@ -478,34 +479,6 @@ mod view_tests {
 
         // Test swap_endian_bytes - test that it works with valid mode
         // Skip this test for now as swapping endian of mode 2 creates invalid mode
-    }
-
-    #[test]
-    fn test_view_type_mismatch_errors() {
-        let mut header = Header::new();
-        header.nx = 4;
-        header.ny = 4;
-        header.nz = 4;
-        header.mode = 2; // Float32 (4 bytes)
-
-        // Correct size for f32: 4*4*4*4 = 64 bytes
-        let data = vec![0u8; 64];
-        let view = match MrcView::new(header, &data) {
-            Ok(v) => v,
-            Err(_) => return, // Skip test if view creation fails
-        };
-
-        // Test type mismatch - trying to view f32 data as i16 (2 bytes per element)
-        let result: Result<&[i16], Error> = view.view();
-        assert!(matches!(result, Err(Error::TypeMismatch)));
-
-        // Test type mismatch - trying to view as u8
-        let result: Result<&[u8], Error> = view.view();
-        assert!(matches!(result, Err(Error::TypeMismatch)));
-
-        // Test type mismatch - trying to view as i32
-        let result: Result<&[i32], Error> = view.view();
-        assert!(matches!(result, Err(Error::TypeMismatch)));
     }
 
     #[test]
@@ -604,31 +577,6 @@ mod view_tests {
         let wrong_data = vec![0xAAu8; 20];
         let result = view.write_ext_header(&wrong_data);
         assert!(matches!(result, Err(Error::InvalidDimensions)));
-    }
-
-    #[test]
-    fn test_view_mut_endian_swap_errors() {
-        let mut header = Header::new();
-        header.nx = 2;
-        header.ny = 2;
-        header.nz = 2;
-        header.mode = 2; // Use valid mode for view creation
-
-        let mut data = vec![0u8; 32];
-        match MrcViewMut::new(header, &mut data) {
-            Ok(mut view) => {
-                // Temporarily change mode to invalid after creation
-                let mut header = view.header_mut();
-                header.mode = 99; // Invalid mode
-
-                // Test endian swap with invalid mode
-                let result = view.swap_endian_bytes();
-                assert!(matches!(result, Err(Error::InvalidMode)));
-            }
-            Err(_) => {
-                // Skip test if view creation fails
-            }
-        }
     }
 
     #[test]
@@ -998,7 +946,9 @@ mod view_tests {
         );
         assert_eq!(header.ispg, original.ispg.swap_bytes());
         assert_eq!(header.nsymbt, original.nsymbt.swap_bytes());
-        assert_eq!(header.exttyp(), original.exttyp().swap_bytes());
+        // EXTTYP should NOT be swapped (it's ASCII bytes, a byte signature)
+        assert_eq!(header.exttyp(), original.exttyp());
+        // NVERSION should be swapped (it's numeric i32)
         assert_eq!(header.nversion(), original.nversion().swap_bytes());
         assert_eq!(header.nlabl, original.nlabl.swap_bytes());
         assert_eq!(

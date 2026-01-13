@@ -81,7 +81,7 @@ fn run_test() -> Result<(), mrc::Error> {
         println!("   ✅ Dimensions tuple: {:?}", dims);
 
         // Test typed access
-        let typed_data: &[f32] = view.view().unwrap();
+        let typed_data = view.data_as_f32().unwrap();
         println!("   ✅ Typed view: {} f32 values", typed_data.len());
     }
 
@@ -97,7 +97,7 @@ fn run_test() -> Result<(), mrc::Error> {
 
         // Test memory-mapped view
         let view = mmap.read_view()?;
-        let typed_data: &[f32] = view.view().unwrap();
+        let typed_data = view.data_as_f32().unwrap();
         println!("   ✅ Mmap view: {} f32 values", typed_data.len());
     }
 

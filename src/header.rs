@@ -49,7 +49,8 @@ pub struct Header {
     /// For crystallography, represents the actual spacegroup.
     /// For volume stacks, conventionally ISPG = spacegroup number + 400.
     pub ispg: i32,
-    /// Size of extended header record ("symmetry data") in bytes.
+    /// Size of extended header (which follows main header) in bytes.
+    /// May contain symmetry records or other metadata (indicated by EXTTYP).
     pub nsymbt: i32,
     /// Extra space used for anything.
     /// Bytes 8–11 hold EXTTYP, 12–15 NVERSION.
@@ -213,10 +214,34 @@ impl Header {
     }
 
     #[inline]
+    /// Detect the file endianness from the MACHST machine stamp
+    pub fn detect_endian(&self) -> crate::FileEndian {
+        crate::FileEndian::from_machst(&self.machst)
+    }
+
+    #[inline]
+    /// Check if the file is little-endian
+    pub fn is_little_endian(&self) -> bool {
+        self.detect_endian() == crate::FileEndian::LittleEndian
+    }
+
+    #[inline]
+    /// Check if the file is big-endian
+    pub fn is_big_endian(&self) -> bool {
+        self.detect_endian() == crate::FileEndian::BigEndian
+    }
+
+    #[inline]
     /// Swaps the endianness of every multi-byte field.
+    ///
+    /// This method swaps numeric fields (i32, f32) but does NOT touch:
+    /// - ASCII fields (MAP, EXTTYP) - these are byte-signatures
+    /// - MACHST - this is an endianness indicator, not data
     ///
     /// Call this after reading a big-endian MRC file on a little-endian
     /// machine (or vice-versa).
+    ///
+    /// After calling this method, all numeric fields will be in native endianness.
     pub fn swap_endian(&mut self) {
         macro_rules! swap_field {
             ($field:ident) => {
@@ -224,6 +249,7 @@ impl Header {
             };
         }
 
+        // Swap all i32 fields
         swap_field!(nx);
         swap_field!(ny);
         swap_field!(nz);
@@ -235,6 +261,7 @@ impl Header {
         swap_field!(my);
         swap_field!(mz);
 
+        // Swap all f32 fields
         self.xlen = f32::from_bits(self.xlen.to_bits().swap_bytes());
         self.ylen = f32::from_bits(self.ylen.to_bits().swap_bytes());
         self.zlen = f32::from_bits(self.zlen.to_bits().swap_bytes());
@@ -242,32 +269,37 @@ impl Header {
         self.beta = f32::from_bits(self.beta.to_bits().swap_bytes());
         self.gamma = f32::from_bits(self.gamma.to_bits().swap_bytes());
 
+        // Swap axis mapping fields
         swap_field!(mapc);
         swap_field!(mapr);
         swap_field!(maps);
 
+        // Swap density statistics
         self.dmin = f32::from_bits(self.dmin.to_bits().swap_bytes());
         self.dmax = f32::from_bits(self.dmax.to_bits().swap_bytes());
         self.dmean = f32::from_bits(self.dmean.to_bits().swap_bytes());
 
+        // Swap space group and extended header size
         swap_field!(ispg);
         swap_field!(nsymbt);
 
-        let exttyp = self.exttyp().swap_bytes();
-        self.set_exttyp(exttyp);
+        // NOTE: EXTTYP is ASCII bytes (e.g., "CCP4", "MRCO"), NOT numeric
+        // Do NOT swap EXTTYP - it's a byte signature
 
+        // NVERSION is numeric (i32), so it MUST be swapped
         let nversion = self.nversion().swap_bytes();
         self.set_nversion(nversion);
 
+        // Swap origin coordinates
         for val in &mut self.origin {
             *val = f32::from_bits(val.to_bits().swap_bytes());
         }
 
+        // Swap label count and RMS
         swap_field!(nlabl);
         self.rms = f32::from_bits(self.rms.to_bits().swap_bytes());
 
-        // Machine stamp should also be swapped for proper cross-platform compatibility
-        // Simply reverse the 4 bytes
-        self.machst.reverse();
+        // NOTE: MACHST is a byte signature indicating endianness, NOT data
+        // Do NOT swap MACHST - it's used to detect file endianness
     }
 }

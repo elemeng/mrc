@@ -1,5 +1,14 @@
 use crate::{Error, Header, Mode};
 
+#[cfg(feature = "std")]
+extern crate alloc;
+
+#[cfg(feature = "std")]
+use alloc::vec::Vec;
+
+#[cfg(not(feature = "std"))]
+use alloc::vec::Vec;
+
 #[non_exhaustive]
 pub struct MrcView<'a> {
     header: Header,
@@ -51,25 +60,6 @@ impl<'a> MrcView<'a> {
     }
 
     #[inline]
-    pub fn view<T: bytemuck::Pod>(&self) -> Result<&[T], Error> {
-        let expected_size = self.header.data_size();
-        let data = self
-            .data
-            .get(..expected_size)
-            .ok_or(Error::InvalidDimensions)?;
-
-        // Use unchecked cast for performance - validated by data_size
-        if data.len() % core::mem::size_of::<T>() != 0 {
-            return Err(Error::TypeMismatch);
-        }
-
-        // SAFETY: We validated the size alignment and the data is contiguous
-        let num_elements = data.len() / core::mem::size_of::<T>();
-        let ptr = data.as_ptr() as *const T;
-        Ok(unsafe { core::slice::from_raw_parts(ptr, num_elements) })
-    }
-
-    #[inline]
     pub fn slice_bytes(&self, range: core::ops::Range<usize>) -> Result<&[u8], Error> {
         // Use get_unchecked for performance when bounds are known
         if range.start > range.end || range.end > self.data.len() {
@@ -82,6 +72,132 @@ impl<'a> MrcView<'a> {
     #[inline]
     pub fn data(&self) -> &[u8] {
         self.data
+    }
+
+    /// Decode data as f32 values, handling endianness conversion
+    ///
+    /// This method allocates a new Vec<f32> and converts bytes according to the file's endianness.
+    /// The result is always native-endian and safe for mathematical operations.
+    ///
+    /// # Errors
+    /// Returns Error::InvalidMode if the file mode is not Float32 (mode 2)
+    /// Returns Error::InvalidDimensions if the data size doesn't match expected dimensions
+    pub fn data_as_f32(&self) -> Result<Vec<f32>, Error> {
+        if self.header.mode != 2 {
+            return Err(Error::InvalidMode);
+        }
+
+        let file_endian = self.header.detect_endian();
+        let expected_size = self.header.data_size();
+        let data = self
+            .data
+            .get(..expected_size)
+            .ok_or(Error::InvalidDimensions)?;
+
+        let mut result = Vec::with_capacity(data.len() / 4);
+        let chunks: Vec<_> = data.chunks_exact(4).collect();
+
+        for chunk in chunks {
+            let arr: [u8; 4] = chunk.try_into().unwrap();
+            let value = match file_endian {
+                crate::FileEndian::LittleEndian => f32::from_le_bytes(arr),
+                crate::FileEndian::BigEndian => f32::from_be_bytes(arr),
+            };
+            result.push(value);
+        }
+
+        Ok(result)
+    }
+
+    /// Decode data as i16 values, handling endianness conversion
+    ///
+    /// This method allocates a new Vec<i16> and converts bytes according to the file's endianness.
+    /// The result is always native-endian and safe for mathematical operations.
+    ///
+    /// # Errors
+    /// Returns Error::InvalidMode if the file mode is not Int16 (mode 1)
+    /// Returns Error::InvalidDimensions if the data size doesn't match expected dimensions
+    pub fn data_as_i16(&self) -> Result<Vec<i16>, Error> {
+        if self.header.mode != 1 {
+            return Err(Error::InvalidMode);
+        }
+
+        let file_endian = self.header.detect_endian();
+        let expected_size = self.header.data_size();
+        let data = self
+            .data
+            .get(..expected_size)
+            .ok_or(Error::InvalidDimensions)?;
+
+        let mut result = Vec::with_capacity(data.len() / 2);
+        let chunks: Vec<_> = data.chunks_exact(2).collect();
+
+        for chunk in chunks {
+            let arr: [u8; 2] = chunk.try_into().unwrap();
+            let value = match file_endian {
+                crate::FileEndian::LittleEndian => i16::from_le_bytes(arr),
+                crate::FileEndian::BigEndian => i16::from_be_bytes(arr),
+            };
+            result.push(value);
+        }
+
+        Ok(result)
+    }
+
+    /// Decode data as u16 values, handling endianness conversion
+    ///
+    /// This method allocates a new Vec<u16> and converts bytes according to the file's endianness.
+    /// The result is always native-endian and safe for mathematical operations.
+    ///
+    /// # Errors
+    /// Returns Error::InvalidMode if the file mode is not Uint16 (mode 6)
+    /// Returns Error::InvalidDimensions if the data size doesn't match expected dimensions
+    pub fn data_as_u16(&self) -> Result<Vec<u16>, Error> {
+        if self.header.mode != 6 {
+            return Err(Error::InvalidMode);
+        }
+
+        let file_endian = self.header.detect_endian();
+        let expected_size = self.header.data_size();
+        let data = self
+            .data
+            .get(..expected_size)
+            .ok_or(Error::InvalidDimensions)?;
+
+        let mut result = Vec::with_capacity(data.len() / 2);
+        let chunks: Vec<_> = data.chunks_exact(2).collect();
+
+        for chunk in chunks {
+            let arr: [u8; 2] = chunk.try_into().unwrap();
+            let value = match file_endian {
+                crate::FileEndian::LittleEndian => u16::from_le_bytes(arr),
+                crate::FileEndian::BigEndian => u16::from_be_bytes(arr),
+            };
+            result.push(value);
+        }
+
+        Ok(result)
+    }
+
+    /// Decode data as i8 values
+    ///
+    /// This method allocates a new Vec<i8>. No endianness conversion is needed for 1-byte values.
+    ///
+    /// # Errors
+    /// Returns Error::InvalidMode if the file mode is not Int8 (mode 0)
+    /// Returns Error::InvalidDimensions if the data size doesn't match expected dimensions
+    pub fn data_as_i8(&self) -> Result<Vec<i8>, Error> {
+        if self.header.mode != 0 {
+            return Err(Error::InvalidMode);
+        }
+
+        let expected_size = self.header.data_size();
+        let data = self
+            .data
+            .get(..expected_size)
+            .ok_or(Error::InvalidDimensions)?;
+
+        Ok(data.to_vec().into_iter().map(|b| b as i8).collect())
     }
 
     #[inline]
@@ -123,18 +239,7 @@ impl<'a> MrcView<'a> {
         Err(Error::Io)
     }
 
-    #[inline]
-    pub fn swap_endian<T: bytemuck::Pod + Copy>(&mut self) -> Result<(), Error> {
-        // This method is available on MapMut, not Map
-        Err(Error::Io)
     }
-
-    #[inline]
-    pub fn swap_endian_bytes(&self) -> Result<(), Error> {
-        // Map is read-only, cannot swap bytes
-        Err(Error::Io)
-    }
-}
 
 /// Mutable version of MrcView for write operations
 #[non_exhaustive]
@@ -212,70 +317,6 @@ impl<'a> MrcViewMut<'a> {
         let num_elements = data.len() / core::mem::size_of::<T>();
         let ptr = data.as_mut_ptr() as *mut T;
         Ok(unsafe { core::slice::from_raw_parts_mut(ptr, num_elements) })
-    }
-
-    #[inline]
-    pub fn swap_endian_bytes(&mut self) -> Result<(), Error> {
-        // Swap header endian
-        self.header.swap_endian();
-
-        // Swap data bytes based on mode
-        match Mode::from_i32(self.header.mode) {
-            Some(Mode::Int8) => {
-                // 1-byte types don’t need swapping
-                Ok(())
-            }
-            Some(Mode::Uint16) => {
-                // 2-byte unsigned 16-bit → must swap
-                let data = self.view_mut::<u16>()?;
-                for val in data.iter_mut() {
-                    *val = val.swap_bytes();
-                }
-                Ok(())
-            }
-            Some(Mode::Int16) | Some(Mode::Int16Complex) => {
-                // 2-byte types
-                let data = self.view_mut::<i16>()?;
-                for val in data.iter_mut() {
-                    *val = val.swap_bytes();
-                }
-                Ok(())
-            }
-            Some(Mode::Float32) | Some(Mode::Float32Complex) => {
-                // 4-byte types
-                let data = self.view_mut::<f32>()?;
-                for val in data.iter_mut() {
-                    let bytes = bytemuck::bytes_of_mut(val);
-                    bytes.reverse();
-                }
-                Ok(())
-            }
-            Some(Mode::Float16) => {
-                // 2-byte f16 types
-                #[cfg(feature = "f16")]
-                {
-                    let data = self.view_mut::<half::f16>()?;
-                    for val in data.iter_mut() {
-                        let bytes = bytemuck::bytes_of_mut(val);
-                        bytes.reverse();
-                    }
-                }
-                #[cfg(not(feature = "f16"))]
-                {
-                    // Fallback to u16 when f16 feature is disabled
-                    let data = self.view_mut::<u16>()?;
-                    for val in data.iter_mut() {
-                        *val = val.swap_bytes();
-                    }
-                }
-                Ok(())
-            }
-            Some(Mode::Packed4Bit) => {
-                // 4-bit packed data - no endian swapping needed for individual nibbles
-                Ok(())
-            }
-            None => Err(Error::InvalidMode),
-        }
     }
 }
 
