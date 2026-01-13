@@ -146,13 +146,18 @@ mod header_tests {
         assert_eq!(header.exttyp(), [b'H', b'D', b'F', b'5']);
 
         // Test NVERSION with latest format (20141)
-        assert_eq!(header.nversion(), 20141); // Default is now 20141
+        assert_eq!(header.nversion(), 0); // Default is 0 when not set
+
+        header.set_nversion(20141); // 2014.1
+        assert_eq!(header.nversion(), 20141);
+
         header.set_nversion(20140); // 2014.0
         assert_eq!(header.nversion(), 20140);
 
-        // Test other version formats
-        header.set_nversion(20140); // 2014.0
-        assert_eq!(header.nversion(), 20140);
+        // Test big-endian encoding (for reading existing BE files)
+        header.set_file_endian(crate::FileEndian::BigEndian);
+        header.set_nversion(20141);
+        assert_eq!(header.nversion(), 20141);
 
         // Test invalid string length for EXTTYP
         assert!(header.set_exttyp_str("CCP").is_err());
@@ -851,7 +856,7 @@ mod view_tests {
         assert_eq!(header.nsymbt, 0);
         assert_eq!(header.nlabl, 0);
         assert_eq!(header.map, *b"MAP ");
-        assert_eq!(header.machst, [0x44, 0x44, 0x00, 0x00]);
+        assert_eq!(header.machst, [0x44, 0x44, 0x00, 0x00]); // Little-endian default
     }
 
     #[test]
@@ -897,7 +902,7 @@ mod view_tests {
         original.dmean = 0.0;
         original.set_nversion(20141);
 
-        // Encode to bytes (little-endian by default)
+        // Encode to bytes
         let mut bytes = [0u8; 1024];
         original.encode_to_bytes(&mut bytes);
 

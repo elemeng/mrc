@@ -82,6 +82,17 @@ impl Header {
     ///
     /// All dimensions are zero, the mode is 32-bit float, and
     /// cell angles are 90°. Other fields are set to safe neutral values.
+    ///
+    /// # Endianness
+    /// Per crate policy, new MRC files are always written in little-endian format.
+    /// This constructor sets `machst` to little-endian by default. The `extra[12..16]`
+    /// (NVERSION) field is uninitialized and should be set via `set_nversion()` when needed.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let mut header = Header::new();
+    /// header.set_nversion(20141);
+    /// ```
     pub const fn new() -> Self {
         Self {
             nx: 0,
@@ -108,21 +119,11 @@ impl Header {
             dmean: f32::NEG_INFINITY, // Less than both to indicate not well-determined
             ispg: 1,                  // P1 space group.
             nsymbt: 0,
-            extra: {
-                let mut arr = [0u8; 100];
-                // Set NVERSION to 20141 (latest MRC2014 format version)
-                // Bytes 12-15 of extra array hold NVERSION
-                // 20141 = 0x4EAD, little-endian: [0xAD, 0x4E, 0x00, 0x00]
-                arr[12] = 0xAD;
-                arr[13] = 0x4E;
-                arr[14] = 0x00;
-                arr[15] = 0x00;
-                arr
-            },
+            extra: [0u8; 100],        // NVERSION not set (no premature encoding)
             origin: [0.0; 3],
             map: *b"MAP ",
-            machst: [0x44, 0x44, 0x00, 0x00], // Little-endian x86/AMD64.
-            rms: -1.0,                        // Negative indicates not well-determined
+            machst: [0x44, 0x44, 0x00, 0x00], // Little-endian (crate policy for new files)
+            rms: -1.0,                // Negative indicates not well-determined
             nlabl: 0,
             label: [0; 800],
         }
@@ -253,6 +254,29 @@ impl Header {
     /// Check if the file is big-endian
     pub fn is_big_endian(&self) -> bool {
         self.detect_endian() == crate::FileEndian::BigEndian
+    }
+
+    #[inline]
+    /// Set the file endianness for this header
+    ///
+    /// This sets the MACHST machine stamp to the appropriate value for the
+    /// specified endianness. This is primarily used internally when reading
+    /// existing files to preserve their endianness.
+    ///
+    /// # Note
+    /// Per crate policy, new MRC files are always written in little-endian format.
+    /// This method is not intended for creating big-endian files from scratch.
+    pub fn set_file_endian(&mut self, endian: crate::FileEndian) {
+        self.machst = endian.to_machst();
+    }
+
+    #[inline]
+    /// Get the file endianness from this header
+    ///
+    /// Returns the endianness as specified by the MACHST field.
+    /// If MACHST is all zeros, defaults to little-endian.
+    pub fn file_endian(&self) -> crate::FileEndian {
+        self.detect_endian()
     }
 
     /// Decode header from raw bytes with correct endianness

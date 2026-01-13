@@ -35,6 +35,18 @@
 //!
 //! All operations are memory-safe. The crate uses no unsafe code for data access,
 //! and all endianness conversions are performed through safe, type-checked APIs.
+//!
+//! ## Endianness Policy
+//!
+//! This crate enforces a simple and safe endianness model:
+//!
+//! - All newly created MRC files are written in little-endian format.
+//! - Existing MRC files are read and modified using their declared file endianness.
+//! - Endianness is handled internally during numeric decode/encode.
+//! - Users never need to reason about byte order.
+//!
+//! This guarantees compatibility with the MRC2014 ecosystem while supporting
+//! cross-platform reading, writing, memory-mapped access, and streaming updates.
 
 #![no_std]
 #[cfg(feature = "std")]
@@ -102,6 +114,16 @@ impl FileEndian {
         }
 
         endian
+    }
+
+    /// Convert FileEndian to MACHST bytes
+    ///
+    /// Returns the 4-byte machine stamp encoding for this endianness.
+    pub fn to_machst(self) -> [u8; 4] {
+        match self {
+            FileEndian::LittleEndian => [0x44, 0x44, 0x00, 0x00],
+            FileEndian::BigEndian => [0x11, 0x11, 0x00, 0x00],
+        }
     }
 
     /// Get native system endianness
