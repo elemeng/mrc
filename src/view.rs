@@ -17,6 +17,25 @@ pub struct MrcView<'a> {
 }
 
 impl<'a> MrcView<'a> {
+    /// Create a new MrcView from a header and a combined buffer.
+    ///
+    /// The `data` parameter must contain the extended header followed by the voxel data:
+    ///
+    /// ```text
+    /// data buffer layout: | NSYMBT bytes | data_size bytes |
+    ///                    | ext header   | voxel data      |
+    /// ```
+    ///
+    /// This constructor automatically splits the buffer into extended header and data
+    /// based on the header's `nsymbt` field.
+    ///
+    /// # Arguments
+    /// * `header` - Decoded MRC header (native-endian)
+    /// * `data` - Buffer containing [ext_header | voxel_data]
+    ///
+    /// # Errors
+    /// Returns `Error::InvalidHeader` if the header validation fails
+    /// Returns `Error::InvalidDimensions` if the buffer size doesn't match expected size
     #[inline]
     pub fn new(header: Header, data: &'a [u8]) -> Result<Self, Error> {
         if !header.validate() {
@@ -32,6 +51,50 @@ impl<'a> MrcView<'a> {
         }
 
         let (ext_header, data) = data.split_at(ext_header_size);
+
+        Ok(Self {
+            header,
+            data,
+            ext_header,
+        })
+    }
+
+    /// Create a new MrcView from separate extended header and data slices.
+    ///
+    /// This constructor provides explicit separation of the three MRC file components:
+    ///
+    /// ```text
+    /// File layout:  | 1024 bytes | NSYMBT bytes | data_size bytes |
+    ///               | Header     | ExtHeader    | VoxelData       |
+    ///
+    /// Memory model: | Header     | ExtHeader    | VoxelData       |
+    ///               | (decoded)  | (raw bytes)  | (raw bytes)     |
+    /// ```
+    ///
+    /// # Arguments
+    /// * `header` - Decoded MRC header (native-endian)
+    /// * `ext_header` - Extended header raw bytes (opaque, no endianness conversion)
+    /// * `data` - Voxel data raw bytes (file-endian, decoded on access)
+    ///
+    /// # Errors
+    /// Returns `Error::InvalidHeader` if the header validation fails
+    /// Returns `Error::InvalidDimensions` if the data size doesn't match expected size
+    #[inline]
+    pub fn from_parts(header: Header, ext_header: &'a [u8], data: &'a [u8]) -> Result<Self, Error> {
+        if !header.validate() {
+            return Err(Error::InvalidHeader);
+        }
+
+        let expected_ext_size = header.nsymbt as usize;
+        let expected_data_size = header.data_size();
+
+        if ext_header.len() != expected_ext_size {
+            return Err(Error::InvalidDimensions);
+        }
+
+        if data.len() != expected_data_size {
+            return Err(Error::InvalidDimensions);
+        }
 
         Ok(Self {
             header,
@@ -277,7 +340,7 @@ impl<'a> MrcView<'a> {
             .get(..expected_size)
             .ok_or(Error::InvalidDimensions)?;
 
-        let mut result = Vec::with_capacity(data.len());
+        let mut result = Vec::with_capacity(data.len() * 2);
         for byte in data {
             let value = crate::DecodeFromFile::decode(file_endian, &[*byte]);
             result.push(value);
@@ -328,8 +391,7 @@ impl<'a> MrcView<'a> {
         // This would require file I/O, which is handled by backends
         Err(Error::Io)
     }
-
-    }
+}
 
 /// Mutable version of MrcView for write operations
 #[non_exhaustive]
@@ -749,5 +811,4 @@ mod tests {
 
         assert_eq!(data[3], 0x42);
     }
-
-    }
+}

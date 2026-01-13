@@ -4,6 +4,27 @@
 //! and writing MRC (Medical Research Council) files, which are commonly used in
 //! cryo-electron microscopy and structural biology.
 //!
+//! ## Memory Model
+//!
+//! This crate strictly separates the three components of an MRC file:
+//!
+//! ```text
+//! File layout:  | 1024 bytes | NSYMBT bytes | data_size bytes |
+//!               | Header     | ExtHeader    | VoxelData       |
+//!
+//! Memory model: | Header     | ExtHeader    | VoxelData       |
+//!               | (decoded)  | (raw bytes)  | (raw bytes)     |
+//!               | native-end| opaque       | file-endian     |
+//! ```
+//!
+//! - **Header** (1024 bytes): Always decoded on load, always native-endian in memory
+//! - **Extended header** (NSYMBT bytes): Opaque bytes, no endianness conversion
+//! - **Voxel data** (data_size bytes): Raw bytes in file-endian, decoded lazily on access
+//!
+//! Endianness conversion occurs **only** when decoding or encoding typed numeric values
+//! through the `DecodeFromFile` and `EncodeToFile` traits. This ensures zero-copy mmap
+//! views and prevents accidental endian corruption.
+//!
 //! ## Features
 //!
 //! - `std`: Standard library support for file I/O
@@ -18,6 +39,8 @@
 #![no_std]
 #[cfg(feature = "std")]
 extern crate alloc;
+#[cfg(feature = "std")]
+extern crate std;
 #[cfg(feature = "f16")]
 extern crate half;
 
@@ -46,11 +69,16 @@ impl FileEndian {
     /// According to MRC2014 spec:
     /// - 0x44 0x44 0x00 0x00 indicates little-endian
     /// - 0x11 0x11 0x00 0x00 indicates big-endian
+    ///
+    /// # Note
+    /// Endianness is determined solely from the first two bytes of MACHST.
+    /// The last two bytes (padding) are ignored for endianness detection,
+    /// but a warning is emitted if they contain non-zero values.
     pub fn from_machst(machst: &[u8; 4]) -> Self {
         // Check first two bytes (bytes 213-214 in header)
         // 0x44 = 'D' in ASCII, indicates little-endian
         // 0x11 indicates big-endian
-        if machst[0] == 0x44 && machst[1] == 0x44 {
+        let endian = if machst[0] == 0x44 && machst[1] == 0x44 {
             FileEndian::LittleEndian
         } else if machst[0] == 0x11 && machst[1] == 0x11 {
             FileEndian::BigEndian
@@ -58,7 +86,20 @@ impl FileEndian {
             // Default to little-endian for unknown values
             // (most common in practice)
             FileEndian::LittleEndian
+        };
+
+        // Warn about non-standard padding bytes (bytes 2-3)
+        #[cfg(feature = "std")]
+        {
+            if machst[2] != 0 || machst[3] != 0 {
+                std::eprintln!(
+                    "Warning: Non-standard MACHST padding bytes: {:02X} {:02X} {:02X} {:02X}",
+                    machst[0], machst[1], machst[2], machst[3]
+                );
+            }
         }
+
+        endian
     }
 
     /// Get native system endianness

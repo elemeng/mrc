@@ -45,6 +45,15 @@ mrc = { version = "0.1", features = ["std", "mmap", "file", "f16"] }
     └─────────┘              └────────┘              └─────────┘
 ```
 
+### Mrc file layer
+
+```text
+| 1024 bytes | NSYMBT bytes | data_size bytes |
+|  header    | ext header   | voxel data      |
+```
+
+Note: Byte index starts from 1.
+
 ### 📖 Reading MRC Files
 
 ```rust

@@ -116,9 +116,8 @@ impl MrcFile {
     #[inline]
     /// Returns a combined view of the MRC file containing header, extended header, and data.
     ///
-    /// This is a convenience method that provides access to all file components through
-    /// a single `MrcView` object. The view internally splits the buffer into extended
-    /// header and data based on the header's `nsymbt` field.
+    /// This method provides access to all file components through a single `MrcView` object.
+    /// The internal buffer is explicitly separated into extended header and data sections.
     ///
     /// # Example
     /// ```ignore
@@ -135,7 +134,9 @@ impl MrcFile {
     /// let data = view.data();
     /// ```
     pub fn read_view(&self) -> Result<MrcView<'_>, Error> {
-        MrcView::new(self.header.clone(), &self.buffer)
+        let ext_header = &self.buffer[..self.ext_header_size];
+        let data = &self.buffer[self.ext_header_size..];
+        MrcView::from_parts(self.header.clone(), ext_header, data)
     }
 
     #[inline]
@@ -269,15 +270,25 @@ impl MrcMmap {
     #[inline]
     /// Returns a combined view of the MRC file containing header, extended header, and data.
     ///
-    /// This is a convenience method that provides access to all file components through
-    /// a single `MrcView` object. The view internally splits the memory-mapped buffer
-    /// into extended header and data based on the header's `nsymbt` field.
+    /// This method provides access to all file components through a single `MrcView` object.
+    /// The memory-mapped buffer is explicitly separated into extended header and data sections.
+    ///
+    /// # Memory Layout
+    /// ```text
+    /// File layout:  | 1024 bytes | NSYMBT bytes | data_size bytes |
+    ///               | Header     | ExtHeader    | VoxelData       |
+    ///
+    /// mmap buffer:  [0..1024)    [1024..data_offset) [data_offset..)
+    /// ```
     pub fn read_view(&self) -> Result<MrcView<'_>, Error> {
-        // MrcView expects ext_header + data in contiguous buffer
-        // For mmap, we can return a view that spans both regions
-        let start = 1024;
-        let end = self.data_offset + self.data_size;
-        MrcView::new(self.header.clone(), &self.buffer[start..end])
+        // Explicitly separate extended header and data from mmap buffer
+        let ext_header = if self.ext_header_size > 0 {
+            &self.buffer[1024..1024 + self.ext_header_size]
+        } else {
+            &[]
+        };
+        let data = &self.buffer[self.data_offset..self.data_offset + self.data_size];
+        MrcView::from_parts(self.header.clone(), ext_header, data)
     }
 
     #[inline]
