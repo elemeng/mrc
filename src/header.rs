@@ -166,15 +166,19 @@ impl Header {
 
     #[inline]
     /// Reads the 4-byte EXTTYP identifier stored in `extra[8..12]`.
-    pub const fn exttyp(&self) -> i32 {
-        i32::from_le_bytes([self.extra[8], self.extra[9], self.extra[10], self.extra[11]])
+    ///
+    /// EXTTYP is a 4-byte ASCII string indicating the type of extended header.
+    /// Common values: "CCP4", "MRCO", "SERI", "AGAR", "FEI1", "FEI2", "HDF5".
+    pub fn exttyp(&self) -> [u8; 4] {
+        [self.extra[8], self.extra[9], self.extra[10], self.extra[11]]
     }
 
     #[inline]
     /// Stores the 4-byte EXTTYP identifier into `extra[8..12]`.
-    pub fn set_exttyp(&mut self, value: i32) {
-        let bytes = value.to_le_bytes();
-        self.extra[8..12].copy_from_slice(&bytes);
+    ///
+    /// EXTTYP is a 4-byte ASCII string indicating the type of extended header.
+    pub fn set_exttyp(&mut self, value: [u8; 4]) {
+        self.extra[8..12].copy_from_slice(&value);
     }
 
     #[inline]
@@ -190,8 +194,7 @@ impl Header {
             return Err("EXTTYP must be exactly 4 characters");
         }
         let bytes = value.as_bytes();
-        let int_value = i32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
-        self.set_exttyp(int_value);
+        self.extra[8..12].copy_from_slice(bytes);
         Ok(())
     }
 

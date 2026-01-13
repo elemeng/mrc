@@ -109,35 +109,38 @@ mod header_tests {
     fn test_header_exttyp_and_nversion() {
         let mut header = Header::new();
 
-        // Test EXTTYP as 4-byte integer
-        assert_eq!(header.exttyp(), 0);
+        // Test EXTTYP as 4-byte array
+        assert_eq!(header.exttyp(), [0, 0, 0, 0]);
 
         // Test setting EXTTYP as 4-char string
         header.set_exttyp_str("CCP4").unwrap();
         assert_eq!(header.exttyp_str().unwrap(), "CCP4");
-        assert_eq!(
-            header.exttyp(),
-            i32::from_le_bytes([b'C', b'C', b'P', b'4'])
-        );
+        assert_eq!(header.exttyp(), [b'C', b'C', b'P', b'4']);
 
         // Test other valid formats
         header.set_exttyp_str("MRCO").unwrap();
         assert_eq!(header.exttyp_str().unwrap(), "MRCO");
+        assert_eq!(header.exttyp(), [b'M', b'R', b'C', b'O']);
 
         header.set_exttyp_str("SERI").unwrap();
         assert_eq!(header.exttyp_str().unwrap(), "SERI");
+        assert_eq!(header.exttyp(), [b'S', b'E', b'R', b'I']);
 
         header.set_exttyp_str("AGAR").unwrap();
         assert_eq!(header.exttyp_str().unwrap(), "AGAR");
+        assert_eq!(header.exttyp(), [b'A', b'G', b'A', b'R']);
 
         header.set_exttyp_str("FEI1").unwrap();
         assert_eq!(header.exttyp_str().unwrap(), "FEI1");
+        assert_eq!(header.exttyp(), [b'F', b'E', b'I', b'1']);
 
         header.set_exttyp_str("FEI2").unwrap();
         assert_eq!(header.exttyp_str().unwrap(), "FEI2");
+        assert_eq!(header.exttyp(), [b'F', b'E', b'I', b'2']);
 
         header.set_exttyp_str("HDF5").unwrap();
         assert_eq!(header.exttyp_str().unwrap(), "HDF5");
+        assert_eq!(header.exttyp(), [b'H', b'D', b'F', b'5']);
 
         // Test NVERSION with latest format (20141)
         assert_eq!(header.nversion(), 20141); // Default is now 20141
