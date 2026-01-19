@@ -343,7 +343,8 @@ mod view_tests {
         ];
         let _full_data = [ext_header.as_slice(), bytemuck::cast_slice(&data)].concat();
 
-        let view = MrcView::from_parts(header, &ext_header, bytemuck::cast_slice(&data)).expect("Valid view should be created");
+        let view = MrcView::from_parts(header, &ext_header, bytemuck::cast_slice(&data))
+            .expect("Valid view should be created");
 
         // Test header access
         assert_eq!(view.header().nx, 2);
@@ -363,7 +364,7 @@ mod view_tests {
         assert_eq!(view.ext_header(), ext_header);
 
         // Test valid view access
-        let floats = view.data.as_f32().unwrap();
+        let floats = view.data.to_vec_f32().unwrap();
         assert_eq!(floats.len(), 8);
         assert_eq!(floats, data);
 
@@ -388,13 +389,14 @@ mod view_tests {
         let data = vec![1.0f32; 8];
         let full_data = bytemuck::cast_slice(&data);
 
-        let view = MrcView::from_parts(header, &[], full_data).expect("Valid view should be created");
+        let view =
+            MrcView::from_parts(header, &[], full_data).expect("Valid view should be created");
 
         // Test zero extended header
         assert_eq!(view.ext_header().len(), 0);
         assert_eq!(view.data.as_bytes().len(), 32);
 
-        let floats = view.data.as_f32().unwrap();
+        let floats = view.data.to_vec_f32().unwrap();
         assert_eq!(floats.len(), 8);
     }
 
@@ -412,7 +414,8 @@ mod view_tests {
         let mut data = vec![1.0f32; 8]; // 8 floats = 32 bytes for 2x2x2 Float32
 
         let mut view =
-            MrcViewMut::from_parts(header, &mut ext_header, bytemuck::cast_slice_mut(&mut data)).expect("Valid view should be created");
+            MrcViewMut::from_parts(header, &mut ext_header, bytemuck::cast_slice_mut(&mut data))
+                .expect("Valid view should be created");
 
         // Test header access
         assert_eq!(view.header().nx, 2);
@@ -466,14 +469,13 @@ mod view_tests {
             let mut buffer = vec![0u8; 256]; // 4x4x4x4 bytes
             let mut view = MrcViewMut::from_parts(header, &mut [], &mut buffer).unwrap();
 
-            let original_data = vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0,
-                                    9.0, 10.0, 11.0, 12.0, 13.0, 14.0, 15.0, 16.0,
-                                    17.0, 18.0, 19.0, 20.0, 21.0, 22.0, 23.0, 24.0,
-                                    25.0, 26.0, 27.0, 28.0, 29.0, 30.0, 31.0, 32.0,
-                                    33.0, 34.0, 35.0, 36.0, 37.0, 38.0, 39.0, 40.0,
-                                    41.0, 42.0, 43.0, 44.0, 45.0, 46.0, 47.0, 48.0,
-                                    49.0, 50.0, 51.0, 52.0, 53.0, 54.0, 55.0, 56.0,
-                                    57.0, 58.0, 59.0, 60.0, 61.0, 62.0, 63.0, 64.0];
+            let original_data = vec![
+                1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0, 15.0,
+                16.0, 17.0, 18.0, 19.0, 20.0, 21.0, 22.0, 23.0, 24.0, 25.0, 26.0, 27.0, 28.0, 29.0,
+                30.0, 31.0, 32.0, 33.0, 34.0, 35.0, 36.0, 37.0, 38.0, 39.0, 40.0, 41.0, 42.0, 43.0,
+                44.0, 45.0, 46.0, 47.0, 48.0, 49.0, 50.0, 51.0, 52.0, 53.0, 54.0, 55.0, 56.0, 57.0,
+                58.0, 59.0, 60.0, 61.0, 62.0, 63.0, 64.0,
+            ];
 
             // Write data using encode method
             view.data.set_f32(&original_data).unwrap();
@@ -482,7 +484,7 @@ mod view_tests {
             let header_clone = view.header().clone();
             let data_slice = view.data_mut();
             let read_only_view = MrcView::from_parts(header_clone, &[], data_slice).unwrap();
-            let decoded_data = read_only_view.data.as_f32().unwrap();
+            let decoded_data = read_only_view.data.to_vec_f32().unwrap();
 
             assert_eq!(original_data, decoded_data);
         }
@@ -498,10 +500,11 @@ mod view_tests {
             let mut buffer = vec![0u8; 128]; // 4x4x4x2 bytes
             let mut view = MrcViewMut::from_parts(header, &mut [], &mut buffer).unwrap();
 
-            let original_data = vec![1i16, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
-                                    17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32,
-                                    33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48,
-                                    49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64];
+            let original_data = vec![
+                1i16, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22,
+                23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43,
+                44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64,
+            ];
 
             // Write data using encode method
             view.data.set_i16(&original_data).unwrap();
@@ -510,7 +513,7 @@ mod view_tests {
             let header_clone = view.header().clone();
             let data_slice = view.data_mut();
             let read_only_view = MrcView::from_parts(header_clone, &[], data_slice).unwrap();
-            let decoded_data = read_only_view.data.as_i16().unwrap();
+            let decoded_data = read_only_view.data.to_vec_i16().unwrap();
 
             assert_eq!(original_data, decoded_data);
         }
@@ -526,10 +529,11 @@ mod view_tests {
             let mut buffer = vec![0u8; 128]; // 4x4x4x2 bytes
             let mut view = MrcViewMut::from_parts(header, &mut [], &mut buffer).unwrap();
 
-            let original_data = vec![1u16, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
-                                    17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32,
-                                    33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48,
-                                    49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64];
+            let original_data = vec![
+                1u16, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22,
+                23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43,
+                44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64,
+            ];
 
             // Write data using encode method
             view.data.set_u16(&original_data).unwrap();
@@ -538,7 +542,7 @@ mod view_tests {
             let header_clone = view.header().clone();
             let data_slice = view.data_mut();
             let read_only_view = MrcView::from_parts(header_clone, &[], data_slice).unwrap();
-            let decoded_data = read_only_view.data.as_u16().unwrap();
+            let decoded_data = read_only_view.data.to_vec_u16().unwrap();
 
             assert_eq!(original_data, decoded_data);
         }
@@ -554,10 +558,11 @@ mod view_tests {
             let mut buffer = vec![0u8; 64]; // 4x4x4x1 bytes
             let mut view = MrcViewMut::from_parts(header, &mut [], &mut buffer).unwrap();
 
-            let original_data = vec![1i8, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
-                                    17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32,
-                                    33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48,
-                                    49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64];
+            let original_data = vec![
+                1i8, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22,
+                23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43,
+                44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64,
+            ];
 
             // Write data using encode method
             view.data.set_i8(&original_data).unwrap();
@@ -1106,7 +1111,13 @@ mod view_tests {
             header.mapr = mapr;
             header.maps = maps;
 
-            assert!(header.validate(), "Axis mapping ({}, {}, {}) should be valid", mapc, mapr, maps);
+            assert!(
+                header.validate(),
+                "Axis mapping ({}, {}, {}) should be valid",
+                mapc,
+                mapr,
+                maps
+            );
         }
     }
 
@@ -1132,7 +1143,13 @@ mod view_tests {
             header.mapr = mapr;
             header.maps = maps;
 
-            assert!(!header.validate(), "Axis mapping ({}, {}, {}) should be invalid (duplicate)", mapc, mapr, maps);
+            assert!(
+                !header.validate(),
+                "Axis mapping ({}, {}, {}) should be invalid (duplicate)",
+                mapc,
+                mapr,
+                maps
+            );
         }
     }
 
@@ -1158,95 +1175,117 @@ mod view_tests {
             header.mapr = mapr;
             header.maps = maps;
 
-            assert!(!header.validate(), "Axis mapping ({}, {}, {}) should be invalid (out of range)", mapc, mapr, maps);
+            assert!(
+                !header.validate(),
+                "Axis mapping ({}, {}, {}) should be invalid (out of range)",
+                mapc,
+                mapr,
+                maps
+            );
         }
     }
 
     // len_voxels() Tests
     #[test]
     fn test_datablock_len_voxels_packed4bit() {
-        use crate::{DataBlock, Mode, FileEndian};
+        use crate::{DataBlock, FileEndian, Mode};
 
         // Test Packed4Bit: 2 voxels per byte
         let bytes = vec![0u8; 10];
         let datablock = DataBlock::new(&bytes, Mode::Packed4Bit, FileEndian::LittleEndian);
 
-        assert_eq!(datablock.len_voxels(), 20, "10 bytes should contain 20 voxels in Packed4Bit mode");
+        assert_eq!(
+            datablock.len_voxels(),
+            20,
+            "10 bytes should contain 20 voxels in Packed4Bit mode"
+        );
     }
 
     #[test]
     fn test_datablock_len_voxels_float32() {
-        use crate::{DataBlock, Mode, FileEndian};
+        use crate::{DataBlock, FileEndian, Mode};
 
         // Test Float32: 1 voxel per 4 bytes
         let bytes = vec![0u8; 12];
         let datablock = DataBlock::new(&bytes, Mode::Float32, FileEndian::LittleEndian);
 
-        assert_eq!(datablock.len_voxels(), 3, "12 bytes should contain 3 voxels in Float32 mode");
+        assert_eq!(
+            datablock.len_voxels(),
+            3,
+            "12 bytes should contain 3 voxels in Float32 mode"
+        );
     }
 
     #[test]
     fn test_datablock_len_voxels_int16() {
-        use crate::{DataBlock, Mode, FileEndian};
+        use crate::{DataBlock, FileEndian, Mode};
 
         // Test Int16: 1 voxel per 2 bytes
         let bytes = vec![0u8; 8];
         let datablock = DataBlock::new(&bytes, Mode::Int16, FileEndian::LittleEndian);
 
-        assert_eq!(datablock.len_voxels(), 4, "8 bytes should contain 4 voxels in Int16 mode");
+        assert_eq!(
+            datablock.len_voxels(),
+            4,
+            "8 bytes should contain 4 voxels in Int16 mode"
+        );
     }
 
     #[test]
     fn test_datablock_len_voxels_int8() {
-        use crate::{DataBlock, Mode, FileEndian};
+        use crate::{DataBlock, FileEndian, Mode};
 
         // Test Int8: 1 voxel per 1 byte
         let bytes = vec![0u8; 5];
         let datablock = DataBlock::new(&bytes, Mode::Int8, FileEndian::LittleEndian);
 
-        assert_eq!(datablock.len_voxels(), 5, "5 bytes should contain 5 voxels in Int8 mode");
+        assert_eq!(
+            datablock.len_voxels(),
+            5,
+            "5 bytes should contain 5 voxels in Int8 mode"
+        );
     }
 
     // Divisibility Error Tests
     #[test]
     fn test_datablock_as_f32_divisibility_error() {
-        use crate::{DataBlock, Mode, FileEndian};
+        use crate::{DataBlock, FileEndian, Mode};
 
         // Test with non-divisible byte length (10 bytes, should be multiple of 4)
         let bytes = vec![0u8; 10];
         let datablock = DataBlock::new(&bytes, Mode::Float32, FileEndian::LittleEndian);
 
-        let result = datablock.as_f32();
+        let result = datablock.to_vec_f32();
         assert!(matches!(result, Err(crate::Error::InvalidDimensions)));
     }
 
     #[test]
     fn test_datablock_as_i16_divisibility_error() {
-        use crate::{DataBlock, Mode, FileEndian};
+        use crate::{DataBlock, FileEndian, Mode};
 
         // Test with non-divisible byte length (3 bytes, should be multiple of 2)
         let bytes = vec![0u8; 3];
         let datablock = DataBlock::new(&bytes, Mode::Int16, FileEndian::LittleEndian);
 
-        let result = datablock.as_i16();
+        let result = datablock.to_vec_i16();
         assert!(matches!(result, Err(crate::Error::InvalidDimensions)));
     }
 
     #[test]
     fn test_datablock_as_u16_divisibility_error() {
-        use crate::{DataBlock, Mode, FileEndian};
+        use crate::{DataBlock, FileEndian, Mode};
 
         // Test with non-divisible byte length (5 bytes, should be multiple of 2)
         let bytes = vec![0u8; 5];
         let datablock = DataBlock::new(&bytes, Mode::Uint16, FileEndian::LittleEndian);
 
-        let result = datablock.as_u16();
+        let result = datablock.to_vec_u16();
         assert!(matches!(result, Err(crate::Error::InvalidDimensions)));
     }
 
     #[test]
     fn test_datablock_as_int16_complex_divisibility_error() {
-        use crate::{DataBlock, Mode, FileEndian};
+        use crate::{DataBlock, FileEndian, Mode};
 
         // Test with non-divisible byte length (10 bytes, should be multiple of 4)
         let bytes = vec![0u8; 10];
@@ -1258,7 +1297,7 @@ mod view_tests {
 
     #[test]
     fn test_datablock_as_float32_complex_divisibility_error() {
-        use crate::{DataBlock, Mode, FileEndian};
+        use crate::{DataBlock, FileEndian, Mode};
 
         // Test with non-divisible byte length (10 bytes, should be multiple of 8)
         let bytes = vec![0u8; 10];
@@ -1270,7 +1309,7 @@ mod view_tests {
 
     #[test]
     fn test_datablock_as_f16_divisibility_error() {
-        use crate::{DataBlock, Mode, FileEndian};
+        use crate::{DataBlock, FileEndian, Mode};
 
         // Test with non-divisible byte length (3 bytes, should be multiple of 2)
         let bytes = vec![0u8; 3];
@@ -1283,7 +1322,7 @@ mod view_tests {
     // Packed4Bit Edge Case Tests
     #[test]
     fn test_datablock_packed4bit_odd_voxels() {
-        use crate::{DataBlock, Mode, FileEndian};
+        use crate::{DataBlock, FileEndian, Mode};
 
         // Test with odd number of voxels (6 voxels = 3 bytes)
         let bytes = vec![0u8; 3];
@@ -1305,7 +1344,7 @@ mod view_tests {
 
     #[test]
     fn test_datablock_packed4bit_single_byte() {
-        use crate::{DataBlock, Mode, FileEndian};
+        use crate::{DataBlock, FileEndian, Mode};
 
         // Test with single byte (2 voxels)
         let bytes = vec![0xABu8];

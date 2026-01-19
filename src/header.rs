@@ -165,9 +165,9 @@ impl Header {
             // Validate ISPG: 0 (2D/stack), 1 (single volume), 1-230 (crystallographic), or 400-630 (volume stacks)
             && (self.ispg == 0 || self.ispg == 1 || (self.ispg >= 1 && self.ispg <= 230) || (self.ispg >= 400 && self.ispg <= 630))
             // Validate axis mapping: MAPC, MAPR, MAPS must be a permutation of (1, 2, 3)
-            && matches!(self.mapc, 1 | 2 | 3)
-            && matches!(self.mapr, 1 | 2 | 3)
-            && matches!(self.maps, 1 | 2 | 3)
+            && matches!(self.mapc, 1..=3)
+            && matches!(self.mapr, 1..=3)
+            && matches!(self.maps, 1..=3)
             && self.mapc != self.mapr
             && self.mapc != self.maps
             && self.mapr != self.maps

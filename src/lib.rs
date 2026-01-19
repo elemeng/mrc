@@ -378,6 +378,7 @@ impl<'a> DataBlock<'a> {
     /// Returns Error::InvalidMode if mode is not Float32
     /// Returns Error::InvalidDimensions if output buffer is too small
     #[inline]
+    #[allow(clippy::needless_range_loop)]  // Intentional: direct indexing for performance
     pub fn read_f32_into(&self, out: &mut [f32]) -> Result<(), Error> {
         if self.mode != Mode::Float32 {
             return Err(Error::InvalidMode);
@@ -446,10 +447,8 @@ impl<'a> DataBlock<'a> {
             return Err(Error::InvalidDimensions);
         }
 
-        let mut result = Vec::with_capacity(self.bytes.len() / 4);
-        unsafe {
-            result.set_len(self.bytes.len() / 4);
-        }
+        let n = self.bytes.len() / 4;
+        let mut result: Vec<f32> = core::iter::repeat_n(0.0f32, n).collect();
         self.read_f32_into(&mut result)?;
         Ok(result)
     }
@@ -514,6 +513,7 @@ impl<'a> DataBlock<'a> {
     /// Returns Error::InvalidMode if mode is not Int16
     /// Returns Error::InvalidDimensions if output buffer is too small
     #[inline]
+    #[allow(clippy::needless_range_loop)]  // Intentional: direct indexing for performance
     pub fn read_i16_into(&self, out: &mut [i16]) -> Result<(), Error> {
         if self.mode != Mode::Int16 {
             return Err(Error::InvalidMode);
@@ -565,10 +565,8 @@ impl<'a> DataBlock<'a> {
             return Err(Error::InvalidDimensions);
         }
 
-        let mut result = Vec::with_capacity(self.bytes.len() / 2);
-        unsafe {
-            result.set_len(self.bytes.len() / 2);
-        }
+        let n = self.bytes.len() / 2;
+        let mut result: Vec<i16> = core::iter::repeat_n(0i16, n).collect();
         self.read_i16_into(&mut result)?;
         Ok(result)
     }
@@ -633,6 +631,7 @@ impl<'a> DataBlock<'a> {
     /// Returns Error::InvalidMode if mode is not Uint16
     /// Returns Error::InvalidDimensions if output buffer is too small
     #[inline]
+    #[allow(clippy::needless_range_loop)]  // Intentional: direct indexing for performance
     pub fn read_u16_into(&self, out: &mut [u16]) -> Result<(), Error> {
         if self.mode != Mode::Uint16 {
             return Err(Error::InvalidMode);
@@ -684,10 +683,8 @@ impl<'a> DataBlock<'a> {
             return Err(Error::InvalidDimensions);
         }
 
-        let mut result = Vec::with_capacity(self.bytes.len() / 2);
-        unsafe {
-            result.set_len(self.bytes.len() / 2);
-        }
+        let n = self.bytes.len() / 2;
+        let mut result: Vec<u16> = core::iter::repeat_n(0u16, n).collect();
         self.read_u16_into(&mut result)?;
         Ok(result)
     }

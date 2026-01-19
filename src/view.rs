@@ -102,7 +102,6 @@ impl<'a> MrcView<'a> {
 
 
     #[cfg(feature = "f16")]
-
     #[inline]
     pub fn ext_header(&self) -> &[u8] {
         self.ext_header.as_bytes()
