@@ -296,12 +296,148 @@ impl<'a> DataBlock<'a> {
         self.bytes
     }
 
-    /// Decode data as f32 values
+    /// Get a single f32 value at the specified voxel index
+    ///
+    /// # Panics
+    /// Panics if index is out of bounds
+    #[inline]
+    pub fn get_f32(&self, index: usize) -> f32 {
+        assert!(self.mode == Mode::Float32, "Mode must be Float32");
+        let offset = index * 4;
+        debug_assert!(offset + 4 <= self.bytes.len());
+        
+        if self.file_endian.is_native() {
+            // Fast path: native endian
+            let arr: [u8; 4] = [
+                self.bytes[offset],
+                self.bytes[offset + 1],
+                self.bytes[offset + 2],
+                self.bytes[offset + 3],
+            ];
+            #[cfg(target_endian = "little")]
+            return f32::from_le_bytes(arr);
+            #[cfg(target_endian = "big")]
+            return f32::from_be_bytes(arr);
+        } else {
+            // Byte swap needed
+            let arr: [u8; 4] = [
+                self.bytes[offset],
+                self.bytes[offset + 1],
+                self.bytes[offset + 2],
+                self.bytes[offset + 3],
+            ];
+            match self.file_endian {
+                FileEndian::LittleEndian => f32::from_le_bytes(arr),
+                FileEndian::BigEndian => f32::from_be_bytes(arr),
+            }
+        }
+    }
+
+    /// Create an iterator over f32 values
+    ///
+    /// # Panics
+    /// Panics if mode is not Float32
+    #[inline]
+    pub fn iter_f32(&self) -> impl Iterator<Item = f32> + '_ {
+        assert!(self.mode == Mode::Float32, "Mode must be Float32");
+        let len = self.len_voxels();
+        let file_endian = self.file_endian;
+        let bytes = self.bytes;
+        
+        (0..len).map(move |i| {
+            let offset = i * 4;
+            if file_endian.is_native() {
+                let arr: [u8; 4] = [
+                    bytes[offset],
+                    bytes[offset + 1],
+                    bytes[offset + 2],
+                    bytes[offset + 3],
+                ];
+                #[cfg(target_endian = "little")]
+                return f32::from_le_bytes(arr);
+                #[cfg(target_endian = "big")]
+                return f32::from_be_bytes(arr);
+            } else {
+                let arr: [u8; 4] = [
+                    bytes[offset],
+                    bytes[offset + 1],
+                    bytes[offset + 2],
+                    bytes[offset + 3],
+                ];
+                match file_endian {
+                    FileEndian::LittleEndian => f32::from_le_bytes(arr),
+                    FileEndian::BigEndian => f32::from_be_bytes(arr),
+                }
+            }
+        })
+    }
+
+    /// Decode f32 values into a pre-allocated buffer
+    ///
+    /// # Errors
+    /// Returns Error::InvalidMode if mode is not Float32
+    /// Returns Error::InvalidDimensions if output buffer is too small
+    #[inline]
+    pub fn read_f32_into(&self, out: &mut [f32]) -> Result<(), Error> {
+        if self.mode != Mode::Float32 {
+            return Err(Error::InvalidMode);
+        }
+
+        let n = out.len();
+        if n * 4 > self.bytes.len() {
+            return Err(Error::InvalidDimensions);
+        }
+
+        if self.file_endian.is_native() {
+            // Fast native-endian path
+            #[cfg(target_endian = "little")]
+            for i in 0..n {
+                let offset = i * 4;
+                let arr: [u8; 4] = [
+                    self.bytes[offset],
+                    self.bytes[offset + 1],
+                    self.bytes[offset + 2],
+                    self.bytes[offset + 3],
+                ];
+                out[i] = f32::from_le_bytes(arr);
+            }
+            #[cfg(target_endian = "big")]
+            for i in 0..n {
+                let offset = i * 4;
+                let arr: [u8; 4] = [
+                    self.bytes[offset],
+                    self.bytes[offset + 1],
+                    self.bytes[offset + 2],
+                    self.bytes[offset + 3],
+                ];
+                out[i] = f32::from_be_bytes(arr);
+            }
+        } else {
+            // Byte swap needed
+            for i in 0..n {
+                let offset = i * 4;
+                let arr: [u8; 4] = [
+                    self.bytes[offset],
+                    self.bytes[offset + 1],
+                    self.bytes[offset + 2],
+                    self.bytes[offset + 3],
+                ];
+                out[i] = match self.file_endian {
+                    FileEndian::LittleEndian => f32::from_le_bytes(arr),
+                    FileEndian::BigEndian => f32::from_be_bytes(arr),
+                };
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Decode data as f32 values (allocates)
     ///
     /// # Errors
     /// Returns Error::InvalidMode if the file mode is not Float32 (mode 2)
     /// Returns Error::InvalidDimensions if the byte length is not divisible by 4
-    pub fn as_f32(&self) -> Result<Vec<f32>, Error> {
+    pub fn to_vec_f32(&self) -> Result<Vec<f32>, Error> {
         if self.mode != Mode::Float32 {
             return Err(Error::InvalidMode);
         }
@@ -311,22 +447,116 @@ impl<'a> DataBlock<'a> {
         }
 
         let mut result = Vec::with_capacity(self.bytes.len() / 4);
-        let chunks: Vec<_> = self.bytes.chunks_exact(4).collect();
-
-        for chunk in chunks {
-            let value = f32::decode(self.file_endian, chunk);
-            result.push(value);
+        unsafe {
+            result.set_len(self.bytes.len() / 4);
         }
-
+        self.read_f32_into(&mut result)?;
         Ok(result)
     }
 
-    /// Decode data as i16 values
+    /// Get a single i16 value at the specified voxel index
+    ///
+    /// # Panics
+    /// Panics if index is out of bounds
+    #[inline]
+    pub fn get_i16(&self, index: usize) -> i16 {
+        assert!(self.mode == Mode::Int16, "Mode must be Int16");
+        let offset = index * 2;
+        debug_assert!(offset + 2 <= self.bytes.len());
+        
+        if self.file_endian.is_native() {
+            let arr: [u8; 2] = [self.bytes[offset], self.bytes[offset + 1]];
+            #[cfg(target_endian = "little")]
+            return i16::from_le_bytes(arr);
+            #[cfg(target_endian = "big")]
+            return i16::from_be_bytes(arr);
+        } else {
+            let arr: [u8; 2] = [self.bytes[offset], self.bytes[offset + 1]];
+            match self.file_endian {
+                FileEndian::LittleEndian => i16::from_le_bytes(arr),
+                FileEndian::BigEndian => i16::from_be_bytes(arr),
+            }
+        }
+    }
+
+    /// Create an iterator over i16 values
+    ///
+    /// # Panics
+    /// Panics if mode is not Int16
+    #[inline]
+    pub fn iter_i16(&self) -> impl Iterator<Item = i16> + '_ {
+        assert!(self.mode == Mode::Int16, "Mode must be Int16");
+        let len = self.len_voxels();
+        let file_endian = self.file_endian;
+        let bytes = self.bytes;
+        
+        (0..len).map(move |i| {
+            let offset = i * 2;
+            if file_endian.is_native() {
+                let arr: [u8; 2] = [bytes[offset], bytes[offset + 1]];
+                #[cfg(target_endian = "little")]
+                return i16::from_le_bytes(arr);
+                #[cfg(target_endian = "big")]
+                return i16::from_be_bytes(arr);
+            } else {
+                let arr: [u8; 2] = [bytes[offset], bytes[offset + 1]];
+                match file_endian {
+                    FileEndian::LittleEndian => i16::from_le_bytes(arr),
+                    FileEndian::BigEndian => i16::from_be_bytes(arr),
+                }
+            }
+        })
+    }
+
+    /// Decode i16 values into a pre-allocated buffer
+    ///
+    /// # Errors
+    /// Returns Error::InvalidMode if mode is not Int16
+    /// Returns Error::InvalidDimensions if output buffer is too small
+    #[inline]
+    pub fn read_i16_into(&self, out: &mut [i16]) -> Result<(), Error> {
+        if self.mode != Mode::Int16 {
+            return Err(Error::InvalidMode);
+        }
+
+        let n = out.len();
+        if n * 2 > self.bytes.len() {
+            return Err(Error::InvalidDimensions);
+        }
+
+        if self.file_endian.is_native() {
+            #[cfg(target_endian = "little")]
+            for i in 0..n {
+                let offset = i * 2;
+                let arr: [u8; 2] = [self.bytes[offset], self.bytes[offset + 1]];
+                out[i] = i16::from_le_bytes(arr);
+            }
+            #[cfg(target_endian = "big")]
+            for i in 0..n {
+                let offset = i * 2;
+                let arr: [u8; 2] = [self.bytes[offset], self.bytes[offset + 1]];
+                out[i] = i16::from_be_bytes(arr);
+            }
+        } else {
+            for i in 0..n {
+                let offset = i * 2;
+                let arr: [u8; 2] = [self.bytes[offset], self.bytes[offset + 1]];
+                out[i] = match self.file_endian {
+                    FileEndian::LittleEndian => i16::from_le_bytes(arr),
+                    FileEndian::BigEndian => i16::from_be_bytes(arr),
+                };
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Decode data as i16 values (allocates)
     ///
     /// # Errors
     /// Returns Error::InvalidMode if the file mode is not Int16 (mode 1)
     /// Returns Error::InvalidDimensions if the byte length is not divisible by 2
-    pub fn as_i16(&self) -> Result<Vec<i16>, Error> {
+    pub fn to_vec_i16(&self) -> Result<Vec<i16>, Error> {
         if self.mode != Mode::Int16 {
             return Err(Error::InvalidMode);
         }
@@ -336,22 +566,116 @@ impl<'a> DataBlock<'a> {
         }
 
         let mut result = Vec::with_capacity(self.bytes.len() / 2);
-        let chunks: Vec<_> = self.bytes.chunks_exact(2).collect();
-
-        for chunk in chunks {
-            let value = i16::decode(self.file_endian, chunk);
-            result.push(value);
+        unsafe {
+            result.set_len(self.bytes.len() / 2);
         }
-
+        self.read_i16_into(&mut result)?;
         Ok(result)
     }
 
-    /// Decode data as u16 values
+    /// Get a single u16 value at the specified voxel index
+    ///
+    /// # Panics
+    /// Panics if index is out of bounds
+    #[inline]
+    pub fn get_u16(&self, index: usize) -> u16 {
+        assert!(self.mode == Mode::Uint16, "Mode must be Uint16");
+        let offset = index * 2;
+        debug_assert!(offset + 2 <= self.bytes.len());
+        
+        if self.file_endian.is_native() {
+            let arr: [u8; 2] = [self.bytes[offset], self.bytes[offset + 1]];
+            #[cfg(target_endian = "little")]
+            return u16::from_le_bytes(arr);
+            #[cfg(target_endian = "big")]
+            return u16::from_be_bytes(arr);
+        } else {
+            let arr: [u8; 2] = [self.bytes[offset], self.bytes[offset + 1]];
+            match self.file_endian {
+                FileEndian::LittleEndian => u16::from_le_bytes(arr),
+                FileEndian::BigEndian => u16::from_be_bytes(arr),
+            }
+        }
+    }
+
+    /// Create an iterator over u16 values
+    ///
+    /// # Panics
+    /// Panics if mode is not Uint16
+    #[inline]
+    pub fn iter_u16(&self) -> impl Iterator<Item = u16> + '_ {
+        assert!(self.mode == Mode::Uint16, "Mode must be Uint16");
+        let len = self.len_voxels();
+        let file_endian = self.file_endian;
+        let bytes = self.bytes;
+        
+        (0..len).map(move |i| {
+            let offset = i * 2;
+            if file_endian.is_native() {
+                let arr: [u8; 2] = [bytes[offset], bytes[offset + 1]];
+                #[cfg(target_endian = "little")]
+                return u16::from_le_bytes(arr);
+                #[cfg(target_endian = "big")]
+                return u16::from_be_bytes(arr);
+            } else {
+                let arr: [u8; 2] = [bytes[offset], bytes[offset + 1]];
+                match file_endian {
+                    FileEndian::LittleEndian => u16::from_le_bytes(arr),
+                    FileEndian::BigEndian => u16::from_be_bytes(arr),
+                }
+            }
+        })
+    }
+
+    /// Decode u16 values into a pre-allocated buffer
+    ///
+    /// # Errors
+    /// Returns Error::InvalidMode if mode is not Uint16
+    /// Returns Error::InvalidDimensions if output buffer is too small
+    #[inline]
+    pub fn read_u16_into(&self, out: &mut [u16]) -> Result<(), Error> {
+        if self.mode != Mode::Uint16 {
+            return Err(Error::InvalidMode);
+        }
+
+        let n = out.len();
+        if n * 2 > self.bytes.len() {
+            return Err(Error::InvalidDimensions);
+        }
+
+        if self.file_endian.is_native() {
+            #[cfg(target_endian = "little")]
+            for i in 0..n {
+                let offset = i * 2;
+                let arr: [u8; 2] = [self.bytes[offset], self.bytes[offset + 1]];
+                out[i] = u16::from_le_bytes(arr);
+            }
+            #[cfg(target_endian = "big")]
+            for i in 0..n {
+                let offset = i * 2;
+                let arr: [u8; 2] = [self.bytes[offset], self.bytes[offset + 1]];
+                out[i] = u16::from_be_bytes(arr);
+            }
+        } else {
+            for i in 0..n {
+                let offset = i * 2;
+                let arr: [u8; 2] = [self.bytes[offset], self.bytes[offset + 1]];
+                out[i] = match self.file_endian {
+                    FileEndian::LittleEndian => u16::from_le_bytes(arr),
+                    FileEndian::BigEndian => u16::from_be_bytes(arr),
+                };
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Decode data as u16 values (allocates)
     ///
     /// # Errors
     /// Returns Error::InvalidMode if the file mode is not Uint16 (mode 6)
     /// Returns Error::InvalidDimensions if the byte length is not divisible by 2
-    pub fn as_u16(&self) -> Result<Vec<u16>, Error> {
+    pub fn to_vec_u16(&self) -> Result<Vec<u16>, Error> {
         if self.mode != Mode::Uint16 {
             return Err(Error::InvalidMode);
         }
@@ -361,13 +685,10 @@ impl<'a> DataBlock<'a> {
         }
 
         let mut result = Vec::with_capacity(self.bytes.len() / 2);
-        let chunks: Vec<_> = self.bytes.chunks_exact(2).collect();
-
-        for chunk in chunks {
-            let value = u16::decode(self.file_endian, chunk);
-            result.push(value);
+        unsafe {
+            result.set_len(self.bytes.len() / 2);
         }
-
+        self.read_u16_into(&mut result)?;
         Ok(result)
     }
 

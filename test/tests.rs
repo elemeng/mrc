@@ -267,21 +267,21 @@ mod header_tests {
         header.mode = 1;
         let data = vec![0i16; 64];
         let map = MrcView::from_parts(header.clone(), &[], bytemuck::cast_slice(&data)).unwrap();
-        let view = map.data.as_i16().unwrap();
+        let view = map.data.to_vec_i16().unwrap();
         assert_eq!(view.len(), 64);
 
         // Test f32 - use new explicit decoding method
         header.mode = 2;
         let data = vec![0f32; 64];
         let map = MrcView::from_parts(header.clone(), &[], bytemuck::cast_slice(&data)).unwrap();
-        let view = map.data.as_f32().unwrap();
+        let view = map.data.to_vec_f32().unwrap();
         assert_eq!(view.len(), 64);
 
         // Test u16 - use new explicit decoding method
         header.mode = 6;
         let data = vec![0u16; 64];
         let map = MrcView::from_parts(header.clone(), &[], bytemuck::cast_slice(&data)).unwrap();
-        let view = map.data.as_u16().unwrap();
+        let view = map.data.to_vec_u16().unwrap();
         assert_eq!(view.len(), 64);
     }
 
@@ -317,7 +317,7 @@ mod header_tests {
         let data = vec![0f32; 64 * 64 * 64];
         let map = MrcView::from_parts(header, &[], bytemuck::cast_slice(&data)).unwrap();
 
-        let volume = map.data.as_f32().unwrap();
+        let volume = map.data.to_vec_f32().unwrap();
         assert_eq!(volume.len(), 64 * 64 * 64);
     }
 }

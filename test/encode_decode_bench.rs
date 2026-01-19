@@ -202,10 +202,10 @@ fn bench_encode_u16(c: &mut Criterion) {
     group.finish();
 }
 
-// Benchmark DataBlock as_* methods (high-level API)
+// Benchmark DataBlock to_vec_* methods (high-level API)
 
-fn bench_datablock_as_f32(c: &mut Criterion) {
-    let mut group = c.benchmark_group("datablock_as_f32");
+fn bench_datablock_to_vec_f32(c: &mut Criterion) {
+    let mut group = c.benchmark_group("datablock_to_vec_f32");
 
     for voxel_count in [256, 4096, 65536, 262144].iter() {
         let data: Vec<u8> = vec![0u8; voxel_count * 4];
@@ -213,14 +213,14 @@ fn bench_datablock_as_f32(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::new("little_endian", voxel_count), &data, |b, data| {
             b.iter(|| {
                 let block = DataBlock::new(data, Mode::Float32, FileEndian::LittleEndian);
-                black_box(block.as_f32().unwrap())
+                black_box(block.to_vec_f32().unwrap())
             })
         });
 
         group.bench_with_input(BenchmarkId::new("big_endian", voxel_count), &data, |b, data| {
             b.iter(|| {
                 let block = DataBlock::new(data, Mode::Float32, FileEndian::BigEndian);
-                black_box(block.as_f32().unwrap())
+                black_box(block.to_vec_f32().unwrap())
             })
         });
     }
@@ -228,8 +228,8 @@ fn bench_datablock_as_f32(c: &mut Criterion) {
     group.finish();
 }
 
-fn bench_datablock_as_i16(c: &mut Criterion) {
-    let mut group = c.benchmark_group("datablock_as_i16");
+fn bench_datablock_to_vec_i16(c: &mut Criterion) {
+    let mut group = c.benchmark_group("datablock_to_vec_i16");
 
     for voxel_count in [256, 4096, 65536, 262144].iter() {
         let data: Vec<u8> = vec![0u8; voxel_count * 2];
@@ -237,14 +237,14 @@ fn bench_datablock_as_i16(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::new("little_endian", voxel_count), &data, |b, data| {
             b.iter(|| {
                 let block = DataBlock::new(data, Mode::Int16, FileEndian::LittleEndian);
-                black_box(block.as_i16().unwrap())
+                black_box(block.to_vec_i16().unwrap())
             })
         });
 
         group.bench_with_input(BenchmarkId::new("big_endian", voxel_count), &data, |b, data| {
             b.iter(|| {
                 let block = DataBlock::new(data, Mode::Int16, FileEndian::BigEndian);
-                black_box(block.as_i16().unwrap())
+                black_box(block.to_vec_i16().unwrap())
             })
         });
     }
@@ -313,8 +313,8 @@ criterion_group!(
     bench_encode_f32,
     bench_encode_i16,
     bench_encode_u16,
-    bench_datablock_as_f32,
-    bench_datablock_as_i16,
+    bench_datablock_to_vec_f32,
+    bench_datablock_to_vec_i16,
     bench_datablock_set_f32,
     bench_datablock_set_i16
 );
