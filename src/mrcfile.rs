@@ -1,10 +1,12 @@
 #[cfg(feature = "std")]
 use crate::{Error, Header, MrcView};
+use std::io::{Read, Seek, SeekFrom};
 
 #[cfg(feature = "std")]
 extern crate std;
+
 #[cfg(feature = "std")]
-use std::{fs::File, os::unix::fs::FileExt};
+use std::fs::File;
 
 #[cfg(feature = "std")]
 /// MrcFile for file I/O operations with pread/pwrite
@@ -22,7 +24,7 @@ pub struct MrcFile {
 impl MrcFile {
     #[inline]
     pub fn open(path: impl AsRef<std::path::Path>) -> Result<Self, Error> {
-        let file = File::open(path).map_err(|_| Error::Io)?;
+        let mut file = File::open(path).map_err(|_| Error::Io)?;
         let header = Self::read_header(&file)?;
 
         if !header.validate() {
@@ -37,11 +39,18 @@ impl MrcFile {
         // Read all data into buffer
         let mut buffer = alloc::vec![0u8; total_size];
         if ext_header_size > 0 {
-            file.read_exact_at(&mut buffer[..ext_header_size], 1024)
+            use std::io::{Read, Seek, SeekFrom};
+            file.seek(SeekFrom::Start(1024)).map_err(|_| Error::Io)?;
+            file.read_exact(&mut buffer[..ext_header_size])
                 .map_err(|_| Error::Io)?;
         }
-        file.read_exact_at(&mut buffer[ext_header_size..], data_offset)
-            .map_err(|_| Error::Io)?;
+        {
+            use std::io::{Read, Seek, SeekFrom};
+            file.seek(SeekFrom::Start(data_offset))
+                .map_err(|_| Error::Io)?;
+            file.read_exact(&mut buffer[ext_header_size..])
+                .map_err(|_| Error::Io)?;
+        }
 
         Ok(Self {
             file,
@@ -59,18 +68,26 @@ impl MrcFile {
             return Err(Error::InvalidHeader);
         }
 
-        let file = File::create(path).map_err(|_| Error::Io)?;
+        let mut file = File::create(path).map_err(|_| Error::Io)?;
 
         // Write the header using safe encode method
         let mut header_bytes = [0u8; 1024];
         header.encode_to_bytes(&mut header_bytes);
-        file.write_all_at(&header_bytes, 0).map_err(|_| Error::Io)?;
+        {
+            use std::io::{Seek, SeekFrom, Write};
+            file.seek(SeekFrom::Start(0)).map_err(|_| Error::Io)?;
+            file.write_all(&header_bytes).map_err(|_| Error::Io)?;
+        }
 
         // Write extended header (zeros if none)
         let ext_header_size = header.nsymbt as usize;
         if ext_header_size > 0 {
             let zeros = alloc::vec![0u8; ext_header_size];
-            file.write_all_at(&zeros, 1024).map_err(|_| Error::Io)?;
+            {
+                use std::io::{Seek, SeekFrom, Write};
+                file.seek(SeekFrom::Start(1024)).map_err(|_| Error::Io)?;
+                file.write_all(&zeros).map_err(|_| Error::Io)?;
+            }
         }
 
         let data_offset = header.data_offset() as u64;
@@ -91,10 +108,10 @@ impl MrcFile {
     }
 
     #[inline]
-    fn read_header(file: &File) -> Result<Header, Error> {
+    fn read_header(mut file: &File) -> Result<Header, Error> {
         let mut header_bytes = [0u8; 1024];
-        file.read_exact_at(&mut header_bytes, 0)
-            .map_err(|_| Error::Io)?;
+        file.seek(SeekFrom::Start(0)).map_err(|_| Error::Io)?; // move point to the beginning position that intended to be read
+        file.read_exact(&mut header_bytes).map_err(|_| Error::Io)?; // read is a stream operation at the current position
 
         // Use safe decode method that handles endianness automatically
         let header = Header::decode_from_bytes(&header_bytes);
@@ -146,21 +163,35 @@ impl MrcFile {
         // Write header using safe encode method
         let mut header_bytes = [0u8; 1024];
         self.header.encode_to_bytes(&mut header_bytes);
-        self.file
-            .write_all_at(&header_bytes, 0)
-            .map_err(|_| Error::Io)?;
+        {
+            use std::io::{Seek, SeekFrom, Write};
+            self.file.seek(SeekFrom::Start(0)).map_err(|_| Error::Io)?;
+            self.file.write_all(&header_bytes).map_err(|_| Error::Io)?;
+        }
 
         // Write extended header
         if self.ext_header_size > 0 {
-            self.file
-                .write_all_at(view.ext_header(), 1024)
-                .map_err(|_| Error::Io)?;
+            {
+                use std::io::{Seek, SeekFrom, Write};
+                self.file
+                    .seek(SeekFrom::Start(1024))
+                    .map_err(|_| Error::Io)?;
+                self.file
+                    .write_all(view.ext_header())
+                    .map_err(|_| Error::Io)?;
+            }
         }
 
         // Write data
-        self.file
-            .write_all_at(view.data.as_bytes(), self.data_offset)
-            .map_err(|_| Error::Io)?;
+        {
+            use std::io::{Seek, SeekFrom, Write};
+            self.file
+                .seek(SeekFrom::Start(self.data_offset))
+                .map_err(|_| Error::Io)?;
+            self.file
+                .write_all(view.data.as_bytes())
+                .map_err(|_| Error::Io)?;
+        }
 
         // Update buffer with new data
         let total_size = self.ext_header_size + self.data_size;
@@ -185,7 +216,13 @@ impl MrcFile {
             return Err(Error::InvalidDimensions);
         }
 
-        self.file.write_all_at(data, 1024).map_err(|_| Error::Io)?;
+        {
+            use std::io::{Seek, SeekFrom, Write};
+            self.file
+                .seek(SeekFrom::Start(1024))
+                .map_err(|_| Error::Io)?;
+            self.file.write_all(data).map_err(|_| Error::Io)?;
+        }
         self.buffer[..self.ext_header_size].copy_from_slice(data);
         Ok(())
     }
@@ -203,9 +240,13 @@ impl MrcFile {
             return Err(Error::InvalidDimensions);
         }
 
-        self.file
-            .write_all_at(data, self.data_offset)
-            .map_err(|_| Error::Io)?;
+        {
+            use std::io::{Seek, SeekFrom, Write};
+            self.file
+                .seek(SeekFrom::Start(self.data_offset))
+                .map_err(|_| Error::Io)?;
+            self.file.write_all(data).map_err(|_| Error::Io)?;
+        }
         self.buffer[self.ext_header_size..].copy_from_slice(data);
         Ok(())
     }

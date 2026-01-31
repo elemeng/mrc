@@ -51,10 +51,12 @@
 #![no_std]
 #[cfg(feature = "std")]
 extern crate alloc;
-#[cfg(feature = "std")]
-extern crate std;
+
 #[cfg(feature = "f16")]
 extern crate half;
+
+#[cfg(feature = "std")]
+extern crate std;
 
 use alloc::vec::Vec;
 
@@ -108,7 +110,10 @@ impl FileEndian {
             if machst[2] != 0 || machst[3] != 0 {
                 std::eprintln!(
                     "Warning: Non-standard MACHST padding bytes: {:02X} {:02X} {:02X} {:02X}",
-                    machst[0], machst[1], machst[2], machst[3]
+                    machst[0],
+                    machst[1],
+                    machst[2],
+                    machst[3]
                 );
             }
         }
@@ -305,7 +310,7 @@ impl<'a> DataBlock<'a> {
         assert!(self.mode == Mode::Float32, "Mode must be Float32");
         let offset = index * 4;
         debug_assert!(offset + 4 <= self.bytes.len());
-        
+
         if self.file_endian.is_native() {
             // Fast path: native endian
             let arr: [u8; 4] = [
@@ -343,7 +348,7 @@ impl<'a> DataBlock<'a> {
         let len = self.len_voxels();
         let file_endian = self.file_endian;
         let bytes = self.bytes;
-        
+
         (0..len).map(move |i| {
             let offset = i * 4;
             if file_endian.is_native() {
@@ -378,7 +383,7 @@ impl<'a> DataBlock<'a> {
     /// Returns Error::InvalidMode if mode is not Float32
     /// Returns Error::InvalidDimensions if output buffer is too small
     #[inline]
-    #[allow(clippy::needless_range_loop)]  // Intentional: direct indexing for performance
+    #[allow(clippy::needless_range_loop)] // Intentional: direct indexing for performance
     pub fn read_f32_into(&self, out: &mut [f32]) -> Result<(), Error> {
         if self.mode != Mode::Float32 {
             return Err(Error::InvalidMode);
@@ -462,7 +467,7 @@ impl<'a> DataBlock<'a> {
         assert!(self.mode == Mode::Int16, "Mode must be Int16");
         let offset = index * 2;
         debug_assert!(offset + 2 <= self.bytes.len());
-        
+
         if self.file_endian.is_native() {
             let arr: [u8; 2] = [self.bytes[offset], self.bytes[offset + 1]];
             #[cfg(target_endian = "little")]
@@ -488,7 +493,7 @@ impl<'a> DataBlock<'a> {
         let len = self.len_voxels();
         let file_endian = self.file_endian;
         let bytes = self.bytes;
-        
+
         (0..len).map(move |i| {
             let offset = i * 2;
             if file_endian.is_native() {
@@ -513,7 +518,7 @@ impl<'a> DataBlock<'a> {
     /// Returns Error::InvalidMode if mode is not Int16
     /// Returns Error::InvalidDimensions if output buffer is too small
     #[inline]
-    #[allow(clippy::needless_range_loop)]  // Intentional: direct indexing for performance
+    #[allow(clippy::needless_range_loop)] // Intentional: direct indexing for performance
     pub fn read_i16_into(&self, out: &mut [i16]) -> Result<(), Error> {
         if self.mode != Mode::Int16 {
             return Err(Error::InvalidMode);
@@ -580,7 +585,7 @@ impl<'a> DataBlock<'a> {
         assert!(self.mode == Mode::Uint16, "Mode must be Uint16");
         let offset = index * 2;
         debug_assert!(offset + 2 <= self.bytes.len());
-        
+
         if self.file_endian.is_native() {
             let arr: [u8; 2] = [self.bytes[offset], self.bytes[offset + 1]];
             #[cfg(target_endian = "little")]
@@ -606,7 +611,7 @@ impl<'a> DataBlock<'a> {
         let len = self.len_voxels();
         let file_endian = self.file_endian;
         let bytes = self.bytes;
-        
+
         (0..len).map(move |i| {
             let offset = i * 2;
             if file_endian.is_native() {
@@ -631,7 +636,7 @@ impl<'a> DataBlock<'a> {
     /// Returns Error::InvalidMode if mode is not Uint16
     /// Returns Error::InvalidDimensions if output buffer is too small
     #[inline]
-    #[allow(clippy::needless_range_loop)]  // Intentional: direct indexing for performance
+    #[allow(clippy::needless_range_loop)] // Intentional: direct indexing for performance
     pub fn read_u16_into(&self, out: &mut [u16]) -> Result<(), Error> {
         if self.mode != Mode::Uint16 {
             return Err(Error::InvalidMode);
@@ -1417,7 +1422,7 @@ impl<'a> RawBuffer<'a> {
     }
 }
 
-// Optional file features
+/// Optional file features
 #[cfg(feature = "file")]
 mod mrcfile;
 #[cfg(test)]
@@ -1431,8 +1436,7 @@ pub use mrcfile::{MrcMmap, open_mmap};
 #[cfg(feature = "file")]
 pub use mrcfile::{MrcFile, open_file};
 
-// Error type
-
+/// Error type
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
     #[error("IO error")]

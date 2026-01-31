@@ -119,11 +119,11 @@ impl Header {
             dmean: f32::NEG_INFINITY, // Less than both to indicate not well-determined
             ispg: 1,                  // P1 space group.
             nsymbt: 0,
-            extra: [0u8; 100],        // NVERSION not set (no premature encoding)
+            extra: [0u8; 100], // NVERSION not set (no premature encoding)
             origin: [0.0; 3],
             map: *b"MAP ",
             machst: [0x44, 0x44, 0x00, 0x00], // Little-endian (crate policy for new files)
-            rms: -1.0,                // Negative indicates not well-determined
+            rms: -1.0,                        // Negative indicates not well-determined
             nlabl: 0,
             label: [0; 800],
         }
@@ -142,15 +142,15 @@ impl Header {
     pub fn data_size(&self) -> usize {
         let n = (self.nx as usize) * (self.ny as usize) * (self.nz as usize);
         match self.mode {
-            0 => n,         // 8-bit signed integer
-            1 => n * 2,         // 16-bit signed integer
-            2 => n * 4,         // 32-bit float
-            3 => n * 4,         // Complex 16-bit (2 bytes real + 2 bytes imaginary)
-            4 => n * 8,         // Complex 32-bit (4 bytes real + 4 bytes imaginary)
-            6 => n * 2,         // 16-bit unsigned integer
-            12 => n * 2,        // 16-bit float (IEEE-754 half)
+            0 => n,               // 8-bit signed integer
+            1 => n * 2,           // 16-bit signed integer
+            2 => n * 4,           // 32-bit float
+            3 => n * 4,           // Complex 16-bit (2 bytes real + 2 bytes imaginary)
+            4 => n * 8,           // Complex 32-bit (4 bytes real + 4 bytes imaginary)
+            6 => n * 2,           // 16-bit unsigned integer
+            12 => n * 2,          // 16-bit float (IEEE-754 half)
             101 => n.div_ceil(2), // 4-bit packed data (two voxels stored per byte)
-            _ => 0,             // unknown/unsupported
+            _ => 0,               // unknown/unsupported
         }
     }
 

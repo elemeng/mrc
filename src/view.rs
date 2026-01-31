@@ -63,8 +63,7 @@ impl<'a> MrcView<'a> {
             return Err(Error::InvalidDimensions);
         }
 
-        let mode = Mode::from_i32(header.mode)
-            .ok_or(Error::InvalidMode)?;
+        let mode = Mode::from_i32(header.mode).ok_or(Error::InvalidMode)?;
 
         let file_endian = header.detect_endian();
 
@@ -93,13 +92,6 @@ impl<'a> MrcView<'a> {
             self.header.nz as usize,
         )
     }
-
-
-
-
-
-
-
 
     #[cfg(feature = "f16")]
     #[inline]
@@ -155,7 +147,11 @@ impl<'a> MrcViewMut<'a> {
     /// Returns `Error::InvalidHeader` if the header validation fails
     /// Returns `Error::InvalidDimensions` if the data size doesn't match expected size
     #[inline]
-    pub fn from_parts(header: Header, ext_header: &'a mut [u8], data: &'a mut [u8]) -> Result<Self, Error> {
+    pub fn from_parts(
+        header: Header,
+        ext_header: &'a mut [u8],
+        data: &'a mut [u8],
+    ) -> Result<Self, Error> {
         if !header.validate() {
             return Err(Error::InvalidHeader);
         }
@@ -171,8 +167,7 @@ impl<'a> MrcViewMut<'a> {
             return Err(Error::InvalidDimensions);
         }
 
-        let mode = Mode::from_i32(header.mode)
-            .ok_or(Error::InvalidMode)?;
+        let mode = Mode::from_i32(header.mode).ok_or(Error::InvalidMode)?;
 
         let file_endian = header.detect_endian();
 
@@ -202,15 +197,7 @@ impl<'a> MrcViewMut<'a> {
     pub fn data_mut(&mut self) -> &mut [u8] {
         self.data.as_bytes_mut()
     }
-
-
-
-
-
-
-
-
-    }
+}
 
 #[cfg(test)]
 mod tests {
