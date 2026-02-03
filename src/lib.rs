@@ -76,7 +76,6 @@ mod tests;
 pub use header::Header;
 pub use mode::Mode;
 pub use view::{MrcView, MrcViewMut};
-pub use crate::{ExtHeader, ExtHeaderMut};
 
 /// Endianness of MRC file data
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

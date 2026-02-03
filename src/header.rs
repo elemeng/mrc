@@ -239,7 +239,7 @@ impl Header {
     ///
     /// This value is a numeric i32 and respects the file's endianness.
     pub fn nversion(&self) -> i32 {
-        use crate::{DecodeFromFile, FileEndian};
+        use crate::DecodeFromFile;
         let file_endian = self.detect_endian();
         i32::decode(file_endian, &self.extra[12..16])
     }
@@ -249,7 +249,7 @@ impl Header {
     ///
     /// This value is a numeric i32 and respects the file's endianness.
     pub fn set_nversion(&mut self, value: i32) {
-        use crate::{EncodeToFile, FileEndian};
+        use crate::EncodeToFile;
         let file_endian = self.detect_endian();
         value.encode(file_endian, &mut self.extra[12..16]);
     }

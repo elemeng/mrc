@@ -22,9 +22,6 @@ criterion = { version = "0.5", features = ["html_reports"] }
 tempfile = "3.8"
 
 
-
-
-
 [[example]]
 name = "test_real_mrc"
 
@@ -60,4 +57,3 @@ mmap = ["std", "dep:memmap2"]
 file = ["std"]
 std = []
 f16 = []
-

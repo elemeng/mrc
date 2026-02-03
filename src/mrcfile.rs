@@ -28,7 +28,7 @@ pub struct MrcFile {
 impl MrcFile {
     #[inline]
     pub fn open(path: impl AsRef<std::path::Path>) -> Result<Self, Error> {
-        let mut file = File::open(path).map_err(Error::Io)?;
+        let mut file = File::open(path).map_err(|_| Error::Io)?;
         let header = Self::read_header(&file)?;
 
         if !header.validate() {
@@ -43,14 +43,14 @@ impl MrcFile {
         // Read all data into buffer
         let mut buffer = alloc::vec![0u8; total_size];
         if ext_header_size > 0 {
-            file.seek(SeekFrom::Start(1024)).map_err(Error::Io)?;
+            file.seek(SeekFrom::Start(1024)).map_err(|_| Error::Io)?;
             file.read_exact(&mut buffer[..ext_header_size])
-                .map_err(Error::Io)?;
+                .map_err(|_| Error::Io)?;
         }
         {
-            file.seek(SeekFrom::Start(data_offset)).map_err(Error::Io)?;
+            file.seek(SeekFrom::Start(data_offset)).map_err(|_| Error::Io)?;
             file.read_exact(&mut buffer[ext_header_size..])
-                .map_err(Error::Io)?;
+                .map_err(|_| Error::Io)?;
         }
 
         Ok(Self {
@@ -69,14 +69,14 @@ impl MrcFile {
             return Err(Error::InvalidHeader);
         }
 
-        let mut file = File::create(path).map_err(Error::Io)?;
+        let mut file = File::create(path).map_err(|_| Error::Io)?;
 
         // Write the header using safe encode method
         let mut header_bytes = [0u8; 1024];
         header.encode_to_bytes(&mut header_bytes);
         {
-            file.seek(SeekFrom::Start(0)).map_err(Error::Io)?;
-            file.write_all(&header_bytes).map_err(Error::Io)?;
+            file.seek(SeekFrom::Start(0)).map_err(|_| Error::Io)?;
+            file.write_all(&header_bytes).map_err(|_| Error::Io)?;
         }
 
         // Write extended header (zeros if none)
@@ -84,8 +84,8 @@ impl MrcFile {
         if ext_header_size > 0 {
             let zeros = alloc::vec![0u8; ext_header_size];
             {
-                file.seek(SeekFrom::Start(1024)).map_err(Error::Io)?;
-                file.write_all(&zeros).map_err(Error::Io)?;
+                file.seek(SeekFrom::Start(1024)).map_err(|_| Error::Io)?;
+                file.write_all(&zeros).map_err(|_| Error::Io)?;
             }
         }
 
@@ -109,8 +109,8 @@ impl MrcFile {
     #[inline]
     fn read_header(mut file: &File) -> Result<Header, Error> {
         let mut header_bytes = [0u8; 1024];
-        file.seek(SeekFrom::Start(0)).map_err(Error::Io)?; // move point to the beginning position that intended to be read
-        file.read_exact(&mut header_bytes).map_err(Error::Io)?; // read is a stream operation at the current position
+        file.seek(SeekFrom::Start(0)).map_err(|_| Error::Io)?; // move point to the beginning position that intended to be read
+        file.read_exact(&mut header_bytes).map_err(|_| Error::Io)?; // read is a stream operation at the current position
 
         // Use safe decode method that handles endianness automatically
         let header = Header::decode_from_bytes(&header_bytes);
@@ -167,15 +167,15 @@ impl MrcFile {
         let mut header_bytes = [0u8; 1024];
         self.header.encode_to_bytes(&mut header_bytes);
         {
-            self.file.seek(SeekFrom::Start(0)).map_err(Error::Io)?;
-            self.file.write_all(&header_bytes).map_err(Error::Io)?;
+            self.file.seek(SeekFrom::Start(0)).map_err(|_| Error::Io)?;
+            self.file.write_all(&header_bytes).map_err(|_| Error::Io)?;
         }
 
         // Write extended header
         if self.ext_header_size > 0 {
             {
-                self.file.seek(SeekFrom::Start(1024)).map_err(Error::Io)?;
-                self.file.write_all(view.ext_header()).map_err(Error::Io)?;
+                self.file.seek(SeekFrom::Start(1024)).map_err(|_| Error::Io)?;
+                self.file.write_all(view.ext_header()).map_err(|_| Error::Io)?;
             }
         }
 
@@ -183,10 +183,10 @@ impl MrcFile {
         {
             self.file
                 .seek(SeekFrom::Start(self.data_offset))
-                .map_err(Error::Io)?;
+                .map_err(|_| Error::Io)?;
             self.file
                 .write_all(view.data.as_bytes())
-                .map_err(Error::Io)?;
+                .map_err(|_| Error::Io)?;
         }
 
         Ok(())
@@ -203,8 +203,8 @@ impl MrcFile {
             return Err(Error::InvalidDimensions);
         }
 
-        self.file.seek(SeekFrom::Start(1024)).map_err(Error::Io)?;
-        self.file.write_all(data).map_err(Error::Io)?;
+        self.file.seek(SeekFrom::Start(1024)).map_err(|_| Error::Io)?;
+        self.file.write_all(data).map_err(|_| Error::Io)?;
         self.buffer[..self.ext_header_size].copy_from_slice(data);
         Ok(())
     }
@@ -222,8 +222,8 @@ impl MrcFile {
 
         self.file
             .seek(SeekFrom::Start(self.data_offset))
-            .map_err(Error::Io)?;
-        self.file.write_all(data).map_err(Error::Io)?;
+            .map_err(|_| Error::Io)?;
+        self.file.write_all(data).map_err(|_| Error::Io)?;
         self.buffer[self.ext_header_size..].copy_from_slice(data);
         Ok(())
     }
@@ -254,9 +254,9 @@ impl MrcMmap {
     pub fn open(path: impl AsRef<std::path::Path>) -> Result<Self, Error> {
         use memmap2::MmapOptions;
 
-        let file = File::open(path).map_err(Error::Io)?;
+        let file = File::open(path).map_err(|_| Error::Io)?;
 
-        let buffer = unsafe { MmapOptions::new().map(&file).map_err(Error::Io)? };
+        let buffer = unsafe { MmapOptions::new().map(&file).map_err(|_| Error::Mmap)? };
 
         if buffer.len() < 1024 {
             return Err(Error::InvalidHeader);
