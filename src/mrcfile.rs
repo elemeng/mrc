@@ -293,6 +293,11 @@ impl MrcMmap {
     }
 
     #[inline]
+    pub fn header(&self) -> &Header {
+        &self.header
+    }
+
+    #[inline]
     /// Returns a combined view of the MRC file containing header, extended header, and data.
     ///
     /// This method provides access to all file components through a single `MrcView` object.

@@ -238,6 +238,56 @@ impl<'a> ExtHeaderMut<'a> {
     }
 }
 
+/// Iterator for individual 4-bit values from Packed4Bit data
+///
+/// This iterator provides efficient access to individual 4-bit values (0-15) from
+/// packed byte data without the overhead of nested closures from flat_map.
+struct Packed4BitValuesIterator<'a> {
+    bytes: &'a [u8],
+    byte_idx: usize,
+    nibble: bool, // false = first nibble (lower 4 bits), true = second nibble (upper 4 bits)
+    file_endian: FileEndian,
+    remaining: usize,
+}
+
+impl<'a> Iterator for Packed4BitValuesIterator<'a> {
+    type Item = u8;
+
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.remaining == 0 {
+            return None;
+        }
+
+        let byte = self.bytes.get(self.byte_idx).copied()?;
+        let packed = Packed4Bit::decode(self.file_endian, &[byte]);
+
+        let value = if self.nibble {
+            packed.second()
+        } else {
+            packed.first()
+        };
+
+        self.nibble = !self.nibble;
+        self.byte_idx += if self.nibble { 1 } else { 0 };
+        self.remaining -= 1;
+
+        Some(value)
+    }
+
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (self.remaining, Some(self.remaining))
+    }
+}
+
+impl<'a> ExactSizeIterator for Packed4BitValuesIterator<'a> {
+    #[inline]
+    fn len(&self) -> usize {
+        self.remaining
+    }
+}
+
 /// Data block - voxel data with endianness-aware decoding
 ///
 /// This type provides typed access to voxel data while maintaining
@@ -376,7 +426,6 @@ impl<'a> DataBlock<'a> {
     /// Returns Error::InvalidMode if mode is not Float32
     /// Returns Error::InvalidDimensions if output buffer is too small
     #[inline]
-    #[allow(clippy::needless_range_loop)] // Intentional: direct indexing for performance
     pub fn read_f32_into(&self, out: &mut [f32]) -> Result<(), Error> {
         if self.mode != Mode::Float32 {
             return Err(Error::InvalidMode);
@@ -387,8 +436,18 @@ impl<'a> DataBlock<'a> {
             return Err(Error::InvalidDimensions);
         }
 
-        for i in 0..n {
-            out[i] = decode_f32(self.bytes, i * 4, self.file_endian);
+        // Branchless endianness handling: check once outside loop
+        match self.file_endian {
+            FileEndian::LittleEndian => {
+                for (i, chunk) in self.bytes.chunks_exact(4).enumerate().take(n) {
+                    out[i] = f32::from_le_bytes(chunk.try_into().unwrap());
+                }
+            }
+            FileEndian::BigEndian => {
+                for (i, chunk) in self.bytes.chunks_exact(4).enumerate().take(n) {
+                    out[i] = f32::from_be_bytes(chunk.try_into().unwrap());
+                }
+            }
         }
 
         Ok(())
@@ -409,9 +468,48 @@ impl<'a> DataBlock<'a> {
         }
 
         let n = self.bytes.len() / 4;
-        let mut result: Vec<f32> = core::iter::repeat_n(0.0f32, n).collect();
+        let mut result = Vec::with_capacity(n);
+
+        // Safe: we're about to fill all elements with read_f32_into
+        unsafe { result.set_len(n); }
         self.read_f32_into(&mut result)?;
         Ok(result)
+    }
+
+    /// Get zero-copy aligned f32 slice (native endianness only)
+    ///
+    /// This method provides a zero-copy view of the data as an f32 slice when the
+    /// file endianness matches the native system endianness and the data is properly
+    /// aligned. This is particularly useful for memory-mapped files where aligned access
+    /// is critical for performance and correctness.
+    ///
+    /// # Errors
+    /// - Returns `Error::InvalidMode` if the mode is not Float32
+    /// - Returns `Error::InvalidDimensions` if the byte length is not divisible by 4
+    /// - Returns `Error::InvalidDimensions` if the file endianness doesn't match native
+    /// - Returns `Error::InvalidDimensions` if the byte slice is not properly aligned for f32 access
+    ///
+    /// # Safety Note
+    /// This method uses `bytemuck::try_cast_slice` which ensures memory alignment and
+    /// prevents undefined behavior from unaligned access. The alignment check is critical
+    /// for memory-mapped files which may start at arbitrary offsets.
+    pub fn as_f32_slice(&self) -> Result<&[f32], Error> {
+        if self.mode != Mode::Float32 {
+            return Err(Error::InvalidMode);
+        }
+
+        if self.bytes.len() % 4 != 0 {
+            return Err(Error::InvalidDimensions);
+        }
+
+        // Only allow zero-copy access for native endianness
+        if !self.file_endian.is_native() {
+            return Err(Error::InvalidDimensions);
+        }
+
+        // Use bytemuck to safely handle alignment requirements
+        // This returns an error if the slice is not properly aligned for f32 access
+        bytemuck::try_cast_slice(self.bytes).map_err(|_| Error::InvalidDimensions)
     }
 
     /// Get a single i16 value at the specified voxel index
@@ -491,6 +589,32 @@ impl<'a> DataBlock<'a> {
         Ok(result)
     }
 
+    /// Get zero-copy aligned i16 slice (native endianness only)
+    ///
+    /// Provides a zero-copy view of the data as an i16 slice when file endianness
+    /// matches native system endianness and data is properly aligned.
+    ///
+    /// # Errors
+    /// - Returns `Error::InvalidMode` if the mode is not Int16
+    /// - Returns `Error::InvalidDimensions` if the byte length is not divisible by 2
+    /// - Returns `Error::InvalidDimensions` if the file endianness doesn't match native
+    /// - Returns `Error::InvalidDimensions` if the byte slice is not properly aligned for i16 access
+    pub fn as_i16_slice(&self) -> Result<&[i16], Error> {
+        if self.mode != Mode::Int16 {
+            return Err(Error::InvalidMode);
+        }
+
+        if self.bytes.len() % 2 != 0 {
+            return Err(Error::InvalidDimensions);
+        }
+
+        if !self.file_endian.is_native() {
+            return Err(Error::InvalidDimensions);
+        }
+
+        bytemuck::try_cast_slice(self.bytes).map_err(|_| Error::InvalidDimensions)
+    }
+
     /// Get a single u16 value at the specified voxel index
     ///
     /// # Errors
@@ -566,6 +690,32 @@ impl<'a> DataBlock<'a> {
         let mut result: Vec<u16> = core::iter::repeat_n(0u16, n).collect();
         self.read_u16_into(&mut result)?;
         Ok(result)
+    }
+
+    /// Get zero-copy aligned u16 slice (native endianness only)
+    ///
+    /// Provides a zero-copy view of the data as a u16 slice when file endianness
+    /// matches native system endianness and data is properly aligned.
+    ///
+    /// # Errors
+    /// - Returns `Error::InvalidMode` if the mode is not Uint16
+    /// - Returns `Error::InvalidDimensions` if the byte length is not divisible by 2
+    /// - Returns `Error::InvalidDimensions` if the file endianness doesn't match native
+    /// - Returns `Error::InvalidDimensions` if the byte slice is not properly aligned for u16 access
+    pub fn as_u16_slice(&self) -> Result<&[u16], Error> {
+        if self.mode != Mode::Uint16 {
+            return Err(Error::InvalidMode);
+        }
+
+        if self.bytes.len() % 2 != 0 {
+            return Err(Error::InvalidDimensions);
+        }
+
+        if !self.file_endian.is_native() {
+            return Err(Error::InvalidDimensions);
+        }
+
+        bytemuck::try_cast_slice(self.bytes).map_err(|_| Error::InvalidDimensions)
     }
 
     /// Get a single i8 value at the specified voxel index
@@ -777,12 +927,14 @@ impl<'a> DataBlock<'a> {
         if self.mode != Mode::Packed4Bit {
             return Err(Error::InvalidMode);
         }
-        let file_endian = self.file_endian;
-        let voxel_count = self.voxel_count;
-        Ok(self.bytes.iter().flat_map(move |&b| {
-            let packed = Packed4Bit::decode(file_endian, &[b]);
-            [packed.first(), packed.second()]
-        }).take(voxel_count))
+
+        Ok(Packed4BitValuesIterator {
+            bytes: self.bytes,
+            byte_idx: 0,
+            nibble: false,
+            file_endian: self.file_endian,
+            remaining: self.voxel_count,
+        })
     }
 
     /// Decode Packed4Bit values into a pre-allocated buffer

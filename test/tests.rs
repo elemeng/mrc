@@ -1192,7 +1192,7 @@ mod view_tests {
 
         // Test Packed4Bit: 2 voxels per byte
         let bytes = vec![0u8; 10];
-        let datablock = DataBlock::new(&bytes, Mode::Packed4Bit, FileEndian::LittleEndian);
+        let datablock = DataBlock::new(&bytes, Mode::Packed4Bit, FileEndian::LittleEndian, 20);
 
         assert_eq!(
             datablock.len_voxels(),
@@ -1207,7 +1207,7 @@ mod view_tests {
 
         // Test Float32: 1 voxel per 4 bytes
         let bytes = vec![0u8; 12];
-        let datablock = DataBlock::new(&bytes, Mode::Float32, FileEndian::LittleEndian);
+        let datablock = DataBlock::new(&bytes, Mode::Float32, FileEndian::LittleEndian, 3);
 
         assert_eq!(
             datablock.len_voxels(),
@@ -1222,7 +1222,7 @@ mod view_tests {
 
         // Test Int16: 1 voxel per 2 bytes
         let bytes = vec![0u8; 8];
-        let datablock = DataBlock::new(&bytes, Mode::Int16, FileEndian::LittleEndian);
+        let datablock = DataBlock::new(&bytes, Mode::Int16, FileEndian::LittleEndian, 4);
 
         assert_eq!(
             datablock.len_voxels(),
@@ -1237,7 +1237,7 @@ mod view_tests {
 
         // Test Int8: 1 voxel per 1 byte
         let bytes = vec![0u8; 5];
-        let datablock = DataBlock::new(&bytes, Mode::Int8, FileEndian::LittleEndian);
+        let datablock = DataBlock::new(&bytes, Mode::Int8, FileEndian::LittleEndian, 5);
 
         assert_eq!(
             datablock.len_voxels(),
@@ -1253,7 +1253,7 @@ mod view_tests {
 
         // Test with non-divisible byte length (10 bytes, should be multiple of 4)
         let bytes = vec![0u8; 10];
-        let datablock = DataBlock::new(&bytes, Mode::Float32, FileEndian::LittleEndian);
+        let datablock = DataBlock::new(&bytes, Mode::Float32, FileEndian::LittleEndian, 2);
 
         let result = datablock.to_vec_f32();
         assert!(matches!(result, Err(crate::Error::InvalidDimensions)));
@@ -1265,7 +1265,7 @@ mod view_tests {
 
         // Test with non-divisible byte length (3 bytes, should be multiple of 2)
         let bytes = vec![0u8; 3];
-        let datablock = DataBlock::new(&bytes, Mode::Int16, FileEndian::LittleEndian);
+        let datablock = DataBlock::new(&bytes, Mode::Int16, FileEndian::LittleEndian, 1);
 
         let result = datablock.to_vec_i16();
         assert!(matches!(result, Err(crate::Error::InvalidDimensions)));
@@ -1277,7 +1277,7 @@ mod view_tests {
 
         // Test with non-divisible byte length (5 bytes, should be multiple of 2)
         let bytes = vec![0u8; 5];
-        let datablock = DataBlock::new(&bytes, Mode::Uint16, FileEndian::LittleEndian);
+        let datablock = DataBlock::new(&bytes, Mode::Uint16, FileEndian::LittleEndian, 2);
 
         let result = datablock.to_vec_u16();
         assert!(matches!(result, Err(crate::Error::InvalidDimensions)));
@@ -1289,7 +1289,7 @@ mod view_tests {
 
         // Test with non-divisible byte length (10 bytes, should be multiple of 4)
         let bytes = vec![0u8; 10];
-        let datablock = DataBlock::new(&bytes, Mode::Int16Complex, FileEndian::LittleEndian);
+        let datablock = DataBlock::new(&bytes, Mode::Int16Complex, FileEndian::LittleEndian, 2);
 
         let result = datablock.as_int16_complex();
         assert!(matches!(result, Err(crate::Error::InvalidDimensions)));
@@ -1301,7 +1301,7 @@ mod view_tests {
 
         // Test with non-divisible byte length (10 bytes, should be multiple of 8)
         let bytes = vec![0u8; 10];
-        let datablock = DataBlock::new(&bytes, Mode::Float32Complex, FileEndian::LittleEndian);
+        let datablock = DataBlock::new(&bytes, Mode::Float32Complex, FileEndian::LittleEndian, 1);
 
         let result = datablock.as_float32_complex();
         assert!(matches!(result, Err(crate::Error::InvalidDimensions)));
@@ -1314,7 +1314,7 @@ mod view_tests {
 
         // Test with non-divisible byte length (3 bytes, should be multiple of 2)
         let bytes = vec![0u8; 3];
-        let datablock = DataBlock::new(&bytes, Mode::Float16, FileEndian::LittleEndian);
+        let datablock = DataBlock::new(&bytes, Mode::Float16, FileEndian::LittleEndian, 1);
 
         let result = datablock.as_f16();
         assert!(matches!(result, Err(crate::Error::InvalidDimensions)));
@@ -1327,7 +1327,7 @@ mod view_tests {
 
         // Test with odd number of voxels (6 voxels = 3 bytes)
         let bytes = vec![0u8; 3];
-        let datablock = DataBlock::new(&bytes, Mode::Packed4Bit, FileEndian::LittleEndian);
+        let datablock = DataBlock::new(&bytes, Mode::Packed4Bit, FileEndian::LittleEndian, 6);
 
         // Should correctly report 6 voxels (3 bytes * 2)
         assert_eq!(datablock.len_voxels(), 6);
@@ -1349,7 +1349,7 @@ mod view_tests {
 
         // Test with single byte (2 voxels)
         let bytes = vec![0xABu8];
-        let datablock = DataBlock::new(&bytes, Mode::Packed4Bit, FileEndian::LittleEndian);
+        let datablock = DataBlock::new(&bytes, Mode::Packed4Bit, FileEndian::LittleEndian, 2);
 
         assert_eq!(datablock.len_voxels(), 2);
 
