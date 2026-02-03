@@ -1307,6 +1307,7 @@ mod view_tests {
         assert!(matches!(result, Err(crate::Error::InvalidDimensions)));
     }
 
+    #[cfg(feature = "f16")]
     #[test]
     fn test_datablock_as_f16_divisibility_error() {
         use crate::{DataBlock, FileEndian, Mode};

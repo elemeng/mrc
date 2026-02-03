@@ -386,7 +386,7 @@ fn calculate_statistics(data: &[f32]) -> Statistics {
 | `std`   | Standard library support | ✅       | ❌                 | File I/O, Error trait                   |
 | `mmap`  | Memory-mapped I/O        | ✅       | ❌                 | Large file processing                   |
 | `file`  | File operations          | ✅       | ❌                 | `MrcFile::open()`                       |
-| `f16`   | Half-precision support   | ✅       | ❌                 | `view::<f16>()` with IEEE 754-2008 half |
+| `f16`   | Half-precision support   | ✅       | ❌                 | `view.data.as_f16()` with nightly Rust  |
 
 ### no_std Usage
 
@@ -427,7 +427,7 @@ let sum: f32 = floats.iter().sum();
 | `Error`       | ✅                  | Comprehensive error handling    |
 | `MrcFile`     | ❌                  | Requires file system (std)      |
 | `MrcMmap`     | ❌                  | Requires memory mapping (std)   |
-| `f16` support | ❌                  | Requires half crate (std)       |
+| `f16` support | ❌                  | Requires nightly Rust (std)     |
 
 ## 🛣️ Development Roadmap
 

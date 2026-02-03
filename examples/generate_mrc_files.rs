@@ -1,4 +1,5 @@
-use half::f16;
+#![feature(f16)]
+
 use mrc::Header;
 use mrc::Mode;
 use std::fs::File;
@@ -108,7 +109,7 @@ fn create_ball_data_3d(
                         } else {
                             0.0f32
                         };
-                        let f16_value = f16::from_f32(value);
+                        let f16_value = (value as f16).to_bits();
                         data.extend_from_slice(&f16_value.to_le_bytes());
                     }
                 }
@@ -249,7 +250,7 @@ fn create_mrc_file(mode: i32, filename: &str) -> std::io::Result<()> {
         }
         Mode::Float16 => {
             for chunk in data.chunks_exact(2) {
-                let val = f16::from_le_bytes([chunk[0], chunk[1]]).into();
+                let val = f16::from_bits(u16::from_le_bytes([chunk[0], chunk[1]])) as f32;
                 min_val = min_val.min(val);
                 max_val = max_val.max(val);
                 sum += val as f64;

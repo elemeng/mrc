@@ -132,9 +132,9 @@ fn run_test() -> Result<(), mrc::Error> {
     // 8. Test high-level convenience functions
     println!("\n8. Testing high-level functions:");
     {
-        // Test open_file and open_mmap
-        let _view = mrc::open_file(temp_path)?;
-        println!("   ✅ open_file()");
+        // Test open_mmap
+        let _file = MrcFile::open(temp_path)?;
+        println!("   ✅ MrcFile::open()");
 
         #[cfg(feature = "mmap")]
         {

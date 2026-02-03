@@ -16,12 +16,14 @@ readme = "README.md"
 bytemuck = { version = "1.15", default-features = false, features = ["derive"] }
 memmap2 = { version = "0.9", optional = true }
 thiserror = { version = "2.0.16", default-features = false }
-half = { version = "2.6", optional = true, default-features = false, features = ["bytemuck"] }
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
-half = "2.6.0"
 tempfile = "3.8"
+
+
+
+
 
 [[example]]
 name = "test_real_mrc"
@@ -57,4 +59,5 @@ default = ["std", "mmap", "file", "f16"]
 mmap = ["std", "dep:memmap2"]
 file = ["std"]
 std = []
-f16 = ["dep:half"]
+f16 = []
+

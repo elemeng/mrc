@@ -216,7 +216,7 @@ let mut buffer = alloc::vec![0u8; total_size];
 // Lines 53-55: 🚨 SECOND BOTTLENECK
 // Single blocking read of entire data block
 file.read_exact_at(&mut buffer[ext_header_size..], data_offset)
-    .map_err(|_| Error::Io)?;
+    .map_err(Error::Io)?;
 ```
 
 ### In `lib.rs` (DataBlock access)

@@ -162,8 +162,8 @@ impl Header {
             && self.nz > 0
             && matches!(self.mode, 0 | 1 | 2 | 3 | 4 | 6 | 12 | 101)
             && self.map == *b"MAP "
-            // Validate ISPG: 0 (2D/stack), 1 (single volume), 1-230 (crystallographic), or 400-630 (volume stacks)
-            && (self.ispg == 0 || self.ispg == 1 || (self.ispg >= 1 && self.ispg <= 230) || (self.ispg >= 400 && self.ispg <= 630))
+            // Validate ISPG: 0 (2D/stack), 1-230 (crystallographic), or 400-630 (volume stacks)
+            && (self.ispg == 0 || (self.ispg >= 1 && self.ispg <= 230) || (self.ispg >= 400 && self.ispg <= 630))
             // Validate axis mapping: MAPC, MAPR, MAPS must be a permutation of (1, 2, 3)
             && matches!(self.mapc, 1..=3)
             && matches!(self.mapr, 1..=3)
@@ -171,6 +171,10 @@ impl Header {
             && self.mapc != self.mapr
             && self.mapc != self.maps
             && self.mapr != self.maps
+            // Validate nsymbt is non-negative
+            && self.nsymbt >= 0
+            // Validate nlabl is between 0 and 10
+            && self.nlabl >= 0 && self.nlabl <= 10
     }
 
     #[inline]
@@ -268,15 +272,6 @@ impl Header {
     /// This method is not intended for creating big-endian files from scratch.
     pub fn set_file_endian(&mut self, endian: crate::FileEndian) {
         self.machst = endian.to_machst();
-    }
-
-    #[inline]
-    /// Get the file endianness from this header
-    ///
-    /// Returns the endianness as specified by the MACHST field.
-    /// If MACHST is all zeros, defaults to little-endian.
-    pub fn file_endian(&self) -> crate::FileEndian {
-        self.detect_endian()
     }
 
     /// Decode header from raw bytes with correct endianness

@@ -49,11 +49,9 @@
 //! cross-platform reading, writing, memory-mapped access, and streaming updates.
 
 #![no_std]
+#![cfg_attr(feature = "f16", feature(f16))]
 #[cfg(feature = "std")]
 extern crate alloc;
-
-#[cfg(feature = "f16")]
-extern crate half;
 
 #[cfg(feature = "std")]
 extern crate std;
@@ -151,40 +149,6 @@ impl FileEndian {
     }
 }
 
-/// Output endianness for writing MRC files
-///
-/// Controls how data is encoded when writing to disk.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum OutputEndian {
-    /// Use native system endianness (default)
-    Native,
-    /// Force little-endian output
-    LittleEndian,
-    /// Force big-endian output
-    BigEndian,
-}
-
-impl OutputEndian {
-    /// Get the actual FileEndian for this output setting
-    #[inline]
-    pub fn as_file_endian(self) -> FileEndian {
-        match self {
-            OutputEndian::Native => FileEndian::native(),
-            OutputEndian::LittleEndian => FileEndian::LittleEndian,
-            OutputEndian::BigEndian => FileEndian::BigEndian,
-        }
-    }
-
-    /// Get the MACHST bytes for this output setting
-    #[inline]
-    pub fn machst_bytes(self) -> [u8; 4] {
-        match self.as_file_endian() {
-            FileEndian::LittleEndian => [0x44, 0x44, 0x00, 0x00],
-            FileEndian::BigEndian => [0x11, 0x11, 0x00, 0x00],
-        }
-    }
-}
-
 /// Extended header - opaque metadata blob
 ///
 /// This type provides read-only access to the extended header bytes.
@@ -244,6 +208,34 @@ pub struct DataBlock<'a> {
     bytes: &'a [u8],
     mode: Mode,
     file_endian: FileEndian,
+}
+
+/// Helper functions for endianness-aware decoding
+#[inline]
+fn decode_f32(bytes: &[u8], offset: usize, file_endian: FileEndian) -> f32 {
+    let arr: [u8; 4] = [bytes[offset], bytes[offset + 1], bytes[offset + 2], bytes[offset + 3]];
+    match file_endian {
+        FileEndian::LittleEndian => f32::from_le_bytes(arr),
+        FileEndian::BigEndian => f32::from_be_bytes(arr),
+    }
+}
+
+#[inline]
+fn decode_i16(bytes: &[u8], offset: usize, file_endian: FileEndian) -> i16 {
+    let arr: [u8; 2] = [bytes[offset], bytes[offset + 1]];
+    match file_endian {
+        FileEndian::LittleEndian => i16::from_le_bytes(arr),
+        FileEndian::BigEndian => i16::from_be_bytes(arr),
+    }
+}
+
+#[inline]
+fn decode_u16(bytes: &[u8], offset: usize, file_endian: FileEndian) -> u16 {
+    let arr: [u8; 2] = [bytes[offset], bytes[offset + 1]];
+    match file_endian {
+        FileEndian::LittleEndian => u16::from_le_bytes(arr),
+        FileEndian::BigEndian => u16::from_be_bytes(arr),
+    }
 }
 
 impl<'a> DataBlock<'a> {
@@ -309,33 +301,8 @@ impl<'a> DataBlock<'a> {
     pub fn get_f32(&self, index: usize) -> f32 {
         assert!(self.mode == Mode::Float32, "Mode must be Float32");
         let offset = index * 4;
-        debug_assert!(offset + 4 <= self.bytes.len());
-
-        if self.file_endian.is_native() {
-            // Fast path: native endian
-            let arr: [u8; 4] = [
-                self.bytes[offset],
-                self.bytes[offset + 1],
-                self.bytes[offset + 2],
-                self.bytes[offset + 3],
-            ];
-            #[cfg(target_endian = "little")]
-            return f32::from_le_bytes(arr);
-            #[cfg(target_endian = "big")]
-            return f32::from_be_bytes(arr);
-        } else {
-            // Byte swap needed
-            let arr: [u8; 4] = [
-                self.bytes[offset],
-                self.bytes[offset + 1],
-                self.bytes[offset + 2],
-                self.bytes[offset + 3],
-            ];
-            match self.file_endian {
-                FileEndian::LittleEndian => f32::from_le_bytes(arr),
-                FileEndian::BigEndian => f32::from_be_bytes(arr),
-            }
-        }
+        assert!(offset + 4 <= self.bytes.len(), "Index out of bounds");
+        decode_f32(self.bytes, offset, self.file_endian)
     }
 
     /// Create an iterator over f32 values
@@ -349,32 +316,7 @@ impl<'a> DataBlock<'a> {
         let file_endian = self.file_endian;
         let bytes = self.bytes;
 
-        (0..len).map(move |i| {
-            let offset = i * 4;
-            if file_endian.is_native() {
-                let arr: [u8; 4] = [
-                    bytes[offset],
-                    bytes[offset + 1],
-                    bytes[offset + 2],
-                    bytes[offset + 3],
-                ];
-                #[cfg(target_endian = "little")]
-                return f32::from_le_bytes(arr);
-                #[cfg(target_endian = "big")]
-                return f32::from_be_bytes(arr);
-            } else {
-                let arr: [u8; 4] = [
-                    bytes[offset],
-                    bytes[offset + 1],
-                    bytes[offset + 2],
-                    bytes[offset + 3],
-                ];
-                match file_endian {
-                    FileEndian::LittleEndian => f32::from_le_bytes(arr),
-                    FileEndian::BigEndian => f32::from_be_bytes(arr),
-                }
-            }
-        })
+        (0..len).map(move |i| decode_f32(bytes, i * 4, file_endian))
     }
 
     /// Decode f32 values into a pre-allocated buffer
@@ -394,45 +336,8 @@ impl<'a> DataBlock<'a> {
             return Err(Error::InvalidDimensions);
         }
 
-        if self.file_endian.is_native() {
-            // Fast native-endian path
-            #[cfg(target_endian = "little")]
-            for i in 0..n {
-                let offset = i * 4;
-                let arr: [u8; 4] = [
-                    self.bytes[offset],
-                    self.bytes[offset + 1],
-                    self.bytes[offset + 2],
-                    self.bytes[offset + 3],
-                ];
-                out[i] = f32::from_le_bytes(arr);
-            }
-            #[cfg(target_endian = "big")]
-            for i in 0..n {
-                let offset = i * 4;
-                let arr: [u8; 4] = [
-                    self.bytes[offset],
-                    self.bytes[offset + 1],
-                    self.bytes[offset + 2],
-                    self.bytes[offset + 3],
-                ];
-                out[i] = f32::from_be_bytes(arr);
-            }
-        } else {
-            // Byte swap needed
-            for i in 0..n {
-                let offset = i * 4;
-                let arr: [u8; 4] = [
-                    self.bytes[offset],
-                    self.bytes[offset + 1],
-                    self.bytes[offset + 2],
-                    self.bytes[offset + 3],
-                ];
-                out[i] = match self.file_endian {
-                    FileEndian::LittleEndian => f32::from_le_bytes(arr),
-                    FileEndian::BigEndian => f32::from_be_bytes(arr),
-                };
-            }
+        for i in 0..n {
+            out[i] = decode_f32(self.bytes, i * 4, self.file_endian);
         }
 
         Ok(())
@@ -466,21 +371,8 @@ impl<'a> DataBlock<'a> {
     pub fn get_i16(&self, index: usize) -> i16 {
         assert!(self.mode == Mode::Int16, "Mode must be Int16");
         let offset = index * 2;
-        debug_assert!(offset + 2 <= self.bytes.len());
-
-        if self.file_endian.is_native() {
-            let arr: [u8; 2] = [self.bytes[offset], self.bytes[offset + 1]];
-            #[cfg(target_endian = "little")]
-            return i16::from_le_bytes(arr);
-            #[cfg(target_endian = "big")]
-            return i16::from_be_bytes(arr);
-        } else {
-            let arr: [u8; 2] = [self.bytes[offset], self.bytes[offset + 1]];
-            match self.file_endian {
-                FileEndian::LittleEndian => i16::from_le_bytes(arr),
-                FileEndian::BigEndian => i16::from_be_bytes(arr),
-            }
-        }
+        assert!(offset + 2 <= self.bytes.len(), "Index out of bounds");
+        decode_i16(self.bytes, offset, self.file_endian)
     }
 
     /// Create an iterator over i16 values
@@ -494,22 +386,7 @@ impl<'a> DataBlock<'a> {
         let file_endian = self.file_endian;
         let bytes = self.bytes;
 
-        (0..len).map(move |i| {
-            let offset = i * 2;
-            if file_endian.is_native() {
-                let arr: [u8; 2] = [bytes[offset], bytes[offset + 1]];
-                #[cfg(target_endian = "little")]
-                return i16::from_le_bytes(arr);
-                #[cfg(target_endian = "big")]
-                return i16::from_be_bytes(arr);
-            } else {
-                let arr: [u8; 2] = [bytes[offset], bytes[offset + 1]];
-                match file_endian {
-                    FileEndian::LittleEndian => i16::from_le_bytes(arr),
-                    FileEndian::BigEndian => i16::from_be_bytes(arr),
-                }
-            }
-        })
+        (0..len).map(move |i| decode_i16(bytes, i * 2, file_endian))
     }
 
     /// Decode i16 values into a pre-allocated buffer
@@ -529,28 +406,8 @@ impl<'a> DataBlock<'a> {
             return Err(Error::InvalidDimensions);
         }
 
-        if self.file_endian.is_native() {
-            #[cfg(target_endian = "little")]
-            for i in 0..n {
-                let offset = i * 2;
-                let arr: [u8; 2] = [self.bytes[offset], self.bytes[offset + 1]];
-                out[i] = i16::from_le_bytes(arr);
-            }
-            #[cfg(target_endian = "big")]
-            for i in 0..n {
-                let offset = i * 2;
-                let arr: [u8; 2] = [self.bytes[offset], self.bytes[offset + 1]];
-                out[i] = i16::from_be_bytes(arr);
-            }
-        } else {
-            for i in 0..n {
-                let offset = i * 2;
-                let arr: [u8; 2] = [self.bytes[offset], self.bytes[offset + 1]];
-                out[i] = match self.file_endian {
-                    FileEndian::LittleEndian => i16::from_le_bytes(arr),
-                    FileEndian::BigEndian => i16::from_be_bytes(arr),
-                };
-            }
+        for i in 0..n {
+            out[i] = decode_i16(self.bytes, i * 2, self.file_endian);
         }
 
         Ok(())
@@ -584,21 +441,8 @@ impl<'a> DataBlock<'a> {
     pub fn get_u16(&self, index: usize) -> u16 {
         assert!(self.mode == Mode::Uint16, "Mode must be Uint16");
         let offset = index * 2;
-        debug_assert!(offset + 2 <= self.bytes.len());
-
-        if self.file_endian.is_native() {
-            let arr: [u8; 2] = [self.bytes[offset], self.bytes[offset + 1]];
-            #[cfg(target_endian = "little")]
-            return u16::from_le_bytes(arr);
-            #[cfg(target_endian = "big")]
-            return u16::from_be_bytes(arr);
-        } else {
-            let arr: [u8; 2] = [self.bytes[offset], self.bytes[offset + 1]];
-            match self.file_endian {
-                FileEndian::LittleEndian => u16::from_le_bytes(arr),
-                FileEndian::BigEndian => u16::from_be_bytes(arr),
-            }
-        }
+        assert!(offset + 2 <= self.bytes.len(), "Index out of bounds");
+        decode_u16(self.bytes, offset, self.file_endian)
     }
 
     /// Create an iterator over u16 values
@@ -612,22 +456,7 @@ impl<'a> DataBlock<'a> {
         let file_endian = self.file_endian;
         let bytes = self.bytes;
 
-        (0..len).map(move |i| {
-            let offset = i * 2;
-            if file_endian.is_native() {
-                let arr: [u8; 2] = [bytes[offset], bytes[offset + 1]];
-                #[cfg(target_endian = "little")]
-                return u16::from_le_bytes(arr);
-                #[cfg(target_endian = "big")]
-                return u16::from_be_bytes(arr);
-            } else {
-                let arr: [u8; 2] = [bytes[offset], bytes[offset + 1]];
-                match file_endian {
-                    FileEndian::LittleEndian => u16::from_le_bytes(arr),
-                    FileEndian::BigEndian => u16::from_be_bytes(arr),
-                }
-            }
-        })
+        (0..len).map(move |i| decode_u16(bytes, i * 2, file_endian))
     }
 
     /// Decode u16 values into a pre-allocated buffer
@@ -647,28 +476,8 @@ impl<'a> DataBlock<'a> {
             return Err(Error::InvalidDimensions);
         }
 
-        if self.file_endian.is_native() {
-            #[cfg(target_endian = "little")]
-            for i in 0..n {
-                let offset = i * 2;
-                let arr: [u8; 2] = [self.bytes[offset], self.bytes[offset + 1]];
-                out[i] = u16::from_le_bytes(arr);
-            }
-            #[cfg(target_endian = "big")]
-            for i in 0..n {
-                let offset = i * 2;
-                let arr: [u8; 2] = [self.bytes[offset], self.bytes[offset + 1]];
-                out[i] = u16::from_be_bytes(arr);
-            }
-        } else {
-            for i in 0..n {
-                let offset = i * 2;
-                let arr: [u8; 2] = [self.bytes[offset], self.bytes[offset + 1]];
-                out[i] = match self.file_endian {
-                    FileEndian::LittleEndian => u16::from_le_bytes(arr),
-                    FileEndian::BigEndian => u16::from_be_bytes(arr),
-                };
-            }
+        for i in 0..n {
+            out[i] = decode_u16(self.bytes, i * 2, self.file_endian);
         }
 
         Ok(())
@@ -771,7 +580,7 @@ impl<'a> DataBlock<'a> {
             return Err(Error::InvalidMode);
         }
 
-        let mut result = Vec::with_capacity(self.bytes.len() * 2);
+        let mut result = Vec::with_capacity(self.bytes.len());
         for byte in self.bytes {
             let value = Packed4Bit::decode(self.file_endian, &[*byte]);
             result.push(value);
@@ -787,7 +596,7 @@ impl<'a> DataBlock<'a> {
     /// Returns Error::InvalidDimensions if the byte length is not divisible by 2
     /// Returns Error::UnsupportedMode if the f16 feature is not enabled
     #[cfg(feature = "f16")]
-    pub fn as_f16(&self) -> Result<Vec<half::f16>, Error> {
+    pub fn as_f16(&self) -> Result<Vec<f16>, Error> {
         if self.mode != Mode::Float16 {
             return Err(Error::InvalidMode);
         }
@@ -797,11 +606,13 @@ impl<'a> DataBlock<'a> {
         }
 
         let mut result = Vec::with_capacity(self.bytes.len() / 2);
-        let chunks: Vec<_> = self.bytes.chunks_exact(2).collect();
-
-        for chunk in chunks {
-            let value = half::f16::decode(self.file_endian, chunk);
-            result.push(value);
+        
+        for chunk in self.bytes.chunks_exact(2) {
+            let bits = match self.file_endian {
+                FileEndian::LittleEndian => u16::from_le_bytes([chunk[0], chunk[1]]),
+                FileEndian::BigEndian => u16::from_be_bytes([chunk[0], chunk[1]]),
+            };
+            result.push(f16::from_bits(bits));
         }
 
         Ok(result)
@@ -1043,7 +854,7 @@ impl<'a> DataBlockMut<'a> {
     /// # Errors
     /// Returns Error::InvalidMode if the file mode is not Float16 (mode 12)
     /// Returns Error::InvalidDimensions if the data size doesn't match the input length
-    pub fn set_f16(&mut self, values: &[half::f16]) -> Result<(), Error> {
+    pub fn set_f16(&mut self, values: &[f16]) -> Result<(), Error> {
         if self.mode != Mode::Float16 {
             return Err(Error::InvalidMode);
         }
@@ -1053,7 +864,12 @@ impl<'a> DataBlockMut<'a> {
         }
 
         for (i, &value) in values.iter().enumerate() {
-            value.encode(self.file_endian, &mut self.bytes[i * 2..i * 2 + 2]);
+            let bits = value.to_bits();
+            let bytes = match self.file_endian {
+                FileEndian::LittleEndian => bits.to_le_bytes(),
+                FileEndian::BigEndian => bits.to_be_bytes(),
+            };
+            self.bytes[i * 2..i * 2 + 2].copy_from_slice(&bytes);
         }
 
         Ok(())
@@ -1300,9 +1116,12 @@ pub struct Packed4Bit {
 
 impl Packed4Bit {
     /// Create a new packed 4-bit value
+    ///
+    /// # Panics
+    /// Panics if either value is greater than 15
     pub fn new(first: u8, second: u8) -> Self {
-        debug_assert!(first <= 15, "First value must be 0-15");
-        debug_assert!(second <= 15, "Second value must be 0-15");
+        assert!(first <= 15, "First value must be 0-15");
+        assert!(second <= 15, "Second value must be 0-15");
         Self {
             values: [first, second],
         }
@@ -1341,7 +1160,7 @@ impl EncodeToFile for Packed4Bit {
 // Optional f16 support (Mode 12)
 
 #[cfg(feature = "f16")]
-impl DecodeFromFile for half::f16 {
+impl DecodeFromFile for f16 {
     const SIZE: usize = 2;
 
     fn decode(e: FileEndian, b: &[u8]) -> Self {
@@ -1350,12 +1169,12 @@ impl DecodeFromFile for half::f16 {
             FileEndian::LittleEndian => u16::from_le_bytes(arr),
             FileEndian::BigEndian => u16::from_be_bytes(arr),
         };
-        half::f16::from_bits(bits)
+        f16::from_bits(bits)
     }
 }
 
 #[cfg(feature = "f16")]
-impl EncodeToFile for half::f16 {
+impl EncodeToFile for f16 {
     const SIZE: usize = 2;
 
     fn encode(self, e: FileEndian, out: &mut [u8]) {
@@ -1365,60 +1184,6 @@ impl EncodeToFile for half::f16 {
             FileEndian::BigEndian => bits.to_be_bytes(),
         };
         out.copy_from_slice(&bytes);
-    }
-}
-
-/// Raw buffer wrapper that prevents misuse
-///
-/// This wrapper enforces the invariant: raw bytes are opaque and can only
-/// be accessed through decode/encode operations. No direct byte manipulation
-/// is allowed outside the codec layer.
-pub struct RawBuffer<'a> {
-    bytes: &'a mut [u8],
-    endian: FileEndian,
-}
-
-impl<'a> RawBuffer<'a> {
-    /// Create a new raw buffer wrapper
-    pub fn new(bytes: &'a mut [u8], endian: FileEndian) -> Self {
-        Self { bytes, endian }
-    }
-
-    /// Read a typed value from the buffer at the given offset
-    ///
-    /// This is the ONLY way to get typed values from raw bytes.
-    /// Endianness conversion is handled automatically.
-    pub fn read<T: DecodeFromFile>(&self, offset: usize) -> T {
-        T::decode(self.endian, &self.bytes[offset..offset + T::SIZE])
-    }
-
-    /// Write a typed value to the buffer at the given offset
-    ///
-    /// This is the ONLY way to write typed values to raw bytes.
-    /// Endianness conversion is handled automatically.
-    pub fn write<T: EncodeToFile>(&mut self, offset: usize, value: T) {
-        value.encode(self.endian, &mut self.bytes[offset..offset + T::SIZE]);
-    }
-
-    /// Get the underlying bytes as a slice (read-only)
-    ///
-    /// This is provided for compatibility but should be used sparingly.
-    /// Prefer using `read<T>()` for value-level access.
-    pub fn as_bytes(&self) -> &[u8] {
-        self.bytes
-    }
-
-    /// Get mutable access to the underlying bytes
-    ///
-    /// This is provided for compatibility but should be used sparingly.
-    /// Prefer using `write<T>()` for value-level access.
-    pub fn as_bytes_mut(&mut self) -> &mut [u8] {
-        self.bytes
-    }
-
-    /// Get the file endianness
-    pub fn endian(&self) -> FileEndian {
-        self.endian
     }
 }
 
@@ -1434,7 +1199,7 @@ mod mrcfile_test;
 pub use mrcfile::{MrcMmap, open_mmap};
 
 #[cfg(feature = "file")]
-pub use mrcfile::{MrcFile, open_file};
+pub use mrcfile::MrcFile;
 
 /// Error type
 #[derive(thiserror::Error, Debug)]
