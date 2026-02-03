@@ -161,7 +161,7 @@ impl Header {
             && self.ny > 0
             && self.nz > 0
             && matches!(self.mode, 0 | 1 | 2 | 3 | 4 | 6 | 12 | 101)
-            && self.map == *b"MAP "
+            && self.validate_map()
             // Validate ISPG: 0 (2D/stack), 1-230 (crystallographic), or 400-630 (volume stacks)
             && (self.ispg == 0 || (self.ispg >= 1 && self.ispg <= 230) || (self.ispg >= 400 && self.ispg <= 630))
             // Validate axis mapping: MAPC, MAPR, MAPS must be a permutation of (1, 2, 3)
@@ -175,6 +175,29 @@ impl Header {
             && self.nsymbt >= 0
             // Validate nlabl is between 0 and 10
             && self.nlabl >= 0 && self.nlabl <= 10
+    }
+
+    #[inline]
+    /// Validate the MAP field, allowing for legacy variants.
+    ///
+    /// Standard MRC2014 requires "MAP ", but some legacy files may use:
+    /// - "MAP\0" (null-terminated)
+    /// - "MAPI" (older format)
+    /// - All zeros (uninitialized)
+    fn validate_map(&self) -> bool {
+        // Standard MRC2014 format
+        if self.map == *b"MAP " {
+            return true;
+        }
+        // Accept legacy variants: "MAP\0" or "MAPI"
+        if &self.map[..3] == b"MAP" && (self.map[3] == b' ' || self.map[3] == 0 || self.map[3] == b'I') {
+            return true;
+        }
+        // Accept all zeros (uninitialized, common in some generated files)
+        if self.map == [0; 4] {
+            return true;
+        }
+        false
     }
 
     #[inline]
@@ -216,17 +239,9 @@ impl Header {
     ///
     /// This value is a numeric i32 and respects the file's endianness.
     pub fn nversion(&self) -> i32 {
+        use crate::{DecodeFromFile, FileEndian};
         let file_endian = self.detect_endian();
-        let arr = [
-            self.extra[12],
-            self.extra[13],
-            self.extra[14],
-            self.extra[15],
-        ];
-        match file_endian {
-            crate::FileEndian::LittleEndian => i32::from_le_bytes(arr),
-            crate::FileEndian::BigEndian => i32::from_be_bytes(arr),
-        }
+        i32::decode(file_endian, &self.extra[12..16])
     }
 
     #[inline]
@@ -234,12 +249,9 @@ impl Header {
     ///
     /// This value is a numeric i32 and respects the file's endianness.
     pub fn set_nversion(&mut self, value: i32) {
+        use crate::{EncodeToFile, FileEndian};
         let file_endian = self.detect_endian();
-        let bytes = match file_endian {
-            crate::FileEndian::LittleEndian => value.to_le_bytes(),
-            crate::FileEndian::BigEndian => value.to_be_bytes(),
-        };
-        self.extra[12..16].copy_from_slice(&bytes);
+        value.encode(file_endian, &mut self.extra[12..16]);
     }
 
     #[inline]

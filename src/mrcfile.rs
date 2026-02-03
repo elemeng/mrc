@@ -9,7 +9,11 @@ extern crate std;
 use std::fs::File;
 
 #[cfg(feature = "std")]
-/// MrcFile for file I/O operations with pread/pwrite
+/// MrcFile for file I/O operations
+///
+/// This struct provides file-based access to MRC files. Data is loaded into
+/// memory when the file is opened. For zero-copy memory-mapped access to
+/// large files, use [`MrcMmap`] instead.
 #[derive(Debug)]
 pub struct MrcFile {
     file: File,
@@ -128,7 +132,6 @@ impl MrcFile {
     /// Returns a combined view of the MRC file containing header, extended header, and data.
     ///
     /// This method provides access to all file components through a single `MrcView` object.
-    /// The internal buffer is explicitly separated into extended header and data sections.
     ///
     /// # Example
     /// ```ignore
@@ -186,13 +189,6 @@ impl MrcFile {
                 .map_err(Error::Io)?;
         }
 
-        // Update buffer with new data
-        let total_size = self.ext_header_size + self.data_size;
-        self.buffer.clear();
-        self.buffer.resize(total_size, 0);
-        self.buffer[..self.ext_header_size].copy_from_slice(view.ext_header());
-        self.buffer[self.ext_header_size..].copy_from_slice(view.data.as_bytes());
-
         Ok(())
     }
 
@@ -207,10 +203,8 @@ impl MrcFile {
             return Err(Error::InvalidDimensions);
         }
 
-        {
-            self.file.seek(SeekFrom::Start(1024)).map_err(Error::Io)?;
-            self.file.write_all(data).map_err(Error::Io)?;
-        }
+        self.file.seek(SeekFrom::Start(1024)).map_err(Error::Io)?;
+        self.file.write_all(data).map_err(Error::Io)?;
         self.buffer[..self.ext_header_size].copy_from_slice(data);
         Ok(())
     }
@@ -226,12 +220,10 @@ impl MrcFile {
             return Err(Error::InvalidDimensions);
         }
 
-        {
-            self.file
-                .seek(SeekFrom::Start(self.data_offset))
-                .map_err(Error::Io)?;
-            self.file.write_all(data).map_err(Error::Io)?;
-        }
+        self.file
+            .seek(SeekFrom::Start(self.data_offset))
+            .map_err(Error::Io)?;
+        self.file.write_all(data).map_err(Error::Io)?;
         self.buffer[self.ext_header_size..].copy_from_slice(data);
         Ok(())
     }
@@ -239,6 +231,14 @@ impl MrcFile {
 
 #[cfg(feature = "mmap")]
 /// MrcMmap for memory-mapped file access
+///
+/// This struct provides zero-copy access to MRC files using OS memory mapping.
+/// It is ideal for large files where eager loading would consume too much memory.
+///
+/// # Safety
+/// Memory mapping is performed using `unsafe` code internally (via the `memmap2`
+/// crate), but the public API is safe. The mapped memory is valid for the lifetime
+/// of this struct, and access is controlled through Rust's borrowing rules.
 #[derive(Debug)]
 pub struct MrcMmap {
     header: Header,

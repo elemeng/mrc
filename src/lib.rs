@@ -33,8 +33,15 @@
 //!
 //! ## Safety
 //!
-//! All operations are memory-safe. The crate uses no unsafe code for data access,
-//! and all endianness conversions are performed through safe, type-checked APIs.
+//! All public operations are memory-safe. The crate's public API contains no unsafe
+//! code for data access, and all endianness conversions are performed through safe,
+//! type-checked APIs.
+//!
+//! ### Memory Mapping
+//! When using the `mmap` feature, the underlying OS memory mapping is created using
+//! `unsafe` code internally (as required by the `memmap2` crate). However, the public
+//! API remains safe - the `MrcMmap` type encapsulates the mapped memory and ensures
+//! valid access through Rust's borrowing rules.
 //!
 //! ## Endianness Policy
 //!
@@ -69,6 +76,7 @@ mod tests;
 pub use header::Header;
 pub use mode::Mode;
 pub use view::{MrcView, MrcViewMut};
+pub use crate::{ExtHeader, ExtHeaderMut};
 
 /// Endianness of MRC file data
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -190,6 +198,47 @@ impl<'a> ExtHeader<'a> {
     }
 }
 
+/// Mutable extended header - opaque metadata blob
+///
+/// This type provides mutable access to the extended header bytes.
+/// No interpretation or endianness conversion is performed.
+#[derive(Debug)]
+pub struct ExtHeaderMut<'a> {
+    bytes: &'a mut [u8],
+}
+
+impl<'a> ExtHeaderMut<'a> {
+    /// Create a new ExtHeaderMut from a mutable byte slice
+    #[inline]
+    pub fn new(bytes: &'a mut [u8]) -> Self {
+        Self { bytes }
+    }
+
+    /// Length of the extended header in bytes
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.bytes.len()
+    }
+
+    /// Check if the extended header is empty
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.bytes.is_empty()
+    }
+
+    /// Get read-only access to the raw bytes
+    #[inline]
+    pub fn as_bytes(&self) -> &[u8] {
+        self.bytes
+    }
+
+    /// Get mutable access to the raw bytes
+    #[inline]
+    pub fn as_bytes_mut(&mut self) -> &mut [u8] {
+        self.bytes
+    }
+}
+
 /// Data block - voxel data with endianness-aware decoding
 ///
 /// This type provides typed access to voxel data while maintaining
@@ -208,6 +257,9 @@ pub struct DataBlock<'a> {
     bytes: &'a [u8],
     mode: Mode,
     file_endian: FileEndian,
+    /// Expected number of voxels (from header dimensions).
+    /// Used for Packed4Bit mode where buffer size may include padding.
+    voxel_count: usize,
 }
 
 /// Helper functions for endianness-aware decoding
@@ -245,12 +297,14 @@ impl<'a> DataBlock<'a> {
     /// * `bytes` - raw voxel data bytes (file-endian)
     /// * `mode` - data mode
     /// * `file_endian` - file endianness
+    /// * `voxel_count` - expected number of voxels (from header dimensions)
     #[inline]
-    pub fn new(bytes: &'a [u8], mode: Mode, file_endian: FileEndian) -> Self {
+    pub fn new(bytes: &'a [u8], mode: Mode, file_endian: FileEndian, voxel_count: usize) -> Self {
         Self {
             bytes,
             mode,
             file_endian,
+            voxel_count,
         }
     }
 
@@ -263,16 +317,7 @@ impl<'a> DataBlock<'a> {
     /// Get the number of voxels
     #[inline]
     pub fn len_voxels(&self) -> usize {
-        match self.mode {
-            Mode::Packed4Bit => self.bytes.len() * 2, // 2 voxels per byte (4 bits each)
-            _ => {
-                let byte_size = self.mode.byte_size();
-                if byte_size == 0 {
-                    return 0;
-                }
-                self.bytes.len() / byte_size
-            }
-        }
+        self.voxel_count
     }
 
     /// Get the size in bytes
@@ -295,28 +340,35 @@ impl<'a> DataBlock<'a> {
 
     /// Get a single f32 value at the specified voxel index
     ///
-    /// # Panics
-    /// Panics if index is out of bounds
+    /// # Errors
+    /// Returns Error::InvalidMode if mode is not Float32
+    /// Returns Error::InvalidDimensions if index is out of bounds
     #[inline]
-    pub fn get_f32(&self, index: usize) -> f32 {
-        assert!(self.mode == Mode::Float32, "Mode must be Float32");
+    pub fn get_f32(&self, index: usize) -> Result<f32, Error> {
+        if self.mode != Mode::Float32 {
+            return Err(Error::InvalidMode);
+        }
         let offset = index * 4;
-        assert!(offset + 4 <= self.bytes.len(), "Index out of bounds");
-        decode_f32(self.bytes, offset, self.file_endian)
+        if offset + 4 > self.bytes.len() {
+            return Err(Error::InvalidDimensions);
+        }
+        Ok(decode_f32(self.bytes, offset, self.file_endian))
     }
 
     /// Create an iterator over f32 values
     ///
-    /// # Panics
-    /// Panics if mode is not Float32
+    /// # Errors
+    /// Returns Error::InvalidMode if mode is not Float32
     #[inline]
-    pub fn iter_f32(&self) -> impl Iterator<Item = f32> + '_ {
-        assert!(self.mode == Mode::Float32, "Mode must be Float32");
+    pub fn iter_f32(&self) -> Result<impl Iterator<Item = f32> + '_, Error> {
+        if self.mode != Mode::Float32 {
+            return Err(Error::InvalidMode);
+        }
         let len = self.len_voxels();
         let file_endian = self.file_endian;
         let bytes = self.bytes;
 
-        (0..len).map(move |i| decode_f32(bytes, i * 4, file_endian))
+        Ok((0..len).map(move |i| decode_f32(bytes, i * 4, file_endian)))
     }
 
     /// Decode f32 values into a pre-allocated buffer
@@ -365,28 +417,35 @@ impl<'a> DataBlock<'a> {
 
     /// Get a single i16 value at the specified voxel index
     ///
-    /// # Panics
-    /// Panics if index is out of bounds
+    /// # Errors
+    /// Returns Error::InvalidMode if mode is not Int16
+    /// Returns Error::InvalidDimensions if index is out of bounds
     #[inline]
-    pub fn get_i16(&self, index: usize) -> i16 {
-        assert!(self.mode == Mode::Int16, "Mode must be Int16");
+    pub fn get_i16(&self, index: usize) -> Result<i16, Error> {
+        if self.mode != Mode::Int16 {
+            return Err(Error::InvalidMode);
+        }
         let offset = index * 2;
-        assert!(offset + 2 <= self.bytes.len(), "Index out of bounds");
-        decode_i16(self.bytes, offset, self.file_endian)
+        if offset + 2 > self.bytes.len() {
+            return Err(Error::InvalidDimensions);
+        }
+        Ok(decode_i16(self.bytes, offset, self.file_endian))
     }
 
     /// Create an iterator over i16 values
     ///
-    /// # Panics
-    /// Panics if mode is not Int16
+    /// # Errors
+    /// Returns Error::InvalidMode if mode is not Int16
     #[inline]
-    pub fn iter_i16(&self) -> impl Iterator<Item = i16> + '_ {
-        assert!(self.mode == Mode::Int16, "Mode must be Int16");
+    pub fn iter_i16(&self) -> Result<impl Iterator<Item = i16> + '_, Error> {
+        if self.mode != Mode::Int16 {
+            return Err(Error::InvalidMode);
+        }
         let len = self.len_voxels();
         let file_endian = self.file_endian;
         let bytes = self.bytes;
 
-        (0..len).map(move |i| decode_i16(bytes, i * 2, file_endian))
+        Ok((0..len).map(move |i| decode_i16(bytes, i * 2, file_endian)))
     }
 
     /// Decode i16 values into a pre-allocated buffer
@@ -435,28 +494,35 @@ impl<'a> DataBlock<'a> {
 
     /// Get a single u16 value at the specified voxel index
     ///
-    /// # Panics
-    /// Panics if index is out of bounds
+    /// # Errors
+    /// Returns Error::InvalidMode if mode is not Uint16
+    /// Returns Error::InvalidDimensions if index is out of bounds
     #[inline]
-    pub fn get_u16(&self, index: usize) -> u16 {
-        assert!(self.mode == Mode::Uint16, "Mode must be Uint16");
+    pub fn get_u16(&self, index: usize) -> Result<u16, Error> {
+        if self.mode != Mode::Uint16 {
+            return Err(Error::InvalidMode);
+        }
         let offset = index * 2;
-        assert!(offset + 2 <= self.bytes.len(), "Index out of bounds");
-        decode_u16(self.bytes, offset, self.file_endian)
+        if offset + 2 > self.bytes.len() {
+            return Err(Error::InvalidDimensions);
+        }
+        Ok(decode_u16(self.bytes, offset, self.file_endian))
     }
 
     /// Create an iterator over u16 values
     ///
-    /// # Panics
-    /// Panics if mode is not Uint16
+    /// # Errors
+    /// Returns Error::InvalidMode if mode is not Uint16
     #[inline]
-    pub fn iter_u16(&self) -> impl Iterator<Item = u16> + '_ {
-        assert!(self.mode == Mode::Uint16, "Mode must be Uint16");
+    pub fn iter_u16(&self) -> Result<impl Iterator<Item = u16> + '_, Error> {
+        if self.mode != Mode::Uint16 {
+            return Err(Error::InvalidMode);
+        }
         let len = self.len_voxels();
         let file_endian = self.file_endian;
         let bytes = self.bytes;
 
-        (0..len).map(move |i| decode_u16(bytes, i * 2, file_endian))
+        Ok((0..len).map(move |i| decode_u16(bytes, i * 2, file_endian)))
     }
 
     /// Decode u16 values into a pre-allocated buffer
@@ -501,6 +567,242 @@ impl<'a> DataBlock<'a> {
         let mut result: Vec<u16> = core::iter::repeat_n(0u16, n).collect();
         self.read_u16_into(&mut result)?;
         Ok(result)
+    }
+
+    /// Get a single i8 value at the specified voxel index
+    ///
+    /// # Errors
+    /// Returns Error::InvalidMode if mode is not Int8
+    /// Returns Error::InvalidDimensions if index is out of bounds
+    #[inline]
+    pub fn get_i8(&self, index: usize) -> Result<i8, Error> {
+        if self.mode != Mode::Int8 {
+            return Err(Error::InvalidMode);
+        }
+        if index >= self.bytes.len() {
+            return Err(Error::InvalidDimensions);
+        }
+        Ok(self.bytes[index] as i8)
+    }
+
+    /// Create an iterator over i8 values
+    ///
+    /// # Errors
+    /// Returns Error::InvalidMode if mode is not Int8
+    #[inline]
+    pub fn iter_i8(&self) -> Result<impl Iterator<Item = i8> + '_, Error> {
+        if self.mode != Mode::Int8 {
+            return Err(Error::InvalidMode);
+        }
+        Ok(self.bytes.iter().map(|&b| b as i8))
+    }
+
+    /// Decode i8 values into a pre-allocated buffer
+    ///
+    /// # Errors
+    /// Returns Error::InvalidMode if mode is not Int8
+    /// Returns Error::InvalidDimensions if output buffer is too small
+    #[inline]
+    pub fn read_i8_into(&self, out: &mut [i8]) -> Result<(), Error> {
+        if self.mode != Mode::Int8 {
+            return Err(Error::InvalidMode);
+        }
+        if out.len() > self.bytes.len() {
+            return Err(Error::InvalidDimensions);
+        }
+        for (i, &byte) in self.bytes.iter().enumerate().take(out.len()) {
+            out[i] = byte as i8;
+        }
+        Ok(())
+    }
+
+    /// Get a single Int16Complex value at the specified voxel index
+    ///
+    /// # Errors
+    /// Returns Error::InvalidMode if mode is not Int16Complex
+    /// Returns Error::InvalidDimensions if index is out of bounds
+    #[inline]
+    pub fn get_int16_complex(&self, index: usize) -> Result<Int16Complex, Error> {
+        if self.mode != Mode::Int16Complex {
+            return Err(Error::InvalidMode);
+        }
+        let offset = index * 4;
+        if offset + 4 > self.bytes.len() {
+            return Err(Error::InvalidDimensions);
+        }
+        Ok(Int16Complex::decode(self.file_endian, &self.bytes[offset..offset + 4]))
+    }
+
+    /// Create an iterator over Int16Complex values
+    ///
+    /// # Errors
+    /// Returns Error::InvalidMode if mode is not Int16Complex
+    #[inline]
+    pub fn iter_int16_complex(&self) -> Result<impl Iterator<Item = Int16Complex> + '_, Error> {
+        if self.mode != Mode::Int16Complex {
+            return Err(Error::InvalidMode);
+        }
+        let file_endian = self.file_endian;
+        Ok(self.bytes.chunks_exact(4).map(move |chunk| Int16Complex::decode(file_endian, chunk)))
+    }
+
+    /// Decode Int16Complex values into a pre-allocated buffer
+    ///
+    /// # Errors
+    /// Returns Error::InvalidMode if mode is not Int16Complex
+    /// Returns Error::InvalidDimensions if output buffer is too small
+    #[inline]
+    pub fn read_int16_complex_into(&self, out: &mut [Int16Complex]) -> Result<(), Error> {
+        if self.mode != Mode::Int16Complex {
+            return Err(Error::InvalidMode);
+        }
+        let n = out.len();
+        if n * 4 > self.bytes.len() {
+            return Err(Error::InvalidDimensions);
+        }
+        for (i, chunk) in self.bytes.chunks_exact(4).take(n).enumerate() {
+            out[i] = Int16Complex::decode(self.file_endian, chunk);
+        }
+        Ok(())
+    }
+
+    /// Get a single Float32Complex value at the specified voxel index
+    ///
+    /// # Errors
+    /// Returns Error::InvalidMode if mode is not Float32Complex
+    /// Returns Error::InvalidDimensions if index is out of bounds
+    #[inline]
+    pub fn get_float32_complex(&self, index: usize) -> Result<Float32Complex, Error> {
+        if self.mode != Mode::Float32Complex {
+            return Err(Error::InvalidMode);
+        }
+        let offset = index * 8;
+        if offset + 8 > self.bytes.len() {
+            return Err(Error::InvalidDimensions);
+        }
+        Ok(Float32Complex::decode(self.file_endian, &self.bytes[offset..offset + 8]))
+    }
+
+    /// Create an iterator over Float32Complex values
+    ///
+    /// # Errors
+    /// Returns Error::InvalidMode if mode is not Float32Complex
+    #[inline]
+    pub fn iter_float32_complex(&self) -> Result<impl Iterator<Item = Float32Complex> + '_, Error> {
+        if self.mode != Mode::Float32Complex {
+            return Err(Error::InvalidMode);
+        }
+        let file_endian = self.file_endian;
+        Ok(self.bytes.chunks_exact(8).map(move |chunk| Float32Complex::decode(file_endian, chunk)))
+    }
+
+    /// Decode Float32Complex values into a pre-allocated buffer
+    ///
+    /// # Errors
+    /// Returns Error::InvalidMode if mode is not Float32Complex
+    /// Returns Error::InvalidDimensions if output buffer is too small
+    #[inline]
+    pub fn read_float32_complex_into(&self, out: &mut [Float32Complex]) -> Result<(), Error> {
+        if self.mode != Mode::Float32Complex {
+            return Err(Error::InvalidMode);
+        }
+        let n = out.len();
+        if n * 8 > self.bytes.len() {
+            return Err(Error::InvalidDimensions);
+        }
+        for (i, chunk) in self.bytes.chunks_exact(8).take(n).enumerate() {
+            out[i] = Float32Complex::decode(self.file_endian, chunk);
+        }
+        Ok(())
+    }
+
+    /// Get a single Packed4Bit value at the specified byte index
+    ///
+    /// Note: Packed4Bit stores 2 values per byte, so the index refers to the byte position,
+    /// not the voxel position. Use `get_packed4bit_value()` for voxel-indexed access.
+    ///
+    /// # Errors
+    /// Returns Error::InvalidMode if mode is not Packed4Bit
+    /// Returns Error::InvalidDimensions if index is out of bounds
+    #[inline]
+    pub fn get_packed4bit(&self, index: usize) -> Result<Packed4Bit, Error> {
+        if self.mode != Mode::Packed4Bit {
+            return Err(Error::InvalidMode);
+        }
+        if index >= self.bytes.len() {
+            return Err(Error::InvalidDimensions);
+        }
+        Ok(Packed4Bit::decode(self.file_endian, &[self.bytes[index]]))
+    }
+
+    /// Get a single 4-bit value at the specified voxel index (0-15)
+    ///
+    /// # Errors
+    /// Returns Error::InvalidMode if mode is not Packed4Bit
+    /// Returns Error::InvalidDimensions if index is out of bounds
+    #[inline]
+    pub fn get_packed4bit_value(&self, index: usize) -> Result<u8, Error> {
+        if self.mode != Mode::Packed4Bit {
+            return Err(Error::InvalidMode);
+        }
+        if index >= self.voxel_count {
+            return Err(Error::InvalidDimensions);
+        }
+        let byte_idx = index / 2;
+        let nibble = index % 2;
+        let packed = Packed4Bit::decode(self.file_endian, &[self.bytes[byte_idx]]);
+        Ok(if nibble == 0 { packed.first() } else { packed.second() })
+    }
+
+    /// Create an iterator over Packed4Bit values (byte-oriented)
+    ///
+    /// # Errors
+    /// Returns Error::InvalidMode if mode is not Packed4Bit
+    #[inline]
+    pub fn iter_packed4bit(&self) -> Result<impl Iterator<Item = Packed4Bit> + '_, Error> {
+        if self.mode != Mode::Packed4Bit {
+            return Err(Error::InvalidMode);
+        }
+        let file_endian = self.file_endian;
+        Ok(self.bytes.iter().map(move |&b| Packed4Bit::decode(file_endian, &[b])))
+    }
+
+    /// Create an iterator over individual 4-bit values (0-15)
+    ///
+    /// Yields exactly `len_voxels()` values.
+    ///
+    /// # Errors
+    /// Returns Error::InvalidMode if mode is not Packed4Bit
+    #[inline]
+    pub fn iter_packed4bit_values(&self) -> Result<impl Iterator<Item = u8> + '_, Error> {
+        if self.mode != Mode::Packed4Bit {
+            return Err(Error::InvalidMode);
+        }
+        let file_endian = self.file_endian;
+        let voxel_count = self.voxel_count;
+        Ok(self.bytes.iter().flat_map(move |&b| {
+            let packed = Packed4Bit::decode(file_endian, &[b]);
+            [packed.first(), packed.second()]
+        }).take(voxel_count))
+    }
+
+    /// Decode Packed4Bit values into a pre-allocated buffer
+    ///
+    /// # Errors
+    /// Returns Error::InvalidMode if mode is not Packed4Bit
+    /// Returns Error::InvalidDimensions if output buffer is too small
+    #[inline]
+    pub fn read_packed4bit_into(&self, out: &mut [Packed4Bit]) -> Result<(), Error> {
+        if self.mode != Mode::Packed4Bit {
+            return Err(Error::InvalidMode);
+        }
+        if out.len() > self.bytes.len() {
+            return Err(Error::InvalidDimensions);
+        }
+        for (i, &byte) in self.bytes.iter().enumerate().take(out.len()) {
+            out[i] = Packed4Bit::decode(self.file_endian, &[byte]);
+        }
+        Ok(())
     }
 
     /// Decode data as i8 values
@@ -638,6 +940,9 @@ pub struct DataBlockMut<'a> {
     bytes: &'a mut [u8],
     mode: Mode,
     file_endian: FileEndian,
+    /// Expected number of voxels (from header dimensions).
+    /// Used for Packed4Bit mode where buffer size may include padding.
+    voxel_count: usize,
 }
 
 impl<'a> DataBlockMut<'a> {
@@ -647,12 +952,14 @@ impl<'a> DataBlockMut<'a> {
     /// * `bytes` - mutable voxel data bytes (file-endian)
     /// * `mode` - data mode
     /// * `file_endian` - file endianness
+    /// * `voxel_count` - expected number of voxels (from header dimensions)
     #[inline]
-    pub fn new(bytes: &'a mut [u8], mode: Mode, file_endian: FileEndian) -> Self {
+    pub fn new(bytes: &'a mut [u8], mode: Mode, file_endian: FileEndian, voxel_count: usize) -> Self {
         Self {
             bytes,
             mode,
             file_endian,
+            voxel_count,
         }
     }
 
@@ -665,16 +972,7 @@ impl<'a> DataBlockMut<'a> {
     /// Get the number of voxels
     #[inline]
     pub fn len_voxels(&self) -> usize {
-        match self.mode {
-            Mode::Packed4Bit => self.bytes.len() * 2, // 2 voxels per byte (4 bits each)
-            _ => {
-                let byte_size = self.mode.byte_size();
-                if byte_size == 0 {
-                    return 0;
-                }
-                self.bytes.len() / byte_size
-            }
-        }
+        self.voxel_count
     }
 
     /// Get the size in bytes

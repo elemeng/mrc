@@ -1,4 +1,4 @@
-use crate::{DataBlock, DataBlockMut, Error, ExtHeader, Header, Mode};
+use crate::{DataBlock, DataBlockMut, Error, ExtHeader, ExtHeaderMut, Header, Mode};
 
 #[non_exhaustive]
 /// A read-only view into an MRC file's components.
@@ -66,11 +66,15 @@ impl<'a> MrcView<'a> {
         let mode = Mode::from_i32(header.mode).ok_or(Error::InvalidMode)?;
 
         let file_endian = header.detect_endian();
+        let voxel_count = (header.nx as usize)
+            .checked_mul(header.ny as usize)
+            .and_then(|v| v.checked_mul(header.nz as usize))
+            .ok_or(Error::InvalidDimensions)?;
 
         Ok(Self {
             header,
             ext_header: ExtHeader::new(ext_header),
-            data: DataBlock::new(data, mode, file_endian),
+            data: DataBlock::new(data, mode, file_endian, voxel_count),
         })
     }
 
@@ -122,7 +126,7 @@ impl<'a> MrcView<'a> {
 #[derive(Debug)]
 pub struct MrcViewMut<'a> {
     pub header: Header,
-    pub ext_header: ExtHeader<'a>,
+    pub ext_header: ExtHeaderMut<'a>,
     pub data: DataBlockMut<'a>,
 }
 
@@ -163,11 +167,15 @@ impl<'a> MrcViewMut<'a> {
         let mode = Mode::from_i32(header.mode).ok_or(Error::InvalidMode)?;
 
         let file_endian = header.detect_endian();
+        let voxel_count = (header.nx as usize)
+            .checked_mul(header.ny as usize)
+            .and_then(|v| v.checked_mul(header.nz as usize))
+            .ok_or(Error::InvalidDimensions)?;
 
         Ok(Self {
             header,
-            ext_header: ExtHeader::new(ext_header),
-            data: DataBlockMut::new(data, mode, file_endian),
+            ext_header: ExtHeaderMut::new(ext_header),
+            data: DataBlockMut::new(data, mode, file_endian, voxel_count),
         })
     }
 
@@ -187,8 +195,27 @@ impl<'a> MrcViewMut<'a> {
     }
 
     #[inline]
+    pub fn ext_header_mut(&mut self) -> &mut [u8] {
+        self.ext_header.as_bytes_mut()
+    }
+
+    #[inline]
     pub fn data_mut(&mut self) -> &mut [u8] {
         self.data.as_bytes_mut()
+    }
+
+    #[inline]
+    pub fn mode(&self) -> Option<Mode> {
+        Mode::from_i32(self.header.mode)
+    }
+
+    #[inline]
+    pub fn dimensions(&self) -> (usize, usize, usize) {
+        (
+            self.header.nx as usize,
+            self.header.ny as usize,
+            self.header.nz as usize,
+        )
     }
 }
 
