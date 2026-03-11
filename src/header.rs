@@ -479,4 +479,214 @@ impl Header {
         // Write labels (bytes 224-1023) - ASCII, no endian conversion
         out[224..1024].copy_from_slice(&self.label);
     }
+
+    /// Create a header builder
+    ///
+    /// # Example
+    /// ```ignore
+    /// let header = Header::builder()
+    ///     .dimensions(64, 64, 64)
+    ///     .mode(Mode::Float32)
+    ///     .cell_dimensions(100.0, 100.0, 100.0)
+    ///     .build();
+    /// ```
+    #[inline]
+    pub fn builder() -> HeaderBuilder {
+        HeaderBuilder::new()
+    }
+}
+
+/// Builder for constructing MRC headers
+///
+/// # Example
+/// ```ignore
+/// let header = Header::builder()
+///     .dimensions(64, 64, 64)
+///     .mode(Mode::Float32)
+///     .cell_dimensions(100.0, 100.0, 100.0)
+///     .build();
+/// ```
+#[derive(Debug)]
+pub struct HeaderBuilder {
+    header: Header,
+}
+
+impl HeaderBuilder {
+    /// Create a new header builder with default values
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            header: Header::new(),
+        }
+    }
+
+    /// Set the dimensions (nx, ny, nz)
+    #[inline]
+    pub fn dimensions(mut self, nx: i32, ny: i32, nz: i32) -> Self {
+        self.header.nx = nx;
+        self.header.ny = ny;
+        self.header.nz = nz;
+        self
+    }
+
+    /// Set the mode
+    #[inline]
+    pub fn mode(mut self, mode: crate::Mode) -> Self {
+        self.header.mode = mode as i32;
+        self
+    }
+
+    /// Set the cell dimensions in Angstroms (xlen, ylen, zlen)
+    #[inline]
+    pub fn cell_dimensions(mut self, xlen: f32, ylen: f32, zlen: f32) -> Self {
+        self.header.xlen = xlen;
+        self.header.ylen = ylen;
+        self.header.zlen = zlen;
+        self
+    }
+
+    /// Set the cell angles in degrees (alpha, beta, gamma)
+    #[inline]
+    pub fn cell_angles(mut self, alpha: f32, beta: f32, gamma: f32) -> Self {
+        self.header.alpha = alpha;
+        self.header.beta = beta;
+        self.header.gamma = gamma;
+        self
+    }
+
+    /// Set the axis mapping (mapc, mapr, maps)
+    ///
+    /// Default is (1, 2, 3) for standard X, Y, Z mapping.
+    #[inline]
+    pub fn axis_mapping(mut self, mapc: i32, mapr: i32, maps: i32) -> Self {
+        self.header.mapc = mapc;
+        self.header.mapr = mapr;
+        self.header.maps = maps;
+        self
+    }
+
+    /// Set the start positions (nxstart, nystart, nzstart)
+    #[inline]
+    pub fn start_positions(mut self, nxstart: i32, nystart: i32, nzstart: i32) -> Self {
+        self.header.nxstart = nxstart;
+        self.header.nystart = nystart;
+        self.header.nzstart = nzstart;
+        self
+    }
+
+    /// Set the sampling rates (mx, my, mz)
+    #[inline]
+    pub fn sampling(mut self, mx: i32, my: i32, mz: i32) -> Self {
+        self.header.mx = mx;
+        self.header.my = my;
+        self.header.mz = mz;
+        self
+    }
+
+    /// Set the space group number
+    #[inline]
+    pub fn space_group(mut self, ispg: i32) -> Self {
+        self.header.ispg = ispg;
+        self
+    }
+
+    /// Set the extended header size in bytes
+    #[inline]
+    pub fn extended_header_size(mut self, nsymbt: i32) -> Self {
+        self.header.nsymbt = nsymbt;
+        self
+    }
+
+    /// Set the origin coordinates
+    #[inline]
+    pub fn origin(mut self, x: f32, y: f32, z: f32) -> Self {
+        self.header.origin = [x, y, z];
+        self
+    }
+
+    /// Set the density statistics (dmin, dmax, dmean)
+    #[inline]
+    pub fn density_stats(mut self, dmin: f32, dmax: f32, dmean: f32) -> Self {
+        self.header.dmin = dmin;
+        self.header.dmax = dmax;
+        self.header.dmean = dmean;
+        self
+    }
+
+    /// Set the RMS deviation
+    #[inline]
+    pub fn rms(mut self, rms: f32) -> Self {
+        self.header.rms = rms;
+        self
+    }
+
+    /// Set the EXTTYP identifier
+    #[inline]
+    pub fn exttyp(mut self, exttyp: [u8; 4]) -> Self {
+        self.header.set_exttyp(exttyp);
+        self
+    }
+
+    /// Set the EXTTYP identifier from a string
+    #[inline]
+    pub fn exttyp_str(mut self, exttyp: &str) -> Result<Self, &'static str> {
+        self.header.set_exttyp_str(exttyp)?;
+        Ok(self)
+    }
+
+    /// Set the NVERSION number
+    #[inline]
+    pub fn nversion(mut self, nversion: i32) -> Self {
+        self.header.set_nversion(nversion);
+        self
+    }
+
+    /// Add a text label (up to 10 labels, 80 bytes each)
+    ///
+    /// Returns an error if all 10 label slots are full.
+    pub fn add_label(mut self, label: &str) -> Result<Self, &'static str> {
+        if self.header.nlabl >= 10 {
+            return Err("Maximum of 10 labels exceeded");
+        }
+        if label.len() > 80 {
+            return Err("Label exceeds 80 bytes");
+        }
+
+        let idx = self.header.nlabl as usize;
+        let start = idx * 80;
+        let bytes = label.as_bytes();
+        self.header.label[start..start + bytes.len()].copy_from_slice(bytes);
+        // Pad with spaces
+        for i in (start + bytes.len())..(start + 80) {
+            self.header.label[i] = b' ';
+        }
+        self.header.nlabl += 1;
+        Ok(self)
+    }
+
+    /// Build the header
+    ///
+    /// # Panics
+    /// Panics if the header is invalid (dimensions not positive, invalid mode, etc.)
+    #[inline]
+    pub fn build(self) -> Header {
+        assert!(self.header.validate(), "Invalid header configuration");
+        self.header
+    }
+
+    /// Build the header, returning an error if invalid
+    #[inline]
+    pub fn try_build(self) -> Result<Header, &'static str> {
+        if self.header.validate() {
+            Ok(self.header)
+        } else {
+            Err("Invalid header configuration")
+        }
+    }
+}
+
+impl Default for HeaderBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
 }

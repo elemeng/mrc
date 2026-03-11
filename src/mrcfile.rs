@@ -24,6 +24,12 @@ pub trait MrcSource {
 
     /// Get the voxel data bytes
     fn data(&self) -> &[u8];
+
+    /// Get the data offset in bytes from the start of the file
+    ///
+    /// This is the byte offset where voxel data begins (1024 + nsymbt).
+    /// Useful for streaming readers that need to seek to the data section.
+    fn data_offset(&self) -> usize;
 }
 
 #[cfg(feature = "std")]
@@ -46,7 +52,7 @@ pub struct MrcFile {
 impl MrcFile {
     #[inline]
     pub fn open(path: impl AsRef<std::path::Path>) -> Result<Self, Error> {
-        let file = File::open(path).map_err(|_| Error::Io)?;
+        let mut file = File::open(path).map_err(|_| Error::Io)?;
         let header = Self::read_header(&file)?;
 
         if !header.validate() {
@@ -177,7 +183,7 @@ impl MrcFile {
         if view.ext_header().len() != self.ext_header_size {
             return Err(Error::InvalidDimensions);
         }
-        if view.data.as_bytes().len() != self.data_size {
+        if view.data().as_bytes().len() != self.data_size {
             return Err(Error::InvalidDimensions);
         }
 
@@ -203,7 +209,7 @@ impl MrcFile {
                 .seek(SeekFrom::Start(self.data_offset))
                 .map_err(|_| Error::Io)?;
             self.file
-                .write_all(view.data.as_bytes())
+                .write_all(view.data().as_bytes())
                 .map_err(|_| Error::Io)?;
         }
 
@@ -262,6 +268,11 @@ impl MrcSource for MrcFile {
     #[inline]
     fn data(&self) -> &[u8] {
         &self.buffer[self.ext_header_size..]
+    }
+
+    #[inline]
+    fn data_offset(&self) -> usize {
+        self.data_offset as usize
     }
 }
 
@@ -391,6 +402,11 @@ impl MrcSource for MrcMmap {
     #[inline]
     fn data(&self) -> &[u8] {
         &self.buffer[self.data_offset..self.data_offset + self.data_size]
+    }
+
+    #[inline]
+    fn data_offset(&self) -> usize {
+        self.data_offset
     }
 }
 

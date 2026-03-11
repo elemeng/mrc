@@ -452,9 +452,9 @@ impl<'a> DataBlock<'a> {
     ///
     /// # Errors
     /// - Returns `Error::InvalidMode` if the mode doesn't match T::MODE
-    /// - Returns `Error::InvalidDimensions` if the byte length doesn't match expected size
-    /// - Returns `Error::InvalidDimensions` if the file endianness doesn't match native
-    /// - Returns `Error::InvalidDimensions` if the byte slice is not properly aligned
+    /// - Returns `Error::BufferTooSmall` if the byte length is less than expected
+    /// - Returns `Error::WrongEndianness` if the file endianness doesn't match native
+    /// - Returns `Error::MisalignedData` if the byte slice is not properly aligned
     #[inline]
     pub fn as_slice<T: VoxelType + bytemuck::Pod>(&self) -> Result<&[T], Error> {
         if !T::is_valid_mode(self.mode) {
@@ -463,15 +463,30 @@ impl<'a> DataBlock<'a> {
 
         let expected_byte_len = self.len_voxels() * T::SIZE;
         if self.bytes.len() < expected_byte_len {
-            return Err(Error::InvalidDimensions);
+            return Err(Error::BufferTooSmall {
+                expected: expected_byte_len,
+                got: self.bytes.len(),
+            });
         }
 
         if !self.file_endian.is_native() {
-            return Err(Error::InvalidDimensions);
+            return Err(Error::WrongEndianness {
+                file: self.file_endian,
+                native: FileEndian::native(),
+            });
         }
 
-        bytemuck::try_cast_slice(&self.bytes[..expected_byte_len])
-            .map_err(|_| Error::InvalidDimensions)
+        bytemuck::try_cast_slice(&self.bytes[..expected_byte_len]).map_err(|e| {
+            use bytemuck::PodCastError;
+            match e {
+                PodCastError::AlignmentMismatch => Error::MisalignedData {
+                    required: core::mem::align_of::<T>(),
+                    actual: self.bytes.as_ptr().align_offset(core::mem::align_of::<T>()),
+                },
+                PodCastError::SizeMismatch => Error::InvalidDimensions,
+                _ => Error::InvalidDimensions,
+            }
+        })
     }
 
     /// Unified fallible iterator (works for all endianness)
@@ -509,7 +524,7 @@ impl<'a> DataBlock<'a> {
     ///
     /// # Errors
     /// - Returns `Error::InvalidMode` if the mode doesn't match T::MODE
-    /// - Returns `Error::InvalidDimensions` if the output buffer is too small
+    /// - Returns `Error::BufferTooSmall` if the output buffer is too large for available data
     #[inline]
     pub fn copy_to<T: VoxelType>(&self, out: &mut [T]) -> Result<(), Error> {
         if !T::is_valid_mode(self.mode) {
@@ -518,7 +533,10 @@ impl<'a> DataBlock<'a> {
 
         let n = out.len();
         if n * T::SIZE > self.bytes.len() {
-            return Err(Error::InvalidDimensions);
+            return Err(Error::BufferTooSmall {
+                expected: n * T::SIZE,
+                got: self.bytes.len(),
+            });
         }
 
         for (i, dst) in out.iter_mut().enumerate() {
@@ -539,23 +557,24 @@ impl<'a> DataBlock<'a> {
     ///
     /// # Errors
     /// - Returns `Error::InvalidMode` if the mode doesn't match T::MODE
-    /// - Returns `Error::InvalidDimensions` if the byte length doesn't match expected size
+    /// - Returns `Error::BufferTooSmall` if the byte length is less than expected
     #[inline]
-    pub fn to_vec<T: VoxelType>(&self) -> Result<Vec<T>, Error> {
+    pub fn to_vec<T: VoxelType + Default>(&self) -> Result<Vec<T>, Error> {
         if !T::is_valid_mode(self.mode) {
             return Err(Error::InvalidMode);
         }
 
         let expected_byte_len = self.len_voxels() * T::SIZE;
         if self.bytes.len() < expected_byte_len {
-            return Err(Error::InvalidDimensions);
+            return Err(Error::BufferTooSmall {
+                expected: expected_byte_len,
+                got: self.bytes.len(),
+            });
         }
 
         let n = self.len_voxels();
         let mut result = Vec::with_capacity(n);
-
-        // Safe: we're about to fill all elements
-        unsafe { result.set_len(n); }
+        result.resize(n, T::default());
         self.copy_to(&mut result)?;
         Ok(result)
     }
@@ -564,7 +583,7 @@ impl<'a> DataBlock<'a> {
     ///
     /// # Errors
     /// Returns Error::InvalidMode if mode is not Float32
-    /// Returns Error::InvalidDimensions if index is out of bounds
+    /// Returns Error::IndexOutOfBounds if index is out of bounds
     #[inline]
     pub fn get_f32(&self, index: usize) -> Result<f32, Error> {
         if self.mode != Mode::Float32 {
@@ -572,7 +591,10 @@ impl<'a> DataBlock<'a> {
         }
         let offset = index * 4;
         if offset + 4 > self.bytes.len() {
-            return Err(Error::InvalidDimensions);
+            return Err(Error::IndexOutOfBounds {
+                index,
+                length: self.len_voxels(),
+            });
         }
         Ok(decode_f32(self.bytes, offset, self.file_endian))
     }
@@ -642,9 +664,7 @@ impl<'a> DataBlock<'a> {
 
         let n = self.bytes.len() / 4;
         let mut result = Vec::with_capacity(n);
-
-        // Safe: we're about to fill all elements with read_f32_into
-        unsafe { result.set_len(n); }
+        result.resize(n, 0.0f32);
         self.read_f32_into(&mut result)?;
         Ok(result)
     }
@@ -659,8 +679,8 @@ impl<'a> DataBlock<'a> {
     /// # Errors
     /// - Returns `Error::InvalidMode` if the mode is not Float32
     /// - Returns `Error::InvalidDimensions` if the byte length is not divisible by 4
-    /// - Returns `Error::InvalidDimensions` if the file endianness doesn't match native
-    /// - Returns `Error::InvalidDimensions` if the byte slice is not properly aligned for f32 access
+    /// - Returns `Error::WrongEndianness` if the file endianness doesn't match native
+    /// - Returns `Error::MisalignedData` if the byte slice is not properly aligned for f32 access
     ///
     /// # Safety Note
     /// This method uses `bytemuck::try_cast_slice` which ensures memory alignment and
@@ -677,19 +697,30 @@ impl<'a> DataBlock<'a> {
 
         // Only allow zero-copy access for native endianness
         if !self.file_endian.is_native() {
-            return Err(Error::InvalidDimensions);
+            return Err(Error::WrongEndianness {
+                file: self.file_endian,
+                native: FileEndian::native(),
+            });
         }
 
         // Use bytemuck to safely handle alignment requirements
-        // This returns an error if the slice is not properly aligned for f32 access
-        bytemuck::try_cast_slice(self.bytes).map_err(|_| Error::InvalidDimensions)
+        bytemuck::try_cast_slice(self.bytes).map_err(|e| {
+            use bytemuck::PodCastError;
+            match e {
+                PodCastError::AlignmentMismatch => Error::MisalignedData {
+                    required: core::mem::align_of::<f32>(),
+                    actual: self.bytes.as_ptr().align_offset(core::mem::align_of::<f32>()),
+                },
+                _ => Error::InvalidDimensions,
+            }
+        })
     }
 
     /// Get a single i16 value at the specified voxel index
     ///
     /// # Errors
     /// Returns Error::InvalidMode if mode is not Int16
-    /// Returns Error::InvalidDimensions if index is out of bounds
+    /// Returns Error::IndexOutOfBounds if index is out of bounds
     #[inline]
     pub fn get_i16(&self, index: usize) -> Result<i16, Error> {
         if self.mode != Mode::Int16 {
@@ -697,7 +728,10 @@ impl<'a> DataBlock<'a> {
         }
         let offset = index * 2;
         if offset + 2 > self.bytes.len() {
-            return Err(Error::InvalidDimensions);
+            return Err(Error::IndexOutOfBounds {
+                index,
+                length: self.len_voxels(),
+            });
         }
         Ok(decode_i16(self.bytes, offset, self.file_endian))
     }
@@ -770,8 +804,8 @@ impl<'a> DataBlock<'a> {
     /// # Errors
     /// - Returns `Error::InvalidMode` if the mode is not Int16
     /// - Returns `Error::InvalidDimensions` if the byte length is not divisible by 2
-    /// - Returns `Error::InvalidDimensions` if the file endianness doesn't match native
-    /// - Returns `Error::InvalidDimensions` if the byte slice is not properly aligned for i16 access
+    /// - Returns `Error::WrongEndianness` if the file endianness doesn't match native
+    /// - Returns `Error::MisalignedData` if the byte slice is not properly aligned for i16 access
     pub fn as_i16_slice(&self) -> Result<&[i16], Error> {
         if self.mode != Mode::Int16 {
             return Err(Error::InvalidMode);
@@ -782,17 +816,29 @@ impl<'a> DataBlock<'a> {
         }
 
         if !self.file_endian.is_native() {
-            return Err(Error::InvalidDimensions);
+            return Err(Error::WrongEndianness {
+                file: self.file_endian,
+                native: FileEndian::native(),
+            });
         }
 
-        bytemuck::try_cast_slice(self.bytes).map_err(|_| Error::InvalidDimensions)
+        bytemuck::try_cast_slice(self.bytes).map_err(|e| {
+            use bytemuck::PodCastError;
+            match e {
+                PodCastError::AlignmentMismatch => Error::MisalignedData {
+                    required: core::mem::align_of::<i16>(),
+                    actual: self.bytes.as_ptr().align_offset(core::mem::align_of::<i16>()),
+                },
+                _ => Error::InvalidDimensions,
+            }
+        })
     }
 
     /// Get a single u16 value at the specified voxel index
     ///
     /// # Errors
     /// Returns Error::InvalidMode if mode is not Uint16
-    /// Returns Error::InvalidDimensions if index is out of bounds
+    /// Returns Error::IndexOutOfBounds if index is out of bounds
     #[inline]
     pub fn get_u16(&self, index: usize) -> Result<u16, Error> {
         if self.mode != Mode::Uint16 {
@@ -800,7 +846,10 @@ impl<'a> DataBlock<'a> {
         }
         let offset = index * 2;
         if offset + 2 > self.bytes.len() {
-            return Err(Error::InvalidDimensions);
+            return Err(Error::IndexOutOfBounds {
+                index,
+                length: self.len_voxels(),
+            });
         }
         Ok(decode_u16(self.bytes, offset, self.file_endian))
     }
@@ -873,8 +922,8 @@ impl<'a> DataBlock<'a> {
     /// # Errors
     /// - Returns `Error::InvalidMode` if the mode is not Uint16
     /// - Returns `Error::InvalidDimensions` if the byte length is not divisible by 2
-    /// - Returns `Error::InvalidDimensions` if the file endianness doesn't match native
-    /// - Returns `Error::InvalidDimensions` if the byte slice is not properly aligned for u16 access
+    /// - Returns `Error::WrongEndianness` if the file endianness doesn't match native
+    /// - Returns `Error::MisalignedData` if the byte slice is not properly aligned for u16 access
     pub fn as_u16_slice(&self) -> Result<&[u16], Error> {
         if self.mode != Mode::Uint16 {
             return Err(Error::InvalidMode);
@@ -885,24 +934,39 @@ impl<'a> DataBlock<'a> {
         }
 
         if !self.file_endian.is_native() {
-            return Err(Error::InvalidDimensions);
+            return Err(Error::WrongEndianness {
+                file: self.file_endian,
+                native: FileEndian::native(),
+            });
         }
 
-        bytemuck::try_cast_slice(self.bytes).map_err(|_| Error::InvalidDimensions)
+        bytemuck::try_cast_slice(self.bytes).map_err(|e| {
+            use bytemuck::PodCastError;
+            match e {
+                PodCastError::AlignmentMismatch => Error::MisalignedData {
+                    required: core::mem::align_of::<u16>(),
+                    actual: self.bytes.as_ptr().align_offset(core::mem::align_of::<u16>()),
+                },
+                _ => Error::InvalidDimensions,
+            }
+        })
     }
 
     /// Get a single i8 value at the specified voxel index
     ///
     /// # Errors
     /// Returns Error::InvalidMode if mode is not Int8
-    /// Returns Error::InvalidDimensions if index is out of bounds
+    /// Returns Error::IndexOutOfBounds if index is out of bounds
     #[inline]
     pub fn get_i8(&self, index: usize) -> Result<i8, Error> {
         if self.mode != Mode::Int8 {
             return Err(Error::InvalidMode);
         }
         if index >= self.bytes.len() {
-            return Err(Error::InvalidDimensions);
+            return Err(Error::IndexOutOfBounds {
+                index,
+                length: self.len_voxels(),
+            });
         }
         Ok(self.bytes[index] as i8)
     }
@@ -942,7 +1006,7 @@ impl<'a> DataBlock<'a> {
     ///
     /// # Errors
     /// Returns Error::InvalidMode if mode is not Int16Complex
-    /// Returns Error::InvalidDimensions if index is out of bounds
+    /// Returns Error::IndexOutOfBounds if index is out of bounds
     #[inline]
     pub fn get_int16_complex(&self, index: usize) -> Result<Int16Complex, Error> {
         if self.mode != Mode::Int16Complex {
@@ -950,7 +1014,10 @@ impl<'a> DataBlock<'a> {
         }
         let offset = index * 4;
         if offset + 4 > self.bytes.len() {
-            return Err(Error::InvalidDimensions);
+            return Err(Error::IndexOutOfBounds {
+                index,
+                length: self.len_voxels(),
+            });
         }
         Ok(Int16Complex::decode(self.file_endian, &self.bytes[offset..offset + 4]))
     }
@@ -992,7 +1059,7 @@ impl<'a> DataBlock<'a> {
     ///
     /// # Errors
     /// Returns Error::InvalidMode if mode is not Float32Complex
-    /// Returns Error::InvalidDimensions if index is out of bounds
+    /// Returns Error::IndexOutOfBounds if index is out of bounds
     #[inline]
     pub fn get_float32_complex(&self, index: usize) -> Result<Float32Complex, Error> {
         if self.mode != Mode::Float32Complex {
@@ -1000,7 +1067,10 @@ impl<'a> DataBlock<'a> {
         }
         let offset = index * 8;
         if offset + 8 > self.bytes.len() {
-            return Err(Error::InvalidDimensions);
+            return Err(Error::IndexOutOfBounds {
+                index,
+                length: self.len_voxels(),
+            });
         }
         Ok(Float32Complex::decode(self.file_endian, &self.bytes[offset..offset + 8]))
     }
@@ -1045,14 +1115,17 @@ impl<'a> DataBlock<'a> {
     ///
     /// # Errors
     /// Returns Error::InvalidMode if mode is not Packed4Bit
-    /// Returns Error::InvalidDimensions if index is out of bounds
+    /// Returns Error::IndexOutOfBounds if index is out of bounds
     #[inline]
     pub fn get_packed4bit(&self, index: usize) -> Result<Packed4Bit, Error> {
         if self.mode != Mode::Packed4Bit {
             return Err(Error::InvalidMode);
         }
         if index >= self.bytes.len() {
-            return Err(Error::InvalidDimensions);
+            return Err(Error::IndexOutOfBounds {
+                index,
+                length: self.bytes.len(),
+            });
         }
         Ok(Packed4Bit::decode(self.file_endian, &[self.bytes[index]]))
     }
@@ -1061,14 +1134,17 @@ impl<'a> DataBlock<'a> {
     ///
     /// # Errors
     /// Returns Error::InvalidMode if mode is not Packed4Bit
-    /// Returns Error::InvalidDimensions if index is out of bounds
+    /// Returns Error::IndexOutOfBounds if index is out of bounds
     #[inline]
     pub fn get_packed4bit_value(&self, index: usize) -> Result<u8, Error> {
         if self.mode != Mode::Packed4Bit {
             return Err(Error::InvalidMode);
         }
         if index >= self.voxel_count {
-            return Err(Error::InvalidDimensions);
+            return Err(Error::IndexOutOfBounds {
+                index,
+                length: self.voxel_count,
+            });
         }
         let byte_idx = index / 2;
         let nibble = index % 2;
@@ -1129,11 +1205,11 @@ impl<'a> DataBlock<'a> {
         Ok(())
     }
 
-    /// Decode data as i8 values
+    /// Decode data as i8 values into a Vec
     ///
     /// # Errors
     /// Returns Error::InvalidMode if the file mode is not Int8 (mode 0)
-    pub fn as_i8(&self) -> Result<Vec<i8>, Error> {
+    pub fn to_vec_i8(&self) -> Result<Vec<i8>, Error> {
         if self.mode != Mode::Int8 {
             return Err(Error::InvalidMode);
         }
@@ -1147,12 +1223,12 @@ impl<'a> DataBlock<'a> {
         Ok(result)
     }
 
-    /// Decode data as Int16Complex values
+    /// Decode data as Int16Complex values into a Vec
     ///
     /// # Errors
     /// Returns Error::InvalidMode if the file mode is not Int16Complex (mode 3)
     /// Returns Error::InvalidDimensions if the byte length is not divisible by 4
-    pub fn as_int16_complex(&self) -> Result<Vec<Int16Complex>, Error> {
+    pub fn to_vec_int16_complex(&self) -> Result<Vec<Int16Complex>, Error> {
         if self.mode != Mode::Int16Complex {
             return Err(Error::InvalidMode);
         }
@@ -1162,9 +1238,7 @@ impl<'a> DataBlock<'a> {
         }
 
         let mut result = Vec::with_capacity(self.bytes.len() / 4);
-        let chunks: Vec<_> = self.bytes.chunks_exact(4).collect();
-
-        for chunk in chunks {
+        for chunk in self.bytes.chunks_exact(4) {
             let value = Int16Complex::decode(self.file_endian, chunk);
             result.push(value);
         }
@@ -1172,12 +1246,12 @@ impl<'a> DataBlock<'a> {
         Ok(result)
     }
 
-    /// Decode data as Float32Complex values
+    /// Decode data as Float32Complex values into a Vec
     ///
     /// # Errors
     /// Returns Error::InvalidMode if the file mode is not Float32Complex (mode 4)
     /// Returns Error::InvalidDimensions if the byte length is not divisible by 8
-    pub fn as_float32_complex(&self) -> Result<Vec<Float32Complex>, Error> {
+    pub fn to_vec_float32_complex(&self) -> Result<Vec<Float32Complex>, Error> {
         if self.mode != Mode::Float32Complex {
             return Err(Error::InvalidMode);
         }
@@ -1187,9 +1261,7 @@ impl<'a> DataBlock<'a> {
         }
 
         let mut result = Vec::with_capacity(self.bytes.len() / 8);
-        let chunks: Vec<_> = self.bytes.chunks_exact(8).collect();
-
-        for chunk in chunks {
+        for chunk in self.bytes.chunks_exact(8) {
             let value = Float32Complex::decode(self.file_endian, chunk);
             result.push(value);
         }
@@ -1197,11 +1269,11 @@ impl<'a> DataBlock<'a> {
         Ok(result)
     }
 
-    /// Decode data as Packed4Bit values
+    /// Decode data as Packed4Bit values into a Vec
     ///
     /// # Errors
     /// Returns Error::InvalidMode if the file mode is not Packed4Bit (mode 101)
-    pub fn as_packed4bit(&self) -> Result<Vec<Packed4Bit>, Error> {
+    pub fn to_vec_packed4bit(&self) -> Result<Vec<Packed4Bit>, Error> {
         if self.mode != Mode::Packed4Bit {
             return Err(Error::InvalidMode);
         }
@@ -1215,14 +1287,87 @@ impl<'a> DataBlock<'a> {
         Ok(result)
     }
 
-    /// Decode data as f16 values
+    /// Get a single f16 value at the specified voxel index
+    ///
+    /// # Errors
+    /// Returns Error::InvalidMode if mode is not Float16
+    /// Returns Error::IndexOutOfBounds if index is out of bounds
+    #[inline]
+    #[cfg(feature = "f16")]
+    pub fn get_f16(&self, index: usize) -> Result<f16, Error> {
+        if self.mode != Mode::Float16 {
+            return Err(Error::InvalidMode);
+        }
+        let offset = index * 2;
+        if offset + 2 > self.bytes.len() {
+            return Err(Error::IndexOutOfBounds {
+                index,
+                length: self.len_voxels(),
+            });
+        }
+        let bits = match self.file_endian {
+            FileEndian::LittleEndian => u16::from_le_bytes([self.bytes[offset], self.bytes[offset + 1]]),
+            FileEndian::BigEndian => u16::from_be_bytes([self.bytes[offset], self.bytes[offset + 1]]),
+        };
+        Ok(f16::from_bits(bits))
+    }
+
+    /// Create an iterator over f16 values
+    ///
+    /// # Errors
+    /// Returns Error::InvalidMode if mode is not Float16
+    #[inline]
+    #[cfg(feature = "f16")]
+    pub fn iter_f16(&self) -> Result<impl Iterator<Item = f16> + '_, Error> {
+        if self.mode != Mode::Float16 {
+            return Err(Error::InvalidMode);
+        }
+        let file_endian = self.file_endian;
+        let bytes = self.bytes;
+        Ok(bytes.chunks_exact(2).map(move |chunk| {
+            let bits = match file_endian {
+                FileEndian::LittleEndian => u16::from_le_bytes([chunk[0], chunk[1]]),
+                FileEndian::BigEndian => u16::from_be_bytes([chunk[0], chunk[1]]),
+            };
+            f16::from_bits(bits)
+        }))
+    }
+
+    /// Decode f16 values into a pre-allocated buffer
+    ///
+    /// # Errors
+    /// Returns Error::InvalidMode if mode is not Float16
+    /// Returns Error::BufferTooSmall if output buffer is too large for available data
+    #[inline]
+    #[cfg(feature = "f16")]
+    pub fn read_f16_into(&self, out: &mut [f16]) -> Result<(), Error> {
+        if self.mode != Mode::Float16 {
+            return Err(Error::InvalidMode);
+        }
+        let n = out.len();
+        if n * 2 > self.bytes.len() {
+            return Err(Error::BufferTooSmall {
+                expected: n * 2,
+                got: self.bytes.len(),
+            });
+        }
+        for (i, chunk) in self.bytes.chunks_exact(2).take(n).enumerate() {
+            let bits = match self.file_endian {
+                FileEndian::LittleEndian => u16::from_le_bytes([chunk[0], chunk[1]]),
+                FileEndian::BigEndian => u16::from_be_bytes([chunk[0], chunk[1]]),
+            };
+            out[i] = f16::from_bits(bits);
+        }
+        Ok(())
+    }
+
+    /// Decode data as f16 values into a Vec
     ///
     /// # Errors
     /// Returns Error::InvalidMode if the file mode is not Float16 (mode 12)
     /// Returns Error::InvalidDimensions if the byte length is not divisible by 2
-    /// Returns Error::UnsupportedMode if the f16 feature is not enabled
     #[cfg(feature = "f16")]
-    pub fn as_f16(&self) -> Result<Vec<f16>, Error> {
+    pub fn to_vec_f16(&self) -> Result<Vec<f16>, Error> {
         if self.mode != Mode::Float16 {
             return Err(Error::InvalidMode);
         }
@@ -1232,7 +1377,7 @@ impl<'a> DataBlock<'a> {
         }
 
         let mut result = Vec::with_capacity(self.bytes.len() / 2);
-        
+
         for chunk in self.bytes.chunks_exact(2) {
             let bits = match self.file_endian {
                 FileEndian::LittleEndian => u16::from_le_bytes([chunk[0], chunk[1]]),
@@ -1243,6 +1388,7 @@ impl<'a> DataBlock<'a> {
 
         Ok(result)
     }
+
 }
 
 /// Mutable data block - voxel data with endianness-aware encoding
@@ -1838,6 +1984,21 @@ pub enum Error {
     InvalidDimensions,
     #[error("Type mismatch")]
     TypeMismatch,
+    /// File endianness does not match native endianness, preventing zero-copy operations
+    #[error("Wrong endianness: file is {file:?}, native is {native:?}")]
+    WrongEndianness {
+        file: FileEndian,
+        native: FileEndian,
+    },
+    /// Data is not properly aligned for the requested type
+    #[error("Misaligned data: required alignment {required}, got {actual}")]
+    MisalignedData { required: usize, actual: usize },
+    /// Buffer is too small for the requested operation
+    #[error("Buffer too small: expected {expected} bytes, got {got}")]
+    BufferTooSmall { expected: usize, got: usize },
+    /// Index is out of bounds
+    #[error("Index out of bounds: index {index}, length {length}")]
+    IndexOutOfBounds { index: usize, length: usize },
     #[cfg(feature = "mmap")]
     #[error("Memory mapping error")]
     Mmap,

@@ -8,21 +8,17 @@ use crate::{DataBlock, DataBlockMut, Error, ExtHeader, ExtHeaderMut, Header, Mod
 /// - `ext_header`: Extended header raw bytes (opaque, no endianness conversion)
 /// - `data`: Voxel data raw bytes (file-endian, decoded on access)
 ///
-/// # Mutation Invariants
+/// # Accessing Components
 ///
-/// The `pub` fields allow direct access for convenience, but direct mutation
-/// may break invariants. For example:
-/// - Replacing `header` with a different header without updating `data` may
-///   cause dimension mismatches
-/// - The `data` block's endianness must match the header's detected endianness
-///
-/// When modifying views, ensure consistency between all components or use
-/// the provided accessor methods when available.
+/// Use the accessor methods to access components:
+/// - `header()` / `header_ref()` - access the header
+/// - `ext_header()` - access extended header bytes
+/// - `data()` / `data_ref()` - access the data block
 #[derive(Debug, Clone)]
 pub struct MrcView<'a> {
-    pub header: Header,
-    pub ext_header: ExtHeader<'a>,
-    pub data: DataBlock<'a>,
+    header: Header,
+    ext_header: ExtHeader<'a>,
+    data: DataBlock<'a>,
 }
 
 impl<'a> MrcView<'a> {
@@ -78,16 +74,25 @@ impl<'a> MrcView<'a> {
         })
     }
 
+    /// Get a reference to the header
     #[inline]
     pub fn header(&self) -> &Header {
         &self.header
     }
 
+    /// Get a reference to the header (alias for `header()`)
+    #[inline]
+    pub fn header_ref(&self) -> &Header {
+        &self.header
+    }
+
+    /// Get the data mode
     #[inline]
     pub fn mode(&self) -> Option<Mode> {
         Mode::from_i32(self.header.mode)
     }
 
+    /// Get the dimensions as (nx, ny, nz)
     #[inline]
     pub fn dimensions(&self) -> (usize, usize, usize) {
         (
@@ -97,9 +102,123 @@ impl<'a> MrcView<'a> {
         )
     }
 
+    /// Get the extended header bytes
     #[inline]
     pub fn ext_header(&self) -> &[u8] {
         self.ext_header.as_bytes()
+    }
+
+    /// Get a reference to the data block
+    #[inline]
+    pub fn data(&self) -> &DataBlock<'a> {
+        &self.data
+    }
+
+    /// Get a reference to the data block (alias for `data()`)
+    #[inline]
+    pub fn data_ref(&self) -> &DataBlock<'a> {
+        &self.data
+    }
+
+    /// Get a single voxel value as f32 at the given coordinates
+    ///
+    /// # Errors
+    /// Returns Error::InvalidMode if mode is not Float32
+    /// Returns Error::IndexOutOfBounds if coordinates are out of bounds
+    #[inline]
+    pub fn get_voxel_f32(&self, x: usize, y: usize, z: usize) -> Result<f32, crate::Error> {
+        let (nx, ny, _nz) = self.dimensions();
+        if x >= nx || y >= ny || z >= self.header.nz as usize {
+            return Err(crate::Error::IndexOutOfBounds {
+                index: z * nx * ny + y * nx + x,
+                length: self.data.len_voxels(),
+            });
+        }
+        let index = z * nx * ny + y * nx + x;
+        self.data.get_f32(index)
+    }
+
+    /// Get a single voxel value as i16 at the given coordinates
+    ///
+    /// # Errors
+    /// Returns Error::InvalidMode if mode is not Int16
+    /// Returns Error::IndexOutOfBounds if coordinates are out of bounds
+    #[inline]
+    pub fn get_voxel_i16(&self, x: usize, y: usize, z: usize) -> Result<i16, crate::Error> {
+        let (nx, ny, _nz) = self.dimensions();
+        if x >= nx || y >= ny || z >= self.header.nz as usize {
+            return Err(crate::Error::IndexOutOfBounds {
+                index: z * nx * ny + y * nx + x,
+                length: self.data.len_voxels(),
+            });
+        }
+        let index = z * nx * ny + y * nx + x;
+        self.data.get_i16(index)
+    }
+
+    /// Get a single voxel value as u16 at the given coordinates
+    ///
+    /// # Errors
+    /// Returns Error::InvalidMode if mode is not Uint16
+    /// Returns Error::IndexOutOfBounds if coordinates are out of bounds
+    #[inline]
+    pub fn get_voxel_u16(&self, x: usize, y: usize, z: usize) -> Result<u16, crate::Error> {
+        let (nx, ny, _nz) = self.dimensions();
+        if x >= nx || y >= ny || z >= self.header.nz as usize {
+            return Err(crate::Error::IndexOutOfBounds {
+                index: z * nx * ny + y * nx + x,
+                length: self.data.len_voxels(),
+            });
+        }
+        let index = z * nx * ny + y * nx + x;
+        self.data.get_u16(index)
+    }
+
+    /// Get a single voxel value as i8 at the given coordinates
+    ///
+    /// # Errors
+    /// Returns Error::InvalidMode if mode is not Int8
+    /// Returns Error::IndexOutOfBounds if coordinates are out of bounds
+    #[inline]
+    pub fn get_voxel_i8(&self, x: usize, y: usize, z: usize) -> Result<i8, crate::Error> {
+        let (nx, ny, _nz) = self.dimensions();
+        if x >= nx || y >= ny || z >= self.header.nz as usize {
+            return Err(crate::Error::IndexOutOfBounds {
+                index: z * nx * ny + y * nx + x,
+                length: self.data.len_voxels(),
+            });
+        }
+        let index = z * nx * ny + y * nx + x;
+        self.data.get_i8(index)
+    }
+
+    /// Get data layout information: shape and strides
+    ///
+    /// Returns ((nx, ny, nz), (sx, sy, sz)) where:
+    /// - (nx, ny, nz) are the dimensions
+    /// - (sx, sy, sz) are the strides in elements (not bytes)
+    #[inline]
+    pub fn data_layout(&self) -> ((usize, usize, usize), (usize, usize, usize)) {
+        let (nx, ny, _nz) = self.dimensions();
+        ((nx, ny, self.header.nz as usize), (1, nx, nx * ny))
+    }
+
+    /// Calculate the flat index from 3D coordinates
+    #[inline]
+    pub fn index_of(&self, x: usize, y: usize, z: usize) -> usize {
+        let (nx, ny, _) = self.dimensions();
+        z * nx * ny + y * nx + x
+    }
+
+    /// Convert a flat index to 3D coordinates
+    #[inline]
+    pub fn coords_of(&self, index: usize) -> (usize, usize, usize) {
+        let (nx, ny, _) = self.dimensions();
+        let z = index / (nx * ny);
+        let remainder = index % (nx * ny);
+        let y = remainder / nx;
+        let x = remainder % nx;
+        (x, y, z)
     }
 }
 
@@ -112,22 +231,17 @@ impl<'a> MrcView<'a> {
 /// - `ext_header`: Extended header raw bytes (opaque, no endianness conversion)
 /// - `data`: Voxel data raw bytes (file-endian, decoded on access)
 ///
-/// # Mutation Invariants
+/// # Accessing Components
 ///
-/// The `pub` fields allow direct access for convenience, but direct mutation
-/// may break invariants. For example:
-/// - Replacing `header` with a different header without updating `data` may
-///   cause dimension mismatches
-/// - The `data` block's endianness must match the header's detected endianness
-/// - When writing back to file, the header must be re-encoded to file endianness
-///
-/// When modifying views, ensure consistency between all components or use
-/// the provided accessor methods when available.
+/// Use the accessor methods to access components:
+/// - `header()` / `header_mut()` - access the header
+/// - `ext_header()` / `ext_header_mut()` - access extended header bytes
+/// - `data()` / `data_mut()` - access the data block
 #[derive(Debug)]
 pub struct MrcViewMut<'a> {
-    pub header: Header,
-    pub ext_header: ExtHeaderMut<'a>,
-    pub data: DataBlockMut<'a>,
+    header: Header,
+    ext_header: ExtHeaderMut<'a>,
+    data: DataBlockMut<'a>,
 }
 
 impl<'a> MrcViewMut<'a> {
@@ -179,36 +293,59 @@ impl<'a> MrcViewMut<'a> {
         })
     }
 
+    /// Get a reference to the header
     #[inline]
     pub fn header(&self) -> &Header {
         &self.header
     }
 
+    /// Get a mutable reference to the header
+    ///
+    /// # Safety Note
+    /// Modifying the header without updating the data block may break invariants.
+    /// Ensure consistency between header and data after modification.
     #[inline]
     pub fn header_mut(&mut self) -> &mut Header {
         &mut self.header
     }
 
+    /// Get the extended header bytes
     #[inline]
     pub fn ext_header(&self) -> &[u8] {
         self.ext_header.as_bytes()
     }
 
+    /// Get mutable access to the extended header bytes
     #[inline]
     pub fn ext_header_mut(&mut self) -> &mut [u8] {
         self.ext_header.as_bytes_mut()
     }
 
+    /// Get a reference to the data block
+    #[inline]
+    pub fn data(&self) -> &DataBlockMut<'a> {
+        &self.data
+    }
+
+    /// Get mutable access to the raw data bytes
     #[inline]
     pub fn data_mut(&mut self) -> &mut [u8] {
         self.data.as_bytes_mut()
     }
 
+    /// Get a mutable reference to the data block
+    #[inline]
+    pub fn data_block_mut(&mut self) -> &mut DataBlockMut<'a> {
+        &mut self.data
+    }
+
+    /// Get the data mode
     #[inline]
     pub fn mode(&self) -> Option<Mode> {
         Mode::from_i32(self.header.mode)
     }
 
+    /// Get the dimensions as (nx, ny, nz)
     #[inline]
     pub fn dimensions(&self) -> (usize, usize, usize) {
         (
@@ -216,6 +353,87 @@ impl<'a> MrcViewMut<'a> {
             self.header.ny as usize,
             self.header.nz as usize,
         )
+    }
+
+    /// Get data layout information: shape and strides
+    ///
+    /// Returns ((nx, ny, nz), (sx, sy, sz)) where:
+    /// - (nx, ny, nz) are the dimensions
+    /// - (sx, sy, sz) are the strides in elements (not bytes)
+    #[inline]
+    pub fn data_layout(&self) -> ((usize, usize, usize), (usize, usize, usize)) {
+        let (nx, ny, _nz) = self.dimensions();
+        ((nx, ny, self.header.nz as usize), (1, nx, nx * ny))
+    }
+
+    /// Calculate the flat index from 3D coordinates
+    #[inline]
+    pub fn index_of(&self, x: usize, y: usize, z: usize) -> usize {
+        let (nx, ny, _) = self.dimensions();
+        z * nx * ny + y * nx + x
+    }
+
+    /// Convert a flat index to 3D coordinates
+    #[inline]
+    pub fn coords_of(&self, index: usize) -> (usize, usize, usize) {
+        let (nx, ny, _) = self.dimensions();
+        let z = index / (nx * ny);
+        let remainder = index % (nx * ny);
+        let y = remainder / nx;
+        let x = remainder % nx;
+        (x, y, z)
+    }
+
+    /// Set a single voxel value as f32 at the given coordinates
+    ///
+    /// # Errors
+    /// Returns Error::InvalidMode if mode is not Float32
+    /// Returns Error::IndexOutOfBounds if coordinates are out of bounds
+    #[inline]
+    pub fn set_voxel_f32(&mut self, x: usize, y: usize, z: usize, value: f32) -> Result<(), crate::Error> {
+        let (nx, ny, _nz) = self.dimensions();
+        if x >= nx || y >= ny || z >= self.header.nz as usize {
+            return Err(crate::Error::IndexOutOfBounds {
+                index: z * nx * ny + y * nx + x,
+                length: self.data.len_voxels(),
+            });
+        }
+        let index = z * nx * ny + y * nx + x;
+        let offset = index * 4;
+        let bytes = match self.data.file_endian() {
+            crate::FileEndian::LittleEndian => value.to_le_bytes(),
+            crate::FileEndian::BigEndian => value.to_be_bytes(),
+        };
+        let data_bytes = self.data.as_bytes_mut();
+        data_bytes[offset..offset + 4].copy_from_slice(&bytes);
+        Ok(())
+    }
+
+    /// Set a single voxel value as i16 at the given coordinates
+    ///
+    /// # Errors
+    /// Returns Error::InvalidMode if mode is not Int16
+    /// Returns Error::IndexOutOfBounds if coordinates are out of bounds
+    #[inline]
+    pub fn set_voxel_i16(&mut self, x: usize, y: usize, z: usize, value: i16) -> Result<(), crate::Error> {
+        let (nx, ny, _nz) = self.dimensions();
+        if x >= nx || y >= ny || z >= self.header.nz as usize {
+            return Err(crate::Error::IndexOutOfBounds {
+                index: z * nx * ny + y * nx + x,
+                length: self.data.len_voxels(),
+            });
+        }
+        let index = z * nx * ny + y * nx + x;
+        // We need to set a single value, but set_i16 expects a slice
+        // Use direct byte manipulation for single value
+        let offset = index * 2;
+        let bytes = match self.data.file_endian() {
+            crate::FileEndian::LittleEndian => value.to_le_bytes(),
+            crate::FileEndian::BigEndian => value.to_be_bytes(),
+        };
+        let data_bytes = self.data.as_bytes_mut();
+        data_bytes[offset..offset + 2].copy_from_slice(&bytes);
+        Ok(())
     }
 }
 
@@ -275,7 +493,7 @@ mod tests {
         let map = MrcView::from_parts(header, &ext_header, &data).unwrap();
 
         assert_eq!(map.ext_header().len(), 0);
-        assert_eq!(map.data.as_bytes().len(), 32);
+        assert_eq!(map.data().as_bytes().len(), 32);
     }
 
     #[test]
@@ -292,7 +510,7 @@ mod tests {
         let map = MrcView::from_parts(header, &ext_header, &data).unwrap();
 
         assert_eq!(map.ext_header().len(), 100);
-        assert_eq!(map.data.as_bytes().len(), 32);
+        assert_eq!(map.data().as_bytes().len(), 32);
     }
 
     #[test]
@@ -309,7 +527,7 @@ mod tests {
         let map = MrcView::from_parts(header, &ext_header, &data).unwrap();
 
         assert_eq!(map.ext_header().len(), 1024);
-        assert_eq!(map.data.as_bytes().len(), 32);
+        assert_eq!(map.data().as_bytes().len(), 32);
     }
 
     #[test]

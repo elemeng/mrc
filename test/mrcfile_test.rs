@@ -64,7 +64,7 @@ mod backend_tests {
             assert_eq!(io_map.header(), mmap_map.header());
 
             // Verify identical data
-            assert_eq!(io_map.data.as_bytes(), mmap_map.data.as_bytes());
+            assert_eq!(io_map.data().as_bytes(), mmap_map.data().as_bytes());
 
             // Verify identical extended headers
             assert_eq!(io_map.ext_header(), mmap_map.ext_header());
@@ -103,7 +103,7 @@ mod backend_tests {
         let map = file.read_view().unwrap();
 
         // Verify
-        let read_data = map.data.to_vec_f32().unwrap();
+        let read_data = map.data().to_vec_f32().unwrap();
         assert_eq!(read_data, original_data);
         assert_eq!(map.header().nx, 3);
         assert_eq!(map.header().ny, 3);
@@ -136,7 +136,7 @@ mod backend_tests {
         let map = file.read_view().unwrap();
 
         assert_eq!(map.ext_header(), &ext_data[..]);
-        assert_eq!(map.data.as_bytes().len(), 16);
+        assert_eq!(map.data().as_bytes().len(), 16);
     }
 
     #[test]
@@ -279,7 +279,7 @@ mod backend_tests {
             let view = file.read_view().unwrap();
 
             assert_eq!(view.mode(), Some(mode));
-            assert_eq!(view.data.as_bytes().len(), data_size);
+            assert_eq!(view.data().as_bytes().len(), data_size);
         }
     }
 
@@ -310,9 +310,9 @@ mod backend_tests {
 
         assert_eq!(view.ext_header().len(), 1024);
         assert_eq!(view.ext_header(), ext_data);
-        assert_eq!(view.data.as_bytes().len(), 4); // 1 float = 4 bytes
+        assert_eq!(view.data().as_bytes().len(), 4); // 1 float = 4 bytes
 
-        let float_data = view.data.to_vec_f32().unwrap();
+        let float_data = view.data().to_vec_f32().unwrap();
         assert_eq!(float_data[0], 42.0);
     }
 
@@ -340,7 +340,7 @@ mod backend_tests {
         let view = file.read_view().unwrap();
 
         assert_eq!(view.ext_header().len(), 0);
-        assert_eq!(view.data.as_bytes().len(), 32); // 8 floats * 4 bytes
+        assert_eq!(view.data().as_bytes().len(), 32); // 8 floats * 4 bytes
     }
 
     #[test]
@@ -458,7 +458,7 @@ mod backend_tests {
         let read_view = file.read_view().unwrap();
         assert_eq!(read_view.ext_header(), ext_data);
 
-        let floats = read_view.data.to_vec_f32().unwrap();
+        let floats = read_view.data().to_vec_f32().unwrap();
         assert_eq!(floats, data);
     }
 
