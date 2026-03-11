@@ -8,6 +8,24 @@ extern crate std;
 #[cfg(feature = "std")]
 use std::fs::File;
 
+/// Unified source trait for MRC file access
+///
+/// This trait provides a common interface for accessing MRC file components
+/// without requiring eager loading of all data. Both MrcFile and MrcMmap
+/// implement this trait, allowing users to write generic code that works
+/// with either backing source.
+#[cfg(feature = "std")]
+pub trait MrcSource {
+    /// Get a reference to the decoded header
+    fn header(&self) -> &Header;
+
+    /// Get the extended header bytes
+    fn ext_header(&self) -> &[u8];
+
+    /// Get the voxel data bytes
+    fn data(&self) -> &[u8];
+}
+
 #[cfg(feature = "std")]
 /// MrcFile for file I/O operations
 ///
@@ -28,7 +46,7 @@ pub struct MrcFile {
 impl MrcFile {
     #[inline]
     pub fn open(path: impl AsRef<std::path::Path>) -> Result<Self, Error> {
-        let mut file = File::open(path).map_err(|_| Error::Io)?;
+        let file = File::open(path).map_err(|_| Error::Io)?;
         let header = Self::read_header(&file)?;
 
         if !header.validate() {
@@ -40,7 +58,7 @@ impl MrcFile {
         let data_size = header.data_size();
         let total_size = ext_header_size + data_size;
 
-        // Read all data into buffer
+        // Read all data into buffer (current behavior)
         let mut buffer = alloc::vec![0u8; total_size];
         if ext_header_size > 0 {
             file.seek(SeekFrom::Start(1024)).map_err(|_| Error::Io)?;
@@ -229,6 +247,24 @@ impl MrcFile {
     }
 }
 
+#[cfg(feature = "std")]
+impl MrcSource for MrcFile {
+    #[inline]
+    fn header(&self) -> &Header {
+        &self.header
+    }
+
+    #[inline]
+    fn ext_header(&self) -> &[u8] {
+        &self.buffer[..self.ext_header_size]
+    }
+
+    #[inline]
+    fn data(&self) -> &[u8] {
+        &self.buffer[self.ext_header_size..]
+    }
+}
+
 #[cfg(feature = "mmap")]
 /// MrcMmap for memory-mapped file access
 ///
@@ -332,6 +368,28 @@ impl MrcMmap {
 
     #[inline]
     pub fn data(&self) -> &[u8] {
+        &self.buffer[self.data_offset..self.data_offset + self.data_size]
+    }
+}
+
+#[cfg(feature = "mmap")]
+impl MrcSource for MrcMmap {
+    #[inline]
+    fn header(&self) -> &Header {
+        &self.header
+    }
+
+    #[inline]
+    fn ext_header(&self) -> &[u8] {
+        if self.ext_header_size > 0 {
+            &self.buffer[1024..1024 + self.ext_header_size]
+        } else {
+            &[]
+        }
+    }
+
+    #[inline]
+    fn data(&self) -> &[u8] {
         &self.buffer[self.data_offset..self.data_offset + self.data_size]
     }
 }

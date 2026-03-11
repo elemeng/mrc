@@ -77,6 +77,61 @@ pub use header::Header;
 pub use mode::Mode;
 pub use view::{MrcView, MrcViewMut};
 
+#[cfg(feature = "std")]
+pub use mrcfile::MrcSource;
+
+/// VoxelType trait for MRC voxel data types
+///
+/// This trait seals the supported types for voxel data and provides
+/// compile-time mode checking. It's used by the unified DataBlock API
+/// to ensure type-safe access to voxel data.
+///
+/// # Safety
+/// This trait is sealed - only types defined in this crate can implement it.
+pub trait VoxelType: DecodeFromFile + Copy + 'static {
+    /// The MRC mode corresponding to this type
+    const MODE: Mode;
+
+    /// Check if a given mode is valid for this type
+    fn is_valid_mode(mode: Mode) -> bool {
+        mode == Self::MODE
+    }
+}
+
+// Implement VoxelType for all supported voxel types
+
+impl VoxelType for i8 {
+    const MODE: Mode = Mode::Int8;
+}
+
+impl VoxelType for i16 {
+    const MODE: Mode = Mode::Int16;
+}
+
+impl VoxelType for f32 {
+    const MODE: Mode = Mode::Float32;
+}
+
+impl VoxelType for Int16Complex {
+    const MODE: Mode = Mode::Int16Complex;
+}
+
+impl VoxelType for Float32Complex {
+    const MODE: Mode = Mode::Float32Complex;
+}
+
+impl VoxelType for u16 {
+    const MODE: Mode = Mode::Uint16;
+}
+
+#[cfg(feature = "f16")]
+impl VoxelType for f16 {
+    const MODE: Mode = Mode::Float16;
+}
+
+// Note: Packed4Bit is not a VoxelType because it packs two values per byte,
+// making it incompatible with the unified slice-based API.
+
 /// Endianness of MRC file data
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FileEndian {
@@ -385,6 +440,124 @@ impl<'a> DataBlock<'a> {
     #[inline]
     pub fn as_bytes(&self) -> &'a [u8] {
         self.bytes
+    }
+
+    /// Unified zero-copy slice view (native endianness only)
+    ///
+    /// This is the primary method for accessing voxel data with zero-copy.
+    /// Works only when the file endianness matches the native system endianness.
+    ///
+    /// # Type Parameters
+    /// * `T` - The voxel type to view the data as (must implement VoxelType and Pod)
+    ///
+    /// # Errors
+    /// - Returns `Error::InvalidMode` if the mode doesn't match T::MODE
+    /// - Returns `Error::InvalidDimensions` if the byte length doesn't match expected size
+    /// - Returns `Error::InvalidDimensions` if the file endianness doesn't match native
+    /// - Returns `Error::InvalidDimensions` if the byte slice is not properly aligned
+    #[inline]
+    pub fn as_slice<T: VoxelType + bytemuck::Pod>(&self) -> Result<&[T], Error> {
+        if !T::is_valid_mode(self.mode) {
+            return Err(Error::InvalidMode);
+        }
+
+        let expected_byte_len = self.len_voxels() * T::SIZE;
+        if self.bytes.len() < expected_byte_len {
+            return Err(Error::InvalidDimensions);
+        }
+
+        if !self.file_endian.is_native() {
+            return Err(Error::InvalidDimensions);
+        }
+
+        bytemuck::try_cast_slice(&self.bytes[..expected_byte_len])
+            .map_err(|_| Error::InvalidDimensions)
+    }
+
+    /// Unified fallible iterator (works for all endianness)
+    ///
+    /// This is the secondary method for accessing voxel data when endianness
+    /// conversion is needed. The iterator performs lazy decoding of each element.
+    ///
+    /// # Type Parameters
+    /// * `T` - The voxel type to iterate over (must implement VoxelType)
+    ///
+    /// # Errors
+    /// - Returns `Error::InvalidMode` if the mode doesn't match T::MODE
+    #[inline]
+    pub fn iter<T: VoxelType>(&self) -> Result<impl Iterator<Item = T> + '_, Error> {
+        if !T::is_valid_mode(self.mode) {
+            return Err(Error::InvalidMode);
+        }
+
+        let file_endian = self.file_endian;
+        let bytes = self.bytes;
+        let len = self.len_voxels();
+
+        Ok((0..len).map(move |i| {
+            T::decode(file_endian, &bytes[i * T::SIZE..(i + 1) * T::SIZE])
+        }))
+    }
+
+    /// Unified method to fill a pre-allocated buffer
+    ///
+    /// This is the utility method for copying data into a user-provided buffer.
+    /// More efficient than `to_vec()` when you already have a buffer allocated.
+    ///
+    /// # Type Parameters
+    /// * `T` - The voxel type to decode (must implement VoxelType)
+    ///
+    /// # Errors
+    /// - Returns `Error::InvalidMode` if the mode doesn't match T::MODE
+    /// - Returns `Error::InvalidDimensions` if the output buffer is too small
+    #[inline]
+    pub fn copy_to<T: VoxelType>(&self, out: &mut [T]) -> Result<(), Error> {
+        if !T::is_valid_mode(self.mode) {
+            return Err(Error::InvalidMode);
+        }
+
+        let n = out.len();
+        if n * T::SIZE > self.bytes.len() {
+            return Err(Error::InvalidDimensions);
+        }
+
+        for (i, dst) in out.iter_mut().enumerate() {
+            *dst = T::decode(self.file_endian, &self.bytes[i * T::SIZE..(i + 1) * T::SIZE]);
+        }
+
+        Ok(())
+    }
+
+    /// Unified escape hatch: owned Vec allocation
+    ///
+    /// This is the fallback method when you need owned data and don't have
+    /// a pre-allocated buffer. Prefer `as_slice()` for zero-copy access or
+    /// `copy_to()` for filling existing buffers.
+    ///
+    /// # Type Parameters
+    /// * `T` - The voxel type to decode (must implement VoxelType)
+    ///
+    /// # Errors
+    /// - Returns `Error::InvalidMode` if the mode doesn't match T::MODE
+    /// - Returns `Error::InvalidDimensions` if the byte length doesn't match expected size
+    #[inline]
+    pub fn to_vec<T: VoxelType>(&self) -> Result<Vec<T>, Error> {
+        if !T::is_valid_mode(self.mode) {
+            return Err(Error::InvalidMode);
+        }
+
+        let expected_byte_len = self.len_voxels() * T::SIZE;
+        if self.bytes.len() < expected_byte_len {
+            return Err(Error::InvalidDimensions);
+        }
+
+        let n = self.len_voxels();
+        let mut result = Vec::with_capacity(n);
+
+        // Safe: we're about to fill all elements
+        unsafe { result.set_len(n); }
+        self.copy_to(&mut result)?;
+        Ok(result)
     }
 
     /// Get a single f32 value at the specified voxel index
@@ -1466,7 +1639,8 @@ impl EncodeToFile for i8 {
 // Complex number types for MRC modes 3 and 4
 
 /// Complex number with 16-bit integer components (Mode 3)
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, bytemuck::Pod, bytemuck::Zeroable)]
+#[repr(C)]
 pub struct Int16Complex {
     pub real: i16,
     pub imag: i16,
@@ -1509,7 +1683,8 @@ impl EncodeToFile for Int16Complex {
 }
 
 /// Complex number with 32-bit float components (Mode 4)
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
+#[repr(C)]
 pub struct Float32Complex {
     pub real: f32,
     pub imag: f32,

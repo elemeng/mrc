@@ -454,7 +454,7 @@ mod backend_tests {
         }
 
         // Verify by reading back
-        let file = MrcFile::open(temp_file.path()).unwrap();
+        let mut file = MrcFile::open(temp_file.path()).unwrap();
         let read_view = file.read_view().unwrap();
         assert_eq!(read_view.ext_header(), ext_data);
 
