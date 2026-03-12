@@ -141,6 +141,28 @@ impl<T: Voxel + Encoding, S: AsMut<[u8]>> Volume<T, S, 1> {
 }
 
 impl<T: Voxel + Encoding, S: AsRef<[u8]>> Volume<T, S, 3> {
+    /// Validate dimensions and compute total voxel count
+    fn validate_dimensions(dimensions: [usize; 3]) -> Result<usize, Error> {
+        dimensions[0]
+            .checked_mul(dimensions[1])
+            .and_then(|v| v.checked_mul(dimensions[2]))
+            .ok_or(Error::InvalidDimensions)
+    }
+
+    /// Validate storage size against expected voxel count
+    fn validate_storage_size(storage: &S, voxel_count: usize) -> Result<(), Error> {
+        let expected_size = voxel_count
+            .checked_mul(T::SIZE)
+            .ok_or(Error::InvalidDimensions)?;
+        if storage.as_ref().len() < expected_size {
+            return Err(Error::BufferTooSmall {
+                expected: expected_size,
+                got: storage.as_ref().len(),
+            });
+        }
+        Ok(())
+    }
+
     /// Create a new 3D volume from header and storage
     ///
     /// The strides are calculated from the axis_map in the header,
@@ -150,23 +172,10 @@ impl<T: Voxel + Encoding, S: AsRef<[u8]>> Volume<T, S, 3> {
         validate_mode::<T>(header.mode())?;
 
         let dimensions = [header.nx(), header.ny(), header.nz()];
-        let total = dimensions[0]
-            .checked_mul(dimensions[1])
-            .and_then(|v| v.checked_mul(dimensions[2]))
-            .ok_or(Error::InvalidDimensions)?;
-
-        // Validate size
-        let expected_size = total.checked_mul(T::SIZE).ok_or(Error::InvalidDimensions)?;
-        if storage.as_ref().len() < expected_size {
-            return Err(Error::BufferTooSmall {
-                expected: expected_size,
-                got: storage.as_ref().len(),
-            });
-        }
+        let total = Self::validate_dimensions(dimensions)?;
+        Self::validate_storage_size(&storage, total)?;
 
         // Calculate strides based on axis_map
-        // MRC data is stored in column-major order (column varies fastest)
-        // axis_map tells us which logical dimension (X, Y, Z) corresponds to each storage axis
         let strides = header.axis_map.strides(dimensions);
 
         Ok(Self {
@@ -187,18 +196,8 @@ impl<T: Voxel + Encoding, S: AsRef<[u8]>> Volume<T, S, 3> {
         storage: S,
     ) -> Result<Self, Error> {
         let dimensions = [nx, ny, nz];
-        let total = nx
-            .checked_mul(ny)
-            .and_then(|v| v.checked_mul(nz))
-            .ok_or(Error::InvalidDimensions)?;
-
-        let expected_size = total.checked_mul(T::SIZE).ok_or(Error::InvalidDimensions)?;
-        if storage.as_ref().len() < expected_size {
-            return Err(Error::BufferTooSmall {
-                expected: expected_size,
-                got: storage.as_ref().len(),
-            });
-        }
+        let total = Self::validate_dimensions(dimensions)?;
+        Self::validate_storage_size(&storage, total)?;
 
         let mut header = Header::new();
         header.set_dimensions(nx, ny, nz);
@@ -596,6 +595,27 @@ impl<T: Voxel + Encoding, S: AsMut<[u8]>> Volume<T, S, 3> {
 pub type Image2D<T, S> = Volume<T, S, 2>;
 
 impl<T: Voxel + Encoding, S: AsRef<[u8]>> Volume<T, S, 2> {
+    /// Validate 2D dimensions
+    fn validate_dimensions_2d(dimensions: [usize; 2]) -> Result<usize, Error> {
+        dimensions[0]
+            .checked_mul(dimensions[1])
+            .ok_or(Error::InvalidDimensions)
+    }
+
+    /// Validate storage size for 2D volume
+    fn validate_storage_size_2d(storage: &S, voxel_count: usize) -> Result<(), Error> {
+        let expected_size = voxel_count
+            .checked_mul(T::SIZE)
+            .ok_or(Error::InvalidDimensions)?;
+        if storage.as_ref().len() < expected_size {
+            return Err(Error::BufferTooSmall {
+                expected: expected_size,
+                got: storage.as_ref().len(),
+            });
+        }
+        Ok(())
+    }
+
     /// Create a new 2D image from storage
     pub fn new_2d(
         nx: usize,
@@ -604,15 +624,8 @@ impl<T: Voxel + Encoding, S: AsRef<[u8]>> Volume<T, S, 2> {
         storage: S,
     ) -> Result<Self, Error> {
         let dimensions = [nx, ny];
-        let total = nx.checked_mul(ny).ok_or(Error::InvalidDimensions)?;
-
-        let expected_size = total.checked_mul(T::SIZE).ok_or(Error::InvalidDimensions)?;
-        if storage.as_ref().len() < expected_size {
-            return Err(Error::BufferTooSmall {
-                expected: expected_size,
-                got: storage.as_ref().len(),
-            });
-        }
+        let total = Self::validate_dimensions_2d(dimensions)?;
+        Self::validate_storage_size_2d(&storage, total)?;
 
         let mut header = Header::new();
         header.set_dimensions(nx, ny, 1);
