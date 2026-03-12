@@ -8,4 +8,4 @@ mod raw;
 mod validated;
 
 pub use raw::RawHeader;
-pub use validated::Header;
+pub use validated::{Header, HeaderBuilder};

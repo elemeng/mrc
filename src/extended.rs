@@ -9,6 +9,7 @@ use alloc::vec::Vec;
 ///
 /// Common values from MRC2014 spec and implementations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Default)]
 pub enum ExtType {
     /// CCP4 format (classic)
     Ccp4,
@@ -25,6 +26,7 @@ pub enum ExtType {
     /// HDF5 format
     Hdf5,
     /// Unknown/unrecognized format
+    #[default]
     Unknown,
 }
 
@@ -60,11 +62,6 @@ impl ExtType {
     }
 }
 
-impl Default for ExtType {
-    fn default() -> Self {
-        Self::Unknown
-    }
-}
 
 /// Extended header wrapper
 ///

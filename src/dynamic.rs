@@ -147,10 +147,43 @@ impl VolumeData {
         }
     }
     
+    /// Try to get as i8 volume
+    pub fn as_i8(&self) -> Option<&Volume<i8, Vec<u8>>> {
+        match self {
+            Self::I8(v) => Some(v),
+            _ => None,
+        }
+    }
+    
     /// Try to get as u16 volume
     pub fn as_u16(&self) -> Option<&Volume<u16, Vec<u8>>> {
         match self {
             Self::U16(v) => Some(v),
+            _ => None,
+        }
+    }
+    
+    /// Try to get as Int16Complex volume
+    pub fn as_complex_i16(&self) -> Option<&Volume<Int16Complex, Vec<u8>>> {
+        match self {
+            Self::ComplexI16(v) => Some(v),
+            _ => None,
+        }
+    }
+    
+    /// Try to get as Float32Complex volume
+    pub fn as_complex_f32(&self) -> Option<&Volume<Float32Complex, Vec<u8>>> {
+        match self {
+            Self::ComplexF32(v) => Some(v),
+            _ => None,
+        }
+    }
+    
+    /// Try to get as f16 volume
+    #[cfg(feature = "f16")]
+    pub fn as_f16(&self) -> Option<&Volume<half::f16, Vec<u8>>> {
+        match self {
+            Self::F16(v) => Some(v),
             _ => None,
         }
     }

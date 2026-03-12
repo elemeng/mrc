@@ -63,7 +63,7 @@ pub use axis::AxisMap;
 pub use encoding::Encoding;
 pub use endian::FileEndian;
 pub use error::Error;
-pub use header::{Header, RawHeader};
+pub use header::{Header, HeaderBuilder, RawHeader};
 pub use mode::{InvalidMode, Mode};
 pub use voxel::{ComplexVoxel, RealVoxel, ScalarVoxel, Voxel, Int16Complex, Float32Complex};
 
