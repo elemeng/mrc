@@ -47,62 +47,51 @@ extern crate alloc;
 #[cfg(feature = "std")]
 extern crate std;
 
-// Core types
-pub mod access;
-pub mod axis;
-pub mod data_block;
-pub mod encoding;
-pub mod endian;
-pub mod error;
-pub mod mode;
-pub mod stats;
+// Core types (no_std compatible)
+pub mod core;
 pub mod voxel;
 
 // Header module
 pub mod header;
 
-// Extended header support
-pub mod extended;
+// Data access patterns (std)
+#[cfg(feature = "std")]
+pub mod access;
 
-// Re-exports
-pub use access::{VoxelAccess, VoxelAccessMut};
-pub use axis::AxisMap;
-pub use data_block::{DataBlock, DataBlockMut};
-pub use encoding::Encoding;
-pub use endian::FileEndian;
-pub use error::Error;
-pub use header::{Header, HeaderBuilder, RawHeader};
-pub use mode::{InvalidMode, Mode};
-pub use stats::{compute_stats, compute_stats_slice, RunningStats, Statistics as Stats};
-pub use voxel::{ComplexVoxel, IntegerVoxel, RealVoxel, ScalarVoxel, Voxel, Int16Complex, Float32Complex, Packed4Bit};
+// Statistics (std)
+#[cfg(feature = "std")]
+pub mod stats;
 
-// Feature-gated modules
+// IO operations (std)
 #[cfg(feature = "std")]
 pub mod io;
 
+// Core re-exports
+pub use core::{Error, Mode, AxisMap, check_bounds};
+
+// Voxel re-exports
+pub use voxel::{
+    Voxel, ScalarVoxel, RealVoxel, IntegerVoxel, ComplexVoxel,
+    ComplexI16, ComplexF32, Packed4Bit,
+    Int16Complex, Float32Complex,
+    FileEndian, EndianConvert,
+};
+
+// Header re-exports
+pub use header::{Header, HeaderBuilder, RawHeader};
+
+// Feature-gated re-exports
 #[cfg(feature = "std")]
-pub mod volume;
+pub use access::{VoxelAccess, VoxelAccessMut, DataBlock, DataBlockMut, Volume, VolumeData};
 
 #[cfg(feature = "std")]
-pub mod volume_trait;
+pub use header::{ExtendedHeader, ExtType};
 
 #[cfg(feature = "std")]
-pub mod dynamic;
+pub use io::{MrcReader, MrcWriter, MrcSource, MrcSink};
 
 #[cfg(feature = "std")]
-pub use dynamic::VolumeData;
-
-#[cfg(feature = "std")]
-pub use extended::ExtendedHeader;
-
-#[cfg(feature = "std")]
-pub use io::{MrcReader, MrcWriter};
-
-#[cfg(feature = "std")]
-pub use volume::{Statistics, Volume};
-
-#[cfg(feature = "std")]
-pub use volume_trait::{Volume as VolumeTrait, VolumeMut, VolumeRef, VolumeMutRef, VolumeStats, VolumeExt};
+pub use stats::{compute_stats, Statistics, RunningStats};
 
 #[cfg(test)]
 mod tests {
@@ -143,7 +132,7 @@ mod tests {
     
     #[test]
     fn test_ext_type() {
-        assert_eq!(extended::ExtType::from_bytes(b"CCP4"), extended::ExtType::Ccp4);
-        assert_eq!(extended::ExtType::from_bytes(b"SERI"), extended::ExtType::Seri);
+        assert_eq!(header::ExtType::from_bytes(b"CCP4"), header::ExtType::Ccp4);
+        assert_eq!(header::ExtType::from_bytes(b"SERI"), header::ExtType::Seri);
     }
 }

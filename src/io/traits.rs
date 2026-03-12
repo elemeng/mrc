@@ -6,7 +6,10 @@
 //! - Network streams
 //! - Custom implementations for testing
 
-use crate::{Error, Header, Voxel, Encoding, Volume};
+use crate::core::Error;
+use crate::header::Header;
+use crate::voxel::{Voxel, Encoding, validate_mode};
+use crate::access::Volume;
 use alloc::vec::Vec;
 use alloc::vec;
 
@@ -72,9 +75,7 @@ pub trait MrcSource {
     /// Returns `Error::TypeMismatch` if the file mode doesn't match T::MODE.
     fn read_volume<T: Voxel + Encoding>(&mut self) -> Result<Volume<T, Vec<u8>>, Error> {
         let header = self.read_header()?;
-        if header.mode() != <T as Voxel>::MODE {
-            return Err(Error::TypeMismatch);
-        }
+        validate_mode::<T>(header.mode())?;
         let data = self.read_data_bytes(&header)?;
         Volume::new(header, data)
     }
@@ -129,9 +130,7 @@ pub trait MrcSink {
         volume: &Volume<T, Vec<u8>>,
     ) -> Result<(), Error> {
         let header = volume.header();
-        if header.mode() != <T as Voxel>::MODE {
-            return Err(Error::TypeMismatch);
-        }
+        validate_mode::<T>(header.mode())?;
         self.write_header(header)?;
         self.write_data_bytes(header, volume.as_bytes())?;
         self.flush()

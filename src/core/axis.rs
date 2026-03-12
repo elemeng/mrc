@@ -96,7 +96,7 @@ impl AxisMap {
     
     /// Get stride multipliers for indexing
     ///
-    /// Returns (stride_x, stride_y, stride_z) for computing linear indices
+    /// Returns [stride_x, stride_y, stride_z] for computing linear indices
     pub fn strides(&self, shape: [usize; 3]) -> [usize; 3] {
         let nx = shape[0];
         let ny = shape[1];
@@ -125,6 +125,15 @@ impl AxisMap {
         };
         
         [stride_x, stride_y, stride_z]
+    }
+    
+    /// Get stride multipliers as tuple
+    ///
+    /// Returns (stride_x, stride_y, stride_z) for computing linear indices
+    #[inline]
+    pub fn strides_tuple(&self, shape: (usize, usize, usize)) -> (usize, usize, usize) {
+        let arr = self.strides([shape.0, shape.1, shape.2]);
+        (arr[0], arr[1], arr[2])
     }
 }
 

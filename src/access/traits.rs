@@ -3,7 +3,8 @@
 //! This module provides traits for type-safe voxel access, implemented by
 //! both `DataBlock` and `Volume` to provide a consistent API.
 
-use crate::{Encoding, Error, Mode, Voxel};
+use crate::core::{Error, Mode};
+use crate::voxel::{Encoding, Voxel};
 
 /// Trait for read-only voxel access
 ///

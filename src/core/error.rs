@@ -147,3 +147,14 @@ impl PartialEq for Error {
         }
     }
 }
+
+/// Check if index is within bounds, returning error if not
+///
+/// Helper function to reduce boilerplate bounds checking.
+#[inline]
+pub fn check_bounds(index: usize, length: usize) -> Result<(), Error> {
+    if index >= length {
+        return Err(Error::IndexOutOfBounds { index, length });
+    }
+    Ok(())
+}

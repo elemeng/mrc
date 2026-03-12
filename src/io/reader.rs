@@ -1,6 +1,9 @@
 //! MRC file reader
 
-use crate::{Error, Header, Mode, Volume, Encoding, Voxel, VolumeData, ExtendedHeader};
+use crate::core::{Error, Mode};
+use crate::header::{Header, ExtendedHeader};
+use crate::voxel::{Encoding, Voxel, validate_mode};
+use crate::access::{Volume, VolumeData};
 use alloc::vec::Vec;
 
 #[cfg(feature = "std")]
@@ -103,9 +106,7 @@ impl MrcReader {
     /// Returns `Error::TypeMismatch` if the file mode doesn't match T::MODE
     pub fn read_volume<T: Voxel + Encoding>(&mut self) -> Result<Volume<T, Vec<u8>>, Error> {
         // Verify mode matches
-        if self.header.mode() != <T as Voxel>::MODE {
-            return Err(Error::TypeMismatch);
-        }
+        validate_mode::<T>(self.header.mode())?;
         
         let data = self.read_data()?;
         Volume::new(self.header.clone(), data)

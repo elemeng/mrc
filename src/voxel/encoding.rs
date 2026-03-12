@@ -3,8 +3,8 @@
 //! This module provides a unified trait for handling endianness-aware
 //! encoding/decoding of voxel data.
 
-use crate::{FileEndian, Mode, Voxel, Error};
-use crate::voxel::{ComplexI16, ComplexF32, Packed4Bit};
+use crate::core::{Mode, Error};
+use crate::voxel::{FileEndian, Voxel, ComplexI16, ComplexF32, Packed4Bit};
 
 /// Trait for encoding/decoding voxel data with endianness handling
 ///

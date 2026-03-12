@@ -2,7 +2,9 @@
 //!
 //! Generic volume container with compile-time type safety.
 
-use crate::{AxisMap, Error, Header, Encoding, Voxel};
+use crate::core::{AxisMap, Error, check_bounds};
+use crate::header::Header;
+use crate::voxel::{Encoding, Voxel, validate_mode};
 
 #[cfg(feature = "std")]
 use alloc::vec;
@@ -64,9 +66,7 @@ impl<T: Voxel + Encoding, S: AsRef<[u8]>> Volume<T, S, 3> {
     /// which defines the storage order of the data.
     pub fn new(header: Header, storage: S) -> Result<Self, Error> {
         // Validate mode matches
-        if <T as Voxel>::MODE != header.mode() {
-            return Err(Error::TypeMismatch);
-        }
+        validate_mode::<T>(header.mode())?;
         
         let shape = [header.nx(), header.ny(), header.nz()];
         let total = shape[0].checked_mul(shape[1])
@@ -86,7 +86,7 @@ impl<T: Voxel + Encoding, S: AsRef<[u8]>> Volume<T, S, 3> {
         // Calculate strides based on axis_map
         // MRC data is stored in column-major order (column varies fastest)
         // axis_map tells us which logical dimension (X, Y, Z) corresponds to each storage axis
-        let strides = calculate_strides(&header.axis_map, shape);
+        let strides = header.axis_map.strides(shape);
         
         Ok(Self {
             header,
@@ -351,13 +351,7 @@ impl<T: Voxel + Encoding, S: AsRef<[u8]>> Volume<T, S, 3> {
     where
         T: Into<f64>,
     {
-        let stats = crate::stats::compute_stats(self.iter());
-        Statistics {
-            dmin: stats.min,
-            dmax: stats.max,
-            dmean: stats.mean,
-            rms: stats.rms,
-        }
+        crate::stats::compute_stats(self.iter())
     }
 
     /// Extract a 2D slice from the volume at a specific Z position
@@ -370,12 +364,7 @@ impl<T: Voxel + Encoding, S: AsRef<[u8]>> Volume<T, S, 3> {
     /// # Errors
     /// Returns `Error::IndexOutOfBounds` if z is out of range
     pub fn slice(&self, z: usize) -> Result<Image2D<T, &[u8]>, Error> {
-        if z >= self.shape[2] {
-            return Err(Error::IndexOutOfBounds {
-                index: z,
-                length: self.shape[2],
-            });
-        }
+        check_bounds(z, self.shape[2])?;
 
         let nx = self.shape[0];
         let ny = self.shape[1];
@@ -475,18 +464,8 @@ impl<T: Voxel + Encoding, S: AsRef<[u8]>> Volume<T, S, 3> {
     }
 }
 
-/// Statistics computed from volume data
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Statistics {
-    /// Minimum density value
-    pub dmin: f64,
-    /// Maximum density value
-    pub dmax: f64,
-    /// Mean density value
-    pub dmean: f64,
-    /// RMS deviation from mean
-    pub rms: f64,
-}
+// Re-export Statistics from stats module
+pub use crate::stats::Statistics;
 
 impl<T: Voxel + Encoding, S: AsMut<[u8]>> Volume<T, S, 3> {
     /// Get mutable access to raw bytes
@@ -506,12 +485,7 @@ impl<T: Voxel + Encoding, S: AsMut<[u8]>> Volume<T, S, 3> {
     
     /// Set a voxel at linear index, returning error if out of bounds
     pub fn set_checked(&mut self, index: usize, value: T) -> Result<(), Error> {
-        if index >= self.len() {
-            return Err(Error::IndexOutOfBounds {
-                index,
-                length: self.len(),
-            });
-        }
+        check_bounds(index, self.len())?;
         self.set(index, value);
         Ok(())
     }
@@ -538,39 +512,7 @@ impl<T: Voxel + Encoding, S: AsMut<[u8]>> Volume<T, S, 3> {
     }
 }
 
-/// Calculate strides for 3D indexing based on axis_map
-/// 
-/// MRC data is stored in column-major order where:
-/// - Column (storage axis 0) varies fastest
-/// - Row (storage axis 1) varies medium
-/// - Section (storage axis 2) varies slowest
-/// 
-/// The axis_map tells us which logical dimension (X, Y, or Z) is stored
-/// as column, row, or section.
-/// 
-/// Returns strides for (X, Y, Z) logical coordinates.
-fn calculate_strides(axis_map: &AxisMap, shape: [usize; 3]) -> [usize; 3] {
-    // Storage dimensions: column, row, section
-    let storage_strides = [1, shape[0], shape[0] * shape[1]];
-    
-    // Map logical dimensions to storage strides
-    // axis_map.column tells us which logical dim (1=X, 2=Y, 3=Z) is column
-    // axis_map.row tells us which logical dim is row
-    // axis_map.section tells us which logical dim is section
-    
-    let mut strides = [0usize; 3];
-    
-    // Column varies fastest - assign its stride to the logical dimension stored as column
-    strides[axis_map.column - 1] = storage_strides[0];
-    
-    // Row varies medium
-    strides[axis_map.row - 1] = storage_strides[1];
-    
-    // Section varies slowest
-    strides[axis_map.section - 1] = storage_strides[2];
-    
-    strides
-}
+// Strides calculation now uses AxisMap::strides() method
 
 /// 2D volume (image slice)
 pub type Image2D<T, S> = Volume<T, S, 2>;
@@ -630,10 +572,10 @@ impl<T: Voxel + Encoding, S: AsRef<[u8]>> Volume<T, S, 2> {
 // Implement unified access traits
 // ============================================================================
 
-use crate::access::{VoxelAccess, VoxelAccessMut};
+use super::{VoxelAccess, VoxelAccessMut};
 
 impl<T: Voxel + Encoding, S: AsRef<[u8]>> VoxelAccess for Volume<T, S, 3> {
-    fn mode(&self) -> crate::Mode {
+    fn mode(&self) -> crate::core::Mode {
         self.header.mode()
     }
 
@@ -642,15 +584,8 @@ impl<T: Voxel + Encoding, S: AsRef<[u8]>> VoxelAccess for Volume<T, S, 3> {
     }
 
     fn get<V: Voxel + Encoding>(&self, index: usize) -> Result<V, Error> {
-        if <V as Voxel>::MODE != self.header.mode() {
-            return Err(Error::TypeMismatch);
-        }
-        if index >= self.len() {
-            return Err(Error::IndexOutOfBounds {
-                index,
-                length: self.len(),
-            });
-        }
+        validate_mode::<V>(self.header.mode())?;
+        check_bounds(index, self.len())?;
         let offset = index * V::SIZE;
         let bytes = self.storage.as_ref();
         Ok(V::decode(self.header.file_endian, &bytes[offset..offset + V::SIZE]))
@@ -659,18 +594,11 @@ impl<T: Voxel + Encoding, S: AsRef<[u8]>> VoxelAccess for Volume<T, S, 3> {
 
 impl<T: Voxel + Encoding, S: AsRef<[u8]> + AsMut<[u8]>> VoxelAccessMut for Volume<T, S, 3> {
     fn set<V: Voxel + Encoding>(&mut self, index: usize, value: V) -> Result<(), Error> {
-        if <V as Voxel>::MODE != self.header.mode() {
-            return Err(Error::TypeMismatch);
-        }
-        if index >= self.len() {
-            return Err(Error::IndexOutOfBounds {
-                index,
-                length: self.len(),
-            });
-        }
+        validate_mode::<V>(self.header.mode())?;
+        check_bounds(index, self.len())?;
         
         // Special handling for Packed4Bit (two values per byte)
-        if <V as Voxel>::MODE == crate::Mode::Packed4Bit {
+        if <V as Voxel>::MODE == crate::core::Mode::Packed4Bit {
             let byte_index = index / 2;
             let is_second = index % 2 == 1;
             let bytes = self.storage.as_mut();
@@ -706,7 +634,7 @@ pub type MmapVolume<T, const D: usize = 3> = Volume<T, memmap2::Mmap, D>;
 pub type MmapVolumeMut<T, const D: usize = 3> = Volume<T, memmap2::MmapMut, D>;
 
 // Implement Volume trait for Volume<T, S, 3>
-use crate::volume_trait::{Volume as VolumeTrait, VolumeStats};
+use super::volume_trait::{Volume as VolumeTrait, VolumeStats};
 
 impl<T: Voxel + Encoding, S: AsRef<[u8]>> VolumeTrait for Volume<T, S, 3> {
     type Voxel = T;
@@ -728,25 +656,7 @@ impl<T: Voxel + Encoding, S: AsRef<[u8]>> VolumeTrait for Volume<T, S, 3> {
     where
         T: Into<f64>,
     {
-        let mut min = f64::INFINITY;
-        let mut max = f64::NEG_INFINITY;
-        let mut sum = 0.0;
-        let mut sum_sq = 0.0;
-        let n = self.len() as f64;
-
-        for i in 0..self.len() {
-            let v: f64 = unsafe { self.get_unchecked(i) }.into();
-            min = min.min(v);
-            max = max.max(v);
-            sum += v;
-            sum_sq += v * v;
-        }
-
-        let mean = if n > 0.0 { sum / n } else { 0.0 };
-        let variance = if n > 0.0 { (sum_sq / n) - (mean * mean) } else { 0.0 };
-        let rms = variance.max(0.0).sqrt();
-
-        VolumeStats { min, max, mean, rms }
+        crate::stats::compute_stats((0..self.len()).map(|i| unsafe { self.get_unchecked(i) }))
     }
 }
 
@@ -759,7 +669,7 @@ mod tests {
         // Standard: X=column, Y=row, Z=section
         let axis_map = AxisMap::new(1, 2, 3);
         let shape = [64, 64, 64];
-        let strides = calculate_strides(&axis_map, shape);
+        let strides = axis_map.strides(shape);
 
         // X should have stride 1 (column, fastest)
         // Y should have stride 64 (row)
@@ -772,7 +682,7 @@ mod tests {
         // Non-standard: Z=column, Y=row, X=section
         let axis_map = AxisMap::new(3, 2, 1);
         let shape = [64, 64, 64];
-        let strides = calculate_strides(&axis_map, shape);
+        let strides = axis_map.strides(shape);
 
         // X (stored as section) should have stride 4096
         // Y (stored as row) should have stride 64

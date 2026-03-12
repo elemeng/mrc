@@ -249,12 +249,12 @@ impl Header {
     /// Calculate data size in bytes
     pub fn data_size(&self) -> usize {
         let voxel_count = self.voxel_count();
-        match self.mode() {
-            Mode::Int8 => voxel_count,
-            Mode::Int16 | Mode::Uint16 | Mode::Float16 => voxel_count * 2,
-            Mode::Float32 | Mode::Int16Complex => voxel_count * 4,
-            Mode::Float32Complex => voxel_count * 8,
-            Mode::Packed4Bit => voxel_count.div_ceil(2),
+        let byte_size = self.mode().byte_size();
+        if self.mode() == Mode::Packed4Bit {
+            // Packed4Bit is special: 2 values per byte
+            voxel_count.div_ceil(2)
+        } else {
+            voxel_count * byte_size
         }
     }
     

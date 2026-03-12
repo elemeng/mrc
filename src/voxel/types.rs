@@ -1,15 +1,16 @@
-//! Voxel trait hierarchy for MRC data types
+//! Voxel trait hierarchy and concrete types for MRC data
 //!
-//! This module provides a type-safe foundation for voxel data:
+//! This module provides:
 //! - `Voxel`: Base trait for all voxel types
-//! - `ScalarVoxel`: Marker for scalar (non-complex) types
-//! - `RealVoxel`: Marker for real (floating-point) types  
-//! - `ComplexI16`/`ComplexF32`: Complex number types
+//! - `ScalarVoxel`: Marker for scalar types
+//! - `RealVoxel`: Marker for floating-point types
+//! - `IntegerVoxel`: Marker for integer types
+//! - Concrete types: ComplexI16, ComplexF32, Packed4Bit
 
 extern crate alloc;
 
 use bytemuck::{Pod, Zeroable};
-use crate::Mode;
+use crate::core::Mode;
 
 /// Base trait for all voxel types
 ///
@@ -17,10 +18,6 @@ use crate::Mode;
 pub trait Voxel: Copy + Send + Sync + 'static + private::Sealed {
     /// The MRC mode for this voxel type
     const MODE: Mode;
-    /// Minimum representable value
-    const MIN: Self;
-    /// Maximum representable value
-    const MAX: Self;
 }
 
 mod private {
@@ -168,10 +165,6 @@ impl ComplexI16 {
     }
 
     /// Returns the magnitude (sqrt(re² + im²)) as f32
-    /// 
-    /// # Note
-    /// This method requires the `std` feature. For `no_std` environments,
-    /// use `magnitude_squared()` and compute the square root manually.
     #[inline]
     #[cfg(feature = "std")]
     pub fn magnitude(self) -> f32 {
@@ -179,9 +172,6 @@ impl ComplexI16 {
     }
 
     /// Returns the phase angle in radians (atan2(im, re))
-    /// 
-    /// # Note
-    /// This method requires the `std` feature.
     #[inline]
     #[cfg(feature = "std")]
     pub fn phase(self) -> f32 {
@@ -233,7 +223,6 @@ impl core::ops::Mul for ComplexI16 {
     type Output = Self;
     #[inline]
     fn mul(self, other: Self) -> Self {
-        // (a + bi) * (c + di) = (ac - bd) + (ad + bc)i
         let a = self.re as i32;
         let b = self.im as i32;
         let c = other.re as i32;
@@ -271,52 +260,33 @@ impl ComplexF32 {
         Self { re, im }
     }
 
-    /// Create a complex number from real part only (imaginary part is 0)
+    /// Create a complex number from real part only
     #[inline]
     pub const fn from_real(re: f32) -> Self {
         Self { re, im: 0.0 }
     }
 
-    /// Create a complex number from polar coordinates (magnitude and phase)
-    /// 
-    /// # Note
-    /// This method requires the `std` feature.
-    #[inline]
-    #[cfg(feature = "std")]
-    pub fn from_polar(magnitude: f32, phase: f32) -> Self {
-        Self {
-            re: magnitude * phase.cos(),
-            im: magnitude * phase.sin(),
-        }
-    }
-
-    /// Returns the square of the magnitude (re² + im²)
+    /// Returns the square of the magnitude
     #[inline]
     pub fn magnitude_squared(self) -> f32 {
         self.re * self.re + self.im * self.im
     }
 
-    /// Returns the magnitude (sqrt(re² + im²))
-    /// 
-    /// # Note
-    /// This method requires the `std` feature.
+    /// Returns the magnitude
     #[inline]
     #[cfg(feature = "std")]
     pub fn magnitude(self) -> f32 {
         self.magnitude_squared().sqrt()
     }
 
-    /// Returns the phase angle in radians (atan2(im, re))
-    /// 
-    /// # Note
-    /// This method requires the `std` feature.
+    /// Returns the phase angle in radians
     #[inline]
     #[cfg(feature = "std")]
     pub fn phase(self) -> f32 {
         self.im.atan2(self.re)
     }
 
-    /// Returns the complex conjugate (re - im*i)
+    /// Returns the complex conjugate
     #[inline]
     pub const fn conjugate(self) -> Self {
         Self {
@@ -325,7 +295,7 @@ impl ComplexF32 {
         }
     }
 
-    /// Returns the reciprocal (1/z)
+    /// Returns the reciprocal
     #[inline]
     pub fn recip(self) -> Self {
         let magsq = self.magnitude_squared();
@@ -336,9 +306,6 @@ impl ComplexF32 {
     }
 
     /// Normalize to unit magnitude
-    /// 
-    /// # Note
-    /// This method requires the `std` feature.
     #[inline]
     #[cfg(feature = "std")]
     pub fn normalize(self) -> Self {
@@ -389,7 +356,6 @@ impl core::ops::Mul for ComplexF32 {
     type Output = Self;
     #[inline]
     fn mul(self, other: Self) -> Self {
-        // (a + bi) * (c + di) = (ac - bd) + (ad + bc)i
         Self {
             re: self.re * other.re - self.im * other.im,
             im: self.re * other.im + self.im * other.re,
@@ -401,7 +367,6 @@ impl core::ops::Div for ComplexF32 {
     type Output = Self;
     #[inline]
     fn div(self, other: Self) -> Self {
-        // (a + bi) / (c + di) = ((ac + bd) + (bc - ad)i) / (c² + d²)
         let magsq = other.magnitude_squared();
         Self {
             re: (self.re * other.re + self.im * other.im) / magsq,
@@ -450,14 +415,10 @@ impl private::Sealed for ComplexF32 {}
 // Implement Voxel for complex types
 impl Voxel for ComplexI16 {
     const MODE: Mode = Mode::Int16Complex;
-    const MIN: Self = Self { re: i16::MIN, im: i16::MIN };
-    const MAX: Self = Self { re: i16::MAX, im: i16::MAX };
 }
 
 impl Voxel for ComplexF32 {
     const MODE: Mode = Mode::Float32Complex;
-    const MIN: Self = Self { re: f32::NEG_INFINITY, im: f32::NEG_INFINITY };
-    const MAX: Self = Self { re: f32::INFINITY, im: f32::INFINITY };
 }
 
 /// Marker for complex voxel types
@@ -480,39 +441,29 @@ impl ComplexVoxel for ComplexF32 {
 
 impl Voxel for i8 {
     const MODE: Mode = Mode::Int8;
-    const MIN: Self = i8::MIN;
-    const MAX: Self = i8::MAX;
 }
 
 impl Voxel for i16 {
     const MODE: Mode = Mode::Int16;
-    const MIN: Self = i16::MIN;
-    const MAX: Self = i16::MAX;
 }
 
 impl Voxel for u16 {
     const MODE: Mode = Mode::Uint16;
-    const MIN: Self = u16::MIN;
-    const MAX: Self = u16::MAX;
 }
 
 impl Voxel for f32 {
     const MODE: Mode = Mode::Float32;
-    const MIN: Self = f32::NEG_INFINITY;
-    const MAX: Self = f32::INFINITY;
 }
 
 #[cfg(feature = "f16")]
 impl Voxel for half::f16 {
     const MODE: Mode = Mode::Float16;
-    const MIN: Self = half::f16::NEG_INFINITY;
-    const MAX: Self = half::f16::INFINITY;
 }
 
-/// Legacy type alias for backwards compatibility
+/// Legacy type alias
 pub type Int16Complex = ComplexI16;
 
-/// Legacy type alias for backwards compatibility  
+/// Legacy type alias
 pub type Float32Complex = ComplexF32;
 
 // ============================================================================
@@ -520,45 +471,32 @@ pub type Float32Complex = ComplexF32;
 // ============================================================================
 
 /// Packed 4-bit values (Mode 101)
-///
-/// Two 4-bit values (0-15) are packed into a single byte.
-/// The lower 4 bits contain the first value, the upper 4 bits contain the second.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Packed4Bit {
-    /// The packed byte containing two 4-bit values
     pub byte: u8,
 }
 
 impl Packed4Bit {
-    /// Create a new packed 4-bit value from raw byte
+    /// Create from raw byte
     #[inline]
     pub const fn new(byte: u8) -> Self {
         Self { byte }
     }
 
-    /// Create a new packed 4-bit value from two values
-    ///
-    /// # Panics
-    /// Panics if either value is greater than 15
+    /// Create from two values
     #[inline]
     pub fn from_values(first: u8, second: u8) -> Self {
         assert!(first <= 15, "First value must be 0-15");
         assert!(second <= 15, "Second value must be 0-15");
-        Self {
-            byte: first | (second << 4),
-        }
+        Self { byte: first | (second << 4) }
     }
 
-    /// Create a new packed 4-bit value from two values with saturation
-    ///
-    /// Values greater than 15 are clamped to 15.
+    /// Create from two values with saturation
     #[inline]
     pub fn from_values_saturated(first: u8, second: u8) -> Self {
         let first = first.min(15);
         let second = second.min(15);
-        Self {
-            byte: first | (second << 4),
-        }
+        Self { byte: first | (second << 4) }
     }
 
     /// Get the first (lower) 4-bit value
@@ -573,42 +511,33 @@ impl Packed4Bit {
         (self.byte >> 4) & 0x0F
     }
 
-    /// Get both values as a tuple (first, second)
+    /// Get both values as a tuple
     #[inline]
     pub const fn values(&self) -> (u8, u8) {
         (self.first(), self.second())
     }
 
-    /// Get both values as an array [first, second]
+    /// Get both values as an array
     #[inline]
     pub const fn unpack(&self) -> [u8; 2] {
         [self.first(), self.second()]
     }
 
-    /// Set the first (lower) 4-bit value
-    ///
-    /// # Panics
-    /// Panics if value is greater than 15
+    /// Set the first value
     #[inline]
     pub fn set_first(&mut self, value: u8) {
         assert!(value <= 15, "Value must be 0-15");
         self.byte = (self.byte & 0xF0) | value;
     }
 
-    /// Set the second (upper) 4-bit value
-    ///
-    /// # Panics
-    /// Panics if value is greater than 15
+    /// Set the second value
     #[inline]
     pub fn set_second(&mut self, value: u8) {
         assert!(value <= 15, "Value must be 0-15");
         self.byte = (self.byte & 0x0F) | (value << 4);
     }
 
-    /// Set both values at once
-    ///
-    /// # Panics
-    /// Panics if either value is greater than 15
+    /// Set both values
     #[inline]
     pub fn set_values(&mut self, first: u8, second: u8) {
         assert!(first <= 15, "First value must be 0-15");
@@ -616,13 +545,13 @@ impl Packed4Bit {
         self.byte = first | (second << 4);
     }
 
-    /// Check if both values are valid (0-15)
+    /// Check if both values are valid
     #[inline]
     pub const fn is_valid(&self) -> bool {
         self.first() <= 15 && self.second() <= 15
     }
 
-    /// Get the nth value (0 = first/lower, 1 = second/upper)
+    /// Get the nth value
     #[inline]
     pub const fn get(&self, index: usize) -> Option<u8> {
         match index {
@@ -665,15 +594,10 @@ impl IntoIterator for Packed4Bit {
     }
 }
 
-// Implement Sealed for Packed4Bit
 impl private::Sealed for Packed4Bit {}
 
-// Implement Voxel for Packed4Bit
 impl Voxel for Packed4Bit {
     const MODE: Mode = Mode::Packed4Bit;
-    const MIN: Self = Self { byte: 0x00 };
-    const MAX: Self = Self { byte: 0xFF };
 }
 
-// Packed4Bit is a scalar type (stores two 4-bit scalars)
 impl ScalarVoxel for Packed4Bit {}

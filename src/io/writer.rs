@@ -89,12 +89,11 @@ impl MrcWriterBuilder {
             .and_then(|v| v.checked_mul(self.shape[2]))
             .ok_or(Error::InvalidDimensions)?;
         
-        let expected_data_size = match self.mode {
-            Mode::Int8 => voxel_count,
-            Mode::Int16 | Mode::Uint16 | Mode::Float16 => voxel_count.checked_mul(2).ok_or(Error::InvalidDimensions)?,
-            Mode::Float32 | Mode::Int16Complex => voxel_count.checked_mul(4).ok_or(Error::InvalidDimensions)?,
-            Mode::Float32Complex => voxel_count.checked_mul(8).ok_or(Error::InvalidDimensions)?,
-            Mode::Packed4Bit => voxel_count.div_ceil(2),
+        let expected_data_size = if self.mode == Mode::Packed4Bit {
+            voxel_count.div_ceil(2)
+        } else {
+            voxel_count.checked_mul(self.mode.byte_size())
+                .ok_or(Error::InvalidDimensions)?
         };
         
         // Validate data size if provided

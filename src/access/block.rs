@@ -5,8 +5,9 @@
 
 extern crate alloc;
 
-use crate::{Encoding, Error, FileEndian, Mode, Voxel};
-use crate::access::{VoxelAccess, VoxelAccessMut};
+use crate::core::{Error, Mode, check_bounds};
+use crate::voxel::{Encoding, FileEndian, Voxel, validate_mode};
+use super::{VoxelAccess, VoxelAccessMut};
 
 /// A read-only view into raw voxel data with runtime mode checking
 ///
@@ -47,12 +48,8 @@ impl VoxelAccess for DataBlock<'_> {
     fn len(&self) -> usize { self.voxel_count }
 
     fn get<T: Voxel + Encoding>(&self, index: usize) -> Result<T, Error> {
-        if <T as Voxel>::MODE != self.mode {
-            return Err(Error::TypeMismatch);
-        }
-        if index >= self.voxel_count {
-            return Err(Error::IndexOutOfBounds { index, length: self.voxel_count });
-        }
+        validate_mode::<T>(self.mode)?;
+        check_bounds(index, self.voxel_count)?;
         let offset = index * T::SIZE;
         Ok(T::decode(self.endian, &self.data[offset..offset + T::SIZE]))
     }
@@ -97,12 +94,8 @@ impl VoxelAccess for DataBlockMut<'_> {
     fn len(&self) -> usize { self.voxel_count }
 
     fn get<T: Voxel + Encoding>(&self, index: usize) -> Result<T, Error> {
-        if <T as Voxel>::MODE != self.mode {
-            return Err(Error::TypeMismatch);
-        }
-        if index >= self.voxel_count {
-            return Err(Error::IndexOutOfBounds { index, length: self.voxel_count });
-        }
+        validate_mode::<T>(self.mode)?;
+        check_bounds(index, self.voxel_count)?;
         let offset = index * T::SIZE;
         Ok(T::decode(self.endian, &self.data[offset..offset + T::SIZE]))
     }
@@ -110,12 +103,8 @@ impl VoxelAccess for DataBlockMut<'_> {
 
 impl VoxelAccessMut for DataBlockMut<'_> {
     fn set<T: Voxel + Encoding>(&mut self, index: usize, value: T) -> Result<(), Error> {
-        if <T as Voxel>::MODE != self.mode {
-            return Err(Error::TypeMismatch);
-        }
-        if index >= self.voxel_count {
-            return Err(Error::IndexOutOfBounds { index, length: self.voxel_count });
-        }
+        validate_mode::<T>(self.mode)?;
+        check_bounds(index, self.voxel_count)?;
         let offset = index * T::SIZE;
         value.encode(self.endian, &mut self.data[offset..offset + T::SIZE]);
         Ok(())

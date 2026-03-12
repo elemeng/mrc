@@ -1,7 +1,9 @@
 //! Dynamic dispatch for runtime mode handling
 
-use crate::{Encoding, Error, Header, Mode, Volume, Voxel};
-use crate::voxel::{Int16Complex, Float32Complex, Packed4Bit};
+use crate::core::{Error, Mode};
+use crate::header::Header;
+use crate::voxel::{Encoding, Voxel, Int16Complex, Float32Complex, Packed4Bit};
+use super::Volume;
 use alloc::vec::Vec;
 use alloc::boxed::Box;
 
@@ -16,11 +18,11 @@ pub trait DynVolume {
 }
 
 impl<T: Voxel + Encoding> DynVolume for Volume<T, Vec<u8>> {
-    fn header(&self) -> &Header { crate::volume_trait::Volume::header(self) }
+    fn header(&self) -> &Header { super::volume_trait::Volume::header(self) }
     fn mode(&self) -> Mode { self.header().mode() }
-    fn dimensions(&self) -> (usize, usize, usize) { crate::volume_trait::Volume::shape(self) }
-    fn len(&self) -> usize { crate::volume::Volume::len(self) }
-    fn is_empty(&self) -> bool { crate::volume::Volume::is_empty(self) }
+    fn dimensions(&self) -> (usize, usize, usize) { super::volume_trait::Volume::shape(self) }
+    fn len(&self) -> usize { super::Volume::len(self) }
+    fn is_empty(&self) -> bool { super::Volume::is_empty(self) }
     fn as_any(&self) -> &dyn core::any::Any { self }
 }
 

@@ -3,7 +3,7 @@
 //! This is a direct memory mapping of the MRC2014 header format.
 //! All fields are stored as they appear in the file (file-endian).
 
-use crate::mode::Mode;
+use crate::core::{AxisMap, Mode};
 
 /// Raw 1024-byte MRC header with exact binary layout
 ///
@@ -216,11 +216,7 @@ impl RawHeader {
     
     /// Validate axis mapping is a permutation of 1, 2, 3
     pub fn has_valid_axis_map(&self) -> bool {
-        let axes = [self.mapc, self.mapr, self.maps];
-        axes.iter().all(|&a| (1..=3).contains(&a))
-            && axes[0] != axes[1]
-            && axes[1] != axes[2]
-            && axes[0] != axes[2]
+        AxisMap::new(self.mapc, self.mapr, self.maps).validate()
     }
     
     /// Full validation of the header
