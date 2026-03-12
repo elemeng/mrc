@@ -209,6 +209,117 @@ impl<T: Voxel + Encoding, S: AsRef<[u8]>> Volume<T, S, 3> {
         self.storage.as_ref()
     }
     
+    /// Zero-copy slice view (native endianness only)
+    ///
+    /// Returns a typed slice view of the voxel data without copying or decoding.
+    /// This only works when:
+    /// 1. The file endianness matches the native system endianness
+    /// 2. The data is properly aligned for type T
+    /// 3. The storage is contiguous (standard axis map)
+    ///
+    /// # Errors
+    /// - `Error::WrongEndianness` if file endianness doesn't match native
+    /// - `Error::MisalignedData` if data is not properly aligned
+    /// - `Error::InvalidAxisMap` if axis mapping is non-standard
+    ///
+    /// # Example
+    /// ```ignore
+    /// let volume = reader.read_volume::<f32>()?;
+    /// if let Ok(slice) = volume.as_slice() {
+    ///     // Zero-copy access - slice[i] is valid
+    ///     let sum: f32 = slice.iter().sum();
+    /// }
+    /// ```
+    pub fn as_slice(&self) -> Result<&[T], Error> 
+    where T: bytemuck::Pod
+    {
+        // Check native endianness
+        if !self.header.file_endian.is_native() {
+            return Err(Error::WrongEndianness);
+        }
+        
+        // Check for standard axis map (contiguous storage)
+        if !self.header.axis_map.is_standard() {
+            return Err(Error::InvalidAxisMap);
+        }
+        
+        // Try to cast the byte slice
+        let bytes = self.storage.as_ref();
+        let expected_len = self.len();
+        let expected_bytes = expected_len * T::SIZE;
+        
+        bytemuck::try_cast_slice(&bytes[..expected_bytes])
+            .map_err(|_| Error::MisalignedData {
+                required: core::mem::align_of::<T>(),
+                actual: bytes.as_ptr().align_offset(core::mem::align_of::<T>()),
+            })
+    }
+    
+    /// Try zero-copy slice, fall back to decoded Vec on failure
+    ///
+    /// Returns a `Cow<[T]>` that borrows the data when possible (native endianness,
+    /// proper alignment, standard axis map) or allocates a decoded copy otherwise.
+    #[cfg(feature = "std")]
+    pub fn to_slice_cow(&self) -> alloc::borrow::Cow<'_, [T]>
+    where T: bytemuck::Pod + Clone
+    {
+        if let Ok(slice) = self.as_slice() {
+            alloc::borrow::Cow::Borrowed(slice)
+        } else {
+            alloc::borrow::Cow::Owned(self.iter().collect())
+        }
+    }
+    
+    /// Copy voxels to a pre-allocated buffer
+    ///
+    /// For native endianness with proper alignment, uses fast memcpy.
+    /// Otherwise, decodes element-by-element.
+    pub fn copy_to(&self, out: &mut [T]) -> Result<(), Error>
+    where T: bytemuck::Pod
+    {
+        let n = self.len();
+        if out.len() < n {
+            return Err(Error::BufferTooSmall {
+                expected: n,
+                got: out.len(),
+            });
+        }
+        
+        // Fast path: native endianness, standard axis map, proper alignment
+        if self.header.file_endian.is_native() && self.header.axis_map.is_standard() {
+            if let Ok(slice) = self.as_slice() {
+                out[..n].copy_from_slice(&slice[..n]);
+                return Ok(());
+            }
+        }
+        
+        // Fallback: decode element-by-element
+        let bytes = self.storage.as_ref();
+        for (i, dst) in out[..n].iter_mut().enumerate() {
+            let offset = i * T::SIZE;
+            *dst = T::decode(self.header.file_endian, &bytes[offset..offset + T::SIZE]);
+        }
+        
+        Ok(())
+    }
+    
+    /// Convert to owned Vec
+    ///
+    /// For native endianness with proper alignment and standard axis map,
+    /// uses fast slice copy. Otherwise decodes element-by-element.
+    #[cfg(feature = "std")]
+    pub fn to_vec(&self) -> alloc::vec::Vec<T>
+    where T: bytemuck::Pod + Default
+    {
+        // Fast path
+        if let Ok(slice) = self.as_slice() {
+            return slice.to_vec();
+        }
+        
+        // Fallback
+        self.iter().collect()
+    }
+    
     /// Convert linear index to logical coordinates (x, y, z)
     /// 
     /// This assumes standard C-order indexing and may not be correct
