@@ -297,9 +297,9 @@ impl ComplexF32 {
     }
 }
 
-// Saturating arithmetic for integer complex types
-macro_rules! impl_complex_saturating {
-    ($type:ty, $real:ty) => {
+// Macro for saturating binary operators (for integer types)
+macro_rules! impl_complex_saturating_binary {
+    ($type:ty) => {
         impl core::ops::Add for $type {
             type Output = Self;
             #[inline]
@@ -321,38 +321,12 @@ macro_rules! impl_complex_saturating {
                 }
             }
         }
-
-        impl core::ops::Neg for $type {
-            type Output = Self;
-            #[inline]
-            fn neg(self) -> Self {
-                Self {
-                    re: self.re.wrapping_neg(),
-                    im: self.im.wrapping_neg(),
-                }
-            }
-        }
-
-        impl core::ops::Mul for $type {
-            type Output = Self;
-            #[inline]
-            fn mul(self, other: Self) -> Self {
-                let a = self.re as i32;
-                let b = self.im as i32;
-                let c = other.re as i32;
-                let d = other.im as i32;
-                Self {
-                    re: (a * c - b * d) as $real,
-                    im: (a * d + b * c) as $real,
-                }
-            }
-        }
     };
 }
 
-// Regular arithmetic for float complex types
-macro_rules! impl_complex_regular {
-    ($type:ty, $real:ty) => {
+// Macro for regular binary operators (for float types)
+macro_rules! impl_complex_regular_binary {
+    ($type:ty) => {
         impl core::ops::Add for $type {
             type Output = Self;
             #[inline]
@@ -374,33 +348,62 @@ macro_rules! impl_complex_regular {
                 }
             }
         }
-
-        impl core::ops::Neg for $type {
-            type Output = Self;
-            #[inline]
-            fn neg(self) -> Self {
-                Self {
-                    re: -self.re,
-                    im: -self.im,
-                }
-            }
-        }
-
-        impl core::ops::Mul for $type {
-            type Output = Self;
-            #[inline]
-            fn mul(self, other: Self) -> Self {
-                Self {
-                    re: self.re * other.re - self.im * other.im,
-                    im: self.re * other.im + self.im * other.re,
-                }
-            }
-        }
     };
 }
 
-impl_complex_saturating!(ComplexI16, i16);
-impl_complex_regular!(ComplexF32, f32);
+// Saturating arithmetic for integer complex types
+impl_complex_saturating_binary!(ComplexI16);
+
+impl core::ops::Neg for ComplexI16 {
+    type Output = Self;
+    #[inline]
+    fn neg(self) -> Self {
+        Self {
+            re: self.re.wrapping_neg(),
+            im: self.im.wrapping_neg(),
+        }
+    }
+}
+
+impl core::ops::Mul for ComplexI16 {
+    type Output = Self;
+    #[inline]
+    fn mul(self, other: Self) -> Self {
+        let a = self.re as i32;
+        let b = self.im as i32;
+        let c = other.re as i32;
+        let d = other.im as i32;
+        Self {
+            re: (a * c - b * d) as i16,
+            im: (a * d + b * c) as i16,
+        }
+    }
+}
+
+// Regular arithmetic for float complex types
+impl_complex_regular_binary!(ComplexF32);
+
+impl core::ops::Neg for ComplexF32 {
+    type Output = Self;
+    #[inline]
+    fn neg(self) -> Self {
+        Self {
+            re: -self.re,
+            im: -self.im,
+        }
+    }
+}
+
+impl core::ops::Mul for ComplexF32 {
+    type Output = Self;
+    #[inline]
+    fn mul(self, other: Self) -> Self {
+        Self {
+            re: self.re * other.re - self.im * other.im,
+            im: self.re * other.im + self.im * other.re,
+        }
+    }
+}
 
 // Additional arithmetic for ComplexF32
 impl core::ops::Div for ComplexF32 {

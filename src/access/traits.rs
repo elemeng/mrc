@@ -70,10 +70,7 @@ pub trait VoxelAccessMut: VoxelAccess {
 
     /// Fill all voxels with the same value
     fn fill<T: Voxel + Encoding + Copy>(&mut self, value: T) -> Result<(), Error> {
-        for i in 0..self.len() {
-            self.set(i, value)?;
-        }
-        Ok(())
+        (0..self.len()).try_for_each(|i| self.set(i, value))
     }
 }
 
@@ -277,9 +274,27 @@ pub trait VolumeAccessMut: VolumeAccess + VoxelAccessMut {
     where
         Self::Voxel: Copy,
     {
-        for i in 0..self.len() {
+        let len = self.len();
+        for i in 0..len {
+            // SAFETY: i is in bounds since we iterate to len
             unsafe {
                 self.set_unchecked(i, value);
+            }
+        }
+    }
+
+    /// Apply a transformation to each voxel
+    fn transform<F>(&mut self, f: F)
+    where
+        F: Fn(Self::Voxel) -> Self::Voxel,
+        Self::Voxel: Copy,
+    {
+        let len = self.len();
+        for i in 0..len {
+            // SAFETY: i is in bounds since we iterate to len
+            unsafe {
+                let old = self.get_unchecked(i);
+                self.set_unchecked(i, f(old));
             }
         }
     }

@@ -141,12 +141,16 @@ impl<T: Voxel + Encoding, S: AsMut<[u8]>> Volume<T, S, 1> {
 }
 
 impl<T: Voxel + Encoding, S: AsRef<[u8]>> Volume<T, S, 3> {
+    /// Generic dimension validation using const generics
+    /// Computes total voxel count by multiplying all dimensions
+    fn validate_dimensions_generic<const D: usize>(dimensions: [usize; D]) -> Result<usize, Error> {
+        dimensions.iter().try_fold(1usize, |acc, &d| acc.checked_mul(d))
+            .ok_or(Error::InvalidDimensions)
+    }
+
     /// Validate dimensions and compute total voxel count
     fn validate_dimensions(dimensions: [usize; 3]) -> Result<usize, Error> {
-        dimensions[0]
-            .checked_mul(dimensions[1])
-            .and_then(|v| v.checked_mul(dimensions[2]))
-            .ok_or(Error::InvalidDimensions)
+        Self::validate_dimensions_generic(dimensions)
     }
 
     /// Validate storage size against expected voxel count
@@ -595,15 +599,8 @@ impl<T: Voxel + Encoding, S: AsMut<[u8]>> Volume<T, S, 3> {
 pub type Image2D<T, S> = Volume<T, S, 2>;
 
 impl<T: Voxel + Encoding, S: AsRef<[u8]>> Volume<T, S, 2> {
-    /// Validate 2D dimensions
-    fn validate_dimensions_2d(dimensions: [usize; 2]) -> Result<usize, Error> {
-        dimensions[0]
-            .checked_mul(dimensions[1])
-            .ok_or(Error::InvalidDimensions)
-    }
-
     /// Validate storage size for 2D volume
-    fn validate_storage_size_2d(storage: &S, voxel_count: usize) -> Result<(), Error> {
+    fn validate_storage_size(storage: &S, voxel_count: usize) -> Result<(), Error> {
         let expected_size = voxel_count
             .checked_mul(T::SIZE)
             .ok_or(Error::InvalidDimensions)?;
@@ -623,9 +620,8 @@ impl<T: Voxel + Encoding, S: AsRef<[u8]>> Volume<T, S, 2> {
         endian: crate::FileEndian,
         storage: S,
     ) -> Result<Self, Error> {
-        let dimensions = [nx, ny];
-        let total = Self::validate_dimensions_2d(dimensions)?;
-        Self::validate_storage_size_2d(&storage, total)?;
+        let total = nx.checked_mul(ny).ok_or(Error::InvalidDimensions)?;
+        Self::validate_storage_size(&storage, total)?;
 
         let mut header = Header::new();
         header.set_dimensions(nx, ny, 1);
@@ -637,7 +633,7 @@ impl<T: Voxel + Encoding, S: AsRef<[u8]>> Volume<T, S, 2> {
         Ok(Self {
             header,
             storage,
-            dimensions,
+            dimensions: [nx, ny],
             strides,
             _marker: core::marker::PhantomData,
         })
