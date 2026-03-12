@@ -165,16 +165,16 @@ impl MrcWriter {
         header: Header,
         ext_header: &[u8],
     ) -> Result<Self, Error> {
-        let mut file = File::create(path).map_err(Error::Io)?;
+        let mut file = File::create(path).map_err(Error::from)?;
 
         // Write header
         let raw: RawHeader = header.clone().into();
         let header_bytes = bytemuck::bytes_of(&raw);
-        file.write_all(header_bytes).map_err(Error::Io)?;
+        file.write_all(header_bytes).map_err(Error::from)?;
 
         // Write extended header
         if !ext_header.is_empty() {
-            file.write_all(ext_header).map_err(Error::Io)?;
+            file.write_all(ext_header).map_err(Error::from)?;
         }
 
         let data_offset = header.data_offset() as u64;
@@ -213,8 +213,8 @@ impl MrcWriter {
 
         self.file
             .seek(SeekFrom::Start(self.data_offset))
-            .map_err(Error::Io)?;
-        self.file.write_all(data).map_err(Error::Io)?;
+            .map_err(Error::from)?;
+        self.file.write_all(data).map_err(Error::from)?;
 
         Ok(())
     }
@@ -223,8 +223,8 @@ impl MrcWriter {
     pub fn flush_header(&mut self) -> Result<(), Error> {
         let raw: RawHeader = self.header.clone().into();
         let header_bytes = bytemuck::bytes_of(&raw);
-        self.file.seek(SeekFrom::Start(0)).map_err(Error::Io)?;
-        self.file.write_all(header_bytes).map_err(Error::Io)?;
+        self.file.seek(SeekFrom::Start(0)).map_err(Error::from)?;
+        self.file.write_all(header_bytes).map_err(Error::from)?;
         Ok(())
     }
 }
@@ -235,7 +235,7 @@ impl MrcSink for MrcWriter {
     fn write_header(&mut self, header: &Header) -> Result<(), Error> {
         let raw: RawHeader = header.clone().into();
         let header_bytes = bytemuck::bytes_of(&raw);
-        self.file.write_all(header_bytes).map_err(Error::Io)
+        self.file.write_all(header_bytes).map_err(Error::from)
     }
 
     fn write_data_bytes(&mut self, header: &Header, data: &[u8]) -> Result<(), Error> {
@@ -245,14 +245,14 @@ impl MrcSink for MrcWriter {
                 got: data.len(),
             });
         }
-        self.file.write_all(data).map_err(Error::Io)
+        self.file.write_all(data).map_err(Error::from)
     }
 
     fn write_all(&mut self, buf: &[u8]) -> Result<(), Error> {
-        self.file.write_all(buf).map_err(Error::Io)
+        self.file.write_all(buf).map_err(Error::from)
     }
 
     fn flush(&mut self) -> Result<(), Error> {
-        self.file.flush().map_err(Error::Io)
+        self.file.flush().map_err(Error::from)
     }
 }

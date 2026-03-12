@@ -137,28 +137,10 @@ pub trait MrcSink {
     }
 }
 
-/// Async-capable IO traits (for future async support)
-///
-/// Note: These require the "async" feature to be enabled.
-/// For now, they are disabled until async support is fully implemented.
-#[cfg(all(feature = "std", feature = "async"))]
-pub mod async_io {
-    use super::*;
+// Async-capable IO traits (for future async support)
 
-    /// Async version of MrcSource
-    #[allow(async_fn_in_trait)]
-    pub trait AsyncMrcSource {
-        async fn read_header(&mut self) -> Result<Header, Error>;
-        async fn read_data_bytes(&mut self, header: &Header) -> Result<Vec<u8>, Error>;
-        async fn read_exact(&mut self, buf: &mut [u8]) -> Result<(), Error>;
-    }
+// Note: These will be added when async support is fully implemented.
 
-    /// Async version of MrcSink
-    #[allow(async_fn_in_trait)]
-    pub trait AsyncMrcSink {
-        async fn write_header(&mut self, header: &Header) -> Result<(), Error>;
-        async fn write_data_bytes(&mut self, header: &Header, data: &[u8]) -> Result<(), Error>;
-        async fn write_all(&mut self, buf: &[u8]) -> Result<(), Error>;
-        async fn flush(&mut self) -> Result<(), Error>;
-    }
-}
+// For now, use the synchronous `MrcSource` and `MrcSink` traits.
+
+

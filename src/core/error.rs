@@ -20,8 +20,8 @@ pub enum Error {
     NonContiguous,
     /// Type mismatch for operation
     TypeMismatch,
-    /// File endianness does not match native endianness
-    WrongEndianness,
+    /// Endianness mismatch between file and native
+    EndiannessMismatch { detected: bool },
     /// Data is not properly aligned
     MisalignedData { required: usize, actual: usize },
     /// Buffer is too small
@@ -30,14 +30,12 @@ pub enum Error {
     IndexOutOfBounds { index: usize, length: usize },
     /// IO error
     #[cfg(feature = "std")]
-    Io(std::io::Error),
+    Io(alloc::boxed::Box<dyn std::error::Error + Send + Sync>),
     /// Memory mapping error
     #[cfg(feature = "mmap")]
     Mmap,
     /// Feature not enabled
     FeatureDisabled { feature: &'static str },
-    /// Unknown file endianness
-    UnknownEndianness,
 }
 
 impl fmt::Display for Error {
@@ -49,7 +47,9 @@ impl fmt::Display for Error {
             Self::InvalidAxisMap => write!(f, "Invalid axis mapping"),
             Self::NonContiguous => write!(f, "Data is not contiguous in memory"),
             Self::TypeMismatch => write!(f, "Type mismatch"),
-            Self::WrongEndianness => write!(f, "Wrong endianness"),
+            Self::EndiannessMismatch { detected } => {
+                write!(f, "Endianness mismatch (detected: {detected})")
+            }
             Self::MisalignedData { required, actual } => {
                 write!(
                     f,
@@ -69,7 +69,6 @@ impl fmt::Display for Error {
             Self::FeatureDisabled { feature } => {
                 write!(f, "Feature '{feature}' is not enabled")
             }
-            Self::UnknownEndianness => write!(f, "Unknown file endianness"),
         }
     }
 }
@@ -86,7 +85,7 @@ impl Clone for Error {
             Self::InvalidAxisMap => Self::InvalidAxisMap,
             Self::NonContiguous => Self::NonContiguous,
             Self::TypeMismatch => Self::TypeMismatch,
-            Self::WrongEndianness => Self::WrongEndianness,
+            Self::EndiannessMismatch { detected } => Self::EndiannessMismatch { detected: *detected },
             Self::MisalignedData { required, actual } => Self::MisalignedData {
                 required: *required,
                 actual: *actual,
@@ -100,11 +99,10 @@ impl Clone for Error {
                 length: *length,
             },
             #[cfg(feature = "std")]
-            Self::Io(_) => Self::Io(std::io::Error::other("IO error (cloned)")),
+            Self::Io(_) => Self::Io(alloc::boxed::Box::new(std::io::Error::other("IO error (cloned)"))),
             #[cfg(feature = "mmap")]
             Self::Mmap => Self::Mmap,
             Self::FeatureDisabled { feature } => Self::FeatureDisabled { feature },
-            Self::UnknownEndianness => Self::UnknownEndianness,
         }
     }
 }
@@ -118,47 +116,35 @@ impl PartialEq for Error {
             (Self::InvalidAxisMap, Self::InvalidAxisMap) => true,
             (Self::NonContiguous, Self::NonContiguous) => true,
             (Self::TypeMismatch, Self::TypeMismatch) => true,
-            (Self::WrongEndianness, Self::WrongEndianness) => true,
+            (Self::EndiannessMismatch { detected: d1 }, Self::EndiannessMismatch { detected: d2 }) => d1 == d2,
             (
-                Self::MisalignedData {
-                    required: r1,
-                    actual: a1,
-                },
-                Self::MisalignedData {
-                    required: r2,
-                    actual: a2,
-                },
+                Self::MisalignedData { required: r1, actual: a1 },
+                Self::MisalignedData { required: r2, actual: a2 },
             ) => r1 == r2 && a1 == a2,
             (
-                Self::BufferTooSmall {
-                    expected: e1,
-                    got: g1,
-                },
-                Self::BufferTooSmall {
-                    expected: e2,
-                    got: g2,
-                },
+                Self::BufferTooSmall { expected: e1, got: g1 },
+                Self::BufferTooSmall { expected: e2, got: g2 },
             ) => e1 == e2 && g1 == g2,
             (
-                Self::IndexOutOfBounds {
-                    index: i1,
-                    length: l1,
-                },
-                Self::IndexOutOfBounds {
-                    index: i2,
-                    length: l2,
-                },
+                Self::IndexOutOfBounds { index: i1, length: l1 },
+                Self::IndexOutOfBounds { index: i2, length: l2 },
             ) => i1 == i2 && l1 == l2,
             #[cfg(feature = "std")]
             (Self::Io(_), Self::Io(_)) => true, // Consider all IO errors equal for comparison
             #[cfg(feature = "mmap")]
             (Self::Mmap, Self::Mmap) => true,
-            (Self::FeatureDisabled { feature: f1 }, Self::FeatureDisabled { feature: f2 }) => {
-                f1 == f2
-            }
-            (Self::UnknownEndianness, Self::UnknownEndianness) => true,
+            (Self::FeatureDisabled { feature: f1 }, Self::FeatureDisabled { feature: f2 }) => f1 == f2,
             _ => false,
         }
+    }
+}
+
+impl Eq for Error {}
+
+#[cfg(feature = "std")]
+impl From<std::io::Error> for Error {
+    fn from(err: std::io::Error) -> Self {
+        Self::Io(alloc::boxed::Box::new(err))
     }
 }
 

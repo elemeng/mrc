@@ -1,7 +1,7 @@
 //! Validated Header with semantic access and type conversions
 
 use super::raw::RawHeader;
-use crate::{AxisMap, Error, FileEndian, Mode};
+use crate::{AxisMap, EndianConvert, Error, FileEndian, Mode};
 
 /// Validated MRC Header with native-endian values
 ///
@@ -303,44 +303,22 @@ impl core::ops::DerefMut for Header {
     }
 }
 
-/// Trait for converting values between file and native endianness
-trait EndianConvert: Copy {
-    fn convert_from_file_endian(self, file_endian: FileEndian) -> Self;
-    fn convert_to_file_endian(self, file_endian: FileEndian) -> Self;
+/// Macro to convert header fields from file endianness
+macro_rules! convert_from_file {
+    ($dst:ident, $src:ident, $endian:expr, $($field:ident),*) => {
+        $(
+            $dst.raw.$field = $src.$field.convert_from_file($endian);
+        )*
+    };
 }
 
-impl EndianConvert for i32 {
-    #[inline]
-    fn convert_from_file_endian(self, file_endian: FileEndian) -> Self {
-        if file_endian.is_native() {
-            return self;
-        }
-        self.swap_bytes()
-    }
-    #[inline]
-    fn convert_to_file_endian(self, file_endian: FileEndian) -> Self {
-        if file_endian.is_native() {
-            return self;
-        }
-        self.swap_bytes()
-    }
-}
-
-impl EndianConvert for f32 {
-    #[inline]
-    fn convert_from_file_endian(self, file_endian: FileEndian) -> Self {
-        if file_endian.is_native() {
-            return self;
-        }
-        f32::from_bits(self.to_bits().swap_bytes())
-    }
-    #[inline]
-    fn convert_to_file_endian(self, file_endian: FileEndian) -> Self {
-        if file_endian.is_native() {
-            return self;
-        }
-        f32::from_bits(self.to_bits().swap_bytes())
-    }
+/// Macro to convert header fields to file endianness
+macro_rules! convert_to_file {
+    ($raw:ident, $endian:expr, $($field:ident),*) => {
+        $(
+            $raw.$field = $raw.$field.convert_from_file($endian);
+        )*
+    };
 }
 
 impl TryFrom<RawHeader> for Header {
@@ -351,9 +329,9 @@ impl TryFrom<RawHeader> for Header {
         let (file_endian, detected) = FileEndian::from_machst_or_little(&raw.machst);
 
         // Convert dimensions
-        let nx = raw.nx.convert_from_file_endian(file_endian);
-        let ny = raw.ny.convert_from_file_endian(file_endian);
-        let nz = raw.nz.convert_from_file_endian(file_endian);
+        let nx = raw.nx.convert_from_file(file_endian);
+        let ny = raw.ny.convert_from_file(file_endian);
+        let nz = raw.nz.convert_from_file(file_endian);
 
         // Validate dimensions
         if nx <= 0 || ny <= 0 || nz <= 0 {
@@ -372,7 +350,7 @@ impl TryFrom<RawHeader> for Header {
         }
 
         // Decode and validate mode
-        let mode_val = raw.mode.convert_from_file_endian(file_endian);
+        let mode_val = raw.mode.convert_from_file(file_endian);
         let _mode = Mode::try_from(mode_val).map_err(|_| Error::InvalidMode)?;
 
         // Validate mode 12 requires f16 feature
@@ -382,20 +360,20 @@ impl TryFrom<RawHeader> for Header {
         }
 
         // Decode axis mapping
-        let mapc = raw.mapc.convert_from_file_endian(file_endian);
-        let mapr = raw.mapr.convert_from_file_endian(file_endian);
-        let maps = raw.maps.convert_from_file_endian(file_endian);
+        let mapc = raw.mapc.convert_from_file(file_endian);
+        let mapr = raw.mapr.convert_from_file(file_endian);
+        let maps = raw.maps.convert_from_file(file_endian);
         let axis_map = AxisMap::try_new(mapc, mapr, maps)?;
 
         // Decode nsymbt with OOM protection
-        let nsymbt = raw.nsymbt.convert_from_file_endian(file_endian);
+        let nsymbt = raw.nsymbt.convert_from_file(file_endian);
         const MAX_EXTENDED_HEADER: usize = 1024 * 1024 * 1024;
         if nsymbt > MAX_EXTENDED_HEADER as i32 {
             return Err(Error::InvalidDimensions);
         }
 
         // Get nlabl with validation
-        let nlabl = raw.nlabl.convert_from_file_endian(file_endian);
+        let nlabl = raw.nlabl.convert_from_file(file_endian);
         if !(0..=10).contains(&nlabl) {
             return Err(Error::InvalidHeader);
         }
@@ -408,78 +386,68 @@ impl TryFrom<RawHeader> for Header {
             file_endian_detected: detected,
         };
 
-        // Store converted values back to raw (now in native endian)
+        // Convert all i32 and f32 fields from file endianness
+        convert_from_file!(
+            header, raw, file_endian,
+            nx, ny, nz, mode,
+            nxstart, nystart, nzstart,
+            mx, my, mz,
+            xlen, ylen, zlen,
+            alpha, beta, gamma,
+            mapc, mapr, maps,
+            dmin, dmax, dmean,
+            ispg, nsymbt, nlabl,
+            rms
+        );
+
+        // Convert origin array
+        header.raw.origin[0] = raw.origin[0].convert_from_file(file_endian);
+        header.raw.origin[1] = raw.origin[1].convert_from_file(file_endian);
+        header.raw.origin[2] = raw.origin[2].convert_from_file(file_endian);
+
+        // Override with already-computed values
         header.raw.nx = nx;
         header.raw.ny = ny;
         header.raw.nz = nz;
         header.raw.mode = mode_val;
-        header.raw.nxstart = raw.nxstart.convert_from_file_endian(file_endian);
-        header.raw.nystart = raw.nystart.convert_from_file_endian(file_endian);
-        header.raw.nzstart = raw.nzstart.convert_from_file_endian(file_endian);
-        header.raw.mx = raw.mx.convert_from_file_endian(file_endian);
-        header.raw.my = raw.my.convert_from_file_endian(file_endian);
-        header.raw.mz = raw.mz.convert_from_file_endian(file_endian);
-        header.raw.xlen = raw.xlen.convert_from_file_endian(file_endian);
-        header.raw.ylen = raw.ylen.convert_from_file_endian(file_endian);
-        header.raw.zlen = raw.zlen.convert_from_file_endian(file_endian);
-        header.raw.alpha = raw.alpha.convert_from_file_endian(file_endian);
-        header.raw.beta = raw.beta.convert_from_file_endian(file_endian);
-        header.raw.gamma = raw.gamma.convert_from_file_endian(file_endian);
         header.raw.mapc = mapc;
         header.raw.mapr = mapr;
         header.raw.maps = maps;
-        header.raw.dmin = raw.dmin.convert_from_file_endian(file_endian);
-        header.raw.dmax = raw.dmax.convert_from_file_endian(file_endian);
-        header.raw.dmean = raw.dmean.convert_from_file_endian(file_endian);
-        header.raw.ispg = raw.ispg.convert_from_file_endian(file_endian);
         header.raw.nsymbt = nsymbt;
         header.raw.nlabl = nlabl;
-        header.raw.origin[0] = raw.origin[0].convert_from_file_endian(file_endian);
-        header.raw.origin[1] = raw.origin[1].convert_from_file_endian(file_endian);
-        header.raw.origin[2] = raw.origin[2].convert_from_file_endian(file_endian);
-        header.raw.rms = raw.rms.convert_from_file_endian(file_endian);
 
         Ok(header)
     }
 }
-
-
 
 impl From<Header> for RawHeader {
     fn from(header: Header) -> Self {
         let mut raw = header.raw;
         let endian = header.file_endian;
 
-        // Encode all fields to file endianness
-        raw.nx = raw.nx.convert_to_file_endian(endian);
-        raw.ny = raw.ny.convert_to_file_endian(endian);
-        raw.nz = raw.nz.convert_to_file_endian(endian);
-        raw.mode = raw.mode.convert_to_file_endian(endian);
-        raw.nxstart = raw.nxstart.convert_to_file_endian(endian);
-        raw.nystart = raw.nystart.convert_to_file_endian(endian);
-        raw.nzstart = raw.nzstart.convert_to_file_endian(endian);
-        raw.mx = raw.mx.convert_to_file_endian(endian);
-        raw.my = raw.my.convert_to_file_endian(endian);
-        raw.mz = raw.mz.convert_to_file_endian(endian);
-        raw.xlen = raw.xlen.convert_to_file_endian(endian);
-        raw.ylen = raw.ylen.convert_to_file_endian(endian);
-        raw.zlen = raw.zlen.convert_to_file_endian(endian);
-        raw.alpha = raw.alpha.convert_to_file_endian(endian);
-        raw.beta = raw.beta.convert_to_file_endian(endian);
-        raw.gamma = raw.gamma.convert_to_file_endian(endian);
-        raw.mapc = (header.axis_map.column as i32).convert_to_file_endian(endian);
-        raw.mapr = (header.axis_map.row as i32).convert_to_file_endian(endian);
-        raw.maps = (header.axis_map.section as i32).convert_to_file_endian(endian);
-        raw.dmin = raw.dmin.convert_to_file_endian(endian);
-        raw.dmax = raw.dmax.convert_to_file_endian(endian);
-        raw.dmean = raw.dmean.convert_to_file_endian(endian);
-        raw.ispg = raw.ispg.convert_to_file_endian(endian);
-        raw.nsymbt = raw.nsymbt.convert_to_file_endian(endian);
-        raw.nlabl = raw.nlabl.convert_to_file_endian(endian);
-        raw.origin[0] = raw.origin[0].convert_to_file_endian(endian);
-        raw.origin[1] = raw.origin[1].convert_to_file_endian(endian);
-        raw.origin[2] = raw.origin[2].convert_to_file_endian(endian);
-        raw.rms = raw.rms.convert_to_file_endian(endian);
+        // Convert all i32 and f32 fields to file endianness
+        convert_to_file!(
+            raw, endian,
+            nx, ny, nz, mode,
+            nxstart, nystart, nzstart,
+            mx, my, mz,
+            xlen, ylen, zlen,
+            alpha, beta, gamma,
+            dmin, dmax, dmean,
+            ispg, nsymbt, nlabl,
+            rms
+        );
+
+        // Convert axis map fields
+        raw.mapc = (header.axis_map.column as i32).convert_from_file(endian);
+        raw.mapr = (header.axis_map.row as i32).convert_from_file(endian);
+        raw.maps = (header.axis_map.section as i32).convert_from_file(endian);
+
+        // Convert origin array
+        raw.origin[0] = raw.origin[0].convert_from_file(endian);
+        raw.origin[1] = raw.origin[1].convert_from_file(endian);
+        raw.origin[2] = raw.origin[2].convert_from_file(endian);
+
         raw.machst = endian.to_machst();
 
         raw

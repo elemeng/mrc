@@ -308,7 +308,7 @@ impl<T: Voxel + Encoding, S: AsRef<[u8]>> Volume<T, S, 3> {
     /// 3. The storage is contiguous (standard axis map)
     ///
     /// # Errors
-    /// - `Error::WrongEndianness` if file endianness doesn't match native
+    /// - `Error::EndiannessMismatch` if file endianness doesn't match native
     /// - `Error::MisalignedData` if data is not properly aligned
     /// - `Error::NonContiguous` if axis mapping is non-standard
     ///
@@ -328,7 +328,7 @@ impl<T: Voxel + Encoding, S: AsRef<[u8]>> Volume<T, S, 3> {
     {
         // Check native endianness
         if !self.header.file_endian.is_native() {
-            return Err(Error::WrongEndianness);
+            return Err(Error::EndiannessMismatch { detected: true });
         }
 
         // Check for standard axis map (contiguous storage)
@@ -440,7 +440,7 @@ impl<T: Voxel + Encoding, S: AsRef<[u8]>> Volume<T, S, 3> {
     ///
     /// # Type Requirements
     /// This method is only available for types that can be converted to f64.
-    pub fn compute_statistics(&self) -> Statistics
+    pub fn compute_statistics(&self) -> crate::stats::Statistics
     where
         T: Into<f64>,
     {
@@ -557,9 +557,6 @@ impl<T: Voxel + Encoding, S: AsRef<[u8]>> Volume<T, S, 3> {
     }
 }
 
-// Re-export Statistics from stats module
-pub use crate::stats::Statistics;
-
 impl<T: Voxel + Encoding, S: AsMut<[u8]>> Volume<T, S, 3> {
     /// Get mutable access to raw bytes
     pub fn as_bytes_mut(&mut self) -> &mut [u8] {
@@ -607,8 +604,6 @@ impl<T: Voxel + Encoding, S: AsMut<[u8]>> Volume<T, S, 3> {
         Ok(())
     }
 }
-
-// Strides calculation now uses AxisMap::strides() method
 
 /// 2D volume (image slice)
 pub type Image2D<T, S> = Volume<T, S, 2>;
@@ -674,10 +669,10 @@ impl<T: Voxel + Encoding, S: AsRef<[u8]>> Volume<T, S, 2> {
 // Implement unified access traits
 // ============================================================================
 
-use super::{VoxelAccess, VoxelAccessMut};
+use super::{VoxelAccess, VoxelAccessMut, VolumeAccess, VolumeAccessMut};
 
 impl<T: Voxel + Encoding, S: AsRef<[u8]>, const D: usize> VoxelAccess for Volume<T, S, D> {
-    fn mode(&self) -> crate::core::Mode {
+    fn mode(&self) -> Mode {
         self.header.mode()
     }
 
@@ -703,7 +698,7 @@ impl<T: Voxel + Encoding, S: AsRef<[u8]> + AsMut<[u8]>, const D: usize> VoxelAcc
         check_bounds(index, self.len())?;
 
         // Special handling for Packed4Bit (two values per byte)
-        if <V as Voxel>::MODE == crate::core::Mode::Packed4Bit {
+        if <V as Voxel>::MODE == Mode::Packed4Bit {
             let byte_index = index / 2;
             let is_second = index % 2 == 1;
             let bytes = self.storage.as_mut();
@@ -731,28 +726,13 @@ impl<T: Voxel + Encoding, S: AsRef<[u8]> + AsMut<[u8]>, const D: usize> VoxelAcc
     }
 }
 
-// Type aliases for common volume types
-
-/// Volume with Vec<u8> storage (most common)
-pub type VecVolume<T, const D: usize = 3> = Volume<T, Vec<u8>, D>;
-
-/// Volume with memory-mapped storage (read-only)
-#[cfg(feature = "mmap")]
-pub type MmapVolume<T, const D: usize = 3> = Volume<T, memmap2::Mmap, D>;
-
-/// Volume with mutable memory-mapped storage
-#[cfg(feature = "mmap")]
-pub type MmapVolumeMut<T, const D: usize = 3> = Volume<T, memmap2::MmapMut, D>;
-
-// Implement Volume trait for Volume<T, S, 3>
-use super::volume_trait::{Volume as VolumeTrait, VolumeStats};
-
-impl<T: Voxel + Encoding, S: AsRef<[u8]>> VolumeTrait for Volume<T, S, 3> {
+impl<T: Voxel + Encoding, S: AsRef<[u8]>> VolumeAccess for Volume<T, S, 3> {
     type Voxel = T;
 
     fn header(&self) -> &Header {
         &self.header
     }
+
     fn dimensions(&self) -> (usize, usize, usize) {
         (self.dimensions[0], self.dimensions[1], self.dimensions[2])
     }
@@ -766,12 +746,16 @@ impl<T: Voxel + Encoding, S: AsRef<[u8]>> VolumeTrait for Volume<T, S, 3> {
         let bytes = self.storage.as_ref();
         T::decode(self.header.file_endian, &bytes[offset..offset + T::SIZE])
     }
+}
 
-    fn compute_stats(&self) -> VolumeStats
-    where
-        T: Into<f64>,
-    {
-        crate::stats::compute_stats((0..self.len()).map(|i| unsafe { self.get_unchecked(i) }))
+impl<T: Voxel + Encoding, S: AsRef<[u8]> + AsMut<[u8]>> VolumeAccessMut for Volume<T, S, 3> {
+    unsafe fn set_unchecked(&mut self, index: usize, value: T) {
+        let offset = index * T::SIZE;
+        let bytes = self.storage.as_mut();
+        value.encode(
+            self.header.file_endian,
+            &mut bytes[offset..offset + T::SIZE],
+        );
     }
 }
 

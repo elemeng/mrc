@@ -29,19 +29,19 @@ pub trait DynVolume {
 
 impl<T: Voxel + Encoding> DynVolume for Volume<T, Vec<u8>> {
     fn header(&self) -> &Header {
-        super::volume_trait::Volume::header(self)
+        super::traits::VolumeAccess::header(self)
     }
     fn mode(&self) -> Mode {
         self.header().mode()
     }
     fn dimensions(&self) -> (usize, usize, usize) {
-        super::volume_trait::Volume::dimensions(self)
+        super::traits::VolumeAccess::dimensions(self)
     }
     fn len(&self) -> usize {
-        super::Volume::len(self)
+        Volume::<T, Vec<u8>>::len(self)
     }
     fn is_empty(&self) -> bool {
-        super::Volume::is_empty(self)
+        Volume::<T, Vec<u8>>::is_empty(self)
     }
     fn as_any(&self) -> &dyn core::any::Any {
         self

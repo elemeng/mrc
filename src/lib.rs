@@ -80,7 +80,7 @@ pub use header::{Header, HeaderBuilder, RawHeader};
 
 // Feature-gated re-exports
 #[cfg(feature = "std")]
-pub use access::{Volume, VolumeData, VoxelAccess, VoxelAccessMut};
+pub use access::{VoxelAccess, VoxelAccessMut, Volume, VolumeAccess, VolumeAccessMut, VolumeData, VolumeIter};
 
 /// 1D volume type alias (replaces DataBlock)
 #[cfg(feature = "std")]

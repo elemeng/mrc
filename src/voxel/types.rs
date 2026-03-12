@@ -145,19 +145,69 @@ pub struct ComplexI16 {
     pub im: i16,
 }
 
+/// Complex number with f32 components (Mode 4)
+#[derive(Debug, Clone, Copy, PartialEq, Pod, Zeroable)]
+#[repr(C)]
+pub struct ComplexF32 {
+    pub re: f32,
+    pub im: f32,
+}
+
+// Common complex methods macro for integer types
+macro_rules! impl_complex_common_int {
+    ($type:ty, $real:ty) => {
+        impl $type {
+            /// Create a new complex number
+            #[inline]
+            pub const fn new(re: $real, im: $real) -> Self {
+                Self { re, im }
+            }
+
+            /// Create a complex number from real part only
+            #[inline]
+            pub const fn from_real(re: $real) -> Self {
+                Self { re, im: 0 as $real }
+            }
+
+            /// Returns the complex conjugate
+            #[inline]
+            pub const fn conjugate(self) -> Self {
+                Self { re: self.re, im: self.im.wrapping_neg() }
+            }
+        }
+    };
+}
+
+// Common complex methods macro for float types
+macro_rules! impl_complex_common_float {
+    ($type:ty, $real:ty) => {
+        impl $type {
+            /// Create a new complex number
+            #[inline]
+            pub const fn new(re: $real, im: $real) -> Self {
+                Self { re, im }
+            }
+
+            /// Create a complex number from real part only
+            #[inline]
+            pub const fn from_real(re: $real) -> Self {
+                Self { re, im: 0.0 }
+            }
+
+            /// Returns the complex conjugate
+            #[inline]
+            pub const fn conjugate(self) -> Self {
+                Self { re: self.re, im: -self.im }
+            }
+        }
+    };
+}
+
+impl_complex_common_int!(ComplexI16, i16);
+impl_complex_common_float!(ComplexF32, f32);
+
+// Additional methods for ComplexI16
 impl ComplexI16 {
-    /// Create a new complex number
-    #[inline]
-    pub const fn new(re: i16, im: i16) -> Self {
-        Self { re, im }
-    }
-
-    /// Create a complex number from real part only (imaginary part is 0)
-    #[inline]
-    pub const fn from_real(re: i16) -> Self {
-        Self { re, im: 0 }
-    }
-
     /// Returns the square of the magnitude (re² + im²)
     #[inline]
     pub fn magnitude_squared(self) -> i32 {
@@ -180,15 +230,6 @@ impl ComplexI16 {
         (self.im as f32).atan2(self.re as f32)
     }
 
-    /// Returns the complex conjugate (re - im*i)
-    #[inline]
-    pub const fn conjugate(self) -> Self {
-        Self {
-            re: self.re,
-            im: -self.im,
-        }
-    }
-
     /// Convert to ComplexF32
     #[inline]
     pub fn to_complex_f32(self) -> ComplexF32 {
@@ -199,127 +240,8 @@ impl ComplexI16 {
     }
 }
 
-// Macro for complex type arithmetic operations
-macro_rules! impl_complex_ops {
-    ($type:ty, $base:ty, regular) => {
-        impl core::ops::Add for $type {
-            type Output = Self;
-            #[inline]
-            fn add(self, other: Self) -> Self {
-                Self {
-                    re: self.re + other.re,
-                    im: self.im + other.im,
-                }
-            }
-        }
-
-        impl core::ops::Sub for $type {
-            type Output = Self;
-            #[inline]
-            fn sub(self, other: Self) -> Self {
-                Self {
-                    re: self.re - other.re,
-                    im: self.im - other.im,
-                }
-            }
-        }
-
-        impl core::ops::Mul for $type {
-            type Output = Self;
-            #[inline]
-            fn mul(self, other: Self) -> Self {
-                Self {
-                    re: self.re * other.re - self.im * other.im,
-                    im: self.re * other.im + self.im * other.re,
-                }
-            }
-        }
-
-        impl core::ops::Neg for $type {
-            type Output = Self;
-            #[inline]
-            fn neg(self) -> Self {
-                Self {
-                    re: -self.re,
-                    im: -self.im,
-                }
-            }
-        }
-    };
-    ($type:ty, $base:ty, saturating) => {
-        impl core::ops::Add for $type {
-            type Output = Self;
-            #[inline]
-            fn add(self, other: Self) -> Self {
-                Self {
-                    re: self.re.saturating_add(other.re),
-                    im: self.im.saturating_add(other.im),
-                }
-            }
-        }
-
-        impl core::ops::Sub for $type {
-            type Output = Self;
-            #[inline]
-            fn sub(self, other: Self) -> Self {
-                Self {
-                    re: self.re.saturating_sub(other.re),
-                    im: self.im.saturating_sub(other.im),
-                }
-            }
-        }
-
-        impl core::ops::Mul for $type {
-            type Output = Self;
-            #[inline]
-            fn mul(self, other: Self) -> Self {
-                let a = self.re as i32;
-                let b = self.im as i32;
-                let c = other.re as i32;
-                let d = other.im as i32;
-                Self {
-                    re: (a * c - b * d) as i16,
-                    im: (a * d + b * c) as i16,
-                }
-            }
-        }
-
-        impl core::ops::Neg for $type {
-            type Output = Self;
-            #[inline]
-            fn neg(self) -> Self {
-                Self {
-                    re: self.re.wrapping_neg(),
-                    im: self.im.wrapping_neg(),
-                }
-            }
-        }
-    };
-}
-
-impl_complex_ops!(ComplexI16, i16, saturating);
-
-/// Complex number with f32 components (Mode 4)
-#[derive(Debug, Clone, Copy, PartialEq, Pod, Zeroable)]
-#[repr(C)]
-pub struct ComplexF32 {
-    pub re: f32,
-    pub im: f32,
-}
-
+// Additional methods for ComplexF32
 impl ComplexF32 {
-    /// Create a new complex number
-    #[inline]
-    pub const fn new(re: f32, im: f32) -> Self {
-        Self { re, im }
-    }
-
-    /// Create a complex number from real part only
-    #[inline]
-    pub const fn from_real(re: f32) -> Self {
-        Self { re, im: 0.0 }
-    }
-
     /// Returns the square of the magnitude
     #[inline]
     pub fn magnitude_squared(self) -> f32 {
@@ -338,15 +260,6 @@ impl ComplexF32 {
     #[cfg(feature = "std")]
     pub fn phase(self) -> f32 {
         self.im.atan2(self.re)
-    }
-
-    /// Returns the complex conjugate
-    #[inline]
-    pub const fn conjugate(self) -> Self {
-        Self {
-            re: self.re,
-            im: -self.im,
-        }
     }
 
     /// Returns the reciprocal
@@ -384,8 +297,112 @@ impl ComplexF32 {
     }
 }
 
-impl_complex_ops!(ComplexF32, f32, regular);
+// Saturating arithmetic for integer complex types
+macro_rules! impl_complex_saturating {
+    ($type:ty, $real:ty) => {
+        impl core::ops::Add for $type {
+            type Output = Self;
+            #[inline]
+            fn add(self, other: Self) -> Self {
+                Self {
+                    re: self.re.saturating_add(other.re),
+                    im: self.im.saturating_add(other.im),
+                }
+            }
+        }
 
+        impl core::ops::Sub for $type {
+            type Output = Self;
+            #[inline]
+            fn sub(self, other: Self) -> Self {
+                Self {
+                    re: self.re.saturating_sub(other.re),
+                    im: self.im.saturating_sub(other.im),
+                }
+            }
+        }
+
+        impl core::ops::Neg for $type {
+            type Output = Self;
+            #[inline]
+            fn neg(self) -> Self {
+                Self {
+                    re: self.re.wrapping_neg(),
+                    im: self.im.wrapping_neg(),
+                }
+            }
+        }
+
+        impl core::ops::Mul for $type {
+            type Output = Self;
+            #[inline]
+            fn mul(self, other: Self) -> Self {
+                let a = self.re as i32;
+                let b = self.im as i32;
+                let c = other.re as i32;
+                let d = other.im as i32;
+                Self {
+                    re: (a * c - b * d) as $real,
+                    im: (a * d + b * c) as $real,
+                }
+            }
+        }
+    };
+}
+
+// Regular arithmetic for float complex types
+macro_rules! impl_complex_regular {
+    ($type:ty, $real:ty) => {
+        impl core::ops::Add for $type {
+            type Output = Self;
+            #[inline]
+            fn add(self, other: Self) -> Self {
+                Self {
+                    re: self.re + other.re,
+                    im: self.im + other.im,
+                }
+            }
+        }
+
+        impl core::ops::Sub for $type {
+            type Output = Self;
+            #[inline]
+            fn sub(self, other: Self) -> Self {
+                Self {
+                    re: self.re - other.re,
+                    im: self.im - other.im,
+                }
+            }
+        }
+
+        impl core::ops::Neg for $type {
+            type Output = Self;
+            #[inline]
+            fn neg(self) -> Self {
+                Self {
+                    re: -self.re,
+                    im: -self.im,
+                }
+            }
+        }
+
+        impl core::ops::Mul for $type {
+            type Output = Self;
+            #[inline]
+            fn mul(self, other: Self) -> Self {
+                Self {
+                    re: self.re * other.re - self.im * other.im,
+                    im: self.re * other.im + self.im * other.re,
+                }
+            }
+        }
+    };
+}
+
+impl_complex_saturating!(ComplexI16, i16);
+impl_complex_regular!(ComplexF32, f32);
+
+// Additional arithmetic for ComplexF32
 impl core::ops::Div for ComplexF32 {
     type Output = Self;
     #[inline]

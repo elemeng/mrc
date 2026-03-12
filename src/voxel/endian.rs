@@ -70,53 +70,63 @@ impl FileEndian {
 }
 
 /// Trait for types that can be converted between endianness
+///
+/// This trait handles conversion between file endianness and native endianness.
+/// It is used for both voxel data and header field conversion.
 pub trait EndianConvert: Copy + Sized {
     /// Convert from file endianness to native
     fn convert_from_file(self, endian: FileEndian) -> Self;
+
+    /// Convert from native to file endianness
+    #[inline]
+    fn convert_to_file(self, endian: FileEndian) -> Self {
+        // Symmetric operation for most types
+        self.convert_from_file(endian)
+    }
 }
 
-macro_rules! impl_endian_convert {
+// Macro for integer types with swap_bytes
+macro_rules! impl_endian_convert_swap {
     ($type:ty) => {
         impl EndianConvert for $type {
             #[inline]
             fn convert_from_file(self, endian: FileEndian) -> Self {
-                match endian {
-                    FileEndian::Little => Self::from_le(self.to_le()),
-                    FileEndian::Big => Self::from_be(self.to_be()),
+                if endian.is_native() {
+                    self
+                } else {
+                    self.swap_bytes()
                 }
             }
         }
     };
 }
 
-impl_endian_convert!(i16);
-impl_endian_convert!(u16);
-impl_endian_convert!(i32);
-impl_endian_convert!(u32);
-impl_endian_convert!(i64);
-impl_endian_convert!(u64);
+impl_endian_convert_swap!(i16);
+impl_endian_convert_swap!(u16);
+impl_endian_convert_swap!(i32);
+impl_endian_convert_swap!(u32);
+impl_endian_convert_swap!(i64);
+impl_endian_convert_swap!(u64);
 
 impl EndianConvert for f32 {
     #[inline]
     fn convert_from_file(self, endian: FileEndian) -> Self {
-        let bits = self.to_bits();
-        let converted = match endian {
-            FileEndian::Little => u32::from_le(bits.to_le()),
-            FileEndian::Big => u32::from_be(bits.to_be()),
-        };
-        f32::from_bits(converted)
+        if endian.is_native() {
+            self
+        } else {
+            f32::from_bits(self.to_bits().swap_bytes())
+        }
     }
 }
 
 impl EndianConvert for f64 {
     #[inline]
     fn convert_from_file(self, endian: FileEndian) -> Self {
-        let bits = self.to_bits();
-        let converted = match endian {
-            FileEndian::Little => u64::from_le(bits.to_le()),
-            FileEndian::Big => u64::from_be(bits.to_be()),
-        };
-        f64::from_bits(converted)
+        if endian.is_native() {
+            self
+        } else {
+            f64::from_bits(self.to_bits().swap_bytes())
+        }
     }
 }
 
@@ -157,5 +167,17 @@ mod tests {
     fn test_is_native() {
         let native = FileEndian::native();
         assert!(native.is_native());
+    }
+
+    #[test]
+    fn test_endian_convert_i32() {
+        let val: i32 = 0x12345678;
+        assert_eq!(val.convert_from_file(FileEndian::native()), val);
+
+        // When converting from opposite endianness
+        let swapped = val.convert_from_file(FileEndian::Little);
+        if FileEndian::native() == FileEndian::Little {
+            assert_eq!(swapped, val);
+        }
     }
 }

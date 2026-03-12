@@ -25,11 +25,11 @@ pub struct MrcReader {
 impl MrcReader {
     /// Open an MRC file for reading
     pub fn open(path: impl AsRef<std::path::Path>) -> Result<Self, Error> {
-        let mut file = File::open(path).map_err(Error::Io)?;
+        let mut file = File::open(path).map_err(Error::from)?;
 
         // Read header
         let mut header_bytes = [0u8; 1024];
-        file.read_exact(&mut header_bytes).map_err(Error::Io)?;
+        file.read_exact(&mut header_bytes).map_err(Error::from)?;
 
         let raw_header: crate::RawHeader = *bytemuck::from_bytes(&header_bytes);
         let header = Header::try_from(raw_header)?;
@@ -47,7 +47,7 @@ impl MrcReader {
         let ext_header_size = header.nsymbt();
         let mut ext_header = alloc::vec![0u8; ext_header_size];
         if ext_header_size > 0 {
-            file.read_exact(&mut ext_header).map_err(Error::Io)?;
+            file.read_exact(&mut ext_header).map_err(Error::from)?;
         }
 
         let data_offset = header.data_offset() as u64;
@@ -92,8 +92,8 @@ impl MrcReader {
         let mut data = alloc::vec![0u8; self.data_size];
         self.file
             .seek(SeekFrom::Start(self.data_offset))
-            .map_err(Error::Io)?;
-        self.file.read_exact(&mut data).map_err(Error::Io)?;
+            .map_err(Error::from)?;
+        self.file.read_exact(&mut data).map_err(Error::from)?;
         Ok(data)
     }
 
@@ -105,9 +105,7 @@ impl MrcReader {
     /// # Errors
     /// Returns `Error::TypeMismatch` if the file mode doesn't match T::MODE
     pub fn read_volume<T: Voxel + Encoding>(&mut self) -> Result<Volume<T, Vec<u8>>, Error> {
-        // Verify mode matches
         validate_mode::<T>(self.header.mode())?;
-
         let data = self.read_data()?;
         Volume::new(self.header.clone(), data)
     }
@@ -134,6 +132,6 @@ impl MrcSource for MrcReader {
 
     fn read_exact(&mut self, buf: &mut [u8]) -> Result<(), Error> {
         use std::io::Read;
-        self.file.read_exact(buf).map_err(Error::Io)
+        self.file.read_exact(buf).map_err(Error::from)
     }
 }
