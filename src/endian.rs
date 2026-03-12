@@ -62,15 +62,6 @@ impl FileEndian {
         }
     }
     
-    /// Detect endianness from MACHST, returning native endianness as fallback
-    ///
-    /// Use this when you want a reasonable default for unrecognized values.
-    #[inline]
-    #[deprecated(since = "0.2.0", note = "Use from_machst_or_little instead for explicit little-endian default")]
-    pub fn from_machst_or_native(machst: &[u8; 4]) -> Self {
-        Self::from_machst(machst).unwrap_or_else(Self::native)
-    }
-    
     /// Convert to MACHST bytes
     #[inline]
     pub const fn to_machst(self) -> [u8; 4] {
