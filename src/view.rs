@@ -80,12 +80,6 @@ impl<'a> MrcView<'a> {
         &self.header
     }
 
-    /// Get a reference to the header (alias for `header()`)
-    #[inline]
-    pub fn header_ref(&self) -> &Header {
-        &self.header
-    }
-
     /// Get the data mode
     #[inline]
     pub fn mode(&self) -> Option<Mode> {
@@ -111,12 +105,6 @@ impl<'a> MrcView<'a> {
     /// Get a reference to the data block
     #[inline]
     pub fn data(&self) -> &DataBlock<'a> {
-        &self.data
-    }
-
-    /// Get a reference to the data block (alias for `data()`)
-    #[inline]
-    pub fn data_ref(&self) -> &DataBlock<'a> {
         &self.data
     }
 

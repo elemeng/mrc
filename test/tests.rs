@@ -1291,7 +1291,7 @@ mod view_tests {
         let bytes = vec![0u8; 10];
         let datablock = DataBlock::new(&bytes, Mode::Int16Complex, FileEndian::LittleEndian, 2);
 
-        let result = datablock.to_vec_int16_complex();
+        let result = datablock.to_vec_i16_complex();
         assert!(matches!(result, Err(crate::Error::InvalidDimensions)));
     }
 
@@ -1303,7 +1303,7 @@ mod view_tests {
         let bytes = vec![0u8; 10];
         let datablock = DataBlock::new(&bytes, Mode::Float32Complex, FileEndian::LittleEndian, 1);
 
-        let result = datablock.to_vec_float32_complex();
+        let result = datablock.to_vec_f32_complex();
         assert!(matches!(result, Err(crate::Error::InvalidDimensions)));
     }
 

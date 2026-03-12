@@ -60,7 +60,7 @@ This file provides essential information for AI coding agents working with the `
   - `bytemuck` (1.15): Safe type casting
   - `memmap2` (0.9): Memory-mapped file I/O (optional)
   - `thiserror` (2.0.16): Error handling
-  - Nightly Rust with `f16` feature enabled
+  - `half` crate for f16 support
 
 ## Feature Flags
 
@@ -69,7 +69,7 @@ This file provides essential information for AI coding agents working with the `
 | `std` | Standard library support | ✅ | ❌ |
 | `mmap` | Memory-mapped I/O via memmap2 | ✅ | ❌ |
 | `file` | File operations | ✅ | ❌ |
-| `f16` | Half-precision float support | ✅ | ❌ |
+| `f16` | Half-precision float support (via half crate) | ✅ | ✅ |
 
 ### no_std Usage
 
@@ -189,7 +189,7 @@ pub fn from_parts(header: Header, ...) -> Result<Self, Error> {
 | `Int16Complex` | 3 | `Int16Complex` | 4 | Complex 16-bit |
 | `Float32Complex` | 4 | `Float32Complex` | 8 | Complex 32-bit |
 | `Uint16` | 6 | `u16` | 2 | Unsigned 16-bit integer |
-| `Float16` | 12 | `f16` | 2 | 16-bit float (requires `f16` feature, nightly only) |
+| `Float16` | 12 | `half::f16` | 2 | 16-bit float (requires `f16` feature) |
 | `Packed4Bit` | 101 | `Packed4Bit` | 1 | 4-bit packed data |
 
 ## Testing Strategy

@@ -160,7 +160,7 @@ impl Header {
         self.nx > 0
             && self.ny > 0
             && self.nz > 0
-            && matches!(self.mode, 0 | 1 | 2 | 3 | 4 | 6 | 12 | 101)
+            && self.validate_mode()
             && self.validate_map()
             // Validate ISPG: 0 (2D/stack), 1-230 (crystallographic), or 400-630 (volume stacks)
             && (self.ispg == 0 || (self.ispg >= 1 && self.ispg <= 230) || (self.ispg >= 400 && self.ispg <= 630))
@@ -175,6 +175,18 @@ impl Header {
             && self.nsymbt >= 0
             // Validate nlabl is between 0 and 10
             && self.nlabl >= 0 && self.nlabl <= 10
+    }
+
+    #[inline]
+    /// Validate the mode value.
+    ///
+    /// Mode 12 (Float16) is only valid when the `f16` feature is enabled.
+    fn validate_mode(&self) -> bool {
+        match self.mode {
+            0 | 1 | 2 | 3 | 4 | 6 | 101 => true,
+            12 => cfg!(feature = "f16"),
+            _ => false,
+        }
     }
 
     #[inline]

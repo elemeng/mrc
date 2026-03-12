@@ -29,7 +29,7 @@
 //!
 //! - `std`: Standard library support for file I/O
 //! - `mmap`: Memory-mapped file support for zero-copy access
-//! - `f16`: Half-precision floating point support
+//! - `f16`: Half-precision floating point support (via `half` crate)
 //!
 //! ## Safety
 //!
@@ -56,7 +56,9 @@
 //! cross-platform reading, writing, memory-mapped access, and streaming updates.
 
 #![no_std]
-#![cfg_attr(feature = "f16", feature(f16))]
+#[cfg(feature = "f16")]
+extern crate half;
+
 #[cfg(feature = "std")]
 extern crate alloc;
 
@@ -125,7 +127,7 @@ impl VoxelType for u16 {
 }
 
 #[cfg(feature = "f16")]
-impl VoxelType for f16 {
+impl VoxelType for half::f16 {
     const MODE: Mode = Mode::Float16;
 }
 
@@ -140,6 +142,30 @@ pub enum FileEndian {
 }
 
 impl FileEndian {
+    /// Try to detect file endianness from MACHST machine stamp
+    ///
+    /// According to MRC2014 spec:
+    /// - 0x44 0x44 0x00 0x00 indicates little-endian
+    /// - 0x11 0x11 0x00 0x00 indicates big-endian
+    ///
+    /// Returns `None` if the MACHST value is not recognized.
+    ///
+    /// # Note
+    /// Endianness is determined solely from the first two bytes of MACHST.
+    /// The last two bytes (padding) are ignored for endianness detection.
+    pub fn try_from_machst(machst: &[u8; 4]) -> Option<Self> {
+        // Check first two bytes (bytes 213-214 in header)
+        // 0x44 = 'D' in ASCII, indicates little-endian
+        // 0x11 indicates big-endian
+        if machst[0] == 0x44 && machst[1] == 0x44 {
+            Some(FileEndian::LittleEndian)
+        } else if machst[0] == 0x11 && machst[1] == 0x11 {
+            Some(FileEndian::BigEndian)
+        } else {
+            None
+        }
+    }
+
     /// Detect file endianness from MACHST machine stamp
     ///
     /// According to MRC2014 spec:
@@ -150,19 +176,18 @@ impl FileEndian {
     /// Endianness is determined solely from the first two bytes of MACHST.
     /// The last two bytes (padding) are ignored for endianness detection,
     /// but a warning is emitted if they contain non-zero values.
+    /// If the MACHST value is not recognized, defaults to little-endian.
     pub fn from_machst(machst: &[u8; 4]) -> Self {
-        // Check first two bytes (bytes 213-214 in header)
-        // 0x44 = 'D' in ASCII, indicates little-endian
-        // 0x11 indicates big-endian
-        let endian = if machst[0] == 0x44 && machst[1] == 0x44 {
-            FileEndian::LittleEndian
-        } else if machst[0] == 0x11 && machst[1] == 0x11 {
-            FileEndian::BigEndian
-        } else {
+        let endian = Self::try_from_machst(machst).unwrap_or_else(|| {
             // Default to little-endian for unknown values
             // (most common in practice)
+            #[cfg(feature = "std")]
+            std::eprintln!(
+                "Warning: Unrecognized MACHST value: {:02X} {:02X} {:02X} {:02X}, defaulting to little-endian",
+                machst[0], machst[1], machst[2], machst[3]
+            );
             FileEndian::LittleEndian
-        };
+        });
 
         // Warn about non-standard padding bytes (bytes 2-3)
         #[cfg(feature = "std")]
@@ -366,32 +391,20 @@ pub struct DataBlock<'a> {
     voxel_count: usize,
 }
 
-/// Helper functions for endianness-aware decoding
+/// Helper functions for endianness-aware decoding (use DecodeFromFile trait)
 #[inline]
 fn decode_f32(bytes: &[u8], offset: usize, file_endian: FileEndian) -> f32 {
-    let arr: [u8; 4] = [bytes[offset], bytes[offset + 1], bytes[offset + 2], bytes[offset + 3]];
-    match file_endian {
-        FileEndian::LittleEndian => f32::from_le_bytes(arr),
-        FileEndian::BigEndian => f32::from_be_bytes(arr),
-    }
+    f32::decode(file_endian, &bytes[offset..offset + 4])
 }
 
 #[inline]
 fn decode_i16(bytes: &[u8], offset: usize, file_endian: FileEndian) -> i16 {
-    let arr: [u8; 2] = [bytes[offset], bytes[offset + 1]];
-    match file_endian {
-        FileEndian::LittleEndian => i16::from_le_bytes(arr),
-        FileEndian::BigEndian => i16::from_be_bytes(arr),
-    }
+    i16::decode(file_endian, &bytes[offset..offset + 2])
 }
 
 #[inline]
 fn decode_u16(bytes: &[u8], offset: usize, file_endian: FileEndian) -> u16 {
-    let arr: [u8; 2] = [bytes[offset], bytes[offset + 1]];
-    match file_endian {
-        FileEndian::LittleEndian => u16::from_le_bytes(arr),
-        FileEndian::BigEndian => u16::from_be_bytes(arr),
-    }
+    u16::decode(file_endian, &bytes[offset..offset + 2])
 }
 
 impl<'a> DataBlock<'a> {
@@ -520,25 +533,35 @@ impl<'a> DataBlock<'a> {
     /// More efficient than `to_vec()` when you already have a buffer allocated.
     ///
     /// # Type Parameters
-    /// * `T` - The voxel type to decode (must implement VoxelType)
+    /// * `T` - The voxel type to decode (must implement VoxelType and Pod)
     ///
     /// # Errors
     /// - Returns `Error::InvalidMode` if the mode doesn't match T::MODE
     /// - Returns `Error::BufferTooSmall` if the output buffer is too large for available data
     #[inline]
-    pub fn copy_to<T: VoxelType>(&self, out: &mut [T]) -> Result<(), Error> {
+    pub fn copy_to<T: VoxelType + bytemuck::Pod>(&self, out: &mut [T]) -> Result<(), Error> {
         if !T::is_valid_mode(self.mode) {
             return Err(Error::InvalidMode);
         }
 
         let n = out.len();
-        if n * T::SIZE > self.bytes.len() {
+        let expected_bytes = n * T::SIZE;
+        if expected_bytes > self.bytes.len() {
             return Err(Error::BufferTooSmall {
-                expected: n * T::SIZE,
+                expected: expected_bytes,
                 got: self.bytes.len(),
             });
         }
 
+        // Fast path: native endianness with proper alignment - use copy_from_slice
+        if self.file_endian.is_native() {
+            if let Ok(slice) = bytemuck::try_cast_slice(&self.bytes[..expected_bytes]) {
+                out.copy_from_slice(slice);
+                return Ok(());
+            }
+        }
+
+        // Fallback: element-by-element decoding
         for (i, dst) in out.iter_mut().enumerate() {
             *dst = T::decode(self.file_endian, &self.bytes[i * T::SIZE..(i + 1) * T::SIZE]);
         }
@@ -553,13 +576,13 @@ impl<'a> DataBlock<'a> {
     /// `copy_to()` for filling existing buffers.
     ///
     /// # Type Parameters
-    /// * `T` - The voxel type to decode (must implement VoxelType)
+    /// * `T` - The voxel type to decode (must implement VoxelType and Pod)
     ///
     /// # Errors
     /// - Returns `Error::InvalidMode` if the mode doesn't match T::MODE
     /// - Returns `Error::BufferTooSmall` if the byte length is less than expected
     #[inline]
-    pub fn to_vec<T: VoxelType + Default>(&self) -> Result<Vec<T>, Error> {
+    pub fn to_vec<T: VoxelType + bytemuck::Pod + Default>(&self) -> Result<Vec<T>, Error> {
         if !T::is_valid_mode(self.mode) {
             return Err(Error::InvalidMode);
         }
@@ -572,6 +595,14 @@ impl<'a> DataBlock<'a> {
             });
         }
 
+        // Fast path: native endianness with proper alignment - use slice.to_vec()
+        if self.file_endian.is_native() {
+            if let Ok(slice) = bytemuck::try_cast_slice(&self.bytes[..expected_byte_len]) {
+                return Ok(slice.to_vec());
+            }
+        }
+
+        // Fallback: allocate and copy element-by-element
         let n = self.len_voxels();
         let mut result = Vec::with_capacity(n);
         result.resize(n, T::default());
@@ -619,7 +650,7 @@ impl<'a> DataBlock<'a> {
     ///
     /// # Errors
     /// Returns Error::InvalidMode if mode is not Float32
-    /// Returns Error::InvalidDimensions if output buffer is too small
+    /// Returns Error::BufferTooSmall if output buffer is too large for available data
     #[inline]
     pub fn read_f32_into(&self, out: &mut [f32]) -> Result<(), Error> {
         if self.mode != Mode::Float32 {
@@ -628,7 +659,10 @@ impl<'a> DataBlock<'a> {
 
         let n = out.len();
         if n * 4 > self.bytes.len() {
-            return Err(Error::InvalidDimensions);
+            return Err(Error::BufferTooSmall {
+                expected: n * 4,
+                got: self.bytes.len(),
+            });
         }
 
         // Branchless endianness handling: check once outside loop
@@ -756,7 +790,7 @@ impl<'a> DataBlock<'a> {
     ///
     /// # Errors
     /// Returns Error::InvalidMode if mode is not Int16
-    /// Returns Error::InvalidDimensions if output buffer is too small
+    /// Returns Error::BufferTooSmall if output buffer is too large for available data
     #[inline]
     #[allow(clippy::needless_range_loop)] // Intentional: direct indexing for performance
     pub fn read_i16_into(&self, out: &mut [i16]) -> Result<(), Error> {
@@ -766,7 +800,10 @@ impl<'a> DataBlock<'a> {
 
         let n = out.len();
         if n * 2 > self.bytes.len() {
-            return Err(Error::InvalidDimensions);
+            return Err(Error::BufferTooSmall {
+                expected: n * 2,
+                got: self.bytes.len(),
+            });
         }
 
         for i in 0..n {
@@ -874,7 +911,7 @@ impl<'a> DataBlock<'a> {
     ///
     /// # Errors
     /// Returns Error::InvalidMode if mode is not Uint16
-    /// Returns Error::InvalidDimensions if output buffer is too small
+    /// Returns Error::BufferTooSmall if output buffer is too large for available data
     #[inline]
     #[allow(clippy::needless_range_loop)] // Intentional: direct indexing for performance
     pub fn read_u16_into(&self, out: &mut [u16]) -> Result<(), Error> {
@@ -884,7 +921,10 @@ impl<'a> DataBlock<'a> {
 
         let n = out.len();
         if n * 2 > self.bytes.len() {
-            return Err(Error::InvalidDimensions);
+            return Err(Error::BufferTooSmall {
+                expected: n * 2,
+                got: self.bytes.len(),
+            });
         }
 
         for i in 0..n {
@@ -987,14 +1027,17 @@ impl<'a> DataBlock<'a> {
     ///
     /// # Errors
     /// Returns Error::InvalidMode if mode is not Int8
-    /// Returns Error::InvalidDimensions if output buffer is too small
+    /// Returns Error::BufferTooSmall if output buffer is too large for available data
     #[inline]
     pub fn read_i8_into(&self, out: &mut [i8]) -> Result<(), Error> {
         if self.mode != Mode::Int8 {
             return Err(Error::InvalidMode);
         }
         if out.len() > self.bytes.len() {
-            return Err(Error::InvalidDimensions);
+            return Err(Error::BufferTooSmall {
+                expected: out.len(),
+                got: self.bytes.len(),
+            });
         }
         for (i, &byte) in self.bytes.iter().enumerate().take(out.len()) {
             out[i] = byte as i8;
@@ -1039,7 +1082,7 @@ impl<'a> DataBlock<'a> {
     ///
     /// # Errors
     /// Returns Error::InvalidMode if mode is not Int16Complex
-    /// Returns Error::InvalidDimensions if output buffer is too small
+    /// Returns Error::BufferTooSmall if output buffer is too large for available data
     #[inline]
     pub fn read_int16_complex_into(&self, out: &mut [Int16Complex]) -> Result<(), Error> {
         if self.mode != Mode::Int16Complex {
@@ -1047,7 +1090,10 @@ impl<'a> DataBlock<'a> {
         }
         let n = out.len();
         if n * 4 > self.bytes.len() {
-            return Err(Error::InvalidDimensions);
+            return Err(Error::BufferTooSmall {
+                expected: n * 4,
+                got: self.bytes.len(),
+            });
         }
         for (i, chunk) in self.bytes.chunks_exact(4).take(n).enumerate() {
             out[i] = Int16Complex::decode(self.file_endian, chunk);
@@ -1092,7 +1138,7 @@ impl<'a> DataBlock<'a> {
     ///
     /// # Errors
     /// Returns Error::InvalidMode if mode is not Float32Complex
-    /// Returns Error::InvalidDimensions if output buffer is too small
+    /// Returns Error::BufferTooSmall if output buffer is too large for available data
     #[inline]
     pub fn read_float32_complex_into(&self, out: &mut [Float32Complex]) -> Result<(), Error> {
         if self.mode != Mode::Float32Complex {
@@ -1100,7 +1146,10 @@ impl<'a> DataBlock<'a> {
         }
         let n = out.len();
         if n * 8 > self.bytes.len() {
-            return Err(Error::InvalidDimensions);
+            return Err(Error::BufferTooSmall {
+                expected: n * 8,
+                got: self.bytes.len(),
+            });
         }
         for (i, chunk) in self.bytes.chunks_exact(8).take(n).enumerate() {
             out[i] = Float32Complex::decode(self.file_endian, chunk);
@@ -1190,14 +1239,17 @@ impl<'a> DataBlock<'a> {
     ///
     /// # Errors
     /// Returns Error::InvalidMode if mode is not Packed4Bit
-    /// Returns Error::InvalidDimensions if output buffer is too small
+    /// Returns Error::BufferTooSmall if output buffer is too large for available data
     #[inline]
     pub fn read_packed4bit_into(&self, out: &mut [Packed4Bit]) -> Result<(), Error> {
         if self.mode != Mode::Packed4Bit {
             return Err(Error::InvalidMode);
         }
         if out.len() > self.bytes.len() {
-            return Err(Error::InvalidDimensions);
+            return Err(Error::BufferTooSmall {
+                expected: out.len(),
+                got: self.bytes.len(),
+            });
         }
         for (i, &byte) in self.bytes.iter().enumerate().take(out.len()) {
             out[i] = Packed4Bit::decode(self.file_endian, &[byte]);
@@ -1228,7 +1280,7 @@ impl<'a> DataBlock<'a> {
     /// # Errors
     /// Returns Error::InvalidMode if the file mode is not Int16Complex (mode 3)
     /// Returns Error::InvalidDimensions if the byte length is not divisible by 4
-    pub fn to_vec_int16_complex(&self) -> Result<Vec<Int16Complex>, Error> {
+    pub fn to_vec_i16_complex(&self) -> Result<Vec<Int16Complex>, Error> {
         if self.mode != Mode::Int16Complex {
             return Err(Error::InvalidMode);
         }
@@ -1251,7 +1303,7 @@ impl<'a> DataBlock<'a> {
     /// # Errors
     /// Returns Error::InvalidMode if the file mode is not Float32Complex (mode 4)
     /// Returns Error::InvalidDimensions if the byte length is not divisible by 8
-    pub fn to_vec_float32_complex(&self) -> Result<Vec<Float32Complex>, Error> {
+    pub fn to_vec_f32_complex(&self) -> Result<Vec<Float32Complex>, Error> {
         if self.mode != Mode::Float32Complex {
             return Err(Error::InvalidMode);
         }
@@ -1294,7 +1346,7 @@ impl<'a> DataBlock<'a> {
     /// Returns Error::IndexOutOfBounds if index is out of bounds
     #[inline]
     #[cfg(feature = "f16")]
-    pub fn get_f16(&self, index: usize) -> Result<f16, Error> {
+    pub fn get_f16(&self, index: usize) -> Result<half::f16, Error> {
         if self.mode != Mode::Float16 {
             return Err(Error::InvalidMode);
         }
@@ -1309,7 +1361,7 @@ impl<'a> DataBlock<'a> {
             FileEndian::LittleEndian => u16::from_le_bytes([self.bytes[offset], self.bytes[offset + 1]]),
             FileEndian::BigEndian => u16::from_be_bytes([self.bytes[offset], self.bytes[offset + 1]]),
         };
-        Ok(f16::from_bits(bits))
+        Ok(half::f16::from_bits(bits))
     }
 
     /// Create an iterator over f16 values
@@ -1318,7 +1370,7 @@ impl<'a> DataBlock<'a> {
     /// Returns Error::InvalidMode if mode is not Float16
     #[inline]
     #[cfg(feature = "f16")]
-    pub fn iter_f16(&self) -> Result<impl Iterator<Item = f16> + '_, Error> {
+    pub fn iter_f16(&self) -> Result<impl Iterator<Item = half::f16> + '_, Error> {
         if self.mode != Mode::Float16 {
             return Err(Error::InvalidMode);
         }
@@ -1329,7 +1381,7 @@ impl<'a> DataBlock<'a> {
                 FileEndian::LittleEndian => u16::from_le_bytes([chunk[0], chunk[1]]),
                 FileEndian::BigEndian => u16::from_be_bytes([chunk[0], chunk[1]]),
             };
-            f16::from_bits(bits)
+            half::f16::from_bits(bits)
         }))
     }
 
@@ -1340,7 +1392,7 @@ impl<'a> DataBlock<'a> {
     /// Returns Error::BufferTooSmall if output buffer is too large for available data
     #[inline]
     #[cfg(feature = "f16")]
-    pub fn read_f16_into(&self, out: &mut [f16]) -> Result<(), Error> {
+    pub fn read_f16_into(&self, out: &mut [half::f16]) -> Result<(), Error> {
         if self.mode != Mode::Float16 {
             return Err(Error::InvalidMode);
         }
@@ -1356,7 +1408,7 @@ impl<'a> DataBlock<'a> {
                 FileEndian::LittleEndian => u16::from_le_bytes([chunk[0], chunk[1]]),
                 FileEndian::BigEndian => u16::from_be_bytes([chunk[0], chunk[1]]),
             };
-            out[i] = f16::from_bits(bits);
+            out[i] = half::f16::from_bits(bits);
         }
         Ok(())
     }
@@ -1367,7 +1419,7 @@ impl<'a> DataBlock<'a> {
     /// Returns Error::InvalidMode if the file mode is not Float16 (mode 12)
     /// Returns Error::InvalidDimensions if the byte length is not divisible by 2
     #[cfg(feature = "f16")]
-    pub fn to_vec_f16(&self) -> Result<Vec<f16>, Error> {
+    pub fn to_vec_f16(&self) -> Result<Vec<half::f16>, Error> {
         if self.mode != Mode::Float16 {
             return Err(Error::InvalidMode);
         }
@@ -1383,7 +1435,7 @@ impl<'a> DataBlock<'a> {
                 FileEndian::LittleEndian => u16::from_le_bytes([chunk[0], chunk[1]]),
                 FileEndian::BigEndian => u16::from_be_bytes([chunk[0], chunk[1]]),
             };
-            result.push(f16::from_bits(bits));
+            result.push(half::f16::from_bits(bits));
         }
 
         Ok(result)
@@ -1467,6 +1519,14 @@ impl<'a> DataBlockMut<'a> {
     #[inline]
     pub fn as_bytes_mut(&mut self) -> &mut [u8] {
         self.bytes
+    }
+
+    /// Get a read-only DataBlock view for reading data
+    ///
+    /// This allows using all the read methods from DataBlock on mutable data.
+    #[inline]
+    pub fn as_data_block(&self) -> DataBlock<'_> {
+        DataBlock::new(self.bytes, self.mode, self.file_endian, self.voxel_count)
     }
 
     /// Encode f32 values to data
@@ -1622,7 +1682,7 @@ impl<'a> DataBlockMut<'a> {
     /// # Errors
     /// Returns Error::InvalidMode if the file mode is not Float16 (mode 12)
     /// Returns Error::InvalidDimensions if the data size doesn't match the input length
-    pub fn set_f16(&mut self, values: &[f16]) -> Result<(), Error> {
+    pub fn set_f16(&mut self, values: &[half::f16]) -> Result<(), Error> {
         if self.mode != Mode::Float16 {
             return Err(Error::InvalidMode);
         }
@@ -1930,7 +1990,7 @@ impl EncodeToFile for Packed4Bit {
 // Optional f16 support (Mode 12)
 
 #[cfg(feature = "f16")]
-impl DecodeFromFile for f16 {
+impl DecodeFromFile for half::f16 {
     const SIZE: usize = 2;
 
     fn decode(e: FileEndian, b: &[u8]) -> Self {
@@ -1939,12 +1999,12 @@ impl DecodeFromFile for f16 {
             FileEndian::LittleEndian => u16::from_le_bytes(arr),
             FileEndian::BigEndian => u16::from_be_bytes(arr),
         };
-        f16::from_bits(bits)
+        half::f16::from_bits(bits)
     }
 }
 
 #[cfg(feature = "f16")]
-impl EncodeToFile for f16 {
+impl EncodeToFile for half::f16 {
     const SIZE: usize = 2;
 
     fn encode(self, e: FileEndian, out: &mut [u8]) {
