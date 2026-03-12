@@ -23,8 +23,12 @@
 //!     let mut reader = MrcReader::open("data.mrc")?;
 //!     let volume = reader.read_volume::<f32>()?;
 //!
-//!     // Access voxel data
+//!     // Access voxel data with spatial coordinates
 //!     let value = volume.get_at(10, 20, 5);
+//!
+//!     // Extract a 2D slice
+//!     let slice = volume.slice(5)?;
+//!     let pixel = slice.get(10, 20);
 //!
 //!     // Or use dynamic dispatch for unknown modes
 //!     let mut reader = MrcReader::open("data.mrc")?;
@@ -37,6 +41,7 @@
 //! ```
 
 #![no_std]
+#![allow(private_interfaces)]
 
 #[cfg(feature = "f16")]
 extern crate half;
@@ -71,20 +76,16 @@ pub use core::{AxisMap, Error, Mode, check_bounds};
 
 // Voxel re-exports
 pub use voxel::{
-    ComplexF32, ComplexI16, ComplexVoxel, EndianConvert, FileEndian, Float32Complex, Int16Complex,
-    IntegerVoxel, Packed4Bit, RealVoxel, ScalarVoxel, Voxel,
+    ComplexF32, ComplexI16, ComplexVoxel, IntegerVoxel, Packed4Bit, RealVoxel, ScalarVoxel, Voxel,
 };
 
 // Header re-exports
-pub use header::{Header, HeaderBuilder, RawHeader};
+pub use header::{Header, HeaderBuilder};
 
-// Feature-gated re-exports
 #[cfg(feature = "std")]
-pub use access::{VoxelAccess, VoxelAccessMut, Volume, VolumeAccess, VolumeAccessMut, VolumeData, VolumeIter};
-
-/// 1D volume type alias (replaces DataBlock)
-#[cfg(feature = "std")]
-pub type Volume1D<T, S> = Volume<T, S, 1>;
+pub use access::{
+    Image2D, Slice2D, Volume, VolumeAccess, VolumeAccessMut, VolumeBuilder, VolumeData, VolumeIter,
+};
 
 #[cfg(feature = "std")]
 pub use header::{ExtType, ExtendedHeader};
@@ -112,18 +113,6 @@ mod tests {
         let map = AxisMap::default();
         assert!(map.is_standard());
         assert!(map.validate());
-    }
-
-    #[test]
-    fn test_file_endian() {
-        let native = FileEndian::native();
-        assert!(native.is_native());
-    }
-
-    #[test]
-    fn test_raw_header_new() {
-        let header = RawHeader::new();
-        assert!(header.has_valid_map());
     }
 
     #[test]

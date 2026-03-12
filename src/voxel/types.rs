@@ -172,7 +172,10 @@ macro_rules! impl_complex_common_int {
             /// Returns the complex conjugate
             #[inline]
             pub const fn conjugate(self) -> Self {
-                Self { re: self.re, im: self.im.wrapping_neg() }
+                Self {
+                    re: self.re,
+                    im: self.im.wrapping_neg(),
+                }
             }
         }
     };
@@ -197,7 +200,10 @@ macro_rules! impl_complex_common_float {
             /// Returns the complex conjugate
             #[inline]
             pub const fn conjugate(self) -> Self {
-                Self { re: self.re, im: -self.im }
+                Self {
+                    re: self.re,
+                    im: -self.im,
+                }
             }
         }
     };
@@ -491,12 +497,6 @@ impl Voxel for f32 {
 impl Voxel for half::f16 {
     const MODE: Mode = Mode::Float16;
 }
-
-/// Legacy type alias
-pub type Int16Complex = ComplexI16;
-
-/// Legacy type alias
-pub type Float32Complex = ComplexF32;
 
 // ============================================================================
 // Packed 4-bit type (Mode 101)

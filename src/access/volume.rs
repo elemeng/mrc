@@ -1,8 +1,9 @@
 //! Volume container for MRC data
 //!
-//! Generic volume container with compile-time type safety.
+//! Generic 3D volume container with compile-time type safety.
+//! For 2D access, use `Slice2D` views extracted from volumes.
 
-use crate::core::{AxisMap, Error, Mode, check_bounds};
+use crate::core::{AxisMap, Error, check_bounds};
 use crate::header::Header;
 use crate::voxel::{Encoding, FileEndian, Voxel, validate_mode};
 
@@ -11,41 +12,39 @@ use alloc::vec;
 #[cfg(feature = "std")]
 use alloc::vec::Vec;
 
-/// A volume of voxel data with configurable dimensionality
+/// A 3D volume of voxel data
 ///
 /// # Type Parameters
 /// - `T`: Voxel type (must implement Voxel + Encoding)
 /// - `S`: Storage backend (must implement AsRef<[u8]> for read, AsMut<[u8]> for write)
-/// - `D`: Dimensionality (default 3 for 3D volumes)
 #[derive(Debug)]
-pub struct Volume<T, S, const D: usize = 3> {
+pub struct Volume<T, S> {
     header: Header,
     storage: S,
-    dimensions: [usize; D],
-    /// Strides for linear indexing (accounts for axis_map)
-    strides: [usize; D],
+    dimensions: [usize; 3],
+    strides: [usize; 3],
     _marker: core::marker::PhantomData<T>,
 }
 
-impl<T, S, const D: usize> Volume<T, S, D> {
+impl<T, S> Volume<T, S> {
     /// Get the header
     pub fn header(&self) -> &Header {
         &self.header
     }
 
     /// Get the strides
-    pub fn strides(&self) -> &[usize; D] {
-        &self.strides
+    pub fn strides(&self) -> [usize; 3] {
+        self.strides
     }
 
     /// Get the axis map
     pub fn axis_map(&self) -> &AxisMap {
-        &self.header.axis_map
+        self.header.axis_map()
     }
 
     /// Total number of voxels
     pub fn len(&self) -> usize {
-        self.dimensions.iter().product()
+        self.dimensions[0] * self.dimensions[1] * self.dimensions[2]
     }
 
     /// Check if empty
@@ -54,103 +53,13 @@ impl<T, S, const D: usize> Volume<T, S, D> {
     }
 }
 
-impl<T: Voxel + Encoding, S: AsRef<[u8]>> Volume<T, S, 1> {
-    /// Create a 1D volume from raw data (replaces DataBlock)
-    ///
-    /// This is a simplified constructor for 1D data without full header metadata.
-    /// For 3D volumes with full header information, use `Volume::new()` with a Header.
-    pub fn from_raw(data: S, mode: Mode, endian: FileEndian) -> Result<Self, Error> {
-        validate_mode::<T>(mode)?;
-
-        let voxel_count = data.as_ref().len() / T::SIZE;
-        let dimensions = [voxel_count];
-        let strides = [1];
-
-        // Create minimal header
-        let mut header = Header::new();
-        header.set_dimensions(voxel_count, 1, 1);
-        header.set_mode(mode);
-        header.file_endian = endian;
-
-        Ok(Self {
-            header,
-            storage: data,
-            dimensions,
-            strides,
-            _marker: core::marker::PhantomData,
-        })
-    }
-
-    /// Create a 1D volume with explicit voxel count
-    pub fn from_raw_with_count(data: S, mode: Mode, endian: FileEndian, voxel_count: usize) -> Result<Self, Error> {
-        validate_mode::<T>(mode)?;
-
-        let expected_size = voxel_count * T::SIZE;
-        if data.as_ref().len() < expected_size {
-            return Err(Error::BufferTooSmall {
-                expected: expected_size,
-                got: data.as_ref().len(),
-            });
-        }
-
-        let dimensions = [voxel_count];
-        let strides = [1];
-
-        let mut header = Header::new();
-        header.set_dimensions(voxel_count, 1, 1);
-        header.set_mode(mode);
-        header.file_endian = endian;
-
-        Ok(Self {
-            header,
-            storage: data,
-            dimensions,
-            strides,
-            _marker: core::marker::PhantomData,
-        })
-    }
-
-    /// Get voxel at index (1D)
-    pub fn get_1d(&self, index: usize) -> T {
-        let offset = index * T::SIZE;
-        T::decode(self.header.file_endian, &self.storage.as_ref()[offset..offset + T::SIZE])
-    }
-
-    /// Get voxel at index with bounds checking
-    pub fn get_1d_checked(&self, index: usize) -> Option<T> {
-        if index >= self.dimensions[0] {
-            return None;
-        }
-        Some(self.get_1d(index))
-    }
-}
-
-impl<T: Voxel + Encoding, S: AsMut<[u8]>> Volume<T, S, 1> {
-    /// Set voxel at index (1D)
-    pub fn set_1d(&mut self, index: usize, value: T) {
-        let offset = index * T::SIZE;
-        value.encode(self.header.file_endian, &mut self.storage.as_mut()[offset..offset + T::SIZE]);
-    }
-
-    /// Set voxel at index with bounds checking
-    pub fn set_1d_checked(&mut self, index: usize, value: T) -> Result<(), Error> {
-        check_bounds(index, self.dimensions[0])?;
-        self.set_1d(index, value);
-        Ok(())
-    }
-}
-
-impl<T: Voxel + Encoding, S: AsRef<[u8]>> Volume<T, S, 3> {
-    /// Generic dimension validation using const generics
-    /// Computes total voxel count by multiplying all dimensions
-    fn validate_dimensions_generic<const D: usize>(dimensions: [usize; D]) -> Result<usize, Error> {
-        dimensions.iter().try_fold(1usize, |acc, &d| acc.checked_mul(d))
-            .ok_or(Error::InvalidDimensions)
-    }
-
+impl<T: Voxel + Encoding, S: AsRef<[u8]>> Volume<T, S> {
     /// Validate dimensions and compute total voxel count
     fn validate_dimensions(dimensions: [usize; 3]) -> Result<usize, Error> {
-        Self::validate_dimensions_generic(dimensions)
+        dimensions
+            .iter()
+            .try_fold(1usize, |acc, &d| acc.checked_mul(d))
+            .ok_or(Error::InvalidDimensions)
     }
 
     /// Validate storage size against expected voxel count
@@ -168,19 +77,14 @@ impl<T: Voxel + Encoding, S: AsRef<[u8]>> Volume<T, S, 3> {
     }
 
     /// Create a new 3D volume from header and storage
-    ///
-    /// The strides are calculated from the axis_map in the header,
-    /// which defines the storage order of the data.
     pub fn new(header: Header, storage: S) -> Result<Self, Error> {
-        // Validate mode matches
         validate_mode::<T>(header.mode())?;
 
         let dimensions = [header.nx(), header.ny(), header.nz()];
         let total = Self::validate_dimensions(dimensions)?;
         Self::validate_storage_size(&storage, total)?;
 
-        // Calculate strides based on axis_map
-        let strides = header.axis_map.strides(dimensions);
+        let strides = header.axis_map().strides(dimensions);
 
         Ok(Self {
             header,
@@ -191,24 +95,17 @@ impl<T: Voxel + Encoding, S: AsRef<[u8]>> Volume<T, S, 3> {
         })
     }
 
-    /// Create from dimensions and data (standard axis map)
-    pub fn from_data(
-        nx: usize,
-        ny: usize,
-        nz: usize,
-        endian: crate::FileEndian,
-        storage: S,
-    ) -> Result<Self, Error> {
+    /// Create from dimensions and data
+    pub fn from_data(nx: usize, ny: usize, nz: usize, storage: S) -> Result<Self, Error> {
         let dimensions = [nx, ny, nz];
         let total = Self::validate_dimensions(dimensions)?;
         Self::validate_storage_size(&storage, total)?;
 
-        let mut header = Header::new();
-        header.set_dimensions(nx, ny, nz);
-        header.set_mode(<T as Voxel>::MODE);
-        header.file_endian = endian;
+        let header = Header::builder()
+            .dimensions(nx, ny, nz)
+            .mode(T::MODE)
+            .build();
 
-        // Standard strides for X=column, Y=row, Z=section
         let strides = [1, nx, nx * ny];
 
         Ok(Self {
@@ -225,52 +122,39 @@ impl<T: Voxel + Encoding, S: AsRef<[u8]>> Volume<T, S, 3> {
         (self.dimensions[0], self.dimensions[1], self.dimensions[2])
     }
 
-    /// Get a voxel at linear index
-    ///
-    /// # Panics
-    /// Panics if index is out of bounds.
-    pub fn get(&self, index: usize) -> T {
-        let offset = index * T::SIZE;
-        let bytes = self.storage.as_ref();
-        T::decode(self.header.file_endian, &bytes[offset..offset + T::SIZE])
-    }
-
-    /// Get a voxel at linear index, returning None if out of bounds
-    pub fn get_checked(&self, index: usize) -> Option<T> {
-        if index >= self.len() {
-            return None;
-        }
-        let offset = index * T::SIZE;
-        let bytes = self.storage.as_ref();
-        Some(T::decode(
-            self.header.file_endian,
-            &bytes[offset..offset + T::SIZE],
-        ))
-    }
-
-    /// Get a voxel at logical 3D coordinates (x, y, z)
-    ///
-    /// The coordinates are in logical space (X, Y, Z). The stride calculation
-    /// accounts for the axis_map to correctly access the stored data.
+    /// Get a voxel at 3D coordinates (x, y, z)
     ///
     /// # Panics
     /// Panics if coordinates are out of bounds.
     pub fn get_at(&self, x: usize, y: usize, z: usize) -> T {
         let index = x * self.strides[0] + y * self.strides[1] + z * self.strides[2];
-        self.get(index)
+        let offset = index * T::SIZE;
+        let bytes = self.storage.as_ref();
+        T::decode(self.header.file_endian(), &bytes[offset..offset + T::SIZE])
     }
 
     /// Get a voxel at 3D coordinates, returning None if out of bounds
-    pub fn get_at_checked(&self, x: usize, y: usize, z: usize) -> Option<T> {
+    pub fn get_at_opt(&self, x: usize, y: usize, z: usize) -> Option<T> {
         if x >= self.dimensions[0] || y >= self.dimensions[1] || z >= self.dimensions[2] {
             return None;
         }
         Some(self.get_at(x, y, z))
     }
 
+    /// Get a voxel at 3D coordinates with full error context
+    pub fn get_at_checked(&self, x: usize, y: usize, z: usize) -> Result<T, Error> {
+        if x >= self.dimensions[0] || y >= self.dimensions[1] || z >= self.dimensions[2] {
+            return Err(Error::IndexOutOfBounds {
+                index: self.linear_index(x, y, z),
+                length: self.len(),
+            });
+        }
+        Ok(self.get_at(x, y, z))
+    }
+
     /// Iterate over all voxels in storage order
     pub fn iter(&self) -> impl Iterator<Item = T> + '_ {
-        let endian = self.header.file_endian;
+        let endian = self.header.file_endian();
         let bytes = self.storage.as_ref();
         let len = self.len();
         (0..len).map(move |i| {
@@ -281,7 +165,7 @@ impl<T: Voxel + Encoding, S: AsRef<[u8]>> Volume<T, S, 3> {
 
     /// Iterate over voxels in logical order (X varies fastest)
     pub fn iter_logical(&self) -> impl Iterator<Item = T> + '_ {
-        let endian = self.header.file_endian;
+        let endian = self.header.file_endian();
         let bytes = self.storage.as_ref();
         let (nx, ny, nz) = self.dimensions();
         let strides = self.strides;
@@ -309,37 +193,18 @@ impl<T: Voxel + Encoding, S: AsRef<[u8]>> Volume<T, S, 3> {
     /// 1. The file endianness matches the native system endianness
     /// 2. The data is properly aligned for type T
     /// 3. The storage is contiguous (standard axis map)
-    ///
-    /// # Errors
-    /// - `Error::EndiannessMismatch` if file endianness doesn't match native
-    /// - `Error::MisalignedData` if data is not properly aligned
-    /// - `Error::NonContiguous` if axis mapping is non-standard
-    ///
-    /// # Example
-    /// ```no_run
-    /// # fn example(volume: &mrc::Volume<f32, Vec<u8>>) -> Result<(), mrc::Error> {
-    /// if let Ok(slice) = volume.as_slice() {
-    ///     // Zero-copy access - slice[i] is valid
-    ///     let sum: f32 = slice.iter().sum();
-    /// }
-    /// # Ok(())
-    /// # }
-    /// ```
     pub fn as_slice(&self) -> Result<&[T], Error>
     where
         T: bytemuck::Pod,
     {
-        // Check native endianness
-        if !self.header.file_endian.is_native() {
+        if !self.header.is_native_endian() {
             return Err(Error::EndiannessMismatch { detected: true });
         }
 
-        // Check for standard axis map (contiguous storage)
-        if !self.header.axis_map.is_standard() {
+        if !self.header.axis_map().is_standard() {
             return Err(Error::NonContiguous);
         }
 
-        // Try to cast the byte slice
         let bytes = self.storage.as_ref();
         let expected_len = self.len();
         let expected_bytes = expected_len * T::SIZE;
@@ -351,9 +216,6 @@ impl<T: Voxel + Encoding, S: AsRef<[u8]>> Volume<T, S, 3> {
     }
 
     /// Try zero-copy slice, fall back to decoded Vec on failure
-    ///
-    /// Returns a `Cow<[T]>` that borrows the data when possible (native endianness,
-    /// proper alignment, standard axis map) or allocates a decoded copy otherwise.
     #[cfg(feature = "std")]
     pub fn to_slice_cow(&self) -> alloc::borrow::Cow<'_, [T]>
     where
@@ -367,9 +229,6 @@ impl<T: Voxel + Encoding, S: AsRef<[u8]>> Volume<T, S, 3> {
     }
 
     /// Copy voxels to a pre-allocated buffer
-    ///
-    /// For native endianness with proper alignment, uses fast memcpy.
-    /// Otherwise, decodes element-by-element.
     pub fn copy_to(&self, out: &mut [T]) -> Result<(), Error>
     where
         T: bytemuck::Pod,
@@ -382,46 +241,35 @@ impl<T: Voxel + Encoding, S: AsRef<[u8]>> Volume<T, S, 3> {
             });
         }
 
-        // Fast path: native endianness, standard axis map, proper alignment
-        if self.header.file_endian.is_native() && self.header.axis_map.is_standard() {
+        if self.header.is_native_endian() && self.header.axis_map().is_standard() {
             if let Ok(slice) = self.as_slice() {
                 out[..n].copy_from_slice(&slice[..n]);
                 return Ok(());
             }
         }
 
-        // Fallback: decode element-by-element
         let bytes = self.storage.as_ref();
         for (i, dst) in out[..n].iter_mut().enumerate() {
             let offset = i * T::SIZE;
-            *dst = T::decode(self.header.file_endian, &bytes[offset..offset + T::SIZE]);
+            *dst = T::decode(self.header.file_endian(), &bytes[offset..offset + T::SIZE]);
         }
 
         Ok(())
     }
 
     /// Convert to owned Vec
-    ///
-    /// For native endianness with proper alignment and standard axis map,
-    /// uses fast slice copy. Otherwise decodes element-by-element.
     #[cfg(feature = "std")]
     pub fn to_vec(&self) -> alloc::vec::Vec<T>
     where
         T: bytemuck::Pod + Default,
     {
-        // Fast path
         if let Ok(slice) = self.as_slice() {
             return slice.to_vec();
         }
-
-        // Fallback
         self.iter().collect()
     }
 
     /// Convert linear index to logical coordinates (x, y, z)
-    ///
-    /// This assumes standard C-order indexing and may not be correct
-    /// for non-standard axis_map values.
     pub fn coords_of(&self, index: usize) -> (usize, usize, usize) {
         let (nx, ny, _) = self.dimensions();
         let z = index / (nx * ny);
@@ -432,61 +280,41 @@ impl<T: Voxel + Encoding, S: AsRef<[u8]>> Volume<T, S, 3> {
     }
 
     /// Convert logical coordinates to linear index
-    pub fn index_of(&self, x: usize, y: usize, z: usize) -> usize {
+    pub fn linear_index(&self, x: usize, y: usize, z: usize) -> usize {
         x * self.strides[0] + y * self.strides[1] + z * self.strides[2]
     }
 
     /// Compute statistics (min, max, mean, rms) for the volume data
-    ///
-    /// Returns a `Statistics` struct with values calculated from the actual data.
-    /// This is useful for updating header statistics after modifying voxel values.
-    ///
-    /// # Type Requirements
-    /// This method is only available for types that can be converted to f64.
     pub fn compute_statistics(&self) -> crate::stats::Statistics
     where
         T: Into<f64>,
     {
-        crate::stats::compute_stats(self.iter())
+        crate::stats::compute_stats(self.iter().map(|v| v.into()))
     }
 
     /// Extract a 2D slice from the volume at a specific Z position
-    ///
-    /// Returns an `Image2D` view into the original volume data.
-    ///
-    /// # Arguments
-    /// * `z` - The Z index of the slice to extract
-    ///
-    /// # Errors
-    /// Returns `Error::IndexOutOfBounds` if z is out of range
-    pub fn slice(&self, z: usize) -> Result<Image2D<T, &[u8]>, Error> {
+    pub fn slice(&self, z: usize) -> Result<Slice2D<'_, T>, Error> {
         check_bounds(z, self.dimensions[2])?;
 
         let nx = self.dimensions[0];
         let ny = self.dimensions[1];
         let slice_size = nx * ny * T::SIZE;
-        let slice_offset = z * slice_size;
+        let slice_offset = z * nx * ny * T::SIZE;
 
         let bytes = self.storage.as_ref();
         let slice_data = &bytes[slice_offset..slice_offset + slice_size];
 
-        Image2D::new_2d(nx, ny, self.header.file_endian, slice_data)
+        Ok(Slice2D {
+            data: slice_data,
+            width: nx,
+            height: ny,
+            stride: nx,
+            endian: self.header.file_endian(),
+            _marker: core::marker::PhantomData,
+        })
     }
 
     /// Extract a subvolume with the specified bounds
-    ///
-    /// Returns a new Volume with copied data for the specified region.
-    ///
-    /// # Arguments
-    /// * `x_start` - Starting X index (inclusive)
-    /// * `x_end` - Ending X index (exclusive)
-    /// * `y_start` - Starting Y index (inclusive)
-    /// * `y_end` - Ending Y index (exclusive)
-    /// * `z_start` - Starting Z index (inclusive)
-    /// * `z_end` - Ending Z index (exclusive)
-    ///
-    /// # Errors
-    /// Returns `Error::IndexOutOfBounds` if any index is out of range
     #[cfg(feature = "std")]
     pub fn subvolume(
         &self,
@@ -496,14 +324,16 @@ impl<T: Voxel + Encoding, S: AsRef<[u8]>> Volume<T, S, 3> {
         y_end: usize,
         z_start: usize,
         z_end: usize,
-    ) -> Result<Volume<T, Vec<u8>, 3>, Error>
+    ) -> Result<Volume<T, Vec<u8>>, Error>
     where
         T: Default + Clone,
     {
-        // Helper to validate a dimension range
         let validate_range = |start: usize, end: usize, dim: usize| -> Result<usize, Error> {
             if start >= dim || end > dim || start >= end {
-                return Err(Error::IndexOutOfBounds { index: start, length: dim });
+                return Err(Error::IndexOutOfBounds {
+                    index: start,
+                    length: dim,
+                });
             }
             Ok(end - start)
         };
@@ -513,16 +343,14 @@ impl<T: Voxel + Encoding, S: AsRef<[u8]>> Volume<T, S, 3> {
         let new_nz = validate_range(z_start, z_end, self.dimensions[2])?;
         let voxel_count = new_nx * new_ny * new_nz;
 
-        // Allocate buffer for subvolume
         let mut new_data = vec![0u8; voxel_count * T::SIZE];
 
-        // Copy data using iterator combinators
         (z_start..z_end).enumerate().for_each(|(new_z, src_z)| {
             (y_start..y_end).enumerate().for_each(|(new_y, src_y)| {
                 (x_start..x_end).enumerate().for_each(|(new_x, src_x)| {
-                    let src_idx = self.index_of(src_x, src_y, src_z);
+                    let src_idx = self.linear_index(src_x, src_y, src_z);
                     let dst_idx = new_z * new_ny * new_nx + new_y * new_nx + new_x;
-                    
+
                     let src_offset = src_idx * T::SIZE;
                     let dst_offset = dst_idx * T::SIZE;
 
@@ -532,61 +360,45 @@ impl<T: Voxel + Encoding, S: AsRef<[u8]>> Volume<T, S, 3> {
             });
         });
 
-        // Create header for subvolume
         let mut new_header = self.header.clone();
         new_header.set_dimensions(new_nx, new_ny, new_nz);
-        // Update origin to reflect subvolume position
         let (dx, dy, dz) = new_header.voxel_size();
         new_header.set_origin(
-            new_header.xorigin() + x_start as f32 * dx,
-            new_header.yorigin() + y_start as f32 * dy,
-            new_header.zorigin() + z_start as f32 * dz,
+            self.header.xorigin() + x_start as f32 * dx,
+            self.header.yorigin() + y_start as f32 * dy,
+            self.header.zorigin() + z_start as f32 * dz,
         );
 
         Volume::new(new_header, new_data)
     }
 }
 
-impl<T: Voxel + Encoding, S: AsMut<[u8]>> Volume<T, S, 3> {
+impl<T: Voxel + Encoding, S: AsMut<[u8]>> Volume<T, S> {
     /// Get mutable access to raw bytes
     pub fn as_bytes_mut(&mut self) -> &mut [u8] {
         self.storage.as_mut()
     }
 
-    /// Set a voxel at linear index
-    ///
-    /// # Panics
-    /// Panics if index is out of bounds.
-    pub fn set(&mut self, index: usize, value: T) {
-        let offset = index * T::SIZE;
-        let bytes = self.storage.as_mut();
-        value.encode(
-            self.header.file_endian,
-            &mut bytes[offset..offset + T::SIZE],
-        );
-    }
-
-    /// Set a voxel at linear index, returning error if out of bounds
-    pub fn set_checked(&mut self, index: usize, value: T) -> Result<(), Error> {
-        check_bounds(index, self.len())?;
-        self.set(index, value);
-        Ok(())
-    }
-
-    /// Set a voxel at logical 3D coordinates (x, y, z)
+    /// Set a voxel at 3D coordinates
     ///
     /// # Panics
     /// Panics if coordinates are out of bounds.
     pub fn set_at(&mut self, x: usize, y: usize, z: usize, value: T) {
         let index = x * self.strides[0] + y * self.strides[1] + z * self.strides[2];
-        self.set(index, value);
+        let offset = index * T::SIZE;
+        let bytes = self.storage.as_mut();
+        value.encode(
+            self.header.file_endian(),
+            &mut bytes[offset..offset + T::SIZE],
+        );
     }
 
     /// Set a voxel at 3D coordinates, returning error if out of bounds
     pub fn set_at_checked(&mut self, x: usize, y: usize, z: usize, value: T) -> Result<(), Error> {
         if x >= self.dimensions[0] || y >= self.dimensions[1] || z >= self.dimensions[2] {
+            let index = x * self.strides[0] + y * self.strides[1] + z * self.strides[2];
             return Err(Error::IndexOutOfBounds {
-                index: x + y * self.dimensions[0] + z * self.dimensions[0] * self.dimensions[1],
+                index,
                 length: self.len(),
             });
         }
@@ -595,148 +407,246 @@ impl<T: Voxel + Encoding, S: AsMut<[u8]>> Volume<T, S, 3> {
     }
 }
 
-/// 2D volume (image slice)
-pub type Image2D<T, S> = Volume<T, S, 2>;
+// ============================================================================
+// Slice2D - 2D view into a volume
+// ============================================================================
 
-impl<T: Voxel + Encoding, S: AsRef<[u8]>> Volume<T, S, 2> {
-    /// Validate storage size for 2D volume
-    fn validate_storage_size(storage: &S, voxel_count: usize) -> Result<(), Error> {
-        let expected_size = voxel_count
-            .checked_mul(T::SIZE)
-            .ok_or(Error::InvalidDimensions)?;
-        if storage.as_ref().len() < expected_size {
-            return Err(Error::BufferTooSmall {
-                expected: expected_size,
-                got: storage.as_ref().len(),
-            });
-        }
-        Ok(())
+/// Borrowed 2D slice view into a 3D volume
+///
+/// This is a zero-copy view - the data is not owned.
+/// For owned 2D data, extract a subvolume with nz=1.
+#[derive(Debug)]
+pub struct Slice2D<'a, T: Voxel> {
+    data: &'a [u8],
+    width: usize,
+    height: usize,
+    stride: usize,
+    endian: FileEndian,
+    _marker: core::marker::PhantomData<T>,
+}
+
+impl<T: Voxel + Encoding> Slice2D<'_, T> {
+    /// Get dimensions
+    pub fn dimensions(&self) -> (usize, usize) {
+        (self.width, self.height)
     }
 
-    /// Create a new 2D image from storage
-    pub fn new_2d(
-        nx: usize,
-        ny: usize,
-        endian: crate::FileEndian,
-        storage: S,
-    ) -> Result<Self, Error> {
-        let total = nx.checked_mul(ny).ok_or(Error::InvalidDimensions)?;
-        Self::validate_storage_size(&storage, total)?;
-
-        let mut header = Header::new();
-        header.set_dimensions(nx, ny, 1);
-        header.set_mode(<T as Voxel>::MODE);
-        header.file_endian = endian;
-
-        let strides = [1, nx];
-
-        Ok(Self {
-            header,
-            storage,
-            dimensions: [nx, ny],
-            strides,
-            _marker: core::marker::PhantomData,
-        })
+    /// Get width
+    pub fn width(&self) -> usize {
+        self.width
     }
 
-    /// Get a pixel at 2D coordinates
+    /// Get height
+    pub fn height(&self) -> usize {
+        self.height
+    }
+
+    /// Get pixel at (x, y)
     ///
     /// # Panics
     /// Panics if coordinates are out of bounds.
-    pub fn get_pixel(&self, x: usize, y: usize) -> T {
-        let index = y * self.strides[1] + x * self.strides[0];
+    pub fn get(&self, x: usize, y: usize) -> T {
+        let index = y * self.stride + x;
         let offset = index * T::SIZE;
-        T::decode(
-            self.header.file_endian,
-            &self.storage.as_ref()[offset..offset + T::SIZE],
-        )
+        T::decode(self.endian, &self.data[offset..offset + T::SIZE])
     }
 
-    /// Get a pixel at 2D coordinates, returning None if out of bounds
-    pub fn get_pixel_checked(&self, x: usize, y: usize) -> Option<T> {
-        if x >= self.dimensions[0] || y >= self.dimensions[1] {
+    /// Get pixel with bounds check
+    pub fn get_opt(&self, x: usize, y: usize) -> Option<T> {
+        if x >= self.width || y >= self.height {
             return None;
         }
-        Some(self.get_pixel(x, y))
+        Some(self.get(x, y))
+    }
+
+    /// Get pixel with full error context
+    pub fn get_checked(&self, x: usize, y: usize) -> Result<T, Error> {
+        if x >= self.width || y >= self.height {
+            return Err(Error::IndexOutOfBounds {
+                index: y * self.stride + x,
+                length: self.width * self.height,
+            });
+        }
+        Ok(self.get(x, y))
+    }
+
+    /// Iterate over pixels in row-major order
+    pub fn iter(&self) -> impl Iterator<Item = T> + '_ {
+        let endian = self.endian;
+        let stride = self.stride;
+        let width = self.width;
+        let height = self.height;
+        let data = self.data;
+
+        (0..height).flat_map(move |y| {
+            (0..width).map(move |x| {
+                let index = y * stride + x;
+                let offset = index * T::SIZE;
+                T::decode(endian, &data[offset..offset + T::SIZE])
+            })
+        })
+    }
+
+    /// Iterate over rows
+    pub fn rows(&self) -> impl Iterator<Item = impl Iterator<Item = T> + '_> + '_ {
+        let endian = self.endian;
+        let stride = self.stride;
+        let width = self.width;
+        let data = self.data;
+
+        (0..self.height).map(move |y| {
+            let row_start = y * stride * T::SIZE;
+            (0..width).map(move |x| {
+                let offset = row_start + x * T::SIZE;
+                T::decode(endian, &data[offset..offset + T::SIZE])
+            })
+        })
+    }
+
+    /// Convert to owned 2D image (allocates)
+    #[cfg(feature = "std")]
+    pub fn to_owned(&self) -> Image2D<T>
+    where
+        T: Clone,
+    {
+        Image2D {
+            data: self.iter().collect(),
+            width: self.width,
+            height: self.height,
+        }
+    }
+}
+
+/// Owned 2D image
+#[derive(Debug, Clone)]
+pub struct Image2D<T: Voxel> {
+    data: Vec<T>,
+    width: usize,
+    height: usize,
+}
+
+impl<T: Voxel + Copy> Image2D<T> {
+    /// Get dimensions
+    pub fn dimensions(&self) -> (usize, usize) {
+        (self.width, self.height)
+    }
+
+    /// Get pixel at (x, y)
+    pub fn get(&self, x: usize, y: usize) -> T {
+        self.data[y * self.width + x]
+    }
+
+    /// Iterate over pixels
+    pub fn iter(&self) -> impl Iterator<Item = T> + '_ {
+        self.data.iter().copied()
     }
 }
 
 // ============================================================================
-// Implement unified access traits
+// VolumeBuilder
 // ============================================================================
 
-use super::{VoxelAccess, VoxelAccessMut, VolumeAccess, VolumeAccessMut};
-
-/// Macro to implement VoxelAccess trait for Volume
-macro_rules! impl_voxel_access {
-    () => {
-        fn mode(&self) -> Mode {
-            self.header.mode()
-        }
-
-        fn len(&self) -> usize {
-            Volume::<T, S, D>::len(self)
-        }
-
-        fn get<V: Voxel + Encoding>(&self, index: usize) -> Result<V, Error> {
-            validate_mode::<V>(self.header.mode())?;
-            check_bounds(index, self.len())?;
-            let offset = index * V::SIZE;
-            let bytes = self.storage.as_ref();
-            Ok(V::decode(
-                self.header.file_endian,
-                &bytes[offset..offset + V::SIZE],
-            ))
-        }
-    };
+/// Builder for constructing volumes
+#[derive(Debug)]
+pub struct VolumeBuilder<T: Voxel> {
+    dimensions: [usize; 3],
+    voxel_size: [f32; 3],
+    origin: [f32; 3],
+    cell_angles: [f32; 3],
+    statistics: Option<(f32, f32, f32, f32)>,
+    _marker: core::marker::PhantomData<T>,
 }
 
-/// Macro to implement VoxelAccessMut trait for Volume
-macro_rules! impl_voxel_access_mut {
-    () => {
-        fn set<V: Voxel + Encoding>(&mut self, index: usize, value: V) -> Result<(), Error> {
-            validate_mode::<V>(self.header.mode())?;
-            check_bounds(index, self.len())?;
-
-            // Special handling for Packed4Bit (two values per byte)
-            if <V as Voxel>::MODE == Mode::Packed4Bit {
-                let byte_index = index / 2;
-                let is_second = index % 2 == 1;
-                let bytes = self.storage.as_mut();
-
-                // Get the new nibble value by encoding to a temporary buffer
-                let mut temp = [0u8; 1];
-                value.encode(self.header.file_endian, &mut temp);
-                let new_nibble = temp[0] & 0x0F;
-
-                if is_second {
-                    bytes[byte_index] = (bytes[byte_index] & 0x0F) | (new_nibble << 4);
-                } else {
-                    bytes[byte_index] = (bytes[byte_index] & 0xF0) | new_nibble;
-                }
-                Ok(())
-            } else {
-                let offset = index * V::SIZE;
-                let bytes = self.storage.as_mut();
-                value.encode(
-                    self.header.file_endian,
-                    &mut bytes[offset..offset + V::SIZE],
-                );
-                Ok(())
-            }
+impl<T: Voxel + Encoding> VolumeBuilder<T> {
+    /// Create a new volume builder
+    pub fn new() -> Self {
+        Self {
+            dimensions: [1, 1, 1],
+            voxel_size: [1.0, 1.0, 1.0],
+            origin: [0.0, 0.0, 0.0],
+            cell_angles: [90.0, 90.0, 90.0],
+            statistics: None,
+            _marker: core::marker::PhantomData,
         }
-    };
+    }
+
+    /// Set dimensions (nx, ny, nz)
+    pub fn dimensions(mut self, nx: usize, ny: usize, nz: usize) -> Self {
+        self.dimensions = [nx, ny, nz];
+        self
+    }
+
+    /// Set voxel size in Angstroms
+    pub fn voxel_size(mut self, dx: f32, dy: f32, dz: f32) -> Self {
+        self.voxel_size = [dx, dy, dz];
+        self
+    }
+
+    /// Set origin in Angstroms
+    pub fn origin(mut self, x: f32, y: f32, z: f32) -> Self {
+        self.origin = [x, y, z];
+        self
+    }
+
+    /// Set cell angles in degrees
+    pub fn cell_angles(mut self, alpha: f32, beta: f32, gamma: f32) -> Self {
+        self.cell_angles = [alpha, beta, gamma];
+        self
+    }
+
+    /// Set statistics (min, max, mean, rms)
+    pub fn statistics(mut self, dmin: f32, dmax: f32, dmean: f32, rms: f32) -> Self {
+        self.statistics = Some((dmin, dmax, dmean, rms));
+        self
+    }
+
+    /// Build with pre-existing storage
+    pub fn build<S: AsRef<[u8]>>(self, storage: S) -> Result<Volume<T, S>, Error> {
+        let mut header = Header::builder()
+            .dimensions(self.dimensions[0], self.dimensions[1], self.dimensions[2])
+            .mode(T::MODE)
+            .cell_dimensions(
+                self.voxel_size[0] * self.dimensions[0] as f32,
+                self.voxel_size[1] * self.dimensions[1] as f32,
+                self.voxel_size[2] * self.dimensions[2] as f32,
+            )
+            .origin(self.origin[0], self.origin[1], self.origin[2])
+            .cell_angles(
+                self.cell_angles[0],
+                self.cell_angles[1],
+                self.cell_angles[2],
+            )
+            .build();
+
+        if let Some((dmin, dmax, dmean, rms)) = self.statistics {
+            header.set_statistics(dmin, dmax, dmean, rms);
+        }
+
+        Volume::new(header, storage)
+    }
+
+    /// Build and allocate storage
+    #[cfg(feature = "std")]
+    pub fn build_allocated(self) -> Volume<T, Vec<u8>> {
+        let voxel_count = self.dimensions[0] * self.dimensions[1] * self.dimensions[2];
+        let data = vec![0u8; voxel_count * T::SIZE];
+        self.build(data).unwrap()
+    }
 }
 
-impl<T: Voxel + Encoding, S: AsRef<[u8]>, const D: usize> VoxelAccess for Volume<T, S, D> {
-    impl_voxel_access!();
+impl<T: Voxel + Encoding> Default for VolumeBuilder<T> {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
-impl<T: Voxel + Encoding, S: AsRef<[u8]> + AsMut<[u8]>, const D: usize> VoxelAccessMut for Volume<T, S, D> {
-    impl_voxel_access_mut!();
-}
+// ============================================================================
+// Implement VolumeAccess trait
+// ============================================================================
 
-impl<T: Voxel + Encoding, S: AsRef<[u8]>> VolumeAccess for Volume<T, S, 3> {
+use super::traits::{VolumeAccess, VolumeAccessMut};
+
+impl<T: Voxel + Encoding, S: AsRef<[u8]>> VolumeAccess for Volume<T, S> {
     type Voxel = T;
 
     fn header(&self) -> &Header {
@@ -751,21 +661,24 @@ impl<T: Voxel + Encoding, S: AsRef<[u8]>> VolumeAccess for Volume<T, S, 3> {
         (self.strides[0], self.strides[1], self.strides[2])
     }
 
+    fn len(&self) -> usize {
+        self.dimensions[0] * self.dimensions[1] * self.dimensions[2]
+    }
+
+    fn get_at(&self, x: usize, y: usize, z: usize) -> T {
+        self.get_at(x, y, z)
+    }
+
     unsafe fn get_unchecked(&self, index: usize) -> T {
         let offset = index * T::SIZE;
         let bytes = self.storage.as_ref();
-        T::decode(self.header.file_endian, &bytes[offset..offset + T::SIZE])
+        T::decode(self.header.file_endian(), &bytes[offset..offset + T::SIZE])
     }
 }
 
-impl<T: Voxel + Encoding, S: AsRef<[u8]> + AsMut<[u8]>> VolumeAccessMut for Volume<T, S, 3> {
-    unsafe fn set_unchecked(&mut self, index: usize, value: T) {
-        let offset = index * T::SIZE;
-        let bytes = self.storage.as_mut();
-        value.encode(
-            self.header.file_endian,
-            &mut bytes[offset..offset + T::SIZE],
-        );
+impl<T: Voxel + Encoding, S: AsRef<[u8]> + AsMut<[u8]>> VolumeAccessMut for Volume<T, S> {
+    fn set_at(&mut self, x: usize, y: usize, z: usize, value: T) {
+        self.set_at(x, y, z, value);
     }
 }
 
@@ -775,27 +688,17 @@ mod tests {
 
     #[test]
     fn test_standard_axis_map_strides() {
-        // Standard: X=column, Y=row, Z=section
         let axis_map = AxisMap::new(1, 2, 3);
         let dimensions = [64, 64, 64];
         let strides = axis_map.strides(dimensions);
-
-        // X should have stride 1 (column, fastest)
-        // Y should have stride 64 (row)
-        // Z should have stride 4096 (section, slowest)
         assert_eq!(strides, [1, 64, 4096]);
     }
 
     #[test]
     fn test_nonstandard_axis_map_strides() {
-        // Non-standard: Z=column, Y=row, X=section
         let axis_map = AxisMap::new(3, 2, 1);
         let dimensions = [64, 64, 64];
         let strides = axis_map.strides(dimensions);
-
-        // X (stored as section) should have stride 4096
-        // Y (stored as row) should have stride 64
-        // Z (stored as column) should have stride 1
         assert_eq!(strides, [4096, 64, 1]);
     }
 }

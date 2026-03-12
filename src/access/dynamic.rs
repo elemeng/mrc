@@ -1,21 +1,11 @@
 //! Dynamic dispatch for runtime mode handling
 
-use super::Volume;
+use super::{Volume, VolumeAccess};
 use crate::core::{Error, Mode};
 use crate::header::Header;
-use crate::voxel::{Encoding, Float32Complex, Int16Complex, Packed4Bit, Voxel};
+use crate::voxel::{ComplexF32, ComplexI16, Encoding, Packed4Bit, Voxel};
 use alloc::boxed::Box;
 use alloc::vec::Vec;
-
-/// Macro to generate typed downcast methods for VolumeData
-macro_rules! impl_downcast {
-    ($method:ident, $type:ty, $doc:expr) => {
-        #[doc = $doc]
-        pub fn $method(&self) -> Option<&Volume<$type, Vec<u8>>> {
-            self.downcast_ref::<$type>()
-        }
-    };
-}
 
 /// Trait for dynamic volume operations
 pub trait DynVolume {
@@ -29,13 +19,13 @@ pub trait DynVolume {
 
 impl<T: Voxel + Encoding> DynVolume for Volume<T, Vec<u8>> {
     fn header(&self) -> &Header {
-        super::traits::VolumeAccess::header(self)
+        VolumeAccess::header(self)
     }
     fn mode(&self) -> Mode {
         self.header().mode()
     }
     fn dimensions(&self) -> (usize, usize, usize) {
-        super::traits::VolumeAccess::dimensions(self)
+        VolumeAccess::dimensions(self)
     }
     fn len(&self) -> usize {
         Volume::<T, Vec<u8>>::len(self)
@@ -67,8 +57,8 @@ impl VolumeData {
             Mode::Int8 => Box::new(Volume::<i8, Vec<u8>>::new(header, data)?),
             Mode::Int16 => Box::new(Volume::<i16, Vec<u8>>::new(header, data)?),
             Mode::Float32 => Box::new(Volume::<f32, Vec<u8>>::new(header, data)?),
-            Mode::Int16Complex => Box::new(Volume::<Int16Complex, Vec<u8>>::new(header, data)?),
-            Mode::Float32Complex => Box::new(Volume::<Float32Complex, Vec<u8>>::new(header, data)?),
+            Mode::Int16Complex => Box::new(Volume::<ComplexI16, Vec<u8>>::new(header, data)?),
+            Mode::Float32Complex => Box::new(Volume::<ComplexF32, Vec<u8>>::new(header, data)?),
             Mode::Uint16 => Box::new(Volume::<u16, Vec<u8>>::new(header, data)?),
             #[cfg(feature = "f16")]
             Mode::Float16 => Box::new(Volume::<half::f16, Vec<u8>>::new(header, data)?),
@@ -107,14 +97,40 @@ impl VolumeData {
         self.0.as_any().downcast_ref::<Volume<T, Vec<u8>>>()
     }
 
-    // Generate typed downcast methods using macro
-    impl_downcast!(as_f32, f32, "Try to get as f32 volume");
-    impl_downcast!(as_i16, i16, "Try to get as i16 volume");
-    impl_downcast!(as_i8, i8, "Try to get as i8 volume");
-    impl_downcast!(as_u16, u16, "Try to get as u16 volume");
-    impl_downcast!(as_complex_i16, Int16Complex, "Try to get as complex i16 volume");
-    impl_downcast!(as_complex_f32, Float32Complex, "Try to get as complex f32 volume");
-    impl_downcast!(as_packed4bit, Packed4Bit, "Try to get as Packed4Bit volume");
+    /// Try to get as f32 volume
+    pub fn as_f32(&self) -> Option<&Volume<f32, Vec<u8>>> {
+        self.downcast_ref::<f32>()
+    }
+
+    /// Try to get as i16 volume
+    pub fn as_i16(&self) -> Option<&Volume<i16, Vec<u8>>> {
+        self.downcast_ref::<i16>()
+    }
+
+    /// Try to get as i8 volume
+    pub fn as_i8(&self) -> Option<&Volume<i8, Vec<u8>>> {
+        self.downcast_ref::<i8>()
+    }
+
+    /// Try to get as u16 volume
+    pub fn as_u16(&self) -> Option<&Volume<u16, Vec<u8>>> {
+        self.downcast_ref::<u16>()
+    }
+
+    /// Try to get as ComplexI16 volume
+    pub fn as_complex_i16(&self) -> Option<&Volume<ComplexI16, Vec<u8>>> {
+        self.downcast_ref::<ComplexI16>()
+    }
+
+    /// Try to get as ComplexF32 volume
+    pub fn as_complex_f32(&self) -> Option<&Volume<ComplexF32, Vec<u8>>> {
+        self.downcast_ref::<ComplexF32>()
+    }
+
+    /// Try to get as Packed4Bit volume
+    pub fn as_packed4bit(&self) -> Option<&Volume<Packed4Bit, Vec<u8>>> {
+        self.downcast_ref::<Packed4Bit>()
+    }
 
     /// Try to get as f16 volume
     #[cfg(feature = "f16")]

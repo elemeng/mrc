@@ -75,7 +75,12 @@ where
 
     let (mean, rms) = calculate_mean_and_rms(count, sum, sum_sq);
 
-    Statistics { min, max, mean, rms }
+    Statistics {
+        min,
+        max,
+        mean,
+        rms,
+    }
 }
 
 /// Compute statistics from a slice

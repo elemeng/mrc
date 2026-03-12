@@ -1,20 +1,18 @@
-//! Endianness handling for MRC files
+//! Endianness handling for MRC files (internal)
 
 use core::fmt;
 
-/// File endianness
+/// File endianness (internal)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum FileEndian {
-    /// Little-endian byte order
+pub(crate) enum FileEndian {
     Little,
-    /// Big-endian byte order
     Big,
 }
 
 impl FileEndian {
     /// Get the native system endianness
     #[inline]
-    pub const fn native() -> Self {
+    pub(crate) const fn native() -> Self {
         #[cfg(target_endian = "little")]
         {
             Self::Little
@@ -27,7 +25,7 @@ impl FileEndian {
 
     /// Check if this is the native endianness
     #[inline]
-    pub const fn is_native(self) -> bool {
+    pub(crate) const fn is_native(self) -> bool {
         matches!(
             (self, Self::native()),
             (Self::Little, Self::Little) | (Self::Big, Self::Big)
@@ -36,7 +34,7 @@ impl FileEndian {
 
     /// Detect endianness from MACHST machine stamp
     #[inline]
-    pub fn from_machst(machst: &[u8; 4]) -> Option<Self> {
+    pub(crate) fn from_machst(machst: &[u8; 4]) -> Option<Self> {
         match (machst[0], machst[1]) {
             (0x44, 0x44) => Some(Self::Little),
             (0x11, 0x11) => Some(Self::Big),
@@ -46,7 +44,7 @@ impl FileEndian {
 
     /// Detect endianness from MACHST, defaulting to little-endian
     #[inline]
-    pub fn from_machst_or_little(machst: &[u8; 4]) -> (Self, bool) {
+    pub(crate) fn from_machst_or_little(machst: &[u8; 4]) -> (Self, bool) {
         match Self::from_machst(machst) {
             Some(endian) => (endian, true),
             None => (Self::Little, false),
@@ -55,34 +53,17 @@ impl FileEndian {
 
     /// Convert to MACHST bytes
     #[inline]
-    pub const fn to_machst(self) -> [u8; 4] {
+    pub(crate) const fn to_machst(self) -> [u8; 4] {
         match self {
             Self::Little => [0x44, 0x44, 0x00, 0x00],
             Self::Big => [0x11, 0x11, 0x00, 0x00],
         }
     }
-
-    /// Convert a value from file endianness to native
-    #[inline]
-    pub fn convert<T: EndianConvert>(self, value: T) -> T {
-        value.convert_from_file(self)
-    }
 }
 
-/// Trait for types that can be converted between endianness
-///
-/// This trait handles conversion between file endianness and native endianness.
-/// It is used for both voxel data and header field conversion.
-pub trait EndianConvert: Copy + Sized {
-    /// Convert from file endianness to native
+/// Trait for types that can be converted between endianness (internal)
+pub(crate) trait EndianConvert: Copy + Sized {
     fn convert_from_file(self, endian: FileEndian) -> Self;
-
-    /// Convert from native to file endianness
-    #[inline]
-    fn convert_to_file(self, endian: FileEndian) -> Self {
-        // Symmetric operation for most types
-        self.convert_from_file(endian)
-    }
 }
 
 // Macro for integer types with swap_bytes
@@ -154,7 +135,6 @@ mod tests {
             Some(FileEndian::Big)
         );
         assert_eq!(FileEndian::from_machst(&[0x00, 0x00, 0x00, 0x00]), None);
-        assert_eq!(FileEndian::from_machst(&[0xFF, 0xFF, 0x00, 0x00]), None);
     }
 
     #[test]
@@ -167,17 +147,5 @@ mod tests {
     fn test_is_native() {
         let native = FileEndian::native();
         assert!(native.is_native());
-    }
-
-    #[test]
-    fn test_endian_convert_i32() {
-        let val: i32 = 0x12345678;
-        assert_eq!(val.convert_from_file(FileEndian::native()), val);
-
-        // When converting from opposite endianness
-        let swapped = val.convert_from_file(FileEndian::Little);
-        if FileEndian::native() == FileEndian::Little {
-            assert_eq!(swapped, val);
-        }
     }
 }

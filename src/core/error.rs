@@ -96,8 +96,16 @@ macro_rules! match_field_variants {
     };
     ($self:expr, $other:expr, $variant:ident, { $field1:ident, $field2:ident }) => {
         match ($self, $other) {
-            (Self::$variant { $field1: a1, $field2: a2 }, 
-             Self::$variant { $field1: b1, $field2: b2 }) => a1 == b1 && a2 == b2,
+            (
+                Self::$variant {
+                    $field1: a1,
+                    $field2: a2,
+                },
+                Self::$variant {
+                    $field1: b1,
+                    $field2: b2,
+                },
+            ) => a1 == b1 && a2 == b2,
             _ => false,
         }
     };
@@ -112,7 +120,9 @@ impl Clone for Error {
             Self::InvalidAxisMap => Self::InvalidAxisMap,
             Self::NonContiguous => Self::NonContiguous,
             Self::TypeMismatch => Self::TypeMismatch,
-            Self::EndiannessMismatch { detected } => Self::EndiannessMismatch { detected: *detected },
+            Self::EndiannessMismatch { detected } => Self::EndiannessMismatch {
+                detected: *detected,
+            },
             Self::MisalignedData { required, actual } => Self::MisalignedData {
                 required: *required,
                 actual: *actual,
@@ -127,7 +137,9 @@ impl Clone for Error {
             },
             Self::FeatureDisabled { feature } => Self::FeatureDisabled { feature },
             #[cfg(feature = "std")]
-            Self::Io(_) => Self::Io(alloc::boxed::Box::new(std::io::Error::other("IO error (cloned)"))),
+            Self::Io(_) => Self::Io(alloc::boxed::Box::new(std::io::Error::other(
+                "IO error (cloned)",
+            ))),
             #[cfg(feature = "mmap")]
             Self::Mmap => Self::Mmap,
         }

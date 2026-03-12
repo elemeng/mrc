@@ -3,19 +3,18 @@
 //! This module provides a unified trait for handling endianness-aware
 //! encoding/decoding of voxel data.
 
-use crate::core::{Error, Mode};
 use crate::voxel::{ComplexF32, ComplexI16, FileEndian, Packed4Bit, Voxel};
 
 /// Trait for encoding/decoding voxel data with endianness handling
 ///
-/// Each MRC mode has a corresponding encoding that knows:
-/// - The mode constant
+/// Inherits MODE from Voxel trait. Each implementation knows:
 /// - How to decode bytes to voxels
 /// - How to encode voxels to bytes
+///
+/// Note: The methods in this trait use internal types (`FileEndian`).
+/// Users typically don't call these methods directly - `Volume` handles encoding internally.
+/// The trait bound `T: Voxel + Encoding` is used for compile-time type checking.
 pub trait Encoding: Voxel {
-    /// The MRC mode this encoding handles
-    const MODE: Mode;
-
     /// Size of one voxel in bytes
     const SIZE: usize;
 
@@ -32,8 +31,6 @@ pub trait Encoding: Voxel {
     unsafe fn encode_unchecked(self, endian: FileEndian, bytes: &mut [u8]);
 
     /// Decode a single voxel from file-endian bytes (checked)
-    ///
-    /// Returns error if bytes slice is too small.
     #[inline]
     fn decode(endian: FileEndian, bytes: &[u8]) -> Self {
         debug_assert!(bytes.len() >= Self::SIZE, "Buffer too small for decoding");
@@ -42,40 +39,11 @@ pub trait Encoding: Voxel {
     }
 
     /// Encode a single voxel to file-endian bytes (checked)
-    ///
-    /// Returns error if bytes slice is too small.
     #[inline]
     fn encode(self, endian: FileEndian, bytes: &mut [u8]) {
         debug_assert!(bytes.len() >= Self::SIZE, "Buffer too small for encoding");
         // SAFETY: We just verified the size
         unsafe { self.encode_unchecked(endian, bytes) }
-    }
-
-    /// Decode with explicit error on bounds failure
-    #[inline]
-    fn decode_checked(endian: FileEndian, bytes: &[u8]) -> Result<Self, Error> {
-        if bytes.len() < Self::SIZE {
-            return Err(Error::BufferTooSmall {
-                expected: Self::SIZE,
-                got: bytes.len(),
-            });
-        }
-        // SAFETY: We just verified the size
-        Ok(unsafe { Self::decode_unchecked(endian, bytes) })
-    }
-
-    /// Encode with explicit error on bounds failure
-    #[inline]
-    fn encode_checked(self, endian: FileEndian, bytes: &mut [u8]) -> Result<(), Error> {
-        if bytes.len() < Self::SIZE {
-            return Err(Error::BufferTooSmall {
-                expected: Self::SIZE,
-                got: bytes.len(),
-            });
-        }
-        // SAFETY: We just verified the size
-        unsafe { self.encode_unchecked(endian, bytes) };
-        Ok(())
     }
 }
 
@@ -85,9 +53,8 @@ pub trait Encoding: Voxel {
 
 // Macro for primitive types with from/to_bytes methods
 macro_rules! impl_primitive_encoding {
-    ($type:ty, $mode:expr, $size:expr) => {
+    ($type:ty, $size:expr) => {
         impl Encoding for $type {
-            const MODE: Mode = $mode;
             const SIZE: usize = $size;
 
             #[inline]
@@ -113,7 +80,6 @@ macro_rules! impl_primitive_encoding {
 
 // i8 encoding (Mode 0) - no endianness handling needed
 impl Encoding for i8 {
-    const MODE: Mode = Mode::Int8;
     const SIZE: usize = 1;
 
     #[inline]
@@ -128,41 +94,46 @@ impl Encoding for i8 {
 }
 
 // Primitive type encodings
-impl_primitive_encoding!(i16, Mode::Int16, 2);
-impl_primitive_encoding!(u16, Mode::Uint16, 2);
-impl_primitive_encoding!(f32, Mode::Float32, 4);
+impl_primitive_encoding!(i16, 2);
+impl_primitive_encoding!(u16, 2);
+impl_primitive_encoding!(f32, 4);
 
 // Macro for complex type encodings
 macro_rules! impl_complex_encoding {
-    ($type:ty, $real:ty, $mode:expr, $size:expr) => {
+    ($type:ty, $real:ty, $size:expr) => {
         impl Encoding for $type {
-            const MODE: Mode = $mode;
             const SIZE: usize = $size;
 
             #[inline]
             unsafe fn decode_unchecked(endian: FileEndian, bytes: &[u8]) -> Self {
-                let re = unsafe { <$real as Encoding>::decode_unchecked(endian, &bytes[0..($size/2)]) };
-                let im = unsafe { <$real as Encoding>::decode_unchecked(endian, &bytes[($size/2)..$size]) };
+                let re = unsafe {
+                    <$real as Encoding>::decode_unchecked(endian, &bytes[0..($size / 2)])
+                };
+                let im = unsafe {
+                    <$real as Encoding>::decode_unchecked(endian, &bytes[($size / 2)..$size])
+                };
                 Self::new(re, im)
             }
 
             #[inline]
             unsafe fn encode_unchecked(self, endian: FileEndian, bytes: &mut [u8]) {
-                unsafe { self.re.encode_unchecked(endian, &mut bytes[0..($size/2)]) };
-                unsafe { self.im.encode_unchecked(endian, &mut bytes[($size/2)..$size]) };
+                unsafe { self.re.encode_unchecked(endian, &mut bytes[0..($size / 2)]) };
+                unsafe {
+                    self.im
+                        .encode_unchecked(endian, &mut bytes[($size / 2)..$size])
+                };
             }
         }
     };
 }
 
 // Complex type encodings
-impl_complex_encoding!(ComplexI16, i16, Mode::Int16Complex, 4);
-impl_complex_encoding!(ComplexF32, f32, Mode::Float32Complex, 8);
+impl_complex_encoding!(ComplexI16, i16, 4);
+impl_complex_encoding!(ComplexF32, f32, 8);
 
 // f16 encoding (Mode 12)
 #[cfg(feature = "f16")]
 impl Encoding for half::f16 {
-    const MODE: Mode = Mode::Float16;
     const SIZE: usize = 2;
 
     #[inline]
@@ -179,12 +150,10 @@ impl Encoding for half::f16 {
 
 // Packed4Bit encoding (Mode 101)
 impl Encoding for Packed4Bit {
-    const MODE: Mode = Mode::Packed4Bit;
     const SIZE: usize = 1;
 
     #[inline]
     unsafe fn decode_unchecked(_endian: FileEndian, bytes: &[u8]) -> Self {
-        // Packed4Bit is endianness-independent (single byte)
         Self::new(bytes[0])
     }
 
@@ -202,7 +171,7 @@ mod tests {
     fn test_i8_encoding() {
         let mut buf = [0u8; 1];
         (-42i8).encode(FileEndian::Little, &mut buf);
-        assert_eq!(buf[0], 214); // -42 as u8
+        assert_eq!(buf[0], 214);
         assert_eq!(i8::decode(FileEndian::Little, &buf), -42);
     }
 
@@ -222,19 +191,5 @@ mod tests {
         3.14159f32.encode(FileEndian::Little, &mut buf);
         let result = f32::decode(FileEndian::Little, &buf);
         assert!((result - 3.14159).abs() < 0.00001);
-    }
-
-    #[test]
-    fn test_checked_encoding() {
-        let buf = [0u8; 1];
-        // Too small for i16
-        assert!(i16::decode_checked(FileEndian::Little, &buf).is_err());
-
-        let mut buf_mut = [0u8; 1];
-        assert!(
-            (-1000i16)
-                .encode_checked(FileEndian::Little, &mut buf_mut)
-                .is_err()
-        );
     }
 }

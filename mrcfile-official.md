@@ -94,8 +94,9 @@ Note 8
 
 A code for the kind of metadata held in the extended header. Currently agreed values are:
 
-| **CCP4** | Format from CCP4 suite |
+| **Code** | Note |
 | --- | --- |
+| **CCP4** | Format from CCP4 suite |
 | **MRCO** | MRC format |
 | **SERI** | SerialEM. Details in the [IMOD documentation](http://bio3d.colorado.edu/imod/doc/mrc_format.txt). |
 | **AGAR** | Agard |

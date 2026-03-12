@@ -1,6 +1,9 @@
 //! MRC file writer
 
-use crate::{Error, Header, Mode, RawHeader};
+use crate::access::Volume;
+use crate::core::{Error, Mode};
+use crate::header::Header;
+use crate::voxel::{Encoding, Voxel, validate_mode};
 use alloc::vec::Vec;
 
 #[cfg(feature = "std")]
@@ -78,12 +81,7 @@ impl MrcWriterBuilder {
     }
 
     /// Build the writer and write to file
-    ///
-    /// # Errors
-    /// Returns `Error::BufferTooSmall` or `Error::InvalidDimensions` if the provided data
-    /// size doesn't match the expected size based on dimensions and mode.
     pub fn write(self, path: impl AsRef<std::path::Path>) -> Result<(), Error> {
-        // Calculate expected data size
         let voxel_count = self.dimensions[0]
             .checked_mul(self.dimensions[1])
             .and_then(|v| v.checked_mul(self.dimensions[2]))
@@ -97,7 +95,6 @@ impl MrcWriterBuilder {
                 .ok_or(Error::InvalidDimensions)?
         };
 
-        // Validate data size if provided
         if let Some(ref data) = self.data {
             if data.len() != expected_data_size {
                 return Err(Error::BufferTooSmall {
@@ -107,19 +104,17 @@ impl MrcWriterBuilder {
             }
         }
 
-        let mut header = Header::new();
-        header.set_dimensions(self.dimensions[0], self.dimensions[1], self.dimensions[2]);
-        header.set_mode(self.mode);
-        header.set_cell_dimensions(
-            self.voxel_size[0] * self.dimensions[0] as f32,
-            self.voxel_size[1] * self.dimensions[1] as f32,
-            self.voxel_size[2] * self.dimensions[2] as f32,
-        );
-        header.raw.alpha = self.cell_angles[0];
-        header.raw.beta = self.cell_angles[1];
-        header.raw.gamma = self.cell_angles[2];
-        header.set_origin(self.origin[0], self.origin[1], self.origin[2]);
-        header.set_nsymbt(self.ext_header.len());
+        let header = Header::builder()
+            .dimensions(self.dimensions[0], self.dimensions[1], self.dimensions[2])
+            .mode(self.mode)
+            .cell_dimensions(
+                self.voxel_size[0] * self.dimensions[0] as f32,
+                self.voxel_size[1] * self.dimensions[1] as f32,
+                self.voxel_size[2] * self.dimensions[2] as f32,
+            )
+            .origin(self.origin[0], self.origin[1], self.origin[2])
+            .extended_header_size(self.ext_header.len())
+            .build();
 
         let mut writer = if self.ext_header.is_empty() {
             MrcWriter::create(path, header)?
@@ -147,7 +142,6 @@ impl Default for MrcWriterBuilder {
 pub struct MrcWriter {
     file: File,
     header: Header,
-    /// Extended header bytes (stored for reference)
     _ext_header: Vec<u8>,
     data_offset: u64,
 }
@@ -168,9 +162,8 @@ impl MrcWriter {
         let mut file = File::create(path).map_err(Error::from)?;
 
         // Write header
-        let raw: RawHeader = header.clone().into();
-        let header_bytes = bytemuck::bytes_of(&raw);
-        file.write_all(header_bytes).map_err(Error::from)?;
+        let header_bytes = header.to_bytes();
+        file.write_all(&header_bytes).map_err(Error::from)?;
 
         // Write extended header
         if !ext_header.is_empty() {
@@ -221,10 +214,9 @@ impl MrcWriter {
 
     /// Update the header on disk
     pub fn flush_header(&mut self) -> Result<(), Error> {
-        let raw: RawHeader = self.header.clone().into();
-        let header_bytes = bytemuck::bytes_of(&raw);
+        let header_bytes = self.header.to_bytes();
         self.file.seek(SeekFrom::Start(0)).map_err(Error::from)?;
-        self.file.write_all(header_bytes).map_err(Error::from)?;
+        self.file.write_all(&header_bytes).map_err(Error::from)?;
         Ok(())
     }
 }
@@ -233,9 +225,8 @@ use super::traits::MrcSink;
 
 impl MrcSink for MrcWriter {
     fn write_header(&mut self, header: &Header) -> Result<(), Error> {
-        let raw: RawHeader = header.clone().into();
-        let header_bytes = bytemuck::bytes_of(&raw);
-        self.file.write_all(header_bytes).map_err(Error::from)
+        let header_bytes = header.to_bytes();
+        self.file.write_all(&header_bytes).map_err(Error::from)
     }
 
     fn write_data_bytes(&mut self, header: &Header, data: &[u8]) -> Result<(), Error> {
@@ -254,5 +245,15 @@ impl MrcSink for MrcWriter {
 
     fn flush(&mut self) -> Result<(), Error> {
         self.file.flush().map_err(Error::from)
+    }
+
+    fn write_volume<T: Voxel + Encoding>(
+        &mut self,
+        volume: &Volume<T, Vec<u8>>,
+    ) -> Result<(), Error> {
+        validate_mode::<T>(volume.header().mode())?;
+        self.write_header(volume.header())?;
+        self.write_data_bytes(volume.header(), volume.as_bytes())?;
+        self.flush()
     }
 }

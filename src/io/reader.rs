@@ -31,17 +31,7 @@ impl MrcReader {
         let mut header_bytes = [0u8; 1024];
         file.read_exact(&mut header_bytes).map_err(Error::from)?;
 
-        let raw_header: crate::RawHeader = *bytemuck::from_bytes(&header_bytes);
-        let header = Header::try_from(raw_header)?;
-
-        // Warn if endianness was not detected (defaulted to little-endian)
-        if !header.file_endian_detected {
-            use std::io::Write;
-            let _ = writeln!(
-                std::io::stderr(),
-                "Warning: MRC file endianness could not be detected from MACHST field, assuming little-endian"
-            );
-        }
+        let header = Header::from_bytes(&header_bytes)?;
 
         // Read extended header
         let ext_header_size = header.nsymbt();
@@ -98,12 +88,6 @@ impl MrcReader {
     }
 
     /// Read volume with compile-time type checking
-    ///
-    /// # Type Parameters
-    /// - `T`: Voxel type (must implement Voxel + Encoding)
-    ///
-    /// # Errors
-    /// Returns `Error::TypeMismatch` if the file mode doesn't match T::MODE
     pub fn read_volume<T: Voxel + Encoding>(&mut self) -> Result<Volume<T, Vec<u8>>, Error> {
         validate_mode::<T>(self.header.mode())?;
         let data = self.read_data()?;
@@ -111,8 +95,6 @@ impl MrcReader {
     }
 
     /// Read volume with dynamic type dispatch
-    ///
-    /// Returns a `VolumeData` enum containing the appropriate typed volume.
     pub fn read(&mut self) -> Result<VolumeData, Error> {
         let data = self.read_data()?;
         VolumeData::from_bytes(self.header.clone(), data)

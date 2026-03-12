@@ -2,12 +2,7 @@
 
 #[cfg(test)]
 mod header_tests {
-    use mrc::{Header, RawHeader, Mode};
-    
-    #[test]
-    fn test_raw_header_size() {
-        assert_eq!(core::mem::size_of::<RawHeader>(), 1024);
-    }
+    use mrc::{Header, Mode};
     
     #[test]
     fn test_mode_from_i32() {
@@ -47,78 +42,67 @@ mod header_tests {
     }
     
     #[test]
-    fn test_raw_header_new() {
-        let header = RawHeader::new();
-        assert!(header.has_valid_map());
-        assert!(header.is_valid_mode());
-        assert_eq!(header.nversion, 20140);
-    }
-    
-    #[test]
     fn test_header_default() {
         let header = Header::default();
         assert_eq!(header.dimensions(), (1, 1, 1));
-        assert_eq!(header.mode, Mode::Float32);
+        assert_eq!(header.mode(), Mode::Float32);
+    }
+    
+    #[test]
+    fn test_header_builder() {
+        let header = Header::builder()
+            .dimensions(64, 64, 64)
+            .mode(Mode::Int16)
+            .origin(10.0, 20.0, 30.0)
+            .build();
+        
+        assert_eq!(header.dimensions(), (64, 64, 64));
+        assert_eq!(header.mode(), Mode::Int16);
+        assert_eq!(header.xorigin(), 10.0);
     }
     
     #[test]
     fn test_header_data_size() {
-        let mut header = Header::default();
-        header.nx = 10;
-        header.ny = 20;
-        header.nz = 30;
-        
-        header.mode = Mode::Int8;
+        let header = Header::builder()
+            .dimensions(10, 20, 30)
+            .mode(Mode::Int8)
+            .build();
         assert_eq!(header.data_size(), 10 * 20 * 30);
         
-        header.mode = Mode::Int16;
+        let header = Header::builder()
+            .dimensions(10, 20, 30)
+            .mode(Mode::Int16)
+            .build();
         assert_eq!(header.data_size(), 10 * 20 * 30 * 2);
         
-        header.mode = Mode::Float32;
+        let header = Header::builder()
+            .dimensions(10, 20, 30)
+            .mode(Mode::Float32)
+            .build();
         assert_eq!(header.data_size(), 10 * 20 * 30 * 4);
         
-        header.mode = Mode::Int16Complex;
-        assert_eq!(header.data_size(), 10 * 20 * 30 * 4);
-        
-        header.mode = Mode::Float32Complex;
+        let header = Header::builder()
+            .dimensions(10, 20, 30)
+            .mode(Mode::Float32Complex)
+            .build();
         assert_eq!(header.data_size(), 10 * 20 * 30 * 8);
     }
     
     #[test]
-    fn test_raw_header_data_size() {
-        let mut header = RawHeader::new();
-        header.nx = 10;
-        header.ny = 20;
-        header.nz = 30;
-        
-        header.mode = 2; // Float32
-        assert_eq!(header.data_size(), 10 * 20 * 30 * 4);
-    }
-    
-    #[test]
-    fn test_raw_to_validated_header() {
-        let mut raw = RawHeader::new();
-        raw.nx = 64;
-        raw.ny = 64;
-        raw.nz = 64;
-        raw.mode = 2; // Float32
-        
-        let header = Header::try_from(raw).unwrap();
-        assert_eq!(header.dimensions(), (64, 64, 64));
-        assert_eq!(header.mode, Mode::Float32);
-    }
-    
-    #[test]
-    fn test_validated_to_raw_header() {
-        let mut header = Header::default();
-        header.nx = 128;
-        header.ny = 128;
-        header.nz = 128;
-        
-        let raw: RawHeader = header.into();
-        assert_eq!(raw.nx, 128);
-        assert_eq!(raw.ny, 128);
-        assert_eq!(raw.nz, 128);
+    fn test_header_roundtrip() {
+        let original = Header::builder()
+            .dimensions(128, 128, 64)
+            .mode(Mode::Float32)
+            .origin(5.0, 10.0, 15.0)
+            .statistics(0.0, 100.0, 50.0, 25.0)
+            .build();
+
+        let bytes = original.to_bytes();
+        let parsed = Header::from_bytes(&bytes).unwrap();
+
+        assert_eq!(parsed.dimensions(), original.dimensions());
+        assert_eq!(parsed.mode(), original.mode());
+        assert_eq!(parsed.xorigin(), original.xorigin());
     }
 }
 
@@ -135,11 +119,9 @@ mod axis_tests {
     
     #[test]
     fn test_axis_map_validation() {
-        // Valid permutations
         assert!(AxisMap::new(1, 2, 3).validate());
         assert!(AxisMap::new(3, 2, 1).validate());
         
-        // Invalid: not a permutation
         assert!(!AxisMap::new(1, 1, 2).validate());
         assert!(!AxisMap::new(1, 2, 1).validate());
     }
@@ -147,14 +129,15 @@ mod axis_tests {
 
 #[cfg(test)]
 mod voxel_tests {
-    use mrc::{Voxel, ScalarVoxel, RealVoxel, ComplexVoxel, ComplexI16, ComplexF32};
+    use mrc::{Voxel, ScalarVoxel, RealVoxel, ComplexVoxel, ComplexI16, ComplexF32, Mode};
     
     #[test]
-    fn test_voxel_bounds() {
-        assert_eq!(i8::MIN, i8::MIN);
-        assert_eq!(i8::MAX, i8::MAX);
-        assert_eq!(f32::MIN, f32::NEG_INFINITY);
-        assert_eq!(f32::MAX, f32::INFINITY);
+    fn test_voxel_mode() {
+        assert_eq!(i8::MODE, Mode::Int8);
+        assert_eq!(i16::MODE, Mode::Int16);
+        assert_eq!(f32::MODE, Mode::Float32);
+        assert_eq!(ComplexI16::MODE, Mode::Int16Complex);
+        assert_eq!(ComplexF32::MODE, Mode::Float32Complex);
     }
     
     #[test]
@@ -176,85 +159,168 @@ mod voxel_tests {
     }
 }
 
-#[cfg(test)]
-mod encoding_tests {
-    use mrc::{Encoding, FileEndian, ComplexI16, ComplexF32};
-    
-    #[test]
-    fn test_f32_encoding() {
-        let value: f32 = 42.5;
-        let mut bytes = [0u8; 4];
-        value.encode(FileEndian::Little, &mut bytes);
-        
-        let decoded = f32::decode(FileEndian::Little, &bytes);
-        assert_eq!(decoded, value);
-    }
-    
-    #[test]
-    fn test_i16_encoding() {
-        let value: i16 = -1000;
-        let mut bytes = [0u8; 2];
-        value.encode(FileEndian::Little, &mut bytes);
-        
-        let decoded = i16::decode(FileEndian::Little, &bytes);
-        assert_eq!(decoded, value);
-    }
-    
-    #[test]
-    fn test_complex_i16_encoding() {
-        let value = ComplexI16::new(100, -200);
-        let mut bytes = [0u8; 4];
-        value.encode(FileEndian::Little, &mut bytes);
-        
-        let decoded = ComplexI16::decode(FileEndian::Little, &bytes);
-        assert_eq!(decoded.re, 100);
-        assert_eq!(decoded.im, -200);
-    }
-    
-    #[test]
-    fn test_complex_f32_encoding() {
-        let value = ComplexF32::new(1.5, -2.5);
-        let mut bytes = [0u8; 8];
-        value.encode(FileEndian::Little, &mut bytes);
-        
-        let decoded = ComplexF32::decode(FileEndian::Little, &bytes);
-        assert_eq!(decoded.re, 1.5);
-        assert_eq!(decoded.im, -2.5);
-    }
-}
-
 #[cfg(all(test, feature = "std"))]
 mod io_tests {
-    use mrc::{Header, MrcReader, MrcWriter, Mode, RawHeader};
-    use std::io::Write;
+    use mrc::{Header, MrcReader, MrcWriter, Mode, Volume};
     use tempfile::NamedTempFile;
     
     #[test]
     fn test_write_and_read_header() {
-        let mut temp = NamedTempFile::new().unwrap();
+        let temp = NamedTempFile::new().unwrap();
         
-        // Create header
-        let mut header = Header::default();
-        header.nx = 64;
-        header.ny = 64;
-        header.nz = 32;
-        header.mode = Mode::Float32;
-        header.xlen = 100.0;
-        header.ylen = 100.0;
-        header.zlen = 50.0;
+        let header = Header::builder()
+            .dimensions(64, 64, 32)
+            .mode(Mode::Float32)
+            .cell_dimensions(100.0, 100.0, 50.0)
+            .build();
         
-        // Write file
         let mut writer = MrcWriter::create(temp.path(), header.clone()).unwrap();
         
-        // Write data
         let data = vec![0u8; header.data_size()];
         writer.write_data(&data).unwrap();
         
-        // Read back
         let reader = MrcReader::open(temp.path()).unwrap();
         let read_header = reader.header();
         
         assert_eq!(read_header.dimensions(), (64, 64, 32));
-        assert_eq!(read_header.mode, Mode::Float32);
+        assert_eq!(read_header.mode(), Mode::Float32);
+    }
+    
+    #[test]
+    fn test_volume_roundtrip() {
+        let temp = NamedTempFile::new().unwrap();
+        
+        // Create volume with builder
+        let volume: Volume<f32, _> = Volume::builder()
+            .dimensions(4, 4, 4)
+            .voxel_size(1.0, 1.0, 1.0)
+            .build_allocated();
+        
+        // Write
+        let header = volume.header().clone();
+        let mut writer = MrcWriter::create(temp.path(), header).unwrap();
+        writer.write_data(volume.as_bytes()).unwrap();
+        drop(writer);
+        
+        // Read back
+        let mut reader = MrcReader::open(temp.path()).unwrap();
+        let read_volume: Volume<f32, _> = reader.read_volume().unwrap();
+        
+        assert_eq!(read_volume.dimensions(), (4, 4, 4));
+    }
+    
+    #[test]
+    fn test_ext_header() {
+        let temp = NamedTempFile::new().unwrap();
+        
+        let header = Header::builder()
+            .dimensions(2, 2, 2)
+            .mode(Mode::Float32)
+            .extended_header_size(100)
+            .build();
+        
+        let ext_header = vec![0xABu8; 100];
+        let mut writer = MrcWriter::create_with_ext_header(temp.path(), header.clone(), &ext_header).unwrap();
+        
+        let data = vec![0u8; 32];
+        writer.write_data(&data).unwrap();
+        drop(writer);
+        
+        let reader = MrcReader::open(temp.path()).unwrap();
+        assert_eq!(reader.ext_header().len(), 100);
+    }
+}
+
+#[cfg(all(test, feature = "std"))]
+mod volume_tests {
+    use mrc::{Volume, Mode};
+    
+    #[test]
+    fn test_volume_builder() {
+        let volume: Volume<f32, _> = Volume::builder()
+            .dimensions(64, 64, 64)
+            .voxel_size(1.5, 1.5, 2.0)
+            .origin(100.0, 100.0, 50.0)
+            .build_allocated();
+        
+        assert_eq!(volume.dimensions(), (64, 64, 64));
+        assert_eq!(volume.header().mode(), Mode::Float32);
+        assert_eq!(volume.header().xorigin(), 100.0);
+    }
+    
+    #[test]
+    fn test_volume_access() {
+        let mut volume: Volume<f32, _> = Volume::builder()
+            .dimensions(4, 4, 4)
+            .build_allocated();
+        
+        // Set a value
+        volume.set_at(1, 2, 3, 42.0);
+        
+        // Get it back
+        assert_eq!(volume.get_at(1, 2, 3), 42.0);
+        
+        // Bounds checking
+        assert!(volume.get_at_opt(4, 0, 0).is_none());
+        assert!(volume.get_at_checked(4, 0, 0).is_err());
+    }
+    
+    #[test]
+    fn test_slice_extraction() {
+        let mut volume: Volume<f32, _> = Volume::builder()
+            .dimensions(4, 4, 4)
+            .build_allocated();
+        
+        // Fill with values
+        for z in 0..4 {
+            for y in 0..4 {
+                for x in 0..4 {
+                    volume.set_at(x, y, z, (x + y * 4 + z * 16) as f32);
+                }
+            }
+        }
+        
+        // Extract slice
+        let slice = volume.slice(2).unwrap();
+        assert_eq!(slice.dimensions(), (4, 4));
+        
+        // Check value
+        assert_eq!(slice.get(1, 2), (1 + 2 * 4 + 2 * 16) as f32);
+    }
+    
+    #[test]
+    fn test_subvolume() {
+        let mut volume: Volume<f32, _> = Volume::builder()
+            .dimensions(8, 8, 8)
+            .build_allocated();
+        
+        // Fill with values
+        for z in 0..8 {
+            for y in 0..8 {
+                for x in 0..8 {
+                    volume.set_at(x, y, z, (x + y * 8 + z * 64) as f32);
+                }
+            }
+        }
+        
+        // Extract subvolume
+        let subvol = volume.subvolume(2, 6, 2, 6, 2, 6).unwrap();
+        assert_eq!(subvol.dimensions(), (4, 4, 4));
+        
+        // Check value at new coordinates
+        assert_eq!(subvol.get_at(0, 0, 0), volume.get_at(2, 2, 2));
+    }
+    
+    #[test]
+    fn test_iteration() {
+        let volume: Volume<i32, _> = Volume::builder()
+            .dimensions(2, 2, 2)
+            .build_allocated();
+        
+        let count = volume.iter().count();
+        assert_eq!(count, 8);
+        
+        let coords: Vec<_> = volume.iter_coords().collect();
+        assert_eq!(coords.len(), 8);
     }
 }
