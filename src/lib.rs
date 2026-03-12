@@ -1,59 +1,31 @@
 //! # MRC File Format Library
 //!
-//! This crate provides a safe, efficient, and endian-correct implementation for reading
-//! and writing MRC (Medical Research Council) files, which are commonly used in
-//! cryo-electron microscopy and structural biology.
+//! A zero-copy, zero-allocation MRC-2014 file format reader/writer for Rust.
 //!
-//! ## Memory Model
-//!
-//! This crate strictly separates the three components of an MRC file:
-//!
-//! ```text
-//! File layout:  | 1024 bytes | NSYMBT bytes | data_size bytes |
-//!               | Header     | ExtHeader    | VoxelData       |
-//!
-//! Memory model: | Header     | ExtHeader    | VoxelData       |
-//!               | (decoded)  | (raw bytes)  | (raw bytes)     |
-//!               | native-end| opaque       | file-endian     |
-//! ```
-//!
-//! - **Header** (1024 bytes): Always decoded on load, always native-endian in memory
-//! - **Extended header** (NSYMBT bytes): Opaque bytes, no endianness conversion
-//! - **Voxel data** (data_size bytes): Raw bytes in file-endian, decoded lazily on access
-//!
-//! Endianness conversion occurs **only** when decoding or encoding typed numeric values
-//! through the `DecodeFromFile` and `EncodeToFile` traits. This ensures zero-copy mmap
-//! views and prevents accidental endian corruption.
+//! This crate provides high-performance, memory-efficient access to MRC
+//! (Medical Research Council) files used in cryo-electron microscopy and
+//! structural biology.
 //!
 //! ## Features
 //!
-//! - `std`: Standard library support for file I/O
-//! - `mmap`: Memory-mapped file support for zero-copy access
-//! - `f16`: Half-precision floating point support (via `half` crate)
+//! - **Zero-copy access**: Direct slice views into data without allocation
+//! - **no_std compatible**: Works in embedded and WebAssembly environments
+//! - **Type-safe**: Compile-time mode checking with generics
+//! - **Memory safe**: Lifetime-based borrowing prevents use-after-free
 //!
-//! ## Safety
+//! ## Quick Start
 //!
-//! All public operations are memory-safe. The crate's public API contains no unsafe
-//! code for data access, and all endianness conversions are performed through safe,
-//! type-checked APIs.
+//! ```ignore
+//! use mrc::{MrcReader, Mode};
 //!
-//! ### Memory Mapping
-//! When using the `mmap` feature, the underlying OS memory mapping is created using
-//! `unsafe` code internally (as required by the `memmap2` crate). However, the public
-//! API remains safe - the `MrcMmap` type encapsulates the mapped memory and ensures
-//! valid access through Rust's borrowing rules.
+//! // Read an MRC file
+//! let reader = MrcReader::open("data.mrc")?;
+//! let header = reader.header();
+//! let volume = reader.read_volume::<f32>()?;
 //!
-//! ## Endianness Policy
-//!
-//! This crate enforces a simple and safe endianness model:
-//!
-//! - All newly created MRC files are written in little-endian format.
-//! - Existing MRC files are read and modified using their declared file endianness.
-//! - Endianness is handled internally during numeric decode/encode.
-//! - Users never need to reason about byte order.
-//!
-//! This guarantees compatibility with the MRC2014 ecosystem while supporting
-//! cross-platform reading, writing, memory-mapped access, and streaming updates.
+//! // Access voxel data
+//! let value = volume.get(x, y, z);
+//! ```
 
 #![no_std]
 
@@ -66,43 +38,70 @@ extern crate alloc;
 #[cfg(feature = "std")]
 extern crate std;
 
-// Internal modules
-mod data;
-mod endian;
-mod error;
-mod header;
-mod mode;
-mod traits;
-mod types;
-mod view;
-
-#[cfg(test)]
-#[path = "../test/tests.rs"]
-mod tests;
-
-// Public re-exports
-
 // Core types
-pub use data::{DataBlock, DataBlockMut, ExtHeader, ExtHeaderMut};
+pub mod axis;
+pub mod encoding;
+pub mod endian;
+pub mod error;
+pub mod mode;
+pub mod voxel;
+
+// Header module
+pub mod header;
+
+// Re-exports
+pub use axis::AxisMap;
+pub use encoding::Encoding;
 pub use endian::FileEndian;
 pub use error::Error;
-pub use header::Header;
-pub use mode::Mode;
-pub use traits::{DecodeFromFile, EncodeToFile, VoxelType};
-pub use types::{Float32Complex, Int16Complex, Packed4Bit};
-pub use view::{MrcView, MrcViewMut};
+pub use header::{Header, RawHeader};
+pub use mode::{InvalidMode, Mode};
+pub use voxel::{ComplexVoxel, RealVoxel, ScalarVoxel, Voxel, Int16Complex, Float32Complex};
 
-// Optional file features
-#[cfg(feature = "file")]
-mod mrcfile;
+// Feature-gated modules
+#[cfg(feature = "std")]
+pub mod io;
+
+#[cfg(feature = "std")]
+pub mod storage;
+
+#[cfg(feature = "std")]
+pub mod volume;
 
 #[cfg(test)]
-#[cfg(feature = "file")]
-#[path = "../test/mrcfile_test.rs"]
-mod mrcfile_test;
-
-#[cfg(feature = "mmap")]
-pub use mrcfile::{open_mmap, MrcMmap};
-
-#[cfg(feature = "file")]
-pub use mrcfile::{MrcFile, MrcSource};
+mod tests {
+    use super::*;
+    
+    #[test]
+    fn test_mode_from_i32() {
+        assert_eq!(Mode::from_i32(0), Some(Mode::Int8));
+        assert_eq!(Mode::from_i32(1), Some(Mode::Int16));
+        assert_eq!(Mode::from_i32(2), Some(Mode::Float32));
+        assert_eq!(Mode::from_i32(99), None);
+    }
+    
+    #[test]
+    fn test_axis_map() {
+        let map = AxisMap::default();
+        assert!(map.is_standard());
+        assert!(map.validate());
+    }
+    
+    #[test]
+    fn test_file_endian() {
+        let native = FileEndian::native();
+        assert!(native.is_native());
+    }
+    
+    #[test]
+    fn test_raw_header_new() {
+        let header = RawHeader::new();
+        assert!(header.has_valid_map());
+    }
+    
+    #[test]
+    fn test_header_default() {
+        let header = Header::default();
+        assert_eq!(header.dimensions(), (1, 1, 1));
+    }
+}

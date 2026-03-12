@@ -1,36 +1,80 @@
 //! Error types for MRC file operations
 
-use crate::FileEndian;
+use core::fmt;
 
-/// Error type
-#[derive(thiserror::Error, Debug)]
+#[cfg(feature = "std")]
+extern crate alloc;
+
+/// Error type for MRC operations
+#[derive(Debug, Clone, PartialEq)]
 pub enum Error {
-    #[error("IO error")]
-    Io,
-    #[error("Invalid MRC header")]
+    /// Invalid MRC header
     InvalidHeader,
-    #[error("Invalid MRC mode")]
+    /// Invalid MRC mode value
     InvalidMode,
-    #[error("Invalid dimensions")]
+    /// Invalid dimensions (negative or zero)
     InvalidDimensions,
-    #[error("Type mismatch")]
+    /// Invalid axis mapping
+    InvalidAxisMap,
+    /// Type mismatch for operation
     TypeMismatch,
-    /// File endianness does not match native endianness, preventing zero-copy operations
-    #[error("Wrong endianness: file is {file:?}, native is {native:?}")]
-    WrongEndianness {
-        file: FileEndian,
-        native: FileEndian,
+    /// File endianness does not match native endianness
+    WrongEndianness,
+    /// Data is not properly aligned
+    MisalignedData {
+        required: usize,
+        actual: usize,
     },
-    /// Data is not properly aligned for the requested type
-    #[error("Misaligned data: required alignment {required}, got {actual}")]
-    MisalignedData { required: usize, actual: usize },
-    /// Buffer is too small for the requested operation
-    #[error("Buffer too small: expected {expected} bytes, got {got}")]
-    BufferTooSmall { expected: usize, got: usize },
-    /// Index is out of bounds
-    #[error("Index out of bounds: index {index}, length {length}")]
-    IndexOutOfBounds { index: usize, length: usize },
+    /// Buffer is too small
+    BufferTooSmall {
+        expected: usize,
+        got: usize,
+    },
+    /// Index out of bounds
+    IndexOutOfBounds {
+        index: usize,
+        length: usize,
+    },
+    /// IO error
+    #[cfg(feature = "std")]
+    Io(alloc::string::String),
+    /// Memory mapping error
     #[cfg(feature = "mmap")]
-    #[error("Memory mapping error")]
     Mmap,
+    /// Feature not enabled
+    FeatureDisabled {
+        feature: &'static str,
+    },
 }
+
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidHeader => write!(f, "Invalid MRC header"),
+            Self::InvalidMode => write!(f, "Invalid MRC mode"),
+            Self::InvalidDimensions => write!(f, "Invalid dimensions"),
+            Self::InvalidAxisMap => write!(f, "Invalid axis mapping"),
+            Self::TypeMismatch => write!(f, "Type mismatch"),
+            Self::WrongEndianness => write!(f, "Wrong endianness"),
+            Self::MisalignedData { required, actual } => {
+                write!(f, "Misaligned data: required alignment {required}, got {actual}")
+            }
+            Self::BufferTooSmall { expected, got } => {
+                write!(f, "Buffer too small: expected {expected} bytes, got {got}")
+            }
+            Self::IndexOutOfBounds { index, length } => {
+                write!(f, "Index {index} out of bounds (length {length})")
+            }
+            #[cfg(feature = "std")]
+            Self::Io(msg) => write!(f, "IO error: {msg}"),
+            #[cfg(feature = "mmap")]
+            Self::Mmap => write!(f, "Memory mapping error"),
+            Self::FeatureDisabled { feature } => {
+                write!(f, "Feature '{feature}' is not enabled")
+            }
+        }
+    }
+}
+
+#[cfg(feature = "std")]
+impl std::error::Error for Error {}

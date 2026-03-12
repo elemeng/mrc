@@ -1,30 +1,43 @@
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[non_exhaustive]
+/// MRC data type mode
+///
+/// Each mode corresponds to a specific voxel type.
+/// Modes are written to the header as i32 values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(i32)]
 pub enum Mode {
+    /// 8-bit signed integer
     Int8 = 0,
+    /// 16-bit signed integer
     Int16 = 1,
+    /// 32-bit float (most common)
     Float32 = 2,
-    /// Complex number with 16-bit integer components (Mode 3)
-    ///
-    /// # Byte Order
-    /// The layout is `[real i16 (2 bytes), imag i16 (2 bytes)]` which matches the
-    /// de facto standard used by CCP4, IMOD, and other MRC implementations.
-    /// This is not explicitly specified in MRC2014 but is universally adopted.
+    /// Complex with 16-bit integer components
     Int16Complex = 3,
-    /// Complex number with 32-bit float components (Mode 4)
-    ///
-    /// # Byte Order
-    /// The layout is `[real f32 (4 bytes), imag f32 (4 bytes)]` which matches the
-    /// de facto standard used by CCP4, IMOD, and other MRC implementations.
-    /// This is not explicitly specified in MRC2014 but is universally adopted.
+    /// Complex with 32-bit float components
     Float32Complex = 4,
+    /// 16-bit unsigned integer
     Uint16 = 6,
+    /// 16-bit float (requires f16 feature)
     Float16 = 12,
-    /// 4-bit data packed two values per byte (mode 101)
+    /// 4-bit packed data (experimental)
     Packed4Bit = 101,
 }
 
+/// Error for invalid mode values
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InvalidMode(pub i32);
+
+impl core::fmt::Display for InvalidMode {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "Invalid MRC mode: {}", self.0)
+    }
+}
+
+#[cfg(feature = "std")]
+impl std::error::Error for InvalidMode {}
+
 impl Mode {
+    /// Convert from i32 mode value
     #[inline]
     pub fn from_i32(mode: i32) -> Option<Self> {
         match mode {
@@ -40,35 +53,64 @@ impl Mode {
         }
     }
 
+    /// Size of one voxel in bytes
     #[inline]
-    pub fn byte_size(&self) -> usize {
+    pub const fn byte_size(self) -> usize {
         match self {
             Self::Int8 => 1,
             Self::Int16 => 2,
             Self::Float32 => 4,
-            Self::Int16Complex => 4,   // 2 bytes real + 2 bytes imaginary
-            Self::Float32Complex => 8, // 4 bytes real + 4 bytes imaginary
+            Self::Int16Complex => 4,
+            Self::Float32Complex => 8,
             Self::Uint16 => 2,
             Self::Float16 => 2,
-            Self::Packed4Bit => 1, // 4 bits per value, 2 values per byte
+            Self::Packed4Bit => 1,
         }
     }
 
+    /// Check if this is a complex type
     #[inline]
-    pub fn is_complex(&self) -> bool {
+    pub const fn is_complex(self) -> bool {
         matches!(self, Self::Int16Complex | Self::Float32Complex)
     }
 
+    /// Check if this is an integer type
     #[inline]
-    pub fn is_integer(&self) -> bool {
+    pub const fn is_integer(self) -> bool {
         matches!(
             self,
             Self::Int8 | Self::Int16 | Self::Int16Complex | Self::Uint16 | Self::Packed4Bit
         )
     }
 
+    /// Check if this is a float type
     #[inline]
-    pub fn is_float(&self) -> bool {
+    pub const fn is_float(self) -> bool {
         matches!(self, Self::Float32 | Self::Float32Complex | Self::Float16)
+    }
+
+    /// Check if this mode is supported with current feature flags
+    #[inline]
+    pub fn is_supported(self) -> bool {
+        match self {
+            Self::Float16 => cfg!(feature = "f16"),
+            _ => true,
+        }
+    }
+}
+
+impl TryFrom<i32> for Mode {
+    type Error = InvalidMode;
+
+    #[inline]
+    fn try_from(value: i32) -> Result<Self, Self::Error> {
+        Self::from_i32(value).ok_or(InvalidMode(value))
+    }
+}
+
+impl From<Mode> for i32 {
+    #[inline]
+    fn from(mode: Mode) -> Self {
+        mode as i32
     }
 }

@@ -542,10 +542,3 @@ MrcWriter::builder()
 
 ---
 
-## Rollback Plan
-
-If issues arise:
-1. New types are non-breaking additions
-2. Old types remain functional
-3. Can release with both APIs
-4. Remove deprecated types in next major version
