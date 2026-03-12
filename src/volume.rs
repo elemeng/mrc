@@ -122,15 +122,40 @@ impl<T: Voxel + Encoding, S: AsRef<[u8]>> Volume<T, S, 3> {
     }
     
     /// Get a voxel at linear index
+    /// 
+    /// # Panics
+    /// Panics if index is out of bounds.
     pub fn get(&self, index: usize) -> T {
         let offset = index * T::SIZE;
-        T::decode(self.header.file_endian, &self.storage.as_ref()[offset..offset + T::SIZE])
+        let bytes = self.storage.as_ref();
+        T::decode(self.header.file_endian, &bytes[offset..offset + T::SIZE])
+    }
+    
+    /// Get a voxel at linear index, returning None if out of bounds
+    pub fn get_checked(&self, index: usize) -> Option<T> {
+        if index >= self.len() {
+            return None;
+        }
+        let offset = index * T::SIZE;
+        let bytes = self.storage.as_ref();
+        Some(T::decode(self.header.file_endian, &bytes[offset..offset + T::SIZE]))
     }
     
     /// Get a voxel at 3D coordinates
+    /// 
+    /// # Panics
+    /// Panics if coordinates are out of bounds.
     pub fn get_at(&self, x: usize, y: usize, z: usize) -> T {
         let index = z * self.strides[2] + y * self.strides[1] + x * self.strides[0];
         self.get(index)
+    }
+    
+    /// Get a voxel at 3D coordinates, returning None if out of bounds
+    pub fn get_at_checked(&self, x: usize, y: usize, z: usize) -> Option<T> {
+        if x >= self.shape[0] || y >= self.shape[1] || z >= self.shape[2] {
+            return None;
+        }
+        Some(self.get_at(x, y, z))
     }
     
     /// Iterate over all voxels
@@ -157,15 +182,46 @@ impl<T: Voxel + Encoding, S: AsMut<[u8]>> Volume<T, S, 3> {
     }
     
     /// Set a voxel at linear index
+    /// 
+    /// # Panics
+    /// Panics if index is out of bounds.
     pub fn set(&mut self, index: usize, value: T) {
         let offset = index * T::SIZE;
-        value.encode(self.header.file_endian, &mut self.storage.as_mut()[offset..offset + T::SIZE]);
+        let bytes = self.storage.as_mut();
+        value.encode(self.header.file_endian, &mut bytes[offset..offset + T::SIZE]);
+    }
+    
+    /// Set a voxel at linear index, returning error if out of bounds
+    pub fn set_checked(&mut self, index: usize, value: T) -> Result<(), Error> {
+        if index >= self.len() {
+            return Err(Error::IndexOutOfBounds {
+                index,
+                length: self.len(),
+            });
+        }
+        self.set(index, value);
+        Ok(())
     }
     
     /// Set a voxel at 3D coordinates
+    /// 
+    /// # Panics
+    /// Panics if coordinates are out of bounds.
     pub fn set_at(&mut self, x: usize, y: usize, z: usize, value: T) {
         let index = z * self.strides[2] + y * self.strides[1] + x * self.strides[0];
         self.set(index, value);
+    }
+    
+    /// Set a voxel at 3D coordinates, returning error if out of bounds
+    pub fn set_at_checked(&mut self, x: usize, y: usize, z: usize, value: T) -> Result<(), Error> {
+        if x >= self.shape[0] || y >= self.shape[1] || z >= self.shape[2] {
+            return Err(Error::IndexOutOfBounds {
+                index: x + y * self.shape[0] + z * self.shape[0] * self.shape[1],
+                length: self.len(),
+            });
+        }
+        self.set_at(x, y, z, value);
+        Ok(())
     }
 }
 
@@ -204,10 +260,21 @@ impl<T: Voxel + Encoding, S: AsRef<[u8]>> Volume<T, S, 2> {
     }
     
     /// Get a pixel at 2D coordinates
+    /// 
+    /// # Panics
+    /// Panics if coordinates are out of bounds.
     pub fn get_pixel(&self, x: usize, y: usize) -> T {
         let index = y * self.strides[1] + x * self.strides[0];
         let offset = index * T::SIZE;
         T::decode(self.header.file_endian, &self.storage.as_ref()[offset..offset + T::SIZE])
+    }
+    
+    /// Get a pixel at 2D coordinates, returning None if out of bounds
+    pub fn get_pixel_checked(&self, x: usize, y: usize) -> Option<T> {
+        if x >= self.shape[0] || y >= self.shape[1] {
+            return None;
+        }
+        Some(self.get_pixel(x, y))
     }
 }
 
@@ -216,6 +283,10 @@ impl<T: Voxel + Encoding, S: AsRef<[u8]>> Volume<T, S, 2> {
 /// Volume with Vec<u8> storage (most common)
 pub type VecVolume<T, const D: usize = 3> = Volume<T, Vec<u8>, D>;
 
-/// Volume with memory-mapped storage
+/// Volume with memory-mapped storage (read-only)
 #[cfg(feature = "mmap")]
 pub type MmapVolume<T, const D: usize = 3> = Volume<T, memmap2::Mmap, D>;
+
+/// Volume with mutable memory-mapped storage
+#[cfg(feature = "mmap")]
+pub type MmapVolumeMut<T, const D: usize = 3> = Volume<T, memmap2::MmapMut, D>;

@@ -3,7 +3,7 @@
 //! This module provides a unified trait for handling endianness-aware
 //! encoding/decoding of voxel data.
 
-use crate::{FileEndian, Mode, Voxel};
+use crate::{FileEndian, Mode, Voxel, Error};
 use crate::voxel::{ComplexI16, ComplexF32};
 
 /// Trait for encoding/decoding voxel data with endianness handling
@@ -20,106 +20,159 @@ pub trait Encoding: Voxel {
     const SIZE: usize;
     
     /// Decode a single voxel from file-endian bytes
-    fn decode(endian: FileEndian, bytes: &[u8]) -> Self;
+    /// 
+    /// # Safety
+    /// `bytes` must have at least SIZE elements.
+    unsafe fn decode_unchecked(endian: FileEndian, bytes: &[u8]) -> Self;
     
     /// Encode a single voxel to file-endian bytes
-    fn encode(self, endian: FileEndian, bytes: &mut [u8]);
-}
-
-// ============================================================================
-// Encoding implementations using a macro to reduce boilerplate
-// ============================================================================
-
-macro_rules! impl_encoding {
-    ($ty:ty, $mode:expr, $size:expr, $decode:expr, $encode:expr) => {
-        impl Encoding for $ty {
-            const MODE: Mode = $mode;
-            const SIZE: usize = $size;
-            
-            #[inline]
-            fn decode(endian: FileEndian, bytes: &[u8]) -> Self {
-                $decode(endian, bytes)
-            }
-            
-            #[inline]
-            fn encode(self, endian: FileEndian, bytes: &mut [u8]) {
-                $encode(self, endian, bytes)
-            }
+    /// 
+    /// # Safety
+    /// `bytes` must have at least SIZE elements.
+    unsafe fn encode_unchecked(self, endian: FileEndian, bytes: &mut [u8]);
+    
+    /// Decode a single voxel from file-endian bytes (checked)
+    /// 
+    /// Returns error if bytes slice is too small.
+    #[inline]
+    fn decode(endian: FileEndian, bytes: &[u8]) -> Self {
+        debug_assert!(bytes.len() >= Self::SIZE, "Buffer too small for decoding");
+        // SAFETY: We just verified the size
+        unsafe { Self::decode_unchecked(endian, bytes) }
+    }
+    
+    /// Encode a single voxel to file-endian bytes (checked)
+    /// 
+    /// Returns error if bytes slice is too small.
+    #[inline]
+    fn encode(self, endian: FileEndian, bytes: &mut [u8]) {
+        debug_assert!(bytes.len() >= Self::SIZE, "Buffer too small for encoding");
+        // SAFETY: We just verified the size
+        unsafe { self.encode_unchecked(endian, bytes) }
+    }
+    
+    /// Decode with explicit error on bounds failure
+    #[inline]
+    fn decode_checked(endian: FileEndian, bytes: &[u8]) -> Result<Self, Error> {
+        if bytes.len() < Self::SIZE {
+            return Err(Error::BufferTooSmall {
+                expected: Self::SIZE,
+                got: bytes.len(),
+            });
         }
-    };
+        // SAFETY: We just verified the size
+        Ok(unsafe { Self::decode_unchecked(endian, bytes) })
+    }
+    
+    /// Encode with explicit error on bounds failure
+    #[inline]
+    fn encode_checked(self, endian: FileEndian, bytes: &mut [u8]) -> Result<(), Error> {
+        if bytes.len() < Self::SIZE {
+            return Err(Error::BufferTooSmall {
+                expected: Self::SIZE,
+                got: bytes.len(),
+            });
+        }
+        // SAFETY: We just verified the size
+        unsafe { self.encode_unchecked(endian, bytes) };
+        Ok(())
+    }
 }
+
+// ============================================================================
+// Encoding implementations
+// ============================================================================
 
 // i8 encoding (Mode 0)
-impl_encoding!(
-    i8,
-    Mode::Int8,
-    1,
-    |_endian: FileEndian, bytes: &[u8]| bytes[0] as i8,
-    |v: i8, _endian: FileEndian, bytes: &mut [u8]| bytes[0] = v as u8
-);
+impl Encoding for i8 {
+    const MODE: Mode = Mode::Int8;
+    const SIZE: usize = 1;
+    
+    #[inline]
+    unsafe fn decode_unchecked(_endian: FileEndian, bytes: &[u8]) -> Self {
+        bytes[0] as i8
+    }
+    
+    #[inline]
+    unsafe fn encode_unchecked(self, _endian: FileEndian, bytes: &mut [u8]) {
+        bytes[0] = self as u8;
+    }
+}
 
 // i16 encoding (Mode 1)
-impl_encoding!(
-    i16,
-    Mode::Int16,
-    2,
-    |endian: FileEndian, bytes: &[u8]| {
-        let arr: [u8; 2] = bytes.try_into().unwrap();
+impl Encoding for i16 {
+    const MODE: Mode = Mode::Int16;
+    const SIZE: usize = 2;
+    
+    #[inline]
+    unsafe fn decode_unchecked(endian: FileEndian, bytes: &[u8]) -> Self {
+        // SAFETY: Caller ensures bytes has at least 2 elements
+        let arr: [u8; 2] = unsafe { *bytes.as_ptr().cast() };
         match endian {
             FileEndian::Little => i16::from_le_bytes(arr),
             FileEndian::Big => i16::from_be_bytes(arr),
         }
-    },
-    |v: i16, endian: FileEndian, bytes: &mut [u8]| {
+    }
+    
+    #[inline]
+    unsafe fn encode_unchecked(self, endian: FileEndian, bytes: &mut [u8]) {
         let arr = match endian {
-            FileEndian::Little => v.to_le_bytes(),
-            FileEndian::Big => v.to_be_bytes(),
+            FileEndian::Little => self.to_le_bytes(),
+            FileEndian::Big => self.to_be_bytes(),
         };
         bytes.copy_from_slice(&arr);
     }
-);
+}
 
 // f32 encoding (Mode 2)
-impl_encoding!(
-    f32,
-    Mode::Float32,
-    4,
-    |endian: FileEndian, bytes: &[u8]| {
-        let arr: [u8; 4] = bytes.try_into().unwrap();
+impl Encoding for f32 {
+    const MODE: Mode = Mode::Float32;
+    const SIZE: usize = 4;
+    
+    #[inline]
+    unsafe fn decode_unchecked(endian: FileEndian, bytes: &[u8]) -> Self {
+        // SAFETY: Caller ensures bytes has at least 4 elements
+        let arr: [u8; 4] = unsafe { *bytes.as_ptr().cast() };
         match endian {
             FileEndian::Little => f32::from_le_bytes(arr),
             FileEndian::Big => f32::from_be_bytes(arr),
         }
-    },
-    |v: f32, endian: FileEndian, bytes: &mut [u8]| {
+    }
+    
+    #[inline]
+    unsafe fn encode_unchecked(self, endian: FileEndian, bytes: &mut [u8]) {
         let arr = match endian {
-            FileEndian::Little => v.to_le_bytes(),
-            FileEndian::Big => v.to_be_bytes(),
+            FileEndian::Little => self.to_le_bytes(),
+            FileEndian::Big => self.to_be_bytes(),
         };
         bytes.copy_from_slice(&arr);
     }
-);
+}
 
 // u16 encoding (Mode 6)
-impl_encoding!(
-    u16,
-    Mode::Uint16,
-    2,
-    |endian: FileEndian, bytes: &[u8]| {
-        let arr: [u8; 2] = bytes.try_into().unwrap();
+impl Encoding for u16 {
+    const MODE: Mode = Mode::Uint16;
+    const SIZE: usize = 2;
+    
+    #[inline]
+    unsafe fn decode_unchecked(endian: FileEndian, bytes: &[u8]) -> Self {
+        // SAFETY: Caller ensures bytes has at least 2 elements
+        let arr: [u8; 2] = unsafe { *bytes.as_ptr().cast() };
         match endian {
             FileEndian::Little => u16::from_le_bytes(arr),
             FileEndian::Big => u16::from_be_bytes(arr),
         }
-    },
-    |v: u16, endian: FileEndian, bytes: &mut [u8]| {
+    }
+    
+    #[inline]
+    unsafe fn encode_unchecked(self, endian: FileEndian, bytes: &mut [u8]) {
         let arr = match endian {
-            FileEndian::Little => v.to_le_bytes(),
-            FileEndian::Big => v.to_be_bytes(),
+            FileEndian::Little => self.to_le_bytes(),
+            FileEndian::Big => self.to_be_bytes(),
         };
         bytes.copy_from_slice(&arr);
     }
-);
+}
 
 // ComplexI16 encoding (Mode 3)
 impl Encoding for ComplexI16 {
@@ -127,16 +180,17 @@ impl Encoding for ComplexI16 {
     const SIZE: usize = 4;
     
     #[inline]
-    fn decode(endian: FileEndian, bytes: &[u8]) -> Self {
-        let re = <i16 as Encoding>::decode(endian, &bytes[0..2]);
-        let im = <i16 as Encoding>::decode(endian, &bytes[2..4]);
+    unsafe fn decode_unchecked(endian: FileEndian, bytes: &[u8]) -> Self {
+        // SAFETY: Caller ensures bytes has at least 4 elements
+        let re = unsafe { <i16 as Encoding>::decode_unchecked(endian, &bytes[0..2]) };
+        let im = unsafe { <i16 as Encoding>::decode_unchecked(endian, &bytes[2..4]) };
         Self::new(re, im)
     }
     
     #[inline]
-    fn encode(self, endian: FileEndian, bytes: &mut [u8]) {
-        self.re.encode(endian, &mut bytes[0..2]);
-        self.im.encode(endian, &mut bytes[2..4]);
+    unsafe fn encode_unchecked(self, endian: FileEndian, bytes: &mut [u8]) {
+        unsafe { self.re.encode_unchecked(endian, &mut bytes[0..2]) };
+        unsafe { self.im.encode_unchecked(endian, &mut bytes[2..4]) };
     }
 }
 
@@ -146,16 +200,17 @@ impl Encoding for ComplexF32 {
     const SIZE: usize = 8;
     
     #[inline]
-    fn decode(endian: FileEndian, bytes: &[u8]) -> Self {
-        let re = <f32 as Encoding>::decode(endian, &bytes[0..4]);
-        let im = <f32 as Encoding>::decode(endian, &bytes[4..8]);
+    unsafe fn decode_unchecked(endian: FileEndian, bytes: &[u8]) -> Self {
+        // SAFETY: Caller ensures bytes has at least 8 elements
+        let re = unsafe { <f32 as Encoding>::decode_unchecked(endian, &bytes[0..4]) };
+        let im = unsafe { <f32 as Encoding>::decode_unchecked(endian, &bytes[4..8]) };
         Self::new(re, im)
     }
     
     #[inline]
-    fn encode(self, endian: FileEndian, bytes: &mut [u8]) {
-        self.re.encode(endian, &mut bytes[0..4]);
-        self.im.encode(endian, &mut bytes[4..8]);
+    unsafe fn encode_unchecked(self, endian: FileEndian, bytes: &mut [u8]) {
+        unsafe { self.re.encode_unchecked(endian, &mut bytes[0..4]) };
+        unsafe { self.im.encode_unchecked(endian, &mut bytes[4..8]) };
     }
 }
 
@@ -166,8 +221,8 @@ impl Encoding for half::f16 {
     const SIZE: usize = 2;
     
     #[inline]
-    fn decode(endian: FileEndian, bytes: &[u8]) -> Self {
-        let arr: [u8; 2] = bytes.try_into().unwrap();
+    unsafe fn decode_unchecked(endian: FileEndian, bytes: &[u8]) -> Self {
+        let arr: [u8; 2] = unsafe { *bytes.as_ptr().cast() };
         let bits = match endian {
             FileEndian::Little => u16::from_le_bytes(arr),
             FileEndian::Big => u16::from_be_bytes(arr),
@@ -176,12 +231,53 @@ impl Encoding for half::f16 {
     }
     
     #[inline]
-    fn encode(self, endian: FileEndian, bytes: &mut [u8]) {
+    unsafe fn encode_unchecked(self, endian: FileEndian, bytes: &mut [u8]) {
         let bits = self.to_bits();
         let arr = match endian {
             FileEndian::Little => bits.to_le_bytes(),
             FileEndian::Big => bits.to_be_bytes(),
         };
         bytes.copy_from_slice(&arr);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    
+    #[test]
+    fn test_i8_encoding() {
+        let mut buf = [0u8; 1];
+        (-42i8).encode(FileEndian::Little, &mut buf);
+        assert_eq!(buf[0], 214); // -42 as u8
+        assert_eq!(i8::decode(FileEndian::Little, &buf), -42);
+    }
+    
+    #[test]
+    fn test_i16_encoding() {
+        let mut buf = [0u8; 2];
+        (-1000i16).encode(FileEndian::Little, &mut buf);
+        assert_eq!(i16::decode(FileEndian::Little, &buf), -1000);
+        
+        (-1000i16).encode(FileEndian::Big, &mut buf);
+        assert_eq!(i16::decode(FileEndian::Big, &buf), -1000);
+    }
+    
+    #[test]
+    fn test_f32_encoding() {
+        let mut buf = [0u8; 4];
+        3.14159f32.encode(FileEndian::Little, &mut buf);
+        let result = f32::decode(FileEndian::Little, &buf);
+        assert!((result - 3.14159).abs() < 0.00001);
+    }
+    
+    #[test]
+    fn test_checked_encoding() {
+        let buf = [0u8; 1];
+        // Too small for i16
+        assert!(i16::decode_checked(FileEndian::Little, &buf).is_err());
+        
+        let mut buf_mut = [0u8; 1];
+        assert!((-1000i16).encode_checked(FileEndian::Little, &mut buf_mut).is_err());
     }
 }

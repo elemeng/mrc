@@ -122,7 +122,8 @@ impl Default for MrcWriterBuilder {
 pub struct MrcWriter {
     file: File,
     header: Header,
-    ext_header: Vec<u8>,
+    /// Extended header bytes (stored for reference)
+    _ext_header: Vec<u8>,
     data_offset: u64,
 }
 
@@ -156,7 +157,7 @@ impl MrcWriter {
         Ok(Self {
             file,
             header,
-            ext_header: ext_header.to_vec(),
+            _ext_header: ext_header.to_vec(),
             data_offset,
         })
     }

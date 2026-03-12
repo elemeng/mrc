@@ -45,6 +45,8 @@ pub enum Error {
     FeatureDisabled {
         feature: &'static str,
     },
+    /// Unknown file endianness
+    UnknownEndianness,
 }
 
 impl fmt::Display for Error {
@@ -72,6 +74,7 @@ impl fmt::Display for Error {
             Self::FeatureDisabled { feature } => {
                 write!(f, "Feature '{feature}' is not enabled")
             }
+            Self::UnknownEndianness => write!(f, "Unknown file endianness"),
         }
     }
 }

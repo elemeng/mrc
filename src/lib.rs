@@ -90,10 +90,10 @@ pub use extended::ExtendedHeader;
 pub use io::{MrcReader, MrcWriter};
 
 #[cfg(feature = "std")]
-pub use storage::{Storage, VecStorage};
+pub use storage::{Storage, StorageMut, VecStorage};
 
 #[cfg(all(feature = "std", feature = "mmap"))]
-pub use storage::MmapStorage;
+pub use storage::{MmapStorage, MmapStorageMut};
 
 #[cfg(feature = "std")]
 pub use volume::Volume;
