@@ -64,10 +64,19 @@ where
 
     let n = count as f64;
     let mean = if n > 0.0 { sum / n } else { 0.0 };
-    let variance = if n > 0.0 { (sum_sq / n) - (mean * mean) } else { 0.0 };
+    let variance = if n > 0.0 {
+        (sum_sq / n) - (mean * mean)
+    } else {
+        0.0
+    };
     let rms = variance.max(0.0).sqrt();
 
-    Statistics { min, max, mean, rms }
+    Statistics {
+        min,
+        max,
+        mean,
+        rms,
+    }
 }
 
 /// Compute statistics from a slice
@@ -112,7 +121,7 @@ impl RunningStats {
             sum_sq: 0.0,
         }
     }
-    
+
     /// Add a value to the statistics
     pub fn add<T: Into<f64>>(&mut self, value: T) {
         let v = value.into();
@@ -122,7 +131,7 @@ impl RunningStats {
         self.sum_sq += v * v;
         self.count += 1;
     }
-    
+
     /// Add multiple values from an iterator
     pub fn extend<T, I>(&mut self, iter: I)
     where
@@ -133,19 +142,23 @@ impl RunningStats {
             self.add(value);
         }
     }
-    
+
     /// Get the current count
     pub fn count(&self) -> usize {
         self.count
     }
-    
+
     /// Compute the final statistics
     pub fn finish(self) -> Statistics {
         let n = self.count as f64;
         let mean = if n > 0.0 { self.sum / n } else { 0.0 };
-        let variance = if n > 0.0 { (self.sum_sq / n) - (mean * mean) } else { 0.0 };
+        let variance = if n > 0.0 {
+            (self.sum_sq / n) - (mean * mean)
+        } else {
+            0.0
+        };
         let rms = variance.max(0.0).sqrt();
-        
+
         Statistics {
             min: if self.count > 0 { self.min } else { 0.0 },
             max: if self.count > 0 { self.max } else { 0.0 },
@@ -160,58 +173,58 @@ mod tests {
     use super::*;
     use alloc::vec;
     use alloc::vec::Vec;
-    
+
     #[test]
     fn test_compute_stats() {
         let data = vec![1.0f32, 2.0, 3.0, 4.0, 5.0];
         let stats = compute_stats(data.into_iter());
-        
+
         assert_eq!(stats.min, 1.0);
         assert_eq!(stats.max, 5.0);
         assert_eq!(stats.mean, 3.0);
         assert!((stats.rms - 1.4142).abs() < 0.001); // sqrt(2)
     }
-    
+
     #[test]
     fn test_compute_stats_empty() {
         let data: Vec<f32> = vec![];
         let stats = compute_stats(data.into_iter());
-        
+
         assert_eq!(stats.min, f64::INFINITY);
         assert_eq!(stats.max, f64::NEG_INFINITY);
         assert_eq!(stats.mean, 0.0);
         assert_eq!(stats.rms, 0.0);
     }
-    
+
     #[test]
     fn test_compute_stats_single() {
         let data = vec![5.0f32];
         let stats = compute_stats(data.into_iter());
-        
+
         assert_eq!(stats.min, 5.0);
         assert_eq!(stats.max, 5.0);
         assert_eq!(stats.mean, 5.0);
         assert_eq!(stats.rms, 0.0);
     }
-    
+
     #[test]
     fn test_running_stats() {
         let mut running = RunningStats::new();
         running.add(1.0f32);
         running.add(2.0f32);
         running.add(3.0f32);
-        
+
         let stats = running.finish();
         assert_eq!(stats.min, 1.0);
         assert_eq!(stats.max, 3.0);
         assert_eq!(stats.mean, 2.0);
     }
-    
+
     #[test]
     fn test_compute_stats_slice() {
         let data = [1.0f32, 2.0, 3.0, 4.0, 5.0];
         let stats = compute_stats_slice(&data);
-        
+
         assert_eq!(stats.min, 1.0);
         assert_eq!(stats.max, 5.0);
         assert_eq!(stats.mean, 3.0);

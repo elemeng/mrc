@@ -5,26 +5,26 @@
 //! - Concrete voxel types (ComplexI16, ComplexF32, Packed4Bit)
 //! - Endianness handling
 
-pub mod types;
+pub mod codex;
 pub mod endian;
-pub mod encoding;
+pub mod types;
 
 // Re-export main types from types
 pub use types::{
-    Voxel, ScalarVoxel, RealVoxel, IntegerVoxel, ComplexVoxel,
-    ComplexI16, ComplexF32, Packed4Bit, Int16Complex, Float32Complex,
+    ComplexF32, ComplexI16, ComplexVoxel, Float32Complex, Int16Complex, IntegerVoxel, Packed4Bit,
+    RealVoxel, ScalarVoxel, Voxel,
 };
 
 // Re-export from endian
-pub use endian::{FileEndian, EndianConvert};
+pub use endian::{EndianConvert, FileEndian};
 
 // Re-export from encoding
-pub use encoding::Encoding;
+pub use codex::Encoding;
 
 use crate::core::{Error, Mode};
 
 /// Validate that voxel type T matches the expected mode
-/// 
+///
 /// Returns Ok(()) if the mode matches, Err(Error::TypeMismatch) otherwise
 #[inline]
 pub fn validate_mode<T: Voxel>(expected: Mode) -> Result<(), Error> {

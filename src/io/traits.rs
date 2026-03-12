@@ -6,12 +6,12 @@
 //! - Network streams
 //! - Custom implementations for testing
 
+use crate::access::Volume;
 use crate::core::Error;
 use crate::header::Header;
-use crate::voxel::{Voxel, Encoding, validate_mode};
-use crate::access::Volume;
-use alloc::vec::Vec;
+use crate::voxel::{Encoding, Voxel, validate_mode};
 use alloc::vec;
+use alloc::vec::Vec;
 
 /// Trait for sources that can provide MRC data
 ///
@@ -33,7 +33,7 @@ pub trait MrcSource {
     /// # Errors
     /// Returns `Error::Io` if reading fails, or `Error::InvalidHeader` if the header is malformed.
     fn read_header(&mut self) -> Result<Header, Error>;
-    
+
     /// Read raw voxel data bytes
     ///
     /// # Arguments
@@ -42,7 +42,7 @@ pub trait MrcSource {
     /// # Errors
     /// Returns `Error::Io` if reading fails, or `Error::BufferTooSmall` if not enough data.
     fn read_data_bytes(&mut self, header: &Header) -> Result<Vec<u8>, Error>;
-    
+
     /// Read extended header bytes
     ///
     /// # Arguments
@@ -59,13 +59,13 @@ pub trait MrcSource {
         self.read_exact(&mut buf)?;
         Ok(buf)
     }
-    
+
     /// Read exact number of bytes
     ///
     /// # Errors
     /// Returns `Error::Io` if reading fails or EOF is reached early.
     fn read_exact(&mut self, buf: &mut [u8]) -> Result<(), Error>;
-    
+
     /// Read a typed volume
     ///
     /// # Type Parameters
@@ -91,13 +91,13 @@ pub trait MrcSink {
     /// # Errors
     /// Returns `Error::Io` if writing fails.
     fn write_header(&mut self, header: &Header) -> Result<(), Error>;
-    
+
     /// Write raw voxel data bytes
     ///
     /// # Errors
     /// Returns `Error::Io` if writing fails, or `Error::BufferTooSmall` if data doesn't match header.
     fn write_data_bytes(&mut self, header: &Header, data: &[u8]) -> Result<(), Error>;
-    
+
     /// Write extended header bytes
     ///
     /// # Errors
@@ -105,19 +105,19 @@ pub trait MrcSink {
     fn write_extended_header(&mut self, data: &[u8]) -> Result<(), Error> {
         self.write_all(data)
     }
-    
+
     /// Write all bytes
     ///
     /// # Errors
     /// Returns `Error::Io` if writing fails.
     fn write_all(&mut self, buf: &[u8]) -> Result<(), Error>;
-    
+
     /// Flush any buffered data
     ///
     /// # Errors
     /// Returns `Error::Io` if flushing fails.
     fn flush(&mut self) -> Result<(), Error>;
-    
+
     /// Write a typed volume
     ///
     /// # Type Parameters
@@ -138,13 +138,13 @@ pub trait MrcSink {
 }
 
 /// Async-capable IO traits (for future async support)
-/// 
+///
 /// Note: These require the "async" feature to be enabled.
 /// For now, they are disabled until async support is fully implemented.
 #[cfg(all(feature = "std", feature = "async"))]
 pub mod async_io {
     use super::*;
-    
+
     /// Async version of MrcSource
     #[allow(async_fn_in_trait)]
     pub trait AsyncMrcSource {
@@ -152,7 +152,7 @@ pub mod async_io {
         async fn read_data_bytes(&mut self, header: &Header) -> Result<Vec<u8>, Error>;
         async fn read_exact(&mut self, buf: &mut [u8]) -> Result<(), Error>;
     }
-    
+
     /// Async version of MrcSink
     #[allow(async_fn_in_trait)]
     pub trait AsyncMrcSink {

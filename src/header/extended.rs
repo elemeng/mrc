@@ -10,8 +10,7 @@ use alloc::vec::Vec;
 /// Extended header type identifier
 ///
 /// Common values from MRC2014 spec and implementations.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ExtType {
     /// CCP4 format (classic)
     Ccp4,
@@ -48,7 +47,7 @@ impl ExtType {
             _ => Self::Unknown,
         }
     }
-    
+
     /// Get the 4-byte identifier
     pub fn as_bytes(&self) -> [u8; 4] {
         match self {
@@ -63,7 +62,6 @@ impl ExtType {
         }
     }
 }
-
 
 /// Extended header wrapper
 ///
@@ -81,13 +79,13 @@ impl ExtendedHeader {
     pub fn new(ext_type: ExtType, data: Vec<u8>) -> Self {
         Self { ext_type, data }
     }
-    
+
     /// Create from raw bytes with EXTTYP identification
     pub fn from_bytes(exttyp: &[u8; 4], data: Vec<u8>) -> Self {
         let ext_type = ExtType::from_bytes(exttyp);
         Self { ext_type, data }
     }
-    
+
     /// Create an empty extended header
     pub fn empty() -> Self {
         Self {
@@ -95,17 +93,17 @@ impl ExtendedHeader {
             data: Vec::new(),
         }
     }
-    
+
     /// Get the size in bytes
     pub fn len(&self) -> usize {
         self.data.len()
     }
-    
+
     /// Check if empty
     pub fn is_empty(&self) -> bool {
         self.data.is_empty()
     }
-    
+
     /// Get the EXTTYP as bytes
     pub fn exttyp_bytes(&self) -> [u8; 4] {
         self.ext_type.as_bytes()

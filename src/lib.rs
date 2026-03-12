@@ -67,14 +67,12 @@ pub mod stats;
 pub mod io;
 
 // Core re-exports
-pub use core::{Error, Mode, AxisMap, check_bounds};
+pub use core::{AxisMap, Error, Mode, check_bounds};
 
 // Voxel re-exports
 pub use voxel::{
-    Voxel, ScalarVoxel, RealVoxel, IntegerVoxel, ComplexVoxel,
-    ComplexI16, ComplexF32, Packed4Bit,
-    Int16Complex, Float32Complex,
-    FileEndian, EndianConvert,
+    ComplexF32, ComplexI16, ComplexVoxel, EndianConvert, FileEndian, Float32Complex, Int16Complex,
+    IntegerVoxel, Packed4Bit, RealVoxel, ScalarVoxel, Voxel,
 };
 
 // Header re-exports
@@ -82,21 +80,25 @@ pub use header::{Header, HeaderBuilder, RawHeader};
 
 // Feature-gated re-exports
 #[cfg(feature = "std")]
-pub use access::{VoxelAccess, VoxelAccessMut, DataBlock, DataBlockMut, Volume, VolumeData};
+pub use access::{Volume, VolumeData, VoxelAccess, VoxelAccessMut};
+
+/// 1D volume type alias (replaces DataBlock)
+#[cfg(feature = "std")]
+pub type Volume1D<T, S> = Volume<T, S, 1>;
 
 #[cfg(feature = "std")]
-pub use header::{ExtendedHeader, ExtType};
+pub use header::{ExtType, ExtendedHeader};
 
 #[cfg(feature = "std")]
-pub use io::{MrcReader, MrcWriter, MrcSource, MrcSink};
+pub use io::{MrcReader, MrcSink, MrcSource, MrcWriter};
 
 #[cfg(feature = "std")]
-pub use stats::{compute_stats, Statistics, RunningStats};
+pub use stats::{RunningStats, Statistics, compute_stats};
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_mode_from_i32() {
         assert_eq!(Mode::from_i32(0), Some(Mode::Int8));
@@ -104,32 +106,32 @@ mod tests {
         assert_eq!(Mode::from_i32(2), Some(Mode::Float32));
         assert_eq!(Mode::from_i32(99), None);
     }
-    
+
     #[test]
     fn test_axis_map() {
         let map = AxisMap::default();
         assert!(map.is_standard());
         assert!(map.validate());
     }
-    
+
     #[test]
     fn test_file_endian() {
         let native = FileEndian::native();
         assert!(native.is_native());
     }
-    
+
     #[test]
     fn test_raw_header_new() {
         let header = RawHeader::new();
         assert!(header.has_valid_map());
     }
-    
+
     #[test]
     fn test_header_default() {
         let header = Header::default();
         assert_eq!(header.dimensions(), (1, 1, 1));
     }
-    
+
     #[test]
     fn test_ext_type() {
         assert_eq!(header::ExtType::from_bytes(b"CCP4"), header::ExtType::Ccp4);

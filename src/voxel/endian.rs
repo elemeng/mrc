@@ -16,15 +16,22 @@ impl FileEndian {
     #[inline]
     pub const fn native() -> Self {
         #[cfg(target_endian = "little")]
-        { Self::Little }
+        {
+            Self::Little
+        }
         #[cfg(target_endian = "big")]
-        { Self::Big }
+        {
+            Self::Big
+        }
     }
 
     /// Check if this is the native endianness
     #[inline]
     pub const fn is_native(self) -> bool {
-        matches!((self, Self::native()), (Self::Little, Self::Little) | (Self::Big, Self::Big))
+        matches!(
+            (self, Self::native()),
+            (Self::Little, Self::Little) | (Self::Big, Self::Big)
+        )
     }
 
     /// Detect endianness from MACHST machine stamp
@@ -125,21 +132,27 @@ impl fmt::Display for FileEndian {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_from_machst() {
-        assert_eq!(FileEndian::from_machst(&[0x44, 0x44, 0x00, 0x00]), Some(FileEndian::Little));
-        assert_eq!(FileEndian::from_machst(&[0x11, 0x11, 0x00, 0x00]), Some(FileEndian::Big));
+        assert_eq!(
+            FileEndian::from_machst(&[0x44, 0x44, 0x00, 0x00]),
+            Some(FileEndian::Little)
+        );
+        assert_eq!(
+            FileEndian::from_machst(&[0x11, 0x11, 0x00, 0x00]),
+            Some(FileEndian::Big)
+        );
         assert_eq!(FileEndian::from_machst(&[0x00, 0x00, 0x00, 0x00]), None);
         assert_eq!(FileEndian::from_machst(&[0xFF, 0xFF, 0x00, 0x00]), None);
     }
-    
+
     #[test]
     fn test_to_machst() {
         assert_eq!(FileEndian::Little.to_machst(), [0x44, 0x44, 0x00, 0x00]);
         assert_eq!(FileEndian::Big.to_machst(), [0x11, 0x11, 0x00, 0x00]);
     }
-    
+
     #[test]
     fn test_is_native() {
         let native = FileEndian::native();

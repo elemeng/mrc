@@ -21,20 +21,11 @@ pub enum Error {
     /// File endianness does not match native endianness
     WrongEndianness,
     /// Data is not properly aligned
-    MisalignedData {
-        required: usize,
-        actual: usize,
-    },
+    MisalignedData { required: usize, actual: usize },
     /// Buffer is too small
-    BufferTooSmall {
-        expected: usize,
-        got: usize,
-    },
+    BufferTooSmall { expected: usize, got: usize },
     /// Index out of bounds
-    IndexOutOfBounds {
-        index: usize,
-        length: usize,
-    },
+    IndexOutOfBounds { index: usize, length: usize },
     /// IO error
     #[cfg(feature = "std")]
     Io(std::io::Error),
@@ -42,9 +33,7 @@ pub enum Error {
     #[cfg(feature = "mmap")]
     Mmap,
     /// Feature not enabled
-    FeatureDisabled {
-        feature: &'static str,
-    },
+    FeatureDisabled { feature: &'static str },
     /// Unknown file endianness
     UnknownEndianness,
 }
@@ -59,7 +48,10 @@ impl fmt::Display for Error {
             Self::TypeMismatch => write!(f, "Type mismatch"),
             Self::WrongEndianness => write!(f, "Wrong endianness"),
             Self::MisalignedData { required, actual } => {
-                write!(f, "Misaligned data: required alignment {required}, got {actual}")
+                write!(
+                    f,
+                    "Misaligned data: required alignment {required}, got {actual}"
+                )
             }
             Self::BufferTooSmall { expected, got } => {
                 write!(f, "Buffer too small: expected {expected} bytes, got {got}")
@@ -123,25 +115,42 @@ impl PartialEq for Error {
             (Self::TypeMismatch, Self::TypeMismatch) => true,
             (Self::WrongEndianness, Self::WrongEndianness) => true,
             (
-                Self::MisalignedData { required: r1, actual: a1 },
-                Self::MisalignedData { required: r2, actual: a2 },
+                Self::MisalignedData {
+                    required: r1,
+                    actual: a1,
+                },
+                Self::MisalignedData {
+                    required: r2,
+                    actual: a2,
+                },
             ) => r1 == r2 && a1 == a2,
             (
-                Self::BufferTooSmall { expected: e1, got: g1 },
-                Self::BufferTooSmall { expected: e2, got: g2 },
+                Self::BufferTooSmall {
+                    expected: e1,
+                    got: g1,
+                },
+                Self::BufferTooSmall {
+                    expected: e2,
+                    got: g2,
+                },
             ) => e1 == e2 && g1 == g2,
             (
-                Self::IndexOutOfBounds { index: i1, length: l1 },
-                Self::IndexOutOfBounds { index: i2, length: l2 },
+                Self::IndexOutOfBounds {
+                    index: i1,
+                    length: l1,
+                },
+                Self::IndexOutOfBounds {
+                    index: i2,
+                    length: l2,
+                },
             ) => i1 == i2 && l1 == l2,
             #[cfg(feature = "std")]
             (Self::Io(_), Self::Io(_)) => true, // Consider all IO errors equal for comparison
             #[cfg(feature = "mmap")]
             (Self::Mmap, Self::Mmap) => true,
-            (
-                Self::FeatureDisabled { feature: f1 },
-                Self::FeatureDisabled { feature: f2 },
-            ) => f1 == f2,
+            (Self::FeatureDisabled { feature: f1 }, Self::FeatureDisabled { feature: f2 }) => {
+                f1 == f2
+            }
             (Self::UnknownEndianness, Self::UnknownEndianness) => true,
             _ => false,
         }

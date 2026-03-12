@@ -9,8 +9,8 @@
 
 extern crate alloc;
 
-use bytemuck::{Pod, Zeroable};
 use crate::core::Mode;
+use bytemuck::{Pod, Zeroable};
 
 /// Base trait for all voxel types
 ///
@@ -52,38 +52,58 @@ pub trait RealVoxel: ScalarVoxel {
 
 impl RealVoxel for f32 {
     #[inline]
-    fn from_f32(v: f32) -> Self { v }
+    fn from_f32(v: f32) -> Self {
+        v
+    }
     #[inline]
-    fn to_f32(self) -> f32 { self }
+    fn to_f32(self) -> f32 {
+        self
+    }
 }
 
 #[cfg(feature = "f16")]
 impl RealVoxel for half::f16 {
     #[inline]
-    fn from_f32(v: f32) -> Self { half::f16::from_f32(v) }
+    fn from_f32(v: f32) -> Self {
+        half::f16::from_f32(v)
+    }
     #[inline]
-    fn to_f32(self) -> f32 { self.to_f32() }
+    fn to_f32(self) -> f32 {
+        self.to_f32()
+    }
 }
 
 impl RealVoxel for i16 {
     #[inline]
-    fn from_f32(v: f32) -> Self { v as i16 }
+    fn from_f32(v: f32) -> Self {
+        v as i16
+    }
     #[inline]
-    fn to_f32(self) -> f32 { self as f32 }
+    fn to_f32(self) -> f32 {
+        self as f32
+    }
 }
 
 impl RealVoxel for i8 {
     #[inline]
-    fn from_f32(v: f32) -> Self { v as i8 }
+    fn from_f32(v: f32) -> Self {
+        v as i8
+    }
     #[inline]
-    fn to_f32(self) -> f32 { self as f32 }
+    fn to_f32(self) -> f32 {
+        self as f32
+    }
 }
 
 impl RealVoxel for u16 {
     #[inline]
-    fn from_f32(v: f32) -> Self { v as u16 }
+    fn from_f32(v: f32) -> Self {
+        v as u16
+    }
     #[inline]
-    fn to_f32(self) -> f32 { self as f32 }
+    fn to_f32(self) -> f32 {
+        self as f32
+    }
 }
 
 /// Marker for integer voxel types
@@ -100,35 +120,59 @@ pub trait IntegerVoxel: ScalarVoxel {
 
 impl IntegerVoxel for i8 {
     #[inline]
-    fn from_i64(v: i64) -> Self { v as i8 }
+    fn from_i64(v: i64) -> Self {
+        v as i8
+    }
     #[inline]
-    fn to_i64(self) -> i64 { self as i64 }
+    fn to_i64(self) -> i64 {
+        self as i64
+    }
     #[inline]
-    fn from_u64(v: u64) -> Self { v as i8 }
+    fn from_u64(v: u64) -> Self {
+        v as i8
+    }
     #[inline]
-    fn to_u64(self) -> u64 { self as u8 as u64 }
+    fn to_u64(self) -> u64 {
+        self as u8 as u64
+    }
 }
 
 impl IntegerVoxel for i16 {
     #[inline]
-    fn from_i64(v: i64) -> Self { v as i16 }
+    fn from_i64(v: i64) -> Self {
+        v as i16
+    }
     #[inline]
-    fn to_i64(self) -> i64 { self as i64 }
+    fn to_i64(self) -> i64 {
+        self as i64
+    }
     #[inline]
-    fn from_u64(v: u64) -> Self { v as i16 }
+    fn from_u64(v: u64) -> Self {
+        v as i16
+    }
     #[inline]
-    fn to_u64(self) -> u64 { self as u16 as u64 }
+    fn to_u64(self) -> u64 {
+        self as u16 as u64
+    }
 }
 
 impl IntegerVoxel for u16 {
     #[inline]
-    fn from_i64(v: i64) -> Self { v as u16 }
+    fn from_i64(v: i64) -> Self {
+        v as u16
+    }
     #[inline]
-    fn to_i64(self) -> i64 { self as i64 }
+    fn to_i64(self) -> i64 {
+        self as i64
+    }
     #[inline]
-    fn from_u64(v: u64) -> Self { v as u16 }
+    fn from_u64(v: u64) -> Self {
+        v as u16
+    }
     #[inline]
-    fn to_u64(self) -> u64 { self as u64 }
+    fn to_u64(self) -> u64 {
+        self as u64
+    }
 }
 
 // ============================================================================
@@ -488,7 +532,9 @@ impl Packed4Bit {
     pub fn from_values(first: u8, second: u8) -> Self {
         assert!(first <= 15, "First value must be 0-15");
         assert!(second <= 15, "Second value must be 0-15");
-        Self { byte: first | (second << 4) }
+        Self {
+            byte: first | (second << 4),
+        }
     }
 
     /// Create from two values with saturation
@@ -496,7 +542,9 @@ impl Packed4Bit {
     pub fn from_values_saturated(first: u8, second: u8) -> Self {
         let first = first.min(15);
         let second = second.min(15);
-        Self { byte: first | (second << 4) }
+        Self {
+            byte: first | (second << 4),
+        }
     }
 
     /// Get the first (lower) 4-bit value

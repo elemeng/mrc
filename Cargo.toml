@@ -22,21 +22,6 @@ thiserror = { version = "2.0.16", default-features = false }
 criterion = { version = "0.5", features = ["html_reports"] }
 tempfile = "3.8"
 
-[[bench]]
-name = "benchmark"
-path = "test/benchmark.rs"
-harness = false
-
-[[bench]]
-name = "performance"
-path = "test/performance.rs"
-harness = false
-
-[[bench]]
-name = "encode_decode_bench"
-path = "test/encode_decode_bench.rs"
-harness = false
-
 [features]
 default = ["std", "mmap", "file", "f16"]
 mmap = ["std", "dep:memmap2"]

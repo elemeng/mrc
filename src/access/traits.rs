@@ -1,7 +1,7 @@
 //! Unified voxel access traits
 //!
 //! This module provides traits for type-safe voxel access, implemented by
-//! both `DataBlock` and `Volume` to provide a consistent API.
+//! `Volume` to provide a consistent API across all dimensionalities.
 
 use crate::core::{Error, Mode};
 use crate::voxel::{Encoding, Voxel};
@@ -9,7 +9,7 @@ use crate::voxel::{Encoding, Voxel};
 /// Trait for read-only voxel access
 ///
 /// This trait provides a unified interface for reading voxel data from
-/// any source (DataBlock, Volume, etc.) with runtime type checking.
+/// any Volume with runtime type checking.
 pub trait VoxelAccess {
     /// Get the data mode
     fn mode(&self) -> Mode;
@@ -36,7 +36,7 @@ pub trait VoxelAccess {
 /// Trait for mutable voxel access
 ///
 /// This trait provides a unified interface for modifying voxel data,
-/// implemented by both `DataBlockMut` and mutable `Volume` instances.
+/// implemented by mutable Volume instances.
 pub trait VoxelAccessMut: VoxelAccess {
     /// Set a voxel value of type T at the given index
     ///

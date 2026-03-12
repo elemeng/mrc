@@ -5,10 +5,10 @@
 //! - Mode enumeration
 //! - Axis mapping
 
+pub mod axis;
 pub mod error;
 pub mod mode;
-pub mod axis;
 
-pub use error::{Error, check_bounds};
-pub use mode::{Mode, InvalidMode};
 pub use axis::AxisMap;
+pub use error::{Error, check_bounds};
+pub use mode::{InvalidMode, Mode};

@@ -15,4 +15,4 @@ pub use reader::MrcReader;
 pub use writer::{MrcWriter, MrcWriterBuilder};
 
 #[cfg(feature = "std")]
-pub use traits::{MrcSource, MrcSink};
+pub use traits::{MrcSink, MrcSource};
