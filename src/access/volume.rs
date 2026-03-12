@@ -310,7 +310,7 @@ impl<T: Voxel + Encoding, S: AsRef<[u8]>> Volume<T, S, 3> {
     /// # Errors
     /// - `Error::WrongEndianness` if file endianness doesn't match native
     /// - `Error::MisalignedData` if data is not properly aligned
-    /// - `Error::InvalidAxisMap` if axis mapping is non-standard
+    /// - `Error::NonContiguous` if axis mapping is non-standard
     ///
     /// # Example
     /// ```no_run
@@ -333,7 +333,7 @@ impl<T: Voxel + Encoding, S: AsRef<[u8]>> Volume<T, S, 3> {
 
         // Check for standard axis map (contiguous storage)
         if !self.header.axis_map.is_standard() {
-            return Err(Error::InvalidAxisMap);
+            return Err(Error::NonContiguous);
         }
 
         // Try to cast the byte slice

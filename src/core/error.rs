@@ -16,6 +16,8 @@ pub enum Error {
     InvalidDimensions,
     /// Invalid axis mapping
     InvalidAxisMap,
+    /// Data is not contiguous in memory
+    NonContiguous,
     /// Type mismatch for operation
     TypeMismatch,
     /// File endianness does not match native endianness
@@ -45,6 +47,7 @@ impl fmt::Display for Error {
             Self::InvalidMode => write!(f, "Invalid MRC mode"),
             Self::InvalidDimensions => write!(f, "Invalid dimensions"),
             Self::InvalidAxisMap => write!(f, "Invalid axis mapping"),
+            Self::NonContiguous => write!(f, "Data is not contiguous in memory"),
             Self::TypeMismatch => write!(f, "Type mismatch"),
             Self::WrongEndianness => write!(f, "Wrong endianness"),
             Self::MisalignedData { required, actual } => {
@@ -81,6 +84,7 @@ impl Clone for Error {
             Self::InvalidMode => Self::InvalidMode,
             Self::InvalidDimensions => Self::InvalidDimensions,
             Self::InvalidAxisMap => Self::InvalidAxisMap,
+            Self::NonContiguous => Self::NonContiguous,
             Self::TypeMismatch => Self::TypeMismatch,
             Self::WrongEndianness => Self::WrongEndianness,
             Self::MisalignedData { required, actual } => Self::MisalignedData {
@@ -112,6 +116,7 @@ impl PartialEq for Error {
             (Self::InvalidMode, Self::InvalidMode) => true,
             (Self::InvalidDimensions, Self::InvalidDimensions) => true,
             (Self::InvalidAxisMap, Self::InvalidAxisMap) => true,
+            (Self::NonContiguous, Self::NonContiguous) => true,
             (Self::TypeMismatch, Self::TypeMismatch) => true,
             (Self::WrongEndianness, Self::WrongEndianness) => true,
             (
