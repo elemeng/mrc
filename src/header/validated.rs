@@ -327,7 +327,7 @@ impl TryFrom<RawHeader> for Header {
         
         // Get nlabl with validation
         let nlabl = convert_i32_from_file_endian(raw.nlabl, file_endian);
-        if nlabl < 0 || nlabl > 10 {
+        if !(0..=10).contains(&nlabl) {
             return Err(Error::InvalidHeader);
         }
         

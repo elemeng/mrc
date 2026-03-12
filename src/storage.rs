@@ -5,9 +5,6 @@ use crate::Error;
 #[cfg(feature = "std")]
 extern crate alloc;
 
-#[cfg(feature = "std")]
-use alloc::string::ToString;
-
 /// Storage backend trait for read-only volume data
 ///
 /// This trait abstracts over different storage mechanisms:
@@ -126,7 +123,7 @@ impl<T: Copy + bytemuck::Pod> MmapStorage<T> {
     pub fn open(path: impl AsRef<std::path::Path>) -> Result<Self, Error> {
         use std::fs::File;
         
-        let file = File::open(path).map_err(|e| Error::Io(e.to_string()))?;
+        let file = File::open(path).map_err(Error::Io)?;
         let mmap = unsafe { memmap2::Mmap::map(&file) }.map_err(|_| Error::Mmap)?;
         Self::new(mmap)
     }
@@ -154,7 +151,6 @@ pub use mmap_storage_mut::MmapStorageMut;
 #[cfg(feature = "mmap")]
 mod mmap_storage_mut {
     use crate::{Error, Storage, StorageMut};
-    use alloc::string::ToString;
     
     /// Mutable memory-mapped file storage (requires mmap feature)
     pub struct MmapStorageMut<T> {
@@ -193,7 +189,7 @@ mod mmap_storage_mut {
                 .read(true)
                 .write(true)
                 .open(path)
-                .map_err(|e| Error::Io(e.to_string()))?;
+                .map_err(Error::Io)?;
             let mmap = unsafe { memmap2::MmapMut::map_mut(&file) }
                 .map_err(|_| Error::Mmap)?;
             Self::new(mmap)

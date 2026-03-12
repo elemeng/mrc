@@ -22,21 +22,6 @@ thiserror = { version = "2.0.16", default-features = false }
 criterion = { version = "0.5", features = ["html_reports"] }
 tempfile = "3.8"
 
-
-[[example]]
-name = "test_real_mrc"
-
-[[example]]
-name = "test_all_features"
-
-[[example]]
-name = "validate"
-path = "examples/validate.rs"
-
-[[example]]
-name = "generate_mrc_files"
-path = "examples/generate_mrc_files.rs"
-
 [[bench]]
 name = "benchmark"
 path = "test/benchmark.rs"

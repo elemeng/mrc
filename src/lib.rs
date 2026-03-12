@@ -15,21 +15,25 @@
 //!
 //! ## Quick Start
 //!
-//! ```ignore
-//! use mrc::{MrcReader, Mode};
+//! ```no_run
+//! use mrc::{MrcReader, Mode, VolumeData};
 //!
-//! // Read an MRC file with compile-time type checking
-//! let mut reader = MrcReader::open("data.mrc")?;
-//! let volume = reader.read_volume::<f32>()?;
+//! fn main() -> Result<(), Box<dyn std::error::Error>> {
+//!     // Read an MRC file with compile-time type checking
+//!     let mut reader = MrcReader::open("data.mrc")?;
+//!     let volume = reader.read_volume::<f32>()?;
 //!
-//! // Access voxel data
-//! let value = volume.get_at(10, 20, 5);
+//!     // Access voxel data
+//!     let value = volume.get_at(10, 20, 5);
 //!
-//! // Or use dynamic dispatch for unknown modes
-//! let data = reader.read()?;
-//! match data {
-//!     VolumeData::F32(vol) => { /* handle f32 */ },
-//!     _ => { /* handle other types */ },
+//!     // Or use dynamic dispatch for unknown modes
+//!     let mut reader = MrcReader::open("data.mrc")?;
+//!     let data = reader.read()?;
+//!     match data {
+//!         VolumeData::F32(vol) => { /* handle f32 */ },
+//!         _ => { /* handle other types */ },
+//!     }
+//!     Ok(())
 //! }
 //! ```
 

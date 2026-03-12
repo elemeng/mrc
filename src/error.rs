@@ -6,7 +6,7 @@ use core::fmt;
 extern crate alloc;
 
 /// Error type for MRC operations
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug)]
 pub enum Error {
     /// Invalid MRC header
     InvalidHeader,
@@ -37,7 +37,7 @@ pub enum Error {
     },
     /// IO error
     #[cfg(feature = "std")]
-    Io(alloc::string::String),
+    Io(std::io::Error),
     /// Memory mapping error
     #[cfg(feature = "mmap")]
     Mmap,
@@ -68,7 +68,7 @@ impl fmt::Display for Error {
                 write!(f, "Index {index} out of bounds (length {length})")
             }
             #[cfg(feature = "std")]
-            Self::Io(msg) => write!(f, "IO error: {msg}"),
+            Self::Io(err) => write!(f, "IO error: {err}"),
             #[cfg(feature = "mmap")]
             Self::Mmap => write!(f, "Memory mapping error"),
             Self::FeatureDisabled { feature } => {

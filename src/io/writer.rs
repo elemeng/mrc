@@ -1,7 +1,6 @@
 //! MRC file writer
 
 use crate::{Error, Header, RawHeader, Mode};
-use alloc::string::ToString;
 use alloc::vec::Vec;
 
 #[cfg(feature = "std")]
@@ -80,21 +79,23 @@ impl MrcWriterBuilder {
     
     /// Build the writer and write to file
     pub fn write(self, path: impl AsRef<std::path::Path>) -> Result<(), Error> {
-        let mut header = Header::default();
-        header.nx = self.shape[0];
-        header.ny = self.shape[1];
-        header.nz = self.shape[2];
-        header.mode = self.mode;
-        header.xlen = self.voxel_size[0] * self.shape[0] as f32;
-        header.ylen = self.voxel_size[1] * self.shape[1] as f32;
-        header.zlen = self.voxel_size[2] * self.shape[2] as f32;
-        header.alpha = self.cell_angles[0];
-        header.beta = self.cell_angles[1];
-        header.gamma = self.cell_angles[2];
-        header.xorigin = self.origin[0];
-        header.yorigin = self.origin[1];
-        header.zorigin = self.origin[2];
-        header.nsymbt = self.ext_header.len();
+        let header = Header {
+            nx: self.shape[0],
+            ny: self.shape[1],
+            nz: self.shape[2],
+            mode: self.mode,
+            xlen: self.voxel_size[0] * self.shape[0] as f32,
+            ylen: self.voxel_size[1] * self.shape[1] as f32,
+            zlen: self.voxel_size[2] * self.shape[2] as f32,
+            alpha: self.cell_angles[0],
+            beta: self.cell_angles[1],
+            gamma: self.cell_angles[2],
+            xorigin: self.origin[0],
+            yorigin: self.origin[1],
+            zorigin: self.origin[2],
+            nsymbt: self.ext_header.len(),
+            ..Default::default()
+        };
         
         let mut writer = if self.ext_header.is_empty() {
             MrcWriter::create(path, header)?
@@ -140,16 +141,16 @@ impl MrcWriter {
         header: Header,
         ext_header: &[u8],
     ) -> Result<Self, Error> {
-        let mut file = File::create(path).map_err(|e| Error::Io(e.to_string()))?;
+        let mut file = File::create(path).map_err(Error::Io)?;
         
         // Write header
         let raw: RawHeader = header.clone().into();
         let header_bytes = bytemuck::bytes_of(&raw);
-        file.write_all(header_bytes).map_err(|e| Error::Io(e.to_string()))?;
+        file.write_all(header_bytes).map_err(Error::Io)?;
         
         // Write extended header
         if !ext_header.is_empty() {
-            file.write_all(ext_header).map_err(|e| Error::Io(e.to_string()))?;
+            file.write_all(ext_header).map_err(Error::Io)?;
         }
         
         let data_offset = header.data_offset() as u64;
@@ -187,8 +188,8 @@ impl MrcWriter {
         }
         
         self.file.seek(SeekFrom::Start(self.data_offset))
-            .map_err(|e| Error::Io(e.to_string()))?;
-        self.file.write_all(data).map_err(|e| Error::Io(e.to_string()))?;
+            .map_err(Error::Io)?;
+        self.file.write_all(data).map_err(Error::Io)?;
         
         Ok(())
     }
@@ -198,8 +199,8 @@ impl MrcWriter {
         let raw: RawHeader = self.header.clone().into();
         let header_bytes = bytemuck::bytes_of(&raw);
         self.file.seek(SeekFrom::Start(0))
-            .map_err(|e| Error::Io(e.to_string()))?;
-        self.file.write_all(header_bytes).map_err(|e| Error::Io(e.to_string()))?;
+            .map_err(Error::Io)?;
+        self.file.write_all(header_bytes).map_err(Error::Io)?;
         Ok(())
     }
 }

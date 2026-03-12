@@ -168,26 +168,15 @@ impl RawHeader {
     
     /// Calculate total data size in bytes
     pub fn data_size(&self) -> usize {
-        let n = (self.nx as usize)
-            .saturating_mul(self.ny as usize)
-            .saturating_mul(self.nz as usize);
+        let nx = self.nx.max(0) as usize;
+        let ny = self.ny.max(0) as usize;
+        let nz = self.nz.max(0) as usize;
+        let voxel_count = nx * ny * nz;
         
-        if n == 0 {
-            return 0;
-        }
-        
-        let bytes_per_voxel = match self.mode {
-            0 | 101 => 1,
-            1 | 3 | 6 | 12 => 2,
-            2 => 4,
-            4 => 8,
-            _ => 4,
-        };
-        
-        if self.mode == 101 {
-            n.div_ceil(2)
-        } else {
-            n.saturating_mul(bytes_per_voxel)
+        match Mode::from_i32(self.mode) {
+            Some(Mode::Packed4Bit) => voxel_count.div_ceil(2),
+            Some(mode) => voxel_count * mode.byte_size(),
+            None => voxel_count * 4, // Default to 4 bytes for unknown modes
         }
     }
     

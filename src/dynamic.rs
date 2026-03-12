@@ -64,8 +64,12 @@ impl VolumeData {
                 Ok(Self::F16(vol))
             }
             Mode::Packed4Bit => {
-                // Packed4Bit requires special handling - decode to u8
-                Err(Error::InvalidMode)
+                // Packed4Bit (mode 101) packs two 4-bit values per byte.
+                // Full support requires special handling for packing/unpacking.
+                // Currently unsupported - consider using mode 0 (Int8) instead.
+                Err(Error::FeatureDisabled {
+                    feature: "Packed4Bit mode (mode 101)",
+                })
             }
         }
     }

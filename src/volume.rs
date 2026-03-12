@@ -223,12 +223,14 @@ impl<T: Voxel + Encoding, S: AsRef<[u8]>> Volume<T, S, 3> {
     /// - `Error::InvalidAxisMap` if axis mapping is non-standard
     ///
     /// # Example
-    /// ```ignore
-    /// let volume = reader.read_volume::<f32>()?;
+    /// ```no_run
+    /// # fn example(volume: &mrc::Volume<f32, Vec<u8>>) -> Result<(), mrc::Error> {
     /// if let Ok(slice) = volume.as_slice() {
     ///     // Zero-copy access - slice[i] is valid
     ///     let sum: f32 = slice.iter().sum();
     /// }
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn as_slice(&self) -> Result<&[T], Error> 
     where T: bytemuck::Pod
@@ -412,13 +414,13 @@ fn calculate_strides(axis_map: &AxisMap, shape: [usize; 3]) -> [usize; 3] {
     let mut strides = [0usize; 3];
     
     // Column varies fastest - assign its stride to the logical dimension stored as column
-    strides[(axis_map.column - 1) as usize] = storage_strides[0];
+    strides[axis_map.column - 1] = storage_strides[0];
     
     // Row varies medium
-    strides[(axis_map.row - 1) as usize] = storage_strides[1];
+    strides[axis_map.row - 1] = storage_strides[1];
     
     // Section varies slowest
-    strides[(axis_map.section - 1) as usize] = storage_strides[2];
+    strides[axis_map.section - 1] = storage_strides[2];
     
     strides
 }
