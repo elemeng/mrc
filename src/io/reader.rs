@@ -1,6 +1,6 @@
 //! MRC file reader
 
-use crate::{Error, Header};
+use crate::{Error, Header, Mode, Volume, Encoding, Voxel, VolumeData, ExtendedHeader};
 use alloc::string::ToString;
 use alloc::vec::Vec;
 
@@ -61,6 +61,21 @@ impl MrcReader {
         &self.ext_header
     }
     
+    /// Get parsed extended header
+    pub fn ext_header_parsed(&self) -> ExtendedHeader {
+        ExtendedHeader::from_bytes(&self.header.exttyp, self.ext_header.clone())
+    }
+    
+    /// Get the mode
+    pub fn mode(&self) -> Mode {
+        self.header.mode
+    }
+    
+    /// Get dimensions
+    pub fn dimensions(&self) -> (usize, usize, usize) {
+        self.header.dimensions()
+    }
+    
     /// Read all data into a vector
     pub fn read_data(&mut self) -> Result<Vec<u8>, Error> {
         let mut data = alloc::vec![0u8; self.data_size];
@@ -69,5 +84,30 @@ impl MrcReader {
         self.file.read_exact(&mut data)
             .map_err(|e| Error::Io(e.to_string()))?;
         Ok(data)
+    }
+    
+    /// Read volume with compile-time type checking
+    ///
+    /// # Type Parameters
+    /// - `T`: Voxel type (must implement Voxel + Encoding)
+    ///
+    /// # Errors
+    /// Returns `Error::TypeMismatch` if the file mode doesn't match T::MODE
+    pub fn read_volume<T: Voxel + Encoding>(&mut self) -> Result<Volume<T, Vec<u8>>, Error> {
+        // Verify mode matches
+        if self.header.mode != T::MODE {
+            return Err(Error::TypeMismatch);
+        }
+        
+        let data = self.read_data()?;
+        Volume::new(self.header.clone(), data)
+    }
+    
+    /// Read volume with dynamic type dispatch
+    ///
+    /// Returns a `VolumeData` enum containing the appropriate typed volume.
+    pub fn read(&mut self) -> Result<VolumeData, Error> {
+        let data = self.read_data()?;
+        VolumeData::from_bytes(self.header.clone(), data)
     }
 }

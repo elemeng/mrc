@@ -18,13 +18,19 @@
 //! ```ignore
 //! use mrc::{MrcReader, Mode};
 //!
-//! // Read an MRC file
-//! let reader = MrcReader::open("data.mrc")?;
-//! let header = reader.header();
+//! // Read an MRC file with compile-time type checking
+//! let mut reader = MrcReader::open("data.mrc")?;
 //! let volume = reader.read_volume::<f32>()?;
 //!
 //! // Access voxel data
-//! let value = volume.get(x, y, z);
+//! let value = volume.get_at(10, 20, 5);
+//!
+//! // Or use dynamic dispatch for unknown modes
+//! let data = reader.read()?;
+//! match data {
+//!     VolumeData::F32(vol) => { /* handle f32 */ },
+//!     _ => { /* handle other types */ },
+//! }
 //! ```
 
 #![no_std]
@@ -49,6 +55,9 @@ pub mod voxel;
 // Header module
 pub mod header;
 
+// Extended header support
+pub mod extended;
+
 // Re-exports
 pub use axis::AxisMap;
 pub use encoding::Encoding;
@@ -67,6 +76,27 @@ pub mod storage;
 
 #[cfg(feature = "std")]
 pub mod volume;
+
+#[cfg(feature = "std")]
+pub mod dynamic;
+
+#[cfg(feature = "std")]
+pub use dynamic::VolumeData;
+
+#[cfg(feature = "std")]
+pub use extended::ExtendedHeader;
+
+#[cfg(feature = "std")]
+pub use io::{MrcReader, MrcWriter};
+
+#[cfg(feature = "std")]
+pub use storage::{Storage, VecStorage};
+
+#[cfg(all(feature = "std", feature = "mmap"))]
+pub use storage::MmapStorage;
+
+#[cfg(feature = "std")]
+pub use volume::Volume;
 
 #[cfg(test)]
 mod tests {
@@ -103,5 +133,11 @@ mod tests {
     fn test_header_default() {
         let header = Header::default();
         assert_eq!(header.dimensions(), (1, 1, 1));
+    }
+    
+    #[test]
+    fn test_ext_type() {
+        assert_eq!(extended::ExtType::from_bytes(b"CCP4"), extended::ExtType::Ccp4);
+        assert_eq!(extended::ExtType::from_bytes(b"SERI"), extended::ExtType::Seri);
     }
 }
