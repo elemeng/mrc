@@ -78,6 +78,8 @@ pub struct Header {
     // File Format
     /// File endianness
     pub file_endian: FileEndian,
+    /// Whether endianness was detected from MACHST (false = defaulted to little)
+    pub file_endian_detected: bool,
     
     // Origin
     /// Origin X
@@ -227,9 +229,8 @@ impl TryFrom<RawHeader> for Header {
     type Error = Error;
     
     fn try_from(raw: RawHeader) -> Result<Self, Self::Error> {
-        // Detect file endianness from MACHST
-        let file_endian = FileEndian::from_machst(&raw.machst)
-            .unwrap_or(FileEndian::native());
+        // Detect file endianness from MACHST, default to little-endian if unknown
+        let (file_endian, detected) = FileEndian::from_machst_or_little(&raw.machst);
         
         // Helper functions for endianness conversion
         let decode_i32 = |v: i32| -> i32 {
@@ -311,6 +312,7 @@ impl TryFrom<RawHeader> for Header {
             exttyp: raw.exttyp(),
             nversion,
             file_endian,
+            file_endian_detected: detected,
             xorigin,
             yorigin,
             zorigin,
@@ -410,6 +412,7 @@ impl Default for Header {
             exttyp: [0; 4],
             nversion: 20140,
             file_endian: FileEndian::native(),
+            file_endian_detected: true,
             xorigin: 0.0,
             yorigin: 0.0,
             zorigin: 0.0,

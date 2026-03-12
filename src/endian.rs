@@ -50,10 +50,23 @@ impl FileEndian {
         }
     }
     
+    /// Detect endianness from MACHST, defaulting to little-endian with warning
+    ///
+    /// Use this when you want a reasonable default for unrecognized values.
+    /// Returns `(endianness, true)` if detected, `(Little, false)` if defaulted.
+    #[inline]
+    pub fn from_machst_or_little(machst: &[u8; 4]) -> (Self, bool) {
+        match Self::from_machst(machst) {
+            Some(endian) => (endian, true),
+            None => (Self::Little, false),
+        }
+    }
+    
     /// Detect endianness from MACHST, returning native endianness as fallback
     ///
     /// Use this when you want a reasonable default for unrecognized values.
     #[inline]
+    #[deprecated(since = "0.2.0", note = "Use from_machst_or_little instead for explicit little-endian default")]
     pub fn from_machst_or_native(machst: &[u8; 4]) -> Self {
         Self::from_machst(machst).unwrap_or_else(Self::native)
     }

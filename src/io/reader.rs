@@ -32,6 +32,15 @@ impl MrcReader {
         let raw_header: crate::RawHeader = *bytemuck::from_bytes(&header_bytes);
         let header = Header::try_from(raw_header)?;
         
+        // Warn if endianness was not detected (defaulted to little-endian)
+        if !header.file_endian_detected {
+            use std::io::Write;
+            let _ = writeln!(
+                std::io::stderr(),
+                "Warning: MRC file endianness could not be detected from MACHST field, assuming little-endian"
+            );
+        }
+        
         // Read extended header
         let ext_header_size = header.nsymbt;
         let mut ext_header = alloc::vec![0u8; ext_header_size];
