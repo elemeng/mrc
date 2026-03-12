@@ -64,29 +64,18 @@ where
     T: Into<f64>,
     I: Iterator<Item = T>,
 {
-    let mut min = f64::INFINITY;
-    let mut max = f64::NEG_INFINITY;
-    let mut sum = 0.0;
-    let mut sum_sq = 0.0;
-    let mut count = 0usize;
-
-    for value in iter {
-        let v: f64 = value.into();
-        min = min.min(v);
-        max = max.max(v);
-        sum += v;
-        sum_sq += v * v;
-        count += 1;
-    }
+    // Use fold to compute all statistics in a single pass
+    let (count, min, max, sum, sum_sq) = iter.fold(
+        (0usize, f64::INFINITY, f64::NEG_INFINITY, 0.0f64, 0.0f64),
+        |(count, min, max, sum, sum_sq), value| {
+            let v: f64 = value.into();
+            (count + 1, min.min(v), max.max(v), sum + v, sum_sq + v * v)
+        },
+    );
 
     let (mean, rms) = calculate_mean_and_rms(count, sum, sum_sq);
 
-    Statistics {
-        min,
-        max,
-        mean,
-        rms,
-    }
+    Statistics { min, max, mean, rms }
 }
 
 /// Compute statistics from a slice
@@ -148,9 +137,7 @@ impl RunningStats {
         T: Into<f64>,
         I: Iterator<Item = T>,
     {
-        for value in iter {
-            self.add(value);
-        }
+        iter.for_each(|v| self.add(v));
     }
 
     /// Get the current count
