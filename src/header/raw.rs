@@ -194,18 +194,10 @@ impl RawHeader {
 
     /// Check if MAP field is valid
     pub fn has_valid_map(&self) -> bool {
-        // Standard MRC2014 format
-        if &self.map == b"MAP " {
-            return true;
-        }
-        // Accept legacy variants: "MAP\0" or "MAPI"
-        if &self.map[..3] == b"MAP"
-            && (self.map[3] == b' ' || self.map[3] == 0 || self.map[3] == b'I')
-        {
-            return true;
-        }
-        // Accept all zeros (uninitialized, common in some generated files)
-        self.map == [0; 4]
+        // Check for valid MAP patterns: "MAP ", "MAP\0", "MAPI", or all zeros
+        &self.map == b"MAP "
+            || (&self.map[..3] == b"MAP" && [b' ', 0, b'I'].contains(&self.map[3]))
+            || self.map == [0; 4]
     }
 
     /// Check if mode is valid

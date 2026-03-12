@@ -241,21 +241,9 @@ impl Header {
         let nx = self.nx();
         let ny = self.ny();
         let nz = self.nz();
-        let dx = if nx > 0 {
-            self.raw.xlen / nx as f32
-        } else {
-            0.0
-        };
-        let dy = if ny > 0 {
-            self.raw.ylen / ny as f32
-        } else {
-            0.0
-        };
-        let dz = if nz > 0 {
-            self.raw.zlen / nz as f32
-        } else {
-            0.0
-        };
+        let dx = if nx > 0 { self.raw.xlen / nx as f32 } else { 0.0 };
+        let dy = if ny > 0 { self.raw.ylen / ny as f32 } else { 0.0 };
+        let dz = if nz > 0 { self.raw.zlen / nz as f32 } else { 0.0 };
         (dx, dy, dz)
     }
 
