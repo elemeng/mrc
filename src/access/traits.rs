@@ -36,6 +36,16 @@ pub trait VoxelAccess {
     /// Returns `Error::TypeMismatch` if the requested type doesn't match the data mode
     /// Returns `Error::IndexOutOfBounds` if index is out of range
     fn get<T: Voxel + Encoding>(&self, index: usize) -> Result<T, Error>;
+
+    /// Try to get a voxel at index, returning None if out of bounds
+    fn get_opt<T: Voxel + Encoding>(&self, index: usize) -> Option<T> {
+        (index < self.len()).then(|| self.get(index).ok()).flatten()
+    }
+
+    /// Collect all voxels of type T into a vector
+    fn collect_vec<T: Voxel + Encoding>(&self) -> Result<Vec<T>, Error> {
+        (0..self.len()).map(|i| self.get(i)).collect()
+    }
 }
 
 /// Trait for mutable voxel access
@@ -52,6 +62,19 @@ pub trait VoxelAccessMut: VoxelAccess {
     /// Returns `Error::TypeMismatch` if the value type doesn't match the data mode
     /// Returns `Error::IndexOutOfBounds` if index is out of range
     fn set<T: Voxel + Encoding>(&mut self, index: usize, value: T) -> Result<(), Error>;
+
+    /// Try to set a voxel at index, returning false if out of bounds
+    fn set_opt<T: Voxel + Encoding>(&mut self, index: usize, value: T) -> bool {
+        index < self.len() && self.set(index, value).is_ok()
+    }
+
+    /// Fill all voxels with the same value
+    fn fill<T: Voxel + Encoding + Copy>(&mut self, value: T) -> Result<(), Error> {
+        for i in 0..self.len() {
+            self.set(i, value)?;
+        }
+        Ok(())
+    }
 }
 
 /// Core Volume trait - zero-cost abstraction over storage backends
@@ -89,14 +112,27 @@ pub trait VolumeAccess: VoxelAccess {
     /// Caller must ensure index is within bounds
     unsafe fn get_unchecked(&self, index: usize) -> Self::Voxel;
 
+    /// Check if coordinates are in bounds
+    #[inline]
+    fn in_bounds(&self, x: usize, y: usize, z: usize) -> bool {
+        let (nx, ny, nz) = self.dimensions();
+        x < nx && y < ny && z < nz
+    }
+
+    /// Compute linear index from 3D coordinates
+    #[inline]
+    fn linear_index(&self, x: usize, y: usize, z: usize) -> usize {
+        let strides = self.strides();
+        x * strides.0 + y * strides.1 + z * strides.2
+    }
+
     /// Get a voxel at 3D coordinates
     ///
     /// # Panics
     /// Panics if coordinates are out of bounds
     #[inline]
     fn get_at(&self, x: usize, y: usize, z: usize) -> Self::Voxel {
-        let strides = self.strides();
-        let index = x * strides.0 + y * strides.1 + z * strides.2;
+        let index = self.linear_index(x, y, z);
         // SAFETY: Caller assumes proper bounds
         unsafe { self.get_unchecked(index) }
     }
@@ -104,11 +140,7 @@ pub trait VolumeAccess: VoxelAccess {
     /// Get a voxel at 3D coordinates, returning None if out of bounds
     #[inline]
     fn get_at_checked(&self, x: usize, y: usize, z: usize) -> Option<Self::Voxel> {
-        let (nx, ny, nz) = self.dimensions();
-        if x >= nx || y >= ny || z >= nz {
-            return None;
-        }
-        Some(self.get_at(x, y, z))
+        self.in_bounds(x, y, z).then(|| self.get_at(x, y, z))
     }
 
     /// Iterate over all voxels in storage order
@@ -123,16 +155,53 @@ pub trait VolumeAccess: VoxelAccess {
         }
     }
 
+    /// Iterate over coordinates in logical order
+    #[inline]
+    fn iter_coords(&self) -> impl Iterator<Item = (usize, usize, usize)> {
+        let (nx, ny, nz) = self.dimensions();
+        (0..nz).flat_map(move |z| {
+            (0..ny).flat_map(move |y| (0..nx).map(move |x| (x, y, z)))
+        })
+    }
+
+    /// Iterate over (coordinate, voxel) pairs
+    #[inline]
+    fn iter_with_coords(&self) -> impl Iterator<Item = ((usize, usize, usize), Self::Voxel)>
+    where
+        Self: Sized,
+    {
+        self.iter_coords()
+            .map(move |coords| (coords, self.get_at(coords.0, coords.1, coords.2)))
+    }
+
     /// Map voxels to a new vector
     #[inline]
-    fn map<F, U>(&self, mut f: F) -> Vec<U>
+    fn map<F, U>(&self, f: F) -> Vec<U>
     where
         F: FnMut(Self::Voxel) -> U,
         Self: Sized,
     {
-        (0..self.len())
-            .map(|i| unsafe { f(self.get_unchecked(i)) })
-            .collect()
+        self.iter().map(f).collect()
+    }
+
+    /// Filter voxels and collect matching ones
+    #[inline]
+    fn filter<F>(&self, predicate: F) -> Vec<Self::Voxel>
+    where
+        F: FnMut(&Self::Voxel) -> bool,
+        Self: Sized,
+    {
+        self.iter().filter(predicate).collect()
+    }
+
+    /// Fold over all voxels
+    #[inline]
+    fn fold<B, F>(&self, init: B, f: F) -> B
+    where
+        F: FnMut(B, Self::Voxel) -> B,
+        Self: Sized,
+    {
+        self.iter().fold(init, f)
     }
 
     /// Compute statistics for this volume
@@ -159,8 +228,7 @@ pub trait VolumeAccessMut: VolumeAccess + VoxelAccessMut {
     /// Panics if coordinates are out of bounds
     #[inline]
     fn set_at(&mut self, x: usize, y: usize, z: usize, value: Self::Voxel) {
-        let strides = self.strides();
-        let index = x * strides.0 + y * strides.1 + z * strides.2;
+        let index = self.linear_index(x, y, z);
         unsafe {
             self.set_unchecked(index, value);
         }
@@ -175,15 +243,45 @@ pub trait VolumeAccessMut: VolumeAccess + VoxelAccessMut {
         z: usize,
         value: Self::Voxel,
     ) -> Result<(), Error> {
-        let (nx, ny, nz) = self.dimensions();
-        if x >= nx || y >= ny || z >= nz {
+        if !self.in_bounds(x, y, z) {
             return Err(Error::IndexOutOfBounds {
-                index: x + y * nx + z * nx * ny,
+                index: self.linear_index(x, y, z),
                 length: self.len(),
             });
         }
         self.set_at(x, y, z, value);
         Ok(())
+    }
+
+    /// Set a voxel at 3D coordinates, returning false if out of bounds
+    #[inline]
+    fn set_at_opt(&mut self, x: usize, y: usize, z: usize, value: Self::Voxel) -> bool {
+        self.in_bounds(x, y, z).then(|| self.set_at(x, y, z, value)).is_some()
+    }
+
+    /// Apply a function to each voxel in-place
+    fn for_each<F>(&mut self, mut f: F)
+    where
+        F: FnMut(Self::Voxel) -> Self::Voxel,
+    {
+        for i in 0..self.len() {
+            unsafe {
+                let old = self.get_unchecked(i);
+                self.set_unchecked(i, f(old));
+            }
+        }
+    }
+
+    /// Fill all voxels with the same value
+    fn fill_volume(&mut self, value: Self::Voxel)
+    where
+        Self::Voxel: Copy,
+    {
+        for i in 0..self.len() {
+            unsafe {
+                self.set_unchecked(i, value);
+            }
+        }
     }
 }
 

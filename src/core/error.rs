@@ -76,6 +76,33 @@ impl fmt::Display for Error {
 #[cfg(feature = "std")]
 impl std::error::Error for Error {}
 
+// Macro for simple Copy-able error variants (no fields or Copy fields)
+macro_rules! match_simple_variants {
+    ($self:expr, $other:expr, $variant:ident) => {
+        match ($self, $other) {
+            (Self::$variant, Self::$variant) => true,
+            _ => false,
+        }
+    };
+}
+
+// Macro for error variants with named fields - uses helper to chain comparisons
+macro_rules! match_field_variants {
+    ($self:expr, $other:expr, $variant:ident, { $field1:ident }) => {
+        match ($self, $other) {
+            (Self::$variant { $field1: a }, Self::$variant { $field1: b }) => a == b,
+            _ => false,
+        }
+    };
+    ($self:expr, $other:expr, $variant:ident, { $field1:ident, $field2:ident }) => {
+        match ($self, $other) {
+            (Self::$variant { $field1: a1, $field2: a2 }, 
+             Self::$variant { $field1: b1, $field2: b2 }) => a1 == b1 && a2 == b2,
+            _ => false,
+        }
+    };
+}
+
 impl Clone for Error {
     fn clone(&self) -> Self {
         match self {
@@ -98,44 +125,39 @@ impl Clone for Error {
                 index: *index,
                 length: *length,
             },
+            Self::FeatureDisabled { feature } => Self::FeatureDisabled { feature },
             #[cfg(feature = "std")]
             Self::Io(_) => Self::Io(alloc::boxed::Box::new(std::io::Error::other("IO error (cloned)"))),
             #[cfg(feature = "mmap")]
             Self::Mmap => Self::Mmap,
-            Self::FeatureDisabled { feature } => Self::FeatureDisabled { feature },
         }
     }
 }
 
 impl PartialEq for Error {
     fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (Self::InvalidHeader, Self::InvalidHeader) => true,
-            (Self::InvalidMode, Self::InvalidMode) => true,
-            (Self::InvalidDimensions, Self::InvalidDimensions) => true,
-            (Self::InvalidAxisMap, Self::InvalidAxisMap) => true,
-            (Self::NonContiguous, Self::NonContiguous) => true,
-            (Self::TypeMismatch, Self::TypeMismatch) => true,
-            (Self::EndiannessMismatch { detected: d1 }, Self::EndiannessMismatch { detected: d2 }) => d1 == d2,
-            (
-                Self::MisalignedData { required: r1, actual: a1 },
-                Self::MisalignedData { required: r2, actual: a2 },
-            ) => r1 == r2 && a1 == a2,
-            (
-                Self::BufferTooSmall { expected: e1, got: g1 },
-                Self::BufferTooSmall { expected: e2, got: g2 },
-            ) => e1 == e2 && g1 == g2,
-            (
-                Self::IndexOutOfBounds { index: i1, length: l1 },
-                Self::IndexOutOfBounds { index: i2, length: l2 },
-            ) => i1 == i2 && l1 == l2,
-            #[cfg(feature = "std")]
-            (Self::Io(_), Self::Io(_)) => true, // Consider all IO errors equal for comparison
-            #[cfg(feature = "mmap")]
-            (Self::Mmap, Self::Mmap) => true,
-            (Self::FeatureDisabled { feature: f1 }, Self::FeatureDisabled { feature: f2 }) => f1 == f2,
-            _ => false,
-        }
+        match_simple_variants!(self, other, InvalidHeader)
+            || match_simple_variants!(self, other, InvalidMode)
+            || match_simple_variants!(self, other, InvalidDimensions)
+            || match_simple_variants!(self, other, InvalidAxisMap)
+            || match_simple_variants!(self, other, NonContiguous)
+            || match_simple_variants!(self, other, TypeMismatch)
+            || match_field_variants!(self, other, EndiannessMismatch, { detected })
+            || match_field_variants!(self, other, MisalignedData, { required, actual })
+            || match_field_variants!(self, other, BufferTooSmall, { expected, got })
+            || match_field_variants!(self, other, IndexOutOfBounds, { index, length })
+            || match_field_variants!(self, other, FeatureDisabled, { feature })
+            || {
+                #[cfg(feature = "std")]
+                if let (Self::Io(_), Self::Io(_)) = (self, other) {
+                    return true;
+                }
+                #[cfg(feature = "mmap")]
+                if let (Self::Mmap, Self::Mmap) = (self, other) {
+                    return true;
+                }
+                false
+            }
     }
 }
 

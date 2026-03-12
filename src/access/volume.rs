@@ -497,61 +497,48 @@ impl<T: Voxel + Encoding, S: AsRef<[u8]>> Volume<T, S, 3> {
     where
         T: Default + Clone,
     {
-        // Validate bounds
-        if x_start >= self.dimensions[0] || x_end > self.dimensions[0] || x_start >= x_end {
-            return Err(Error::IndexOutOfBounds {
-                index: x_start,
-                length: self.dimensions[0],
-            });
-        }
-        if y_start >= self.dimensions[1] || y_end > self.dimensions[1] || y_start >= y_end {
-            return Err(Error::IndexOutOfBounds {
-                index: y_start,
-                length: self.dimensions[1],
-            });
-        }
-        if z_start >= self.dimensions[2] || z_end > self.dimensions[2] || z_start >= z_end {
-            return Err(Error::IndexOutOfBounds {
-                index: z_start,
-                length: self.dimensions[2],
-            });
-        }
+        // Helper to validate a dimension range
+        let validate_range = |start: usize, end: usize, dim: usize| -> Result<usize, Error> {
+            if start >= dim || end > dim || start >= end {
+                return Err(Error::IndexOutOfBounds { index: start, length: dim });
+            }
+            Ok(end - start)
+        };
 
-        let new_nx = x_end - x_start;
-        let new_ny = y_end - y_start;
-        let new_nz = z_end - z_start;
+        let new_nx = validate_range(x_start, x_end, self.dimensions[0])?;
+        let new_ny = validate_range(y_start, y_end, self.dimensions[1])?;
+        let new_nz = validate_range(z_start, z_end, self.dimensions[2])?;
         let voxel_count = new_nx * new_ny * new_nz;
 
         // Allocate buffer for subvolume
         let mut new_data = vec![0u8; voxel_count * T::SIZE];
 
-        // Copy data from source region
-        for (new_z, src_z) in (z_start..z_end).enumerate() {
-            for (new_y, src_y) in (y_start..y_end).enumerate() {
-                for (new_x, src_x) in (x_start..x_end).enumerate() {
+        // Copy data using iterator combinators
+        (z_start..z_end).enumerate().for_each(|(new_z, src_z)| {
+            (y_start..y_end).enumerate().for_each(|(new_y, src_y)| {
+                (x_start..x_end).enumerate().for_each(|(new_x, src_x)| {
                     let src_idx = self.index_of(src_x, src_y, src_z);
                     let dst_idx = new_z * new_ny * new_nx + new_y * new_nx + new_x;
-
+                    
                     let src_offset = src_idx * T::SIZE;
                     let dst_offset = dst_idx * T::SIZE;
 
                     new_data[dst_offset..dst_offset + T::SIZE]
                         .copy_from_slice(&self.storage.as_ref()[src_offset..src_offset + T::SIZE]);
-                }
-            }
-        }
+                });
+            });
+        });
 
         // Create header for subvolume
         let mut new_header = self.header.clone();
         new_header.set_dimensions(new_nx, new_ny, new_nz);
         // Update origin to reflect subvolume position
         let (dx, dy, dz) = new_header.voxel_size();
-        let new_origin = [
+        new_header.set_origin(
             new_header.xorigin() + x_start as f32 * dx,
             new_header.yorigin() + y_start as f32 * dy,
             new_header.zorigin() + z_start as f32 * dz,
-        ];
-        new_header.set_origin(new_origin[0], new_origin[1], new_origin[2]);
+        );
 
         Volume::new(new_header, new_data)
     }
@@ -671,59 +658,73 @@ impl<T: Voxel + Encoding, S: AsRef<[u8]>> Volume<T, S, 2> {
 
 use super::{VoxelAccess, VoxelAccessMut, VolumeAccess, VolumeAccessMut};
 
+/// Macro to implement VoxelAccess trait for Volume
+macro_rules! impl_voxel_access {
+    () => {
+        fn mode(&self) -> Mode {
+            self.header.mode()
+        }
+
+        fn len(&self) -> usize {
+            Volume::<T, S, D>::len(self)
+        }
+
+        fn get<V: Voxel + Encoding>(&self, index: usize) -> Result<V, Error> {
+            validate_mode::<V>(self.header.mode())?;
+            check_bounds(index, self.len())?;
+            let offset = index * V::SIZE;
+            let bytes = self.storage.as_ref();
+            Ok(V::decode(
+                self.header.file_endian,
+                &bytes[offset..offset + V::SIZE],
+            ))
+        }
+    };
+}
+
+/// Macro to implement VoxelAccessMut trait for Volume
+macro_rules! impl_voxel_access_mut {
+    () => {
+        fn set<V: Voxel + Encoding>(&mut self, index: usize, value: V) -> Result<(), Error> {
+            validate_mode::<V>(self.header.mode())?;
+            check_bounds(index, self.len())?;
+
+            // Special handling for Packed4Bit (two values per byte)
+            if <V as Voxel>::MODE == Mode::Packed4Bit {
+                let byte_index = index / 2;
+                let is_second = index % 2 == 1;
+                let bytes = self.storage.as_mut();
+
+                // Get the new nibble value by encoding to a temporary buffer
+                let mut temp = [0u8; 1];
+                value.encode(self.header.file_endian, &mut temp);
+                let new_nibble = temp[0] & 0x0F;
+
+                if is_second {
+                    bytes[byte_index] = (bytes[byte_index] & 0x0F) | (new_nibble << 4);
+                } else {
+                    bytes[byte_index] = (bytes[byte_index] & 0xF0) | new_nibble;
+                }
+                Ok(())
+            } else {
+                let offset = index * V::SIZE;
+                let bytes = self.storage.as_mut();
+                value.encode(
+                    self.header.file_endian,
+                    &mut bytes[offset..offset + V::SIZE],
+                );
+                Ok(())
+            }
+        }
+    };
+}
+
 impl<T: Voxel + Encoding, S: AsRef<[u8]>, const D: usize> VoxelAccess for Volume<T, S, D> {
-    fn mode(&self) -> Mode {
-        self.header.mode()
-    }
-
-    fn len(&self) -> usize {
-        self.len()
-    }
-
-    fn get<V: Voxel + Encoding>(&self, index: usize) -> Result<V, Error> {
-        validate_mode::<V>(self.header.mode())?;
-        check_bounds(index, self.len())?;
-        let offset = index * V::SIZE;
-        let bytes = self.storage.as_ref();
-        Ok(V::decode(
-            self.header.file_endian,
-            &bytes[offset..offset + V::SIZE],
-        ))
-    }
+    impl_voxel_access!();
 }
 
 impl<T: Voxel + Encoding, S: AsRef<[u8]> + AsMut<[u8]>, const D: usize> VoxelAccessMut for Volume<T, S, D> {
-    fn set<V: Voxel + Encoding>(&mut self, index: usize, value: V) -> Result<(), Error> {
-        validate_mode::<V>(self.header.mode())?;
-        check_bounds(index, self.len())?;
-
-        // Special handling for Packed4Bit (two values per byte)
-        if <V as Voxel>::MODE == Mode::Packed4Bit {
-            let byte_index = index / 2;
-            let is_second = index % 2 == 1;
-            let bytes = self.storage.as_mut();
-
-            // Get the new nibble value by encoding to a temporary buffer
-            let mut temp = [0u8; 1];
-            value.encode(self.header.file_endian, &mut temp);
-            let new_nibble = temp[0] & 0x0F;
-
-            if is_second {
-                bytes[byte_index] = (bytes[byte_index] & 0x0F) | (new_nibble << 4);
-            } else {
-                bytes[byte_index] = (bytes[byte_index] & 0xF0) | new_nibble;
-            }
-            Ok(())
-        } else {
-            let offset = index * V::SIZE;
-            let bytes = self.storage.as_mut();
-            value.encode(
-                self.header.file_endian,
-                &mut bytes[offset..offset + V::SIZE],
-            );
-            Ok(())
-        }
-    }
+    impl_voxel_access_mut!();
 }
 
 impl<T: Voxel + Encoding, S: AsRef<[u8]>> VolumeAccess for Volume<T, S, 3> {

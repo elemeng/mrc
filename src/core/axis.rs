@@ -104,31 +104,19 @@ impl AxisMap {
     pub fn strides(&self, dimensions: [usize; 3]) -> [usize; 3] {
         let nx = dimensions[0];
         let ny = dimensions[1];
-        let _nz = dimensions[2];
 
-        // Map from logical (x, y, z) to storage order
-        let stride_x = match self.column {
-            1 => 1,       // X is column
-            2 => nx,      // X is row
-            3 => nx * ny, // X is section
-            _ => unreachable!("Invalid axis map"),
-        };
+        // Pre-compute stride options: [column, row, section]
+        // Column has stride 1, row has stride nx, section has stride nx*ny
+        let stride_options = [1, nx, nx * ny];
 
-        let stride_y = match self.row {
-            1 => 1,
-            2 => nx,
-            3 => nx * ny,
-            _ => unreachable!("Invalid axis map"),
-        };
+        // Map axis values (1,2,3) to stride indices (0,1,2)
+        let idx = |axis: usize| axis.saturating_sub(1).min(2);
 
-        let stride_z = match self.section {
-            1 => 1,
-            2 => nx,
-            3 => nx * ny,
-            _ => unreachable!("Invalid axis map"),
-        };
-
-        [stride_x, stride_y, stride_z]
+        [
+            stride_options[idx(self.column)],
+            stride_options[idx(self.row)],
+            stride_options[idx(self.section)],
+        ]
     }
 
     /// Get stride multipliers as tuple
