@@ -11,7 +11,7 @@ use std::io::{Seek, SeekFrom, Write};
 /// Builder for creating MRC files
 #[cfg(feature = "std")]
 pub struct MrcWriterBuilder {
-    shape: [usize; 3],
+    dimensions: [usize; 3],
     mode: Mode,
     voxel_size: [f32; 3],
     origin: [f32; 3],
@@ -25,7 +25,7 @@ impl MrcWriterBuilder {
     /// Create a new builder
     pub fn new() -> Self {
         Self {
-            shape: [1, 1, 1],
+            dimensions: [1, 1, 1],
             mode: Mode::Float32,
             voxel_size: [1.0, 1.0, 1.0],
             origin: [0.0, 0.0, 0.0],
@@ -35,9 +35,9 @@ impl MrcWriterBuilder {
         }
     }
 
-    /// Set the shape (nx, ny, nz)
-    pub fn shape(mut self, nx: usize, ny: usize, nz: usize) -> Self {
-        self.shape = [nx, ny, nz];
+    /// Set the dimensions (nx, ny, nz)
+    pub fn dimensions(mut self, nx: usize, ny: usize, nz: usize) -> Self {
+        self.dimensions = [nx, ny, nz];
         self
     }
 
@@ -84,9 +84,9 @@ impl MrcWriterBuilder {
     /// size doesn't match the expected size based on shape and mode.
     pub fn write(self, path: impl AsRef<std::path::Path>) -> Result<(), Error> {
         // Calculate expected data size
-        let voxel_count = self.shape[0]
-            .checked_mul(self.shape[1])
-            .and_then(|v| v.checked_mul(self.shape[2]))
+        let voxel_count = self.dimensions[0]
+            .checked_mul(self.dimensions[1])
+            .and_then(|v| v.checked_mul(self.dimensions[2]))
             .ok_or(Error::InvalidDimensions)?;
 
         let expected_data_size = if self.mode == Mode::Packed4Bit {
@@ -108,12 +108,12 @@ impl MrcWriterBuilder {
         }
 
         let mut header = Header::new();
-        header.set_dimensions(self.shape[0], self.shape[1], self.shape[2]);
+        header.set_dimensions(self.dimensions[0], self.dimensions[1], self.dimensions[2]);
         header.set_mode(self.mode);
         header.set_cell_dimensions(
-            self.voxel_size[0] * self.shape[0] as f32,
-            self.voxel_size[1] * self.shape[1] as f32,
-            self.voxel_size[2] * self.shape[2] as f32,
+            self.voxel_size[0] * self.dimensions[0] as f32,
+            self.voxel_size[1] * self.dimensions[1] as f32,
+            self.voxel_size[2] * self.dimensions[2] as f32,
         );
         header.raw.alpha = self.cell_angles[0];
         header.raw.beta = self.cell_angles[1];

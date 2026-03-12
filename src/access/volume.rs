@@ -21,7 +21,7 @@ use alloc::vec::Vec;
 pub struct Volume<T, S, const D: usize = 3> {
     header: Header,
     storage: S,
-    shape: [usize; D],
+    dimensions: [usize; D],
     /// Strides for linear indexing (accounts for axis_map)
     strides: [usize; D],
     _marker: core::marker::PhantomData<T>,
@@ -45,7 +45,7 @@ impl<T, S, const D: usize> Volume<T, S, D> {
 
     /// Total number of voxels
     pub fn len(&self) -> usize {
-        self.shape.iter().product()
+        self.dimensions.iter().product()
     }
 
     /// Check if empty
@@ -63,7 +63,7 @@ impl<T: Voxel + Encoding, S: AsRef<[u8]>> Volume<T, S, 1> {
         validate_mode::<T>(mode)?;
 
         let voxel_count = data.as_ref().len() / T::SIZE;
-        let shape = [voxel_count];
+        let dimensions = [voxel_count];
         let strides = [1];
 
         // Create minimal header
@@ -75,7 +75,7 @@ impl<T: Voxel + Encoding, S: AsRef<[u8]>> Volume<T, S, 1> {
         Ok(Self {
             header,
             storage: data,
-            shape,
+            dimensions,
             strides,
             _marker: core::marker::PhantomData,
         })
@@ -93,7 +93,7 @@ impl<T: Voxel + Encoding, S: AsRef<[u8]>> Volume<T, S, 1> {
             });
         }
 
-        let shape = [voxel_count];
+        let dimensions = [voxel_count];
         let strides = [1];
 
         let mut header = Header::new();
@@ -104,7 +104,7 @@ impl<T: Voxel + Encoding, S: AsRef<[u8]>> Volume<T, S, 1> {
         Ok(Self {
             header,
             storage: data,
-            shape,
+            dimensions,
             strides,
             _marker: core::marker::PhantomData,
         })
@@ -118,7 +118,7 @@ impl<T: Voxel + Encoding, S: AsRef<[u8]>> Volume<T, S, 1> {
 
     /// Get voxel at index with bounds checking
     pub fn get_1d_checked(&self, index: usize) -> Option<T> {
-        if index >= self.shape[0] {
+        if index >= self.dimensions[0] {
             return None;
         }
         Some(self.get_1d(index))
@@ -134,7 +134,7 @@ impl<T: Voxel + Encoding, S: AsMut<[u8]>> Volume<T, S, 1> {
 
     /// Set voxel at index with bounds checking
     pub fn set_1d_checked(&mut self, index: usize, value: T) -> Result<(), Error> {
-        check_bounds(index, self.shape[0])?;
+        check_bounds(index, self.dimensions[0])?;
         self.set_1d(index, value);
         Ok(())
     }
@@ -149,10 +149,10 @@ impl<T: Voxel + Encoding, S: AsRef<[u8]>> Volume<T, S, 3> {
         // Validate mode matches
         validate_mode::<T>(header.mode())?;
 
-        let shape = [header.nx(), header.ny(), header.nz()];
-        let total = shape[0]
-            .checked_mul(shape[1])
-            .and_then(|v| v.checked_mul(shape[2]))
+        let dimensions = [header.nx(), header.ny(), header.nz()];
+        let total = dimensions[0]
+            .checked_mul(dimensions[1])
+            .and_then(|v| v.checked_mul(dimensions[2]))
             .ok_or(Error::InvalidDimensions)?;
 
         // Validate size
@@ -167,12 +167,12 @@ impl<T: Voxel + Encoding, S: AsRef<[u8]>> Volume<T, S, 3> {
         // Calculate strides based on axis_map
         // MRC data is stored in column-major order (column varies fastest)
         // axis_map tells us which logical dimension (X, Y, Z) corresponds to each storage axis
-        let strides = header.axis_map.strides(shape);
+        let strides = header.axis_map.strides(dimensions);
 
         Ok(Self {
             header,
             storage,
-            shape,
+            dimensions,
             strides,
             _marker: core::marker::PhantomData,
         })
@@ -186,7 +186,7 @@ impl<T: Voxel + Encoding, S: AsRef<[u8]>> Volume<T, S, 3> {
         endian: crate::FileEndian,
         storage: S,
     ) -> Result<Self, Error> {
-        let shape = [nx, ny, nz];
+        let dimensions = [nx, ny, nz];
         let total = nx
             .checked_mul(ny)
             .and_then(|v| v.checked_mul(nz))
@@ -211,7 +211,7 @@ impl<T: Voxel + Encoding, S: AsRef<[u8]>> Volume<T, S, 3> {
         Ok(Self {
             header,
             storage,
-            shape,
+            dimensions,
             strides,
             _marker: core::marker::PhantomData,
         })
@@ -219,7 +219,7 @@ impl<T: Voxel + Encoding, S: AsRef<[u8]>> Volume<T, S, 3> {
 
     /// Get dimensions as tuple
     pub fn dimensions(&self) -> (usize, usize, usize) {
-        (self.shape[0], self.shape[1], self.shape[2])
+        (self.dimensions[0], self.dimensions[1], self.dimensions[2])
     }
 
     /// Get a voxel at linear index
@@ -259,7 +259,7 @@ impl<T: Voxel + Encoding, S: AsRef<[u8]>> Volume<T, S, 3> {
 
     /// Get a voxel at 3D coordinates, returning None if out of bounds
     pub fn get_at_checked(&self, x: usize, y: usize, z: usize) -> Option<T> {
-        if x >= self.shape[0] || y >= self.shape[1] || z >= self.shape[2] {
+        if x >= self.dimensions[0] || y >= self.dimensions[1] || z >= self.dimensions[2] {
             return None;
         }
         Some(self.get_at(x, y, z))
@@ -457,10 +457,10 @@ impl<T: Voxel + Encoding, S: AsRef<[u8]>> Volume<T, S, 3> {
     /// # Errors
     /// Returns `Error::IndexOutOfBounds` if z is out of range
     pub fn slice(&self, z: usize) -> Result<Image2D<T, &[u8]>, Error> {
-        check_bounds(z, self.shape[2])?;
+        check_bounds(z, self.dimensions[2])?;
 
-        let nx = self.shape[0];
-        let ny = self.shape[1];
+        let nx = self.dimensions[0];
+        let ny = self.dimensions[1];
         let slice_size = nx * ny * T::SIZE;
         let slice_offset = z * slice_size;
 
@@ -498,22 +498,22 @@ impl<T: Voxel + Encoding, S: AsRef<[u8]>> Volume<T, S, 3> {
         T: Default + Clone,
     {
         // Validate bounds
-        if x_start >= self.shape[0] || x_end > self.shape[0] || x_start >= x_end {
+        if x_start >= self.dimensions[0] || x_end > self.dimensions[0] || x_start >= x_end {
             return Err(Error::IndexOutOfBounds {
                 index: x_start,
-                length: self.shape[0],
+                length: self.dimensions[0],
             });
         }
-        if y_start >= self.shape[1] || y_end > self.shape[1] || y_start >= y_end {
+        if y_start >= self.dimensions[1] || y_end > self.dimensions[1] || y_start >= y_end {
             return Err(Error::IndexOutOfBounds {
                 index: y_start,
-                length: self.shape[1],
+                length: self.dimensions[1],
             });
         }
-        if z_start >= self.shape[2] || z_end > self.shape[2] || z_start >= z_end {
+        if z_start >= self.dimensions[2] || z_end > self.dimensions[2] || z_start >= z_end {
             return Err(Error::IndexOutOfBounds {
                 index: z_start,
-                length: self.shape[2],
+                length: self.dimensions[2],
             });
         }
 
@@ -597,9 +597,9 @@ impl<T: Voxel + Encoding, S: AsMut<[u8]>> Volume<T, S, 3> {
 
     /// Set a voxel at 3D coordinates, returning error if out of bounds
     pub fn set_at_checked(&mut self, x: usize, y: usize, z: usize, value: T) -> Result<(), Error> {
-        if x >= self.shape[0] || y >= self.shape[1] || z >= self.shape[2] {
+        if x >= self.dimensions[0] || y >= self.dimensions[1] || z >= self.dimensions[2] {
             return Err(Error::IndexOutOfBounds {
-                index: x + y * self.shape[0] + z * self.shape[0] * self.shape[1],
+                index: x + y * self.dimensions[0] + z * self.dimensions[0] * self.dimensions[1],
                 length: self.len(),
             });
         }
@@ -621,7 +621,7 @@ impl<T: Voxel + Encoding, S: AsRef<[u8]>> Volume<T, S, 2> {
         endian: crate::FileEndian,
         storage: S,
     ) -> Result<Self, Error> {
-        let shape = [nx, ny];
+        let dimensions = [nx, ny];
         let total = nx.checked_mul(ny).ok_or(Error::InvalidDimensions)?;
 
         let expected_size = total.checked_mul(T::SIZE).ok_or(Error::InvalidDimensions)?;
@@ -642,7 +642,7 @@ impl<T: Voxel + Encoding, S: AsRef<[u8]>> Volume<T, S, 2> {
         Ok(Self {
             header,
             storage,
-            shape,
+            dimensions,
             strides,
             _marker: core::marker::PhantomData,
         })
@@ -663,7 +663,7 @@ impl<T: Voxel + Encoding, S: AsRef<[u8]>> Volume<T, S, 2> {
 
     /// Get a pixel at 2D coordinates, returning None if out of bounds
     pub fn get_pixel_checked(&self, x: usize, y: usize) -> Option<T> {
-        if x >= self.shape[0] || y >= self.shape[1] {
+        if x >= self.dimensions[0] || y >= self.dimensions[1] {
             return None;
         }
         Some(self.get_pixel(x, y))
@@ -754,7 +754,7 @@ impl<T: Voxel + Encoding, S: AsRef<[u8]>> VolumeTrait for Volume<T, S, 3> {
         &self.header
     }
     fn dimensions(&self) -> (usize, usize, usize) {
-        (self.shape[0], self.shape[1], self.shape[2])
+        (self.dimensions[0], self.dimensions[1], self.dimensions[2])
     }
 
     fn strides(&self) -> (usize, usize, usize) {
@@ -783,8 +783,8 @@ mod tests {
     fn test_standard_axis_map_strides() {
         // Standard: X=column, Y=row, Z=section
         let axis_map = AxisMap::new(1, 2, 3);
-        let shape = [64, 64, 64];
-        let strides = axis_map.strides(shape);
+        let dimensions = [64, 64, 64];
+        let strides = axis_map.strides(dimensions);
 
         // X should have stride 1 (column, fastest)
         // Y should have stride 64 (row)
@@ -796,8 +796,8 @@ mod tests {
     fn test_nonstandard_axis_map_strides() {
         // Non-standard: Z=column, Y=row, X=section
         let axis_map = AxisMap::new(3, 2, 1);
-        let shape = [64, 64, 64];
-        let strides = axis_map.strides(shape);
+        let dimensions = [64, 64, 64];
+        let strides = axis_map.strides(dimensions);
 
         // X (stored as section) should have stride 4096
         // Y (stored as row) should have stride 64

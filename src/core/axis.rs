@@ -101,10 +101,10 @@ impl AxisMap {
     /// Get stride multipliers for indexing
     ///
     /// Returns [stride_x, stride_y, stride_z] for computing linear indices
-    pub fn strides(&self, shape: [usize; 3]) -> [usize; 3] {
-        let nx = shape[0];
-        let ny = shape[1];
-        let _nz = shape[2];
+    pub fn strides(&self, dimensions: [usize; 3]) -> [usize; 3] {
+        let nx = dimensions[0];
+        let ny = dimensions[1];
+        let _nz = dimensions[2];
 
         // Map from logical (x, y, z) to storage order
         let stride_x = match self.column {
@@ -135,8 +135,8 @@ impl AxisMap {
     ///
     /// Returns (stride_x, stride_y, stride_z) for computing linear indices
     #[inline]
-    pub fn strides_tuple(&self, shape: (usize, usize, usize)) -> (usize, usize, usize) {
-        let arr = self.strides([shape.0, shape.1, shape.2]);
+    pub fn strides_tuple(&self, dimensions: (usize, usize, usize)) -> (usize, usize, usize) {
+        let arr = self.strides([dimensions.0, dimensions.1, dimensions.2]);
         (arr[0], arr[1], arr[2])
     }
 }
