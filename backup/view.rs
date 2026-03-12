@@ -180,7 +180,7 @@ impl<'a> MrcView<'a> {
         self.data.get_i8(index)
     }
 
-    /// Get data layout information: shape and strides
+    /// Get data layout information: dimensions and strides
     ///
     /// Returns ((nx, ny, nz), (sx, sy, sz)) where:
     /// - (nx, ny, nz) are the dimensions
@@ -343,7 +343,7 @@ impl<'a> MrcViewMut<'a> {
         )
     }
 
-    /// Get data layout information: shape and strides
+    /// Get data layout information: dimensions and strides
     ///
     /// Returns ((nx, ny, nz), (sx, sy, sz)) where:
     /// - (nx, ny, nz) are the dimensions

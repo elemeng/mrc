@@ -330,7 +330,7 @@ Storage<T>
 Responsibilities:
 
 ```
-shape
+dimensions
 data access
 mutable access
 ```
@@ -542,7 +542,7 @@ Conceptually:
 
 ```
 MrcWriter::builder()
-   .shape(nx,ny,nz)
+   .dimensions(nx,ny,nz)
    .mode(Float32)
    .voxel_size(1.5)
    .origin(...)
@@ -584,7 +584,7 @@ let map = MrcFile::open("map.mrc")?;
 
 let volume = map.read_volume::<f32>()?;
 
-println!("{}", volume.shape());
+println!("{}", volume.dimensions());
 ```
 
 Or dynamic:

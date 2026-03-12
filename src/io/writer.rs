@@ -81,7 +81,7 @@ impl MrcWriterBuilder {
     ///
     /// # Errors
     /// Returns `Error::BufferTooSmall` or `Error::InvalidDimensions` if the provided data
-    /// size doesn't match the expected size based on shape and mode.
+    /// size doesn't match the expected size based on dimensions and mode.
     pub fn write(self, path: impl AsRef<std::path::Path>) -> Result<(), Error> {
         // Calculate expected data size
         let voxel_count = self.dimensions[0]
