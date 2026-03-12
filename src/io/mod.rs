@@ -9,4 +9,4 @@ mod writer;
 #[cfg(feature = "std")]
 pub use reader::MrcReader;
 #[cfg(feature = "std")]
-pub use writer::MrcWriter;
+pub use writer::{MrcWriter, MrcWriterBuilder};
