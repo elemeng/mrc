@@ -16,6 +16,23 @@ pub struct Statistics {
     pub rms: f64,
 }
 
+/// Calculate mean and RMS from count, sum, and sum of squares
+///
+/// This helper consolidates the variance calculation used in both
+/// `compute_stats` and `RunningStats::finish`.
+#[inline]
+fn calculate_mean_and_rms(count: usize, sum: f64, sum_sq: f64) -> (f64, f64) {
+    let n = count as f64;
+    let mean = if n > 0.0 { sum / n } else { 0.0 };
+    let variance = if n > 0.0 {
+        (sum_sq / n) - (mean * mean)
+    } else {
+        0.0
+    };
+    let rms = variance.max(0.0).sqrt();
+    (mean, rms)
+}
+
 /// Compute statistics from an iterator of values
 ///
 /// This is a generic function that works with any iterator producing
@@ -62,14 +79,7 @@ where
         count += 1;
     }
 
-    let n = count as f64;
-    let mean = if n > 0.0 { sum / n } else { 0.0 };
-    let variance = if n > 0.0 {
-        (sum_sq / n) - (mean * mean)
-    } else {
-        0.0
-    };
-    let rms = variance.max(0.0).sqrt();
+    let (mean, rms) = calculate_mean_and_rms(count, sum, sum_sq);
 
     Statistics {
         min,
@@ -150,14 +160,7 @@ impl RunningStats {
 
     /// Compute the final statistics
     pub fn finish(self) -> Statistics {
-        let n = self.count as f64;
-        let mean = if n > 0.0 { self.sum / n } else { 0.0 };
-        let variance = if n > 0.0 {
-            (self.sum_sq / n) - (mean * mean)
-        } else {
-            0.0
-        };
-        let rms = variance.max(0.0).sqrt();
+        let (mean, rms) = calculate_mean_and_rms(self.count, self.sum, self.sum_sq);
 
         Statistics {
             min: if self.count > 0 { self.min } else { 0.0 },

@@ -73,38 +73,25 @@ impl RealVoxel for half::f16 {
     }
 }
 
-impl RealVoxel for i16 {
-    #[inline]
-    fn from_f32(v: f32) -> Self {
-        v as i16
-    }
-    #[inline]
-    fn to_f32(self) -> f32 {
-        self as f32
-    }
+// Macro for primitive RealVoxel implementations (cast-based)
+macro_rules! impl_real_voxel_cast {
+    ($type:ty) => {
+        impl RealVoxel for $type {
+            #[inline]
+            fn from_f32(v: f32) -> Self {
+                v as Self
+            }
+            #[inline]
+            fn to_f32(self) -> f32 {
+                self as f32
+            }
+        }
+    };
 }
 
-impl RealVoxel for i8 {
-    #[inline]
-    fn from_f32(v: f32) -> Self {
-        v as i8
-    }
-    #[inline]
-    fn to_f32(self) -> f32 {
-        self as f32
-    }
-}
-
-impl RealVoxel for u16 {
-    #[inline]
-    fn from_f32(v: f32) -> Self {
-        v as u16
-    }
-    #[inline]
-    fn to_f32(self) -> f32 {
-        self as f32
-    }
-}
+impl_real_voxel_cast!(i8);
+impl_real_voxel_cast!(i16);
+impl_real_voxel_cast!(u16);
 
 /// Marker for integer voxel types
 pub trait IntegerVoxel: ScalarVoxel {
@@ -118,62 +105,33 @@ pub trait IntegerVoxel: ScalarVoxel {
     fn to_u64(self) -> u64;
 }
 
-impl IntegerVoxel for i8 {
-    #[inline]
-    fn from_i64(v: i64) -> Self {
-        v as i8
-    }
-    #[inline]
-    fn to_i64(self) -> i64 {
-        self as i64
-    }
-    #[inline]
-    fn from_u64(v: u64) -> Self {
-        v as i8
-    }
-    #[inline]
-    fn to_u64(self) -> u64 {
-        self as u8 as u64
-    }
+// Macro for IntegerVoxel implementations
+macro_rules! impl_integer_voxel {
+    ($type:ty) => {
+        impl IntegerVoxel for $type {
+            #[inline]
+            fn from_i64(v: i64) -> Self {
+                v as Self
+            }
+            #[inline]
+            fn to_i64(self) -> i64 {
+                self as i64
+            }
+            #[inline]
+            fn from_u64(v: u64) -> Self {
+                v as Self
+            }
+            #[inline]
+            fn to_u64(self) -> u64 {
+                self as u64
+            }
+        }
+    };
 }
 
-impl IntegerVoxel for i16 {
-    #[inline]
-    fn from_i64(v: i64) -> Self {
-        v as i16
-    }
-    #[inline]
-    fn to_i64(self) -> i64 {
-        self as i64
-    }
-    #[inline]
-    fn from_u64(v: u64) -> Self {
-        v as i16
-    }
-    #[inline]
-    fn to_u64(self) -> u64 {
-        self as u16 as u64
-    }
-}
-
-impl IntegerVoxel for u16 {
-    #[inline]
-    fn from_i64(v: i64) -> Self {
-        v as u16
-    }
-    #[inline]
-    fn to_i64(self) -> i64 {
-        self as i64
-    }
-    #[inline]
-    fn from_u64(v: u64) -> Self {
-        v as u16
-    }
-    #[inline]
-    fn to_u64(self) -> u64 {
-        self as u64
-    }
-}
+impl_integer_voxel!(i8);
+impl_integer_voxel!(i16);
+impl_integer_voxel!(u16);
 
 // ============================================================================
 // Complex types
@@ -241,53 +199,105 @@ impl ComplexI16 {
     }
 }
 
-impl core::ops::Add for ComplexI16 {
-    type Output = Self;
-    #[inline]
-    fn add(self, other: Self) -> Self {
-        Self {
-            re: self.re.saturating_add(other.re),
-            im: self.im.saturating_add(other.im),
+// Macro for complex type arithmetic operations
+macro_rules! impl_complex_ops {
+    ($type:ty, $base:ty, regular) => {
+        impl core::ops::Add for $type {
+            type Output = Self;
+            #[inline]
+            fn add(self, other: Self) -> Self {
+                Self {
+                    re: self.re + other.re,
+                    im: self.im + other.im,
+                }
+            }
         }
-    }
+
+        impl core::ops::Sub for $type {
+            type Output = Self;
+            #[inline]
+            fn sub(self, other: Self) -> Self {
+                Self {
+                    re: self.re - other.re,
+                    im: self.im - other.im,
+                }
+            }
+        }
+
+        impl core::ops::Mul for $type {
+            type Output = Self;
+            #[inline]
+            fn mul(self, other: Self) -> Self {
+                Self {
+                    re: self.re * other.re - self.im * other.im,
+                    im: self.re * other.im + self.im * other.re,
+                }
+            }
+        }
+
+        impl core::ops::Neg for $type {
+            type Output = Self;
+            #[inline]
+            fn neg(self) -> Self {
+                Self {
+                    re: -self.re,
+                    im: -self.im,
+                }
+            }
+        }
+    };
+    ($type:ty, $base:ty, saturating) => {
+        impl core::ops::Add for $type {
+            type Output = Self;
+            #[inline]
+            fn add(self, other: Self) -> Self {
+                Self {
+                    re: self.re.saturating_add(other.re),
+                    im: self.im.saturating_add(other.im),
+                }
+            }
+        }
+
+        impl core::ops::Sub for $type {
+            type Output = Self;
+            #[inline]
+            fn sub(self, other: Self) -> Self {
+                Self {
+                    re: self.re.saturating_sub(other.re),
+                    im: self.im.saturating_sub(other.im),
+                }
+            }
+        }
+
+        impl core::ops::Mul for $type {
+            type Output = Self;
+            #[inline]
+            fn mul(self, other: Self) -> Self {
+                let a = self.re as i32;
+                let b = self.im as i32;
+                let c = other.re as i32;
+                let d = other.im as i32;
+                Self {
+                    re: (a * c - b * d) as i16,
+                    im: (a * d + b * c) as i16,
+                }
+            }
+        }
+
+        impl core::ops::Neg for $type {
+            type Output = Self;
+            #[inline]
+            fn neg(self) -> Self {
+                Self {
+                    re: self.re.wrapping_neg(),
+                    im: self.im.wrapping_neg(),
+                }
+            }
+        }
+    };
 }
 
-impl core::ops::Sub for ComplexI16 {
-    type Output = Self;
-    #[inline]
-    fn sub(self, other: Self) -> Self {
-        Self {
-            re: self.re.saturating_sub(other.re),
-            im: self.im.saturating_sub(other.im),
-        }
-    }
-}
-
-impl core::ops::Mul for ComplexI16 {
-    type Output = Self;
-    #[inline]
-    fn mul(self, other: Self) -> Self {
-        let a = self.re as i32;
-        let b = self.im as i32;
-        let c = other.re as i32;
-        let d = other.im as i32;
-        Self {
-            re: (a * c - b * d) as i16,
-            im: (a * d + b * c) as i16,
-        }
-    }
-}
-
-impl core::ops::Neg for ComplexI16 {
-    type Output = Self;
-    #[inline]
-    fn neg(self) -> Self {
-        Self {
-            re: self.re.wrapping_neg(),
-            im: self.im.wrapping_neg(),
-        }
-    }
-}
+impl_complex_ops!(ComplexI16, i16, saturating);
 
 /// Complex number with f32 components (Mode 4)
 #[derive(Debug, Clone, Copy, PartialEq, Pod, Zeroable)]
@@ -374,38 +384,7 @@ impl ComplexF32 {
     }
 }
 
-impl core::ops::Add for ComplexF32 {
-    type Output = Self;
-    #[inline]
-    fn add(self, other: Self) -> Self {
-        Self {
-            re: self.re + other.re,
-            im: self.im + other.im,
-        }
-    }
-}
-
-impl core::ops::Sub for ComplexF32 {
-    type Output = Self;
-    #[inline]
-    fn sub(self, other: Self) -> Self {
-        Self {
-            re: self.re - other.re,
-            im: self.im - other.im,
-        }
-    }
-}
-
-impl core::ops::Mul for ComplexF32 {
-    type Output = Self;
-    #[inline]
-    fn mul(self, other: Self) -> Self {
-        Self {
-            re: self.re * other.re - self.im * other.im,
-            im: self.re * other.im + self.im * other.re,
-        }
-    }
-}
+impl_complex_ops!(ComplexF32, f32, regular);
 
 impl core::ops::Div for ComplexF32 {
     type Output = Self;
@@ -415,17 +394,6 @@ impl core::ops::Div for ComplexF32 {
         Self {
             re: (self.re * other.re + self.im * other.im) / magsq,
             im: (self.im * other.re - self.re * other.im) / magsq,
-        }
-    }
-}
-
-impl core::ops::Neg for ComplexF32 {
-    type Output = Self;
-    #[inline]
-    fn neg(self) -> Self {
-        Self {
-            re: -self.re,
-            im: -self.im,
         }
     }
 }

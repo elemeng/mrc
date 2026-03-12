@@ -303,21 +303,44 @@ impl core::ops::DerefMut for Header {
     }
 }
 
-/// Decode a value that was already loaded into memory via bytemuck
-#[inline]
-fn convert_i32_from_file_endian(value: i32, file_endian: FileEndian) -> i32 {
-    if file_endian.is_native() {
-        return value;
-    }
-    value.swap_bytes()
+/// Trait for converting values between file and native endianness
+trait EndianConvert: Copy {
+    fn convert_from_file_endian(self, file_endian: FileEndian) -> Self;
+    fn convert_to_file_endian(self, file_endian: FileEndian) -> Self;
 }
 
-#[inline]
-fn convert_f32_from_file_endian(value: f32, file_endian: FileEndian) -> f32 {
-    if file_endian.is_native() {
-        return value;
+impl EndianConvert for i32 {
+    #[inline]
+    fn convert_from_file_endian(self, file_endian: FileEndian) -> Self {
+        if file_endian.is_native() {
+            return self;
+        }
+        self.swap_bytes()
     }
-    f32::from_bits(value.to_bits().swap_bytes())
+    #[inline]
+    fn convert_to_file_endian(self, file_endian: FileEndian) -> Self {
+        if file_endian.is_native() {
+            return self;
+        }
+        self.swap_bytes()
+    }
+}
+
+impl EndianConvert for f32 {
+    #[inline]
+    fn convert_from_file_endian(self, file_endian: FileEndian) -> Self {
+        if file_endian.is_native() {
+            return self;
+        }
+        f32::from_bits(self.to_bits().swap_bytes())
+    }
+    #[inline]
+    fn convert_to_file_endian(self, file_endian: FileEndian) -> Self {
+        if file_endian.is_native() {
+            return self;
+        }
+        f32::from_bits(self.to_bits().swap_bytes())
+    }
 }
 
 impl TryFrom<RawHeader> for Header {
@@ -328,9 +351,9 @@ impl TryFrom<RawHeader> for Header {
         let (file_endian, detected) = FileEndian::from_machst_or_little(&raw.machst);
 
         // Convert dimensions
-        let nx = convert_i32_from_file_endian(raw.nx, file_endian);
-        let ny = convert_i32_from_file_endian(raw.ny, file_endian);
-        let nz = convert_i32_from_file_endian(raw.nz, file_endian);
+        let nx = raw.nx.convert_from_file_endian(file_endian);
+        let ny = raw.ny.convert_from_file_endian(file_endian);
+        let nz = raw.nz.convert_from_file_endian(file_endian);
 
         // Validate dimensions
         if nx <= 0 || ny <= 0 || nz <= 0 {
@@ -349,7 +372,7 @@ impl TryFrom<RawHeader> for Header {
         }
 
         // Decode and validate mode
-        let mode_val = convert_i32_from_file_endian(raw.mode, file_endian);
+        let mode_val = raw.mode.convert_from_file_endian(file_endian);
         let _mode = Mode::try_from(mode_val).map_err(|_| Error::InvalidMode)?;
 
         // Validate mode 12 requires f16 feature
@@ -359,20 +382,20 @@ impl TryFrom<RawHeader> for Header {
         }
 
         // Decode axis mapping
-        let mapc = convert_i32_from_file_endian(raw.mapc, file_endian);
-        let mapr = convert_i32_from_file_endian(raw.mapr, file_endian);
-        let maps = convert_i32_from_file_endian(raw.maps, file_endian);
+        let mapc = raw.mapc.convert_from_file_endian(file_endian);
+        let mapr = raw.mapr.convert_from_file_endian(file_endian);
+        let maps = raw.maps.convert_from_file_endian(file_endian);
         let axis_map = AxisMap::try_new(mapc, mapr, maps)?;
 
         // Decode nsymbt with OOM protection
-        let nsymbt = convert_i32_from_file_endian(raw.nsymbt, file_endian);
+        let nsymbt = raw.nsymbt.convert_from_file_endian(file_endian);
         const MAX_EXTENDED_HEADER: usize = 1024 * 1024 * 1024;
         if nsymbt > MAX_EXTENDED_HEADER as i32 {
             return Err(Error::InvalidDimensions);
         }
 
         // Get nlabl with validation
-        let nlabl = convert_i32_from_file_endian(raw.nlabl, file_endian);
+        let nlabl = raw.nlabl.convert_from_file_endian(file_endian);
         if !(0..=10).contains(&nlabl) {
             return Err(Error::InvalidHeader);
         }
@@ -390,52 +413,37 @@ impl TryFrom<RawHeader> for Header {
         header.raw.ny = ny;
         header.raw.nz = nz;
         header.raw.mode = mode_val;
-        header.raw.nxstart = convert_i32_from_file_endian(raw.nxstart, file_endian);
-        header.raw.nystart = convert_i32_from_file_endian(raw.nystart, file_endian);
-        header.raw.nzstart = convert_i32_from_file_endian(raw.nzstart, file_endian);
-        header.raw.mx = convert_i32_from_file_endian(raw.mx, file_endian);
-        header.raw.my = convert_i32_from_file_endian(raw.my, file_endian);
-        header.raw.mz = convert_i32_from_file_endian(raw.mz, file_endian);
-        header.raw.xlen = convert_f32_from_file_endian(raw.xlen, file_endian);
-        header.raw.ylen = convert_f32_from_file_endian(raw.ylen, file_endian);
-        header.raw.zlen = convert_f32_from_file_endian(raw.zlen, file_endian);
-        header.raw.alpha = convert_f32_from_file_endian(raw.alpha, file_endian);
-        header.raw.beta = convert_f32_from_file_endian(raw.beta, file_endian);
-        header.raw.gamma = convert_f32_from_file_endian(raw.gamma, file_endian);
+        header.raw.nxstart = raw.nxstart.convert_from_file_endian(file_endian);
+        header.raw.nystart = raw.nystart.convert_from_file_endian(file_endian);
+        header.raw.nzstart = raw.nzstart.convert_from_file_endian(file_endian);
+        header.raw.mx = raw.mx.convert_from_file_endian(file_endian);
+        header.raw.my = raw.my.convert_from_file_endian(file_endian);
+        header.raw.mz = raw.mz.convert_from_file_endian(file_endian);
+        header.raw.xlen = raw.xlen.convert_from_file_endian(file_endian);
+        header.raw.ylen = raw.ylen.convert_from_file_endian(file_endian);
+        header.raw.zlen = raw.zlen.convert_from_file_endian(file_endian);
+        header.raw.alpha = raw.alpha.convert_from_file_endian(file_endian);
+        header.raw.beta = raw.beta.convert_from_file_endian(file_endian);
+        header.raw.gamma = raw.gamma.convert_from_file_endian(file_endian);
         header.raw.mapc = mapc;
         header.raw.mapr = mapr;
         header.raw.maps = maps;
-        header.raw.dmin = convert_f32_from_file_endian(raw.dmin, file_endian);
-        header.raw.dmax = convert_f32_from_file_endian(raw.dmax, file_endian);
-        header.raw.dmean = convert_f32_from_file_endian(raw.dmean, file_endian);
-        header.raw.ispg = convert_i32_from_file_endian(raw.ispg, file_endian);
+        header.raw.dmin = raw.dmin.convert_from_file_endian(file_endian);
+        header.raw.dmax = raw.dmax.convert_from_file_endian(file_endian);
+        header.raw.dmean = raw.dmean.convert_from_file_endian(file_endian);
+        header.raw.ispg = raw.ispg.convert_from_file_endian(file_endian);
         header.raw.nsymbt = nsymbt;
         header.raw.nlabl = nlabl;
-        header.raw.origin[0] = convert_f32_from_file_endian(raw.origin[0], file_endian);
-        header.raw.origin[1] = convert_f32_from_file_endian(raw.origin[1], file_endian);
-        header.raw.origin[2] = convert_f32_from_file_endian(raw.origin[2], file_endian);
-        header.raw.rms = convert_f32_from_file_endian(raw.rms, file_endian);
+        header.raw.origin[0] = raw.origin[0].convert_from_file_endian(file_endian);
+        header.raw.origin[1] = raw.origin[1].convert_from_file_endian(file_endian);
+        header.raw.origin[2] = raw.origin[2].convert_from_file_endian(file_endian);
+        header.raw.rms = raw.rms.convert_from_file_endian(file_endian);
 
         Ok(header)
     }
 }
 
-/// Encode a value to file endianness
-#[inline]
-fn encode_i32_to_file_endian(value: i32, endian: FileEndian) -> i32 {
-    if endian.is_native() {
-        return value;
-    }
-    value.swap_bytes()
-}
 
-#[inline]
-fn encode_f32_to_file_endian(value: f32, endian: FileEndian) -> f32 {
-    if endian.is_native() {
-        return value;
-    }
-    f32::from_bits(value.to_bits().swap_bytes())
-}
 
 impl From<Header> for RawHeader {
     fn from(header: Header) -> Self {
@@ -443,35 +451,35 @@ impl From<Header> for RawHeader {
         let endian = header.file_endian;
 
         // Encode all fields to file endianness
-        raw.nx = encode_i32_to_file_endian(raw.nx, endian);
-        raw.ny = encode_i32_to_file_endian(raw.ny, endian);
-        raw.nz = encode_i32_to_file_endian(raw.nz, endian);
-        raw.mode = encode_i32_to_file_endian(raw.mode, endian);
-        raw.nxstart = encode_i32_to_file_endian(raw.nxstart, endian);
-        raw.nystart = encode_i32_to_file_endian(raw.nystart, endian);
-        raw.nzstart = encode_i32_to_file_endian(raw.nzstart, endian);
-        raw.mx = encode_i32_to_file_endian(raw.mx, endian);
-        raw.my = encode_i32_to_file_endian(raw.my, endian);
-        raw.mz = encode_i32_to_file_endian(raw.mz, endian);
-        raw.xlen = encode_f32_to_file_endian(raw.xlen, endian);
-        raw.ylen = encode_f32_to_file_endian(raw.ylen, endian);
-        raw.zlen = encode_f32_to_file_endian(raw.zlen, endian);
-        raw.alpha = encode_f32_to_file_endian(raw.alpha, endian);
-        raw.beta = encode_f32_to_file_endian(raw.beta, endian);
-        raw.gamma = encode_f32_to_file_endian(raw.gamma, endian);
-        raw.mapc = encode_i32_to_file_endian(header.axis_map.column as i32, endian);
-        raw.mapr = encode_i32_to_file_endian(header.axis_map.row as i32, endian);
-        raw.maps = encode_i32_to_file_endian(header.axis_map.section as i32, endian);
-        raw.dmin = encode_f32_to_file_endian(raw.dmin, endian);
-        raw.dmax = encode_f32_to_file_endian(raw.dmax, endian);
-        raw.dmean = encode_f32_to_file_endian(raw.dmean, endian);
-        raw.ispg = encode_i32_to_file_endian(raw.ispg, endian);
-        raw.nsymbt = encode_i32_to_file_endian(raw.nsymbt, endian);
-        raw.nlabl = encode_i32_to_file_endian(raw.nlabl, endian);
-        raw.origin[0] = encode_f32_to_file_endian(raw.origin[0], endian);
-        raw.origin[1] = encode_f32_to_file_endian(raw.origin[1], endian);
-        raw.origin[2] = encode_f32_to_file_endian(raw.origin[2], endian);
-        raw.rms = encode_f32_to_file_endian(raw.rms, endian);
+        raw.nx = raw.nx.convert_to_file_endian(endian);
+        raw.ny = raw.ny.convert_to_file_endian(endian);
+        raw.nz = raw.nz.convert_to_file_endian(endian);
+        raw.mode = raw.mode.convert_to_file_endian(endian);
+        raw.nxstart = raw.nxstart.convert_to_file_endian(endian);
+        raw.nystart = raw.nystart.convert_to_file_endian(endian);
+        raw.nzstart = raw.nzstart.convert_to_file_endian(endian);
+        raw.mx = raw.mx.convert_to_file_endian(endian);
+        raw.my = raw.my.convert_to_file_endian(endian);
+        raw.mz = raw.mz.convert_to_file_endian(endian);
+        raw.xlen = raw.xlen.convert_to_file_endian(endian);
+        raw.ylen = raw.ylen.convert_to_file_endian(endian);
+        raw.zlen = raw.zlen.convert_to_file_endian(endian);
+        raw.alpha = raw.alpha.convert_to_file_endian(endian);
+        raw.beta = raw.beta.convert_to_file_endian(endian);
+        raw.gamma = raw.gamma.convert_to_file_endian(endian);
+        raw.mapc = (header.axis_map.column as i32).convert_to_file_endian(endian);
+        raw.mapr = (header.axis_map.row as i32).convert_to_file_endian(endian);
+        raw.maps = (header.axis_map.section as i32).convert_to_file_endian(endian);
+        raw.dmin = raw.dmin.convert_to_file_endian(endian);
+        raw.dmax = raw.dmax.convert_to_file_endian(endian);
+        raw.dmean = raw.dmean.convert_to_file_endian(endian);
+        raw.ispg = raw.ispg.convert_to_file_endian(endian);
+        raw.nsymbt = raw.nsymbt.convert_to_file_endian(endian);
+        raw.nlabl = raw.nlabl.convert_to_file_endian(endian);
+        raw.origin[0] = raw.origin[0].convert_to_file_endian(endian);
+        raw.origin[1] = raw.origin[1].convert_to_file_endian(endian);
+        raw.origin[2] = raw.origin[2].convert_to_file_endian(endian);
+        raw.rms = raw.rms.convert_to_file_endian(endian);
         raw.machst = endian.to_machst();
 
         raw
