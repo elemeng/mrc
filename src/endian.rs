@@ -16,31 +16,18 @@ impl FileEndian {
     #[inline]
     pub const fn native() -> Self {
         #[cfg(target_endian = "little")]
-        {
-            Self::Little
-        }
+        { Self::Little }
         #[cfg(target_endian = "big")]
-        {
-            Self::Big
-        }
+        { Self::Big }
     }
-    
+
     /// Check if this is the native endianness
     #[inline]
     pub const fn is_native(self) -> bool {
-        matches!(
-            (self, Self::native()),
-            (Self::Little, Self::Little) | (Self::Big, Self::Big)
-        )
+        matches!((self, Self::native()), (Self::Little, Self::Little) | (Self::Big, Self::Big))
     }
-    
+
     /// Detect endianness from MACHST machine stamp
-    ///
-    /// MRC2014 spec:
-    /// - `0x44 0x44 0x00 0x00` = little-endian
-    /// - `0x11 0x11 0x00 0x00` = big-endian
-    ///
-    /// Returns `None` for unrecognized values.
     #[inline]
     pub fn from_machst(machst: &[u8; 4]) -> Option<Self> {
         match (machst[0], machst[1]) {
@@ -49,11 +36,8 @@ impl FileEndian {
             _ => None,
         }
     }
-    
-    /// Detect endianness from MACHST, defaulting to little-endian with warning
-    ///
-    /// Use this when you want a reasonable default for unrecognized values.
-    /// Returns `(endianness, true)` if detected, `(Little, false)` if defaulted.
+
+    /// Detect endianness from MACHST, defaulting to little-endian
     #[inline]
     pub fn from_machst_or_little(machst: &[u8; 4]) -> (Self, bool) {
         match Self::from_machst(machst) {
@@ -61,7 +45,7 @@ impl FileEndian {
             None => (Self::Little, false),
         }
     }
-    
+
     /// Convert to MACHST bytes
     #[inline]
     pub const fn to_machst(self) -> [u8; 4] {
@@ -70,81 +54,62 @@ impl FileEndian {
             Self::Big => [0x11, 0x11, 0x00, 0x00],
         }
     }
-    
-    /// Convert an i32 from file endianness to native
+
+    /// Convert a value from file endianness to native
     #[inline]
-    pub fn convert_i32_to_native(self, value: i32) -> i32 {
-        match self {
-            Self::Little => i32::from_le(value.to_le()),
-            Self::Big => i32::from_be(value.to_be()),
-        }
+    pub fn convert<T: EndianConvert>(self, value: T) -> T {
+        value.convert_from_file(self)
     }
-    
-    /// Convert an i32 from native to file endianness
-    #[inline]
-    pub fn convert_i32_from_native(self, value: i32) -> i32 {
-        match self {
-            Self::Little => value.to_le(),
-            Self::Big => value.to_be(),
+}
+
+/// Trait for types that can be converted between endianness
+pub trait EndianConvert: Copy + Sized {
+    /// Convert from file endianness to native
+    fn convert_from_file(self, endian: FileEndian) -> Self;
+}
+
+macro_rules! impl_endian_convert {
+    ($type:ty) => {
+        impl EndianConvert for $type {
+            #[inline]
+            fn convert_from_file(self, endian: FileEndian) -> Self {
+                match endian {
+                    FileEndian::Little => Self::from_le(self.to_le()),
+                    FileEndian::Big => Self::from_be(self.to_be()),
+                }
+            }
         }
-    }
-    
-    /// Convert an f32 from file endianness to native
+    };
+}
+
+impl_endian_convert!(i16);
+impl_endian_convert!(u16);
+impl_endian_convert!(i32);
+impl_endian_convert!(u32);
+impl_endian_convert!(i64);
+impl_endian_convert!(u64);
+
+impl EndianConvert for f32 {
     #[inline]
-    pub fn convert_f32_to_native(self, value: f32) -> f32 {
-        let bits = value.to_bits();
-        let converted = match self {
-            Self::Little => u32::from_le(bits.to_le()),
-            Self::Big => u32::from_be(bits.to_be()),
+    fn convert_from_file(self, endian: FileEndian) -> Self {
+        let bits = self.to_bits();
+        let converted = match endian {
+            FileEndian::Little => u32::from_le(bits.to_le()),
+            FileEndian::Big => u32::from_be(bits.to_be()),
         };
         f32::from_bits(converted)
     }
-    
-    /// Convert an f32 from native to file endianness
+}
+
+impl EndianConvert for f64 {
     #[inline]
-    pub fn convert_f32_from_native(self, value: f32) -> f32 {
-        let bits = value.to_bits();
-        let converted = match self {
-            Self::Little => bits.to_le(),
-            Self::Big => bits.to_be(),
+    fn convert_from_file(self, endian: FileEndian) -> Self {
+        let bits = self.to_bits();
+        let converted = match endian {
+            FileEndian::Little => u64::from_le(bits.to_le()),
+            FileEndian::Big => u64::from_be(bits.to_be()),
         };
-        f32::from_bits(converted)
-    }
-    
-    /// Convert an i16 from file endianness to native
-    #[inline]
-    pub fn convert_i16_to_native(self, value: i16) -> i16 {
-        match self {
-            Self::Little => i16::from_le(value.to_le()),
-            Self::Big => i16::from_be(value.to_be()),
-        }
-    }
-    
-    /// Convert an i16 from native to file endianness
-    #[inline]
-    pub fn convert_i16_from_native(self, value: i16) -> i16 {
-        match self {
-            Self::Little => value.to_le(),
-            Self::Big => value.to_be(),
-        }
-    }
-    
-    /// Convert a u16 from file endianness to native
-    #[inline]
-    pub fn convert_u16_to_native(self, value: u16) -> u16 {
-        match self {
-            Self::Little => u16::from_le(value.to_le()),
-            Self::Big => u16::from_be(value.to_be()),
-        }
-    }
-    
-    /// Convert a u16 from native to file endianness
-    #[inline]
-    pub fn convert_u16_from_native(self, value: u16) -> u16 {
-        match self {
-            Self::Little => value.to_le(),
-            Self::Big => value.to_be(),
-        }
+        f64::from_bits(converted)
     }
 }
 

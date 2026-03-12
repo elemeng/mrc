@@ -78,24 +78,48 @@ impl MrcWriterBuilder {
     }
     
     /// Build the writer and write to file
+    /// 
+    /// # Errors
+    /// Returns `Error::BufferTooSmall` or `Error::InvalidDimensions` if the provided data
+    /// size doesn't match the expected size based on shape and mode.
     pub fn write(self, path: impl AsRef<std::path::Path>) -> Result<(), Error> {
-        let header = Header {
-            nx: self.shape[0],
-            ny: self.shape[1],
-            nz: self.shape[2],
-            mode: self.mode,
-            xlen: self.voxel_size[0] * self.shape[0] as f32,
-            ylen: self.voxel_size[1] * self.shape[1] as f32,
-            zlen: self.voxel_size[2] * self.shape[2] as f32,
-            alpha: self.cell_angles[0],
-            beta: self.cell_angles[1],
-            gamma: self.cell_angles[2],
-            xorigin: self.origin[0],
-            yorigin: self.origin[1],
-            zorigin: self.origin[2],
-            nsymbt: self.ext_header.len(),
-            ..Default::default()
+        // Calculate expected data size
+        let voxel_count = self.shape[0]
+            .checked_mul(self.shape[1])
+            .and_then(|v| v.checked_mul(self.shape[2]))
+            .ok_or(Error::InvalidDimensions)?;
+        
+        let expected_data_size = match self.mode {
+            Mode::Int8 => voxel_count,
+            Mode::Int16 | Mode::Uint16 | Mode::Float16 => voxel_count.checked_mul(2).ok_or(Error::InvalidDimensions)?,
+            Mode::Float32 | Mode::Int16Complex => voxel_count.checked_mul(4).ok_or(Error::InvalidDimensions)?,
+            Mode::Float32Complex => voxel_count.checked_mul(8).ok_or(Error::InvalidDimensions)?,
+            Mode::Packed4Bit => voxel_count.div_ceil(2),
         };
+        
+        // Validate data size if provided
+        if let Some(ref data) = self.data {
+            if data.len() != expected_data_size {
+                return Err(Error::BufferTooSmall {
+                    expected: expected_data_size,
+                    got: data.len(),
+                });
+            }
+        }
+        
+        let mut header = Header::new();
+        header.set_dimensions(self.shape[0], self.shape[1], self.shape[2]);
+        header.set_mode(self.mode);
+        header.set_cell_dimensions(
+            self.voxel_size[0] * self.shape[0] as f32,
+            self.voxel_size[1] * self.shape[1] as f32,
+            self.voxel_size[2] * self.shape[2] as f32,
+        );
+        header.raw.alpha = self.cell_angles[0];
+        header.raw.beta = self.cell_angles[1];
+        header.raw.gamma = self.cell_angles[2];
+        header.set_origin(self.origin[0], self.origin[1], self.origin[2]);
+        header.set_nsymbt(self.ext_header.len());
         
         let mut writer = if self.ext_header.is_empty() {
             MrcWriter::create(path, header)?
@@ -202,5 +226,33 @@ impl MrcWriter {
             .map_err(Error::Io)?;
         self.file.write_all(header_bytes).map_err(Error::Io)?;
         Ok(())
+    }
+}
+
+use super::traits::MrcSink;
+
+impl MrcSink for MrcWriter {
+    fn write_header(&mut self, header: &Header) -> Result<(), Error> {
+        let raw: RawHeader = header.clone().into();
+        let header_bytes = bytemuck::bytes_of(&raw);
+        self.file.write_all(header_bytes).map_err(Error::Io)
+    }
+    
+    fn write_data_bytes(&mut self, header: &Header, data: &[u8]) -> Result<(), Error> {
+        if data.len() != header.data_size() {
+            return Err(Error::BufferTooSmall {
+                expected: header.data_size(),
+                got: data.len(),
+            });
+        }
+        self.file.write_all(data).map_err(Error::Io)
+    }
+    
+    fn write_all(&mut self, buf: &[u8]) -> Result<(), Error> {
+        self.file.write_all(buf).map_err(Error::Io)
+    }
+    
+    fn flush(&mut self) -> Result<(), Error> {
+        self.file.flush().map_err(Error::Io)
     }
 }

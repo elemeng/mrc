@@ -3,6 +3,8 @@
 //! MRC extended headers come beyond the 1024-byte main header.
 //! They contain application-specific metadata and vary by type.
 
+extern crate alloc;
+
 use alloc::vec::Vec;
 
 /// Extended header type identifier

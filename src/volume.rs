@@ -5,6 +5,8 @@
 use crate::{AxisMap, Error, Header, Encoding, Voxel};
 
 #[cfg(feature = "std")]
+use alloc::vec;
+#[cfg(feature = "std")]
 use alloc::vec::Vec;
 
 /// A volume of voxel data with configurable dimensionality
@@ -62,11 +64,11 @@ impl<T: Voxel + Encoding, S: AsRef<[u8]>> Volume<T, S, 3> {
     /// which defines the storage order of the data.
     pub fn new(header: Header, storage: S) -> Result<Self, Error> {
         // Validate mode matches
-        if T::MODE != header.mode {
+        if <T as Voxel>::MODE != header.mode() {
             return Err(Error::TypeMismatch);
         }
         
-        let shape = [header.nx, header.ny, header.nz];
+        let shape = [header.nx(), header.ny(), header.nz()];
         let total = shape[0].checked_mul(shape[1])
             .and_then(|v| v.checked_mul(shape[2]))
             .ok_or(Error::InvalidDimensions)?;
@@ -111,12 +113,10 @@ impl<T: Voxel + Encoding, S: AsRef<[u8]>> Volume<T, S, 3> {
             });
         }
         
-        let header = Header {
-            nx, ny, nz,
-            mode: T::MODE,
-            file_endian: endian,
-            ..Default::default()
-        };
+        let mut header = Header::new();
+        header.set_dimensions(nx, ny, nz);
+        header.set_mode(<T as Voxel>::MODE);
+        header.file_endian = endian;
         
         // Standard strides for X=column, Y=row, Z=section
         let strides = [1, nx, nx * ny];
@@ -339,6 +339,153 @@ impl<T: Voxel + Encoding, S: AsRef<[u8]>> Volume<T, S, 3> {
     pub fn index_of(&self, x: usize, y: usize, z: usize) -> usize {
         x * self.strides[0] + y * self.strides[1] + z * self.strides[2]
     }
+
+    /// Compute statistics (min, max, mean, rms) for the volume data
+    ///
+    /// Returns a `Statistics` struct with values calculated from the actual data.
+    /// This is useful for updating header statistics after modifying voxel values.
+    ///
+    /// # Type Requirements
+    /// This method is only available for types that can be converted to f64.
+    pub fn compute_statistics(&self) -> Statistics
+    where
+        T: Into<f64>,
+    {
+        let stats = crate::stats::compute_stats(self.iter());
+        Statistics {
+            dmin: stats.min,
+            dmax: stats.max,
+            dmean: stats.mean,
+            rms: stats.rms,
+        }
+    }
+
+    /// Extract a 2D slice from the volume at a specific Z position
+    ///
+    /// Returns an `Image2D` view into the original volume data.
+    ///
+    /// # Arguments
+    /// * `z` - The Z index of the slice to extract
+    ///
+    /// # Errors
+    /// Returns `Error::IndexOutOfBounds` if z is out of range
+    pub fn slice(&self, z: usize) -> Result<Image2D<T, &[u8]>, Error> {
+        if z >= self.shape[2] {
+            return Err(Error::IndexOutOfBounds {
+                index: z,
+                length: self.shape[2],
+            });
+        }
+
+        let nx = self.shape[0];
+        let ny = self.shape[1];
+        let slice_size = nx * ny * T::SIZE;
+        let slice_offset = z * slice_size;
+
+        let bytes = self.storage.as_ref();
+        let slice_data = &bytes[slice_offset..slice_offset + slice_size];
+
+        Image2D::new_2d(nx, ny, self.header.file_endian, slice_data)
+    }
+
+    /// Extract a subvolume with the specified bounds
+    ///
+    /// Returns a new Volume with copied data for the specified region.
+    ///
+    /// # Arguments
+    /// * `x_start` - Starting X index (inclusive)
+    /// * `x_end` - Ending X index (exclusive)
+    /// * `y_start` - Starting Y index (inclusive)
+    /// * `y_end` - Ending Y index (exclusive)
+    /// * `z_start` - Starting Z index (inclusive)
+    /// * `z_end` - Ending Z index (exclusive)
+    ///
+    /// # Errors
+    /// Returns `Error::IndexOutOfBounds` if any index is out of range
+    #[cfg(feature = "std")]
+    pub fn subvolume(
+        &self,
+        x_start: usize,
+        x_end: usize,
+        y_start: usize,
+        y_end: usize,
+        z_start: usize,
+        z_end: usize,
+    ) -> Result<Volume<T, Vec<u8>, 3>, Error>
+    where
+        T: Default + Clone,
+    {
+        // Validate bounds
+        if x_start >= self.shape[0] || x_end > self.shape[0] || x_start >= x_end {
+            return Err(Error::IndexOutOfBounds {
+                index: x_start,
+                length: self.shape[0],
+            });
+        }
+        if y_start >= self.shape[1] || y_end > self.shape[1] || y_start >= y_end {
+            return Err(Error::IndexOutOfBounds {
+                index: y_start,
+                length: self.shape[1],
+            });
+        }
+        if z_start >= self.shape[2] || z_end > self.shape[2] || z_start >= z_end {
+            return Err(Error::IndexOutOfBounds {
+                index: z_start,
+                length: self.shape[2],
+            });
+        }
+
+        let new_nx = x_end - x_start;
+        let new_ny = y_end - y_start;
+        let new_nz = z_end - z_start;
+        let voxel_count = new_nx * new_ny * new_nz;
+
+        // Allocate buffer for subvolume
+        let mut new_data = vec![0u8; voxel_count * T::SIZE];
+
+        // Copy data from source region
+        for (new_z, src_z) in (z_start..z_end).enumerate() {
+            for (new_y, src_y) in (y_start..y_end).enumerate() {
+                for (new_x, src_x) in (x_start..x_end).enumerate() {
+                    let src_idx = self.index_of(src_x, src_y, src_z);
+                    let dst_idx = new_z * new_ny * new_nx + new_y * new_nx + new_x;
+
+                    let src_offset = src_idx * T::SIZE;
+                    let dst_offset = dst_idx * T::SIZE;
+
+                    new_data[dst_offset..dst_offset + T::SIZE]
+                        .copy_from_slice(&self.storage.as_ref()[src_offset..src_offset + T::SIZE]);
+                }
+            }
+        }
+
+        // Create header for subvolume
+        let mut new_header = self.header.clone();
+        new_header.set_dimensions(new_nx, new_ny, new_nz);
+        // Update origin to reflect subvolume position
+        let (dx, dy, dz) = new_header.voxel_size();
+        let new_origin = [
+            new_header.xorigin() + x_start as f32 * dx,
+            new_header.yorigin() + y_start as f32 * dy,
+            new_header.zorigin() + z_start as f32 * dz,
+        ];
+        new_header.set_origin(new_origin[0], new_origin[1], new_origin[2]);
+
+        Volume::new(new_header, new_data)
+    }
+}
+
+/// Statistics computed from volume data
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Statistics {
+    /// Minimum density value
+    pub dmin: f64,
+    /// Maximum density value
+    pub dmax: f64,
+    /// Mean density value
+    pub dmean: f64,
+    /// RMS deviation from mean
+    pub rms: f64,
 }
 
 impl<T: Voxel + Encoding, S: AsMut<[u8]>> Volume<T, S, 3> {
@@ -444,12 +591,10 @@ impl<T: Voxel + Encoding, S: AsRef<[u8]>> Volume<T, S, 2> {
             });
         }
         
-        let header = Header {
-            nx, ny, nz: 1,
-            mode: T::MODE,
-            file_endian: endian,
-            ..Default::default()
-        };
+        let mut header = Header::new();
+        header.set_dimensions(nx, ny, 1);
+        header.set_mode(<T as Voxel>::MODE);
+        header.file_endian = endian;
         
         let strides = [1, nx];
         
@@ -481,6 +626,72 @@ impl<T: Voxel + Encoding, S: AsRef<[u8]>> Volume<T, S, 2> {
     }
 }
 
+// ============================================================================
+// Implement unified access traits
+// ============================================================================
+
+use crate::access::{VoxelAccess, VoxelAccessMut};
+
+impl<T: Voxel + Encoding, S: AsRef<[u8]>> VoxelAccess for Volume<T, S, 3> {
+    fn mode(&self) -> crate::Mode {
+        self.header.mode()
+    }
+
+    fn len(&self) -> usize {
+        self.len()
+    }
+
+    fn get<V: Voxel + Encoding>(&self, index: usize) -> Result<V, Error> {
+        if <V as Voxel>::MODE != self.header.mode() {
+            return Err(Error::TypeMismatch);
+        }
+        if index >= self.len() {
+            return Err(Error::IndexOutOfBounds {
+                index,
+                length: self.len(),
+            });
+        }
+        let offset = index * V::SIZE;
+        let bytes = self.storage.as_ref();
+        Ok(V::decode(self.header.file_endian, &bytes[offset..offset + V::SIZE]))
+    }
+}
+
+impl<T: Voxel + Encoding, S: AsRef<[u8]> + AsMut<[u8]>> VoxelAccessMut for Volume<T, S, 3> {
+    fn set<V: Voxel + Encoding>(&mut self, index: usize, value: V) -> Result<(), Error> {
+        if <V as Voxel>::MODE != self.header.mode() {
+            return Err(Error::TypeMismatch);
+        }
+        if index >= self.len() {
+            return Err(Error::IndexOutOfBounds {
+                index,
+                length: self.len(),
+            });
+        }
+        
+        // Special handling for Packed4Bit (two values per byte)
+        if <V as Voxel>::MODE == crate::Mode::Packed4Bit {
+            let byte_index = index / 2;
+            let is_second = index % 2 == 1;
+            let bytes = self.storage.as_mut();
+            // SAFETY: Packed4Bit has byte_size() = 1, but we need special handling
+            // This is a workaround for the type system
+            let packed_byte = unsafe { *(&value as *const V as *const u8) };
+            if is_second {
+                bytes[byte_index] = (bytes[byte_index] & 0x0F) | (packed_byte & 0xF0);
+            } else {
+                bytes[byte_index] = (bytes[byte_index] & 0xF0) | (packed_byte & 0x0F);
+            }
+            Ok(())
+        } else {
+            let offset = index * V::SIZE;
+            let bytes = self.storage.as_mut();
+            value.encode(self.header.file_endian, &mut bytes[offset..offset + V::SIZE]);
+            Ok(())
+        }
+    }
+}
+
 // Type aliases for common volume types
 
 /// Volume with Vec<u8> storage (most common)
@@ -494,30 +705,75 @@ pub type MmapVolume<T, const D: usize = 3> = Volume<T, memmap2::Mmap, D>;
 #[cfg(feature = "mmap")]
 pub type MmapVolumeMut<T, const D: usize = 3> = Volume<T, memmap2::MmapMut, D>;
 
+// Implement Volume trait for Volume<T, S, 3>
+use crate::volume_trait::{Volume as VolumeTrait, VolumeStats};
+
+impl<T: Voxel + Encoding, S: AsRef<[u8]>> VolumeTrait for Volume<T, S, 3> {
+    type Voxel = T;
+
+    fn header(&self) -> &Header { &self.header }
+    fn shape(&self) -> (usize, usize, usize) { (self.shape[0], self.shape[1], self.shape[2]) }
+    
+    fn strides(&self) -> (usize, usize, usize) {
+        (self.strides[0], self.strides[1], self.strides[2])
+    }
+
+    unsafe fn get_unchecked(&self, index: usize) -> T {
+        let offset = index * T::SIZE;
+        let bytes = self.storage.as_ref();
+        T::decode(self.header.file_endian, &bytes[offset..offset + T::SIZE])
+    }
+
+    fn compute_stats(&self) -> VolumeStats
+    where
+        T: Into<f64>,
+    {
+        let mut min = f64::INFINITY;
+        let mut max = f64::NEG_INFINITY;
+        let mut sum = 0.0;
+        let mut sum_sq = 0.0;
+        let n = self.len() as f64;
+
+        for i in 0..self.len() {
+            let v: f64 = unsafe { self.get_unchecked(i) }.into();
+            min = min.min(v);
+            max = max.max(v);
+            sum += v;
+            sum_sq += v * v;
+        }
+
+        let mean = if n > 0.0 { sum / n } else { 0.0 };
+        let variance = if n > 0.0 { (sum_sq / n) - (mean * mean) } else { 0.0 };
+        let rms = variance.max(0.0).sqrt();
+
+        VolumeStats { min, max, mean, rms }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_standard_axis_map_strides() {
         // Standard: X=column, Y=row, Z=section
         let axis_map = AxisMap::new(1, 2, 3);
         let shape = [64, 64, 64];
         let strides = calculate_strides(&axis_map, shape);
-        
+
         // X should have stride 1 (column, fastest)
         // Y should have stride 64 (row)
         // Z should have stride 4096 (section, slowest)
         assert_eq!(strides, [1, 64, 4096]);
     }
-    
+
     #[test]
     fn test_nonstandard_axis_map_strides() {
         // Non-standard: Z=column, Y=row, X=section
         let axis_map = AxisMap::new(3, 2, 1);
         let shape = [64, 64, 64];
         let strides = calculate_strides(&axis_map, shape);
-        
+
         // X (stored as section) should have stride 4096
         // Y (stored as row) should have stride 64
         // Z (stored as column) should have stride 1

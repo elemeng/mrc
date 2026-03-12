@@ -4,7 +4,7 @@
 //! encoding/decoding of voxel data.
 
 use crate::{FileEndian, Mode, Voxel, Error};
-use crate::voxel::{ComplexI16, ComplexF32};
+use crate::voxel::{ComplexI16, ComplexF32, Packed4Bit};
 
 /// Trait for encoding/decoding voxel data with endianness handling
 ///
@@ -238,6 +238,23 @@ impl Encoding for half::f16 {
             FileEndian::Big => bits.to_be_bytes(),
         };
         bytes.copy_from_slice(&arr);
+    }
+}
+
+// Packed4Bit encoding (Mode 101)
+impl Encoding for Packed4Bit {
+    const MODE: Mode = Mode::Packed4Bit;
+    const SIZE: usize = 1;
+
+    #[inline]
+    unsafe fn decode_unchecked(_endian: FileEndian, bytes: &[u8]) -> Self {
+        // Packed4Bit is endianness-independent (single byte)
+        Self::new(bytes[0])
+    }
+
+    #[inline]
+    unsafe fn encode_unchecked(self, _endian: FileEndian, bytes: &mut [u8]) {
+        bytes[0] = self.byte;
     }
 }
 

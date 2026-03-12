@@ -41,7 +41,7 @@ impl MrcReader {
         }
         
         // Read extended header
-        let ext_header_size = header.nsymbt;
+        let ext_header_size = header.nsymbt();
         let mut ext_header = alloc::vec![0u8; ext_header_size];
         if ext_header_size > 0 {
             file.read_exact(&mut ext_header).map_err(Error::Io)?;
@@ -71,12 +71,12 @@ impl MrcReader {
     
     /// Get parsed extended header
     pub fn ext_header_parsed(&self) -> ExtendedHeader {
-        ExtendedHeader::from_bytes(&self.header.exttyp, self.ext_header.clone())
+        ExtendedHeader::from_bytes(&self.header.exttyp(), self.ext_header.clone())
     }
     
     /// Get the mode
     pub fn mode(&self) -> Mode {
-        self.header.mode
+        self.header.mode()
     }
     
     /// Get dimensions
@@ -103,7 +103,7 @@ impl MrcReader {
     /// Returns `Error::TypeMismatch` if the file mode doesn't match T::MODE
     pub fn read_volume<T: Voxel + Encoding>(&mut self) -> Result<Volume<T, Vec<u8>>, Error> {
         // Verify mode matches
-        if self.header.mode != T::MODE {
+        if self.header.mode() != <T as Voxel>::MODE {
             return Err(Error::TypeMismatch);
         }
         
@@ -117,5 +117,22 @@ impl MrcReader {
     pub fn read(&mut self) -> Result<VolumeData, Error> {
         let data = self.read_data()?;
         VolumeData::from_bytes(self.header.clone(), data)
+    }
+}
+
+use super::traits::MrcSource;
+
+impl MrcSource for MrcReader {
+    fn read_header(&mut self) -> Result<Header, Error> {
+        Ok(self.header.clone())
+    }
+    
+    fn read_data_bytes(&mut self, _header: &Header) -> Result<Vec<u8>, Error> {
+        self.read_data()
+    }
+    
+    fn read_exact(&mut self, buf: &mut [u8]) -> Result<(), Error> {
+        use std::io::Read;
+        self.file.read_exact(buf).map_err(Error::Io)
     }
 }

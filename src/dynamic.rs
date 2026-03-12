@@ -1,206 +1,100 @@
 //! Dynamic dispatch for runtime mode handling
-//!
-//! When the MRC mode is unknown at compile time, use `VolumeData`
-//! to hold the volume with runtime type dispatch.
 
-use crate::{Error, Header, Mode, Volume};
-use crate::voxel::{Int16Complex, Float32Complex};
+use crate::{Encoding, Error, Header, Mode, Volume, Voxel};
+use crate::voxel::{Int16Complex, Float32Complex, Packed4Bit};
 use alloc::vec::Vec;
+use alloc::boxed::Box;
+
+/// Trait for dynamic volume operations
+pub trait DynVolume {
+    fn header(&self) -> &Header;
+    fn mode(&self) -> Mode;
+    fn dimensions(&self) -> (usize, usize, usize);
+    fn len(&self) -> usize;
+    fn is_empty(&self) -> bool;
+    fn as_any(&self) -> &dyn core::any::Any;
+}
+
+impl<T: Voxel + Encoding> DynVolume for Volume<T, Vec<u8>> {
+    fn header(&self) -> &Header { crate::volume_trait::Volume::header(self) }
+    fn mode(&self) -> Mode { self.header().mode() }
+    fn dimensions(&self) -> (usize, usize, usize) { crate::volume_trait::Volume::shape(self) }
+    fn len(&self) -> usize { crate::volume::Volume::len(self) }
+    fn is_empty(&self) -> bool { crate::volume::Volume::is_empty(self) }
+    fn as_any(&self) -> &dyn core::any::Any { self }
+}
 
 /// Runtime-typed volume data
-///
-/// This enum provides runtime dispatch for MRC volumes when the
-/// voxel type is not known at compile time.
-#[derive(Debug)]
-pub enum VolumeData {
-    /// 8-bit signed integer (Mode 0)
-    I8(Volume<i8, Vec<u8>>),
-    /// 16-bit signed integer (Mode 1)
-    I16(Volume<i16, Vec<u8>>),
-    /// 32-bit float (Mode 2)
-    F32(Volume<f32, Vec<u8>>),
-    /// Complex 16-bit integer (Mode 3)
-    ComplexI16(Volume<Int16Complex, Vec<u8>>),
-    /// Complex 32-bit float (Mode 4)
-    ComplexF32(Volume<Float32Complex, Vec<u8>>),
-    /// 16-bit unsigned integer (Mode 6)
-    U16(Volume<u16, Vec<u8>>),
-    /// 16-bit float (Mode 12)
-    #[cfg(feature = "f16")]
-    F16(Volume<half::f16, Vec<u8>>),
+pub struct VolumeData(Box<dyn DynVolume>);
+
+impl core::fmt::Debug for VolumeData {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("VolumeData")
+            .field("mode", &self.mode())
+            .field("dimensions", &self.dimensions())
+            .finish()
+    }
 }
 
 impl VolumeData {
     /// Create VolumeData from raw bytes and header
     pub fn from_bytes(header: Header, data: Vec<u8>) -> Result<Self, Error> {
-        match header.mode {
-            Mode::Int8 => {
-                let vol = Volume::new(header, data)?;
-                Ok(Self::I8(vol))
-            }
-            Mode::Int16 => {
-                let vol = Volume::new(header, data)?;
-                Ok(Self::I16(vol))
-            }
-            Mode::Float32 => {
-                let vol = Volume::new(header, data)?;
-                Ok(Self::F32(vol))
-            }
-            Mode::Int16Complex => {
-                let vol = Volume::new(header, data)?;
-                Ok(Self::ComplexI16(vol))
-            }
-            Mode::Float32Complex => {
-                let vol = Volume::new(header, data)?;
-                Ok(Self::ComplexF32(vol))
-            }
-            Mode::Uint16 => {
-                let vol = Volume::new(header, data)?;
-                Ok(Self::U16(vol))
-            }
+        let boxed: Box<dyn DynVolume> = match header.mode() {
+            Mode::Int8 => Box::new(Volume::<i8, Vec<u8>>::new(header, data)?),
+            Mode::Int16 => Box::new(Volume::<i16, Vec<u8>>::new(header, data)?),
+            Mode::Float32 => Box::new(Volume::<f32, Vec<u8>>::new(header, data)?),
+            Mode::Int16Complex => Box::new(Volume::<Int16Complex, Vec<u8>>::new(header, data)?),
+            Mode::Float32Complex => Box::new(Volume::<Float32Complex, Vec<u8>>::new(header, data)?),
+            Mode::Uint16 => Box::new(Volume::<u16, Vec<u8>>::new(header, data)?),
             #[cfg(feature = "f16")]
-            Mode::Float16 => {
-                let vol = Volume::new(header, data)?;
-                Ok(Self::F16(vol))
-            }
-            Mode::Packed4Bit => {
-                // Packed4Bit (mode 101) packs two 4-bit values per byte.
-                // Full support requires special handling for packing/unpacking.
-                // Currently unsupported - consider using mode 0 (Int8) instead.
-                Err(Error::FeatureDisabled {
-                    feature: "Packed4Bit mode (mode 101)",
-                })
-            }
-        }
+            Mode::Float16 => Box::new(Volume::<half::f16, Vec<u8>>::new(header, data)?),
+            Mode::Packed4Bit => Box::new(Volume::<Packed4Bit, Vec<u8>>::new(header, data)?),
+        };
+        Ok(Self(boxed))
     }
-    
-    /// Get the mode of this volume
-    pub fn mode(&self) -> Mode {
-        match self {
-            Self::I8(_) => Mode::Int8,
-            Self::I16(_) => Mode::Int16,
-            Self::F32(_) => Mode::Float32,
-            Self::ComplexI16(_) => Mode::Int16Complex,
-            Self::ComplexF32(_) => Mode::Float32Complex,
-            Self::U16(_) => Mode::Uint16,
-            #[cfg(feature = "f16")]
-            Self::F16(_) => Mode::Float16,
-        }
-    }
-    
+
+    /// Get the mode
+    pub fn mode(&self) -> Mode { self.0.mode() }
+
     /// Get the header
-    pub fn header(&self) -> &Header {
-        match self {
-            Self::I8(v) => v.header(),
-            Self::I16(v) => v.header(),
-            Self::F32(v) => v.header(),
-            Self::ComplexI16(v) => v.header(),
-            Self::ComplexF32(v) => v.header(),
-            Self::U16(v) => v.header(),
-            #[cfg(feature = "f16")]
-            Self::F16(v) => v.header(),
-        }
-    }
-    
-    /// Get dimensions (nx, ny, nz)
-    pub fn dimensions(&self) -> (usize, usize, usize) {
-        match self {
-            Self::I8(v) => v.dimensions(),
-            Self::I16(v) => v.dimensions(),
-            Self::F32(v) => v.dimensions(),
-            Self::ComplexI16(v) => v.dimensions(),
-            Self::ComplexF32(v) => v.dimensions(),
-            Self::U16(v) => v.dimensions(),
-            #[cfg(feature = "f16")]
-            Self::F16(v) => v.dimensions(),
-        }
-    }
-    
-    /// Total number of voxels
-    pub fn len(&self) -> usize {
-        match self {
-            Self::I8(v) => v.len(),
-            Self::I16(v) => v.len(),
-            Self::F32(v) => v.len(),
-            Self::ComplexI16(v) => v.len(),
-            Self::ComplexF32(v) => v.len(),
-            Self::U16(v) => v.len(),
-            #[cfg(feature = "f16")]
-            Self::F16(v) => v.len(),
-        }
-    }
-    
+    pub fn header(&self) -> &Header { self.0.header() }
+
+    /// Get dimensions
+    pub fn dimensions(&self) -> (usize, usize, usize) { self.0.dimensions() }
+
+    /// Total voxels
+    pub fn len(&self) -> usize { self.0.len() }
+
     /// Check if empty
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
+    pub fn is_empty(&self) -> bool { self.0.is_empty() }
+
+    /// Downcast to typed volume
+    pub fn downcast_ref<T: Voxel + Encoding>(&self) -> Option<&Volume<T, Vec<u8>>> {
+        self.0.as_any().downcast_ref::<Volume<T, Vec<u8>>>()
     }
-    
+
     /// Try to get as f32 volume
-    pub fn as_f32(&self) -> Option<&Volume<f32, Vec<u8>>> {
-        match self {
-            Self::F32(v) => Some(v),
-            _ => None,
-        }
-    }
-    
+    pub fn as_f32(&self) -> Option<&Volume<f32, Vec<u8>>> { self.downcast_ref::<f32>() }
+
     /// Try to get as i16 volume
-    pub fn as_i16(&self) -> Option<&Volume<i16, Vec<u8>>> {
-        match self {
-            Self::I16(v) => Some(v),
-            _ => None,
-        }
-    }
-    
+    pub fn as_i16(&self) -> Option<&Volume<i16, Vec<u8>>> { self.downcast_ref::<i16>() }
+
     /// Try to get as i8 volume
-    pub fn as_i8(&self) -> Option<&Volume<i8, Vec<u8>>> {
-        match self {
-            Self::I8(v) => Some(v),
-            _ => None,
-        }
-    }
-    
+    pub fn as_i8(&self) -> Option<&Volume<i8, Vec<u8>>> { self.downcast_ref::<i8>() }
+
     /// Try to get as u16 volume
-    pub fn as_u16(&self) -> Option<&Volume<u16, Vec<u8>>> {
-        match self {
-            Self::U16(v) => Some(v),
-            _ => None,
-        }
-    }
-    
-    /// Try to get as Int16Complex volume
-    pub fn as_complex_i16(&self) -> Option<&Volume<Int16Complex, Vec<u8>>> {
-        match self {
-            Self::ComplexI16(v) => Some(v),
-            _ => None,
-        }
-    }
-    
-    /// Try to get as Float32Complex volume
-    pub fn as_complex_f32(&self) -> Option<&Volume<Float32Complex, Vec<u8>>> {
-        match self {
-            Self::ComplexF32(v) => Some(v),
-            _ => None,
-        }
-    }
-    
+    pub fn as_u16(&self) -> Option<&Volume<u16, Vec<u8>>> { self.downcast_ref::<u16>() }
+
+    /// Try to get as complex i16 volume
+    pub fn as_complex_i16(&self) -> Option<&Volume<Int16Complex, Vec<u8>>> { self.downcast_ref::<Int16Complex>() }
+
+    /// Try to get as complex f32 volume
+    pub fn as_complex_f32(&self) -> Option<&Volume<Float32Complex, Vec<u8>>> { self.downcast_ref::<Float32Complex>() }
+
     /// Try to get as f16 volume
     #[cfg(feature = "f16")]
-    pub fn as_f16(&self) -> Option<&Volume<half::f16, Vec<u8>>> {
-        match self {
-            Self::F16(v) => Some(v),
-            _ => None,
-        }
-    }
-    
-    /// Convert to f32 values (allocates)
-    pub fn to_f32_vec(&self) -> Option<Vec<f32>> {
-        match self {
-            Self::F32(v) => Some(v.iter().collect()),
-            Self::I16(v) => Some(v.iter().map(|x| x as f32).collect()),
-            Self::U16(v) => Some(v.iter().map(|x| x as f32).collect()),
-            #[cfg(feature = "f16")]
-            Self::F16(v) => Some(v.iter().map(|x| x.to_f32()).collect()),
-            _ => None,
-        }
-    }
+    pub fn as_f16(&self) -> Option<&Volume<half::f16, Vec<u8>>> { self.downcast_ref::<half::f16>() }
+
+    /// Try to get as Packed4Bit volume
+    pub fn as_packed4bit(&self) -> Option<&Volume<Packed4Bit, Vec<u8>>> { self.downcast_ref::<Packed4Bit>() }
 }

@@ -81,3 +81,69 @@ impl fmt::Display for Error {
 
 #[cfg(feature = "std")]
 impl std::error::Error for Error {}
+
+impl Clone for Error {
+    fn clone(&self) -> Self {
+        match self {
+            Self::InvalidHeader => Self::InvalidHeader,
+            Self::InvalidMode => Self::InvalidMode,
+            Self::InvalidDimensions => Self::InvalidDimensions,
+            Self::InvalidAxisMap => Self::InvalidAxisMap,
+            Self::TypeMismatch => Self::TypeMismatch,
+            Self::WrongEndianness => Self::WrongEndianness,
+            Self::MisalignedData { required, actual } => Self::MisalignedData {
+                required: *required,
+                actual: *actual,
+            },
+            Self::BufferTooSmall { expected, got } => Self::BufferTooSmall {
+                expected: *expected,
+                got: *got,
+            },
+            Self::IndexOutOfBounds { index, length } => Self::IndexOutOfBounds {
+                index: *index,
+                length: *length,
+            },
+            #[cfg(feature = "std")]
+            Self::Io(_) => Self::Io(std::io::Error::other("IO error (cloned)")),
+            #[cfg(feature = "mmap")]
+            Self::Mmap => Self::Mmap,
+            Self::FeatureDisabled { feature } => Self::FeatureDisabled { feature },
+            Self::UnknownEndianness => Self::UnknownEndianness,
+        }
+    }
+}
+
+impl PartialEq for Error {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::InvalidHeader, Self::InvalidHeader) => true,
+            (Self::InvalidMode, Self::InvalidMode) => true,
+            (Self::InvalidDimensions, Self::InvalidDimensions) => true,
+            (Self::InvalidAxisMap, Self::InvalidAxisMap) => true,
+            (Self::TypeMismatch, Self::TypeMismatch) => true,
+            (Self::WrongEndianness, Self::WrongEndianness) => true,
+            (
+                Self::MisalignedData { required: r1, actual: a1 },
+                Self::MisalignedData { required: r2, actual: a2 },
+            ) => r1 == r2 && a1 == a2,
+            (
+                Self::BufferTooSmall { expected: e1, got: g1 },
+                Self::BufferTooSmall { expected: e2, got: g2 },
+            ) => e1 == e2 && g1 == g2,
+            (
+                Self::IndexOutOfBounds { index: i1, length: l1 },
+                Self::IndexOutOfBounds { index: i2, length: l2 },
+            ) => i1 == i2 && l1 == l2,
+            #[cfg(feature = "std")]
+            (Self::Io(_), Self::Io(_)) => true, // Consider all IO errors equal for comparison
+            #[cfg(feature = "mmap")]
+            (Self::Mmap, Self::Mmap) => true,
+            (
+                Self::FeatureDisabled { feature: f1 },
+                Self::FeatureDisabled { feature: f2 },
+            ) => f1 == f2,
+            (Self::UnknownEndianness, Self::UnknownEndianness) => true,
+            _ => false,
+        }
+    }
+}

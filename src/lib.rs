@@ -29,9 +29,8 @@
 //!     // Or use dynamic dispatch for unknown modes
 //!     let mut reader = MrcReader::open("data.mrc")?;
 //!     let data = reader.read()?;
-//!     match data {
-//!         VolumeData::F32(vol) => { /* handle f32 */ },
-//!         _ => { /* handle other types */ },
+//!     if let Some(vol) = data.as_f32() {
+//!         // handle f32
 //!     }
 //!     Ok(())
 //! }
@@ -49,11 +48,14 @@ extern crate alloc;
 extern crate std;
 
 // Core types
+pub mod access;
 pub mod axis;
+pub mod data_block;
 pub mod encoding;
 pub mod endian;
 pub mod error;
 pub mod mode;
+pub mod stats;
 pub mod voxel;
 
 // Header module
@@ -63,23 +65,26 @@ pub mod header;
 pub mod extended;
 
 // Re-exports
+pub use access::{VoxelAccess, VoxelAccessMut};
 pub use axis::AxisMap;
+pub use data_block::{DataBlock, DataBlockMut};
 pub use encoding::Encoding;
 pub use endian::FileEndian;
 pub use error::Error;
 pub use header::{Header, HeaderBuilder, RawHeader};
 pub use mode::{InvalidMode, Mode};
-pub use voxel::{ComplexVoxel, RealVoxel, ScalarVoxel, Voxel, Int16Complex, Float32Complex};
+pub use stats::{compute_stats, compute_stats_slice, RunningStats, Statistics as Stats};
+pub use voxel::{ComplexVoxel, IntegerVoxel, RealVoxel, ScalarVoxel, Voxel, Int16Complex, Float32Complex, Packed4Bit};
 
 // Feature-gated modules
 #[cfg(feature = "std")]
 pub mod io;
 
 #[cfg(feature = "std")]
-pub mod storage;
+pub mod volume;
 
 #[cfg(feature = "std")]
-pub mod volume;
+pub mod volume_trait;
 
 #[cfg(feature = "std")]
 pub mod dynamic;
@@ -94,13 +99,10 @@ pub use extended::ExtendedHeader;
 pub use io::{MrcReader, MrcWriter};
 
 #[cfg(feature = "std")]
-pub use storage::{Storage, StorageMut, VecStorage};
-
-#[cfg(all(feature = "std", feature = "mmap"))]
-pub use storage::{MmapStorage, MmapStorageMut};
+pub use volume::{Statistics, Volume};
 
 #[cfg(feature = "std")]
-pub use volume::Volume;
+pub use volume_trait::{Volume as VolumeTrait, VolumeMut, VolumeRef, VolumeMutRef, VolumeStats, VolumeExt};
 
 #[cfg(test)]
 mod tests {
