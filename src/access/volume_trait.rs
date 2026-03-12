@@ -22,8 +22,8 @@ pub trait Volume: VoxelAccess {
     /// Get the header
     fn header(&self) -> &Header;
 
-    /// Get the shape (nx, ny, nz)
-    fn shape(&self) -> (usize, usize, usize);
+    /// Get the dimensions (nx, ny, nz)
+    fn dimensions(&self) -> (usize, usize, usize);
 
     /// Get the axis map
     #[inline]
@@ -53,7 +53,7 @@ pub trait Volume: VoxelAccess {
     /// Get a voxel at 3D coordinates, returning None if out of bounds
     #[inline]
     fn get_at_checked(&self, x: usize, y: usize, z: usize) -> Option<Self::Voxel> {
-        let (nx, ny, nz) = self.shape();
+        let (nx, ny, nz) = self.dimensions();
         if x >= nx || y >= ny || z >= nz {
             return None;
         }
@@ -99,7 +99,7 @@ pub trait VolumeMut: Volume + VoxelAccessMut {
         z: usize,
         value: Self::Voxel,
     ) -> Result<(), Error> {
-        let (nx, ny, nz) = self.shape();
+        let (nx, ny, nz) = self.dimensions();
         if x >= nx || y >= ny || z >= nz {
             return Err(Error::IndexOutOfBounds {
                 index: x + y * nx + z * nx * ny,

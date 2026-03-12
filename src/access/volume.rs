@@ -33,11 +33,6 @@ impl<T, S, const D: usize> Volume<T, S, D> {
         &self.header
     }
 
-    /// Get the shape (logical dimensions: nx, ny, nz)
-    pub fn shape(&self) -> &[usize; D] {
-        &self.shape
-    }
-
     /// Get the strides
     pub fn strides(&self) -> &[usize; D] {
         &self.strides
@@ -758,7 +753,7 @@ impl<T: Voxel + Encoding, S: AsRef<[u8]>> VolumeTrait for Volume<T, S, 3> {
     fn header(&self) -> &Header {
         &self.header
     }
-    fn shape(&self) -> (usize, usize, usize) {
+    fn dimensions(&self) -> (usize, usize, usize) {
         (self.shape[0], self.shape[1], self.shape[2])
     }
 

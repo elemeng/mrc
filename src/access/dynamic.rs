@@ -25,7 +25,7 @@ impl<T: Voxel + Encoding> DynVolume for Volume<T, Vec<u8>> {
         self.header().mode()
     }
     fn dimensions(&self) -> (usize, usize, usize) {
-        super::volume_trait::Volume::shape(self)
+        super::volume_trait::Volume::dimensions(self)
     }
     fn len(&self) -> usize {
         super::Volume::len(self)
