@@ -31,37 +31,43 @@ pub enum ExtType {
     Unknown,
 }
 
-impl ExtType {
-    /// Create from 4-byte EXTTYP field
-    pub fn from_bytes(bytes: &[u8; 4]) -> Self {
-        // Check for common patterns
-        let s = core::str::from_utf8(bytes).unwrap_or("");
-        match s {
-            "CCP4" => Self::Ccp4,
-            "MRCO" => Self::Mrco,
-            "SERI" => Self::Seri,
-            "AGAR" => Self::Agar,
-            "FEI1" => Self::Fei1,
-            "FEI2" => Self::Fei2,
-            "HDF5" => Self::Hdf5,
-            _ => Self::Unknown,
-        }
-    }
+// Macro to define ExtType variants with their string representations
+macro_rules! ext_type_variants {
+    ($(($variant:ident, $str:literal)),* $(,)?) => {
+        impl ExtType {
+            /// Create from 4-byte EXTTYP field
+            pub fn from_bytes(bytes: &[u8; 4]) -> Self {
+                let s = core::str::from_utf8(bytes).unwrap_or("");
+                match s {
+                    $($str => Self::$variant,)*
+                    _ => Self::Unknown,
+                }
+            }
 
-    /// Get the 4-byte identifier
-    pub fn as_bytes(&self) -> [u8; 4] {
-        match self {
-            Self::Ccp4 => *b"CCP4",
-            Self::Mrco => *b"MRCO",
-            Self::Seri => *b"SERI",
-            Self::Agar => *b"AGAR",
-            Self::Fei1 => *b"FEI1",
-            Self::Fei2 => *b"FEI2",
-            Self::Hdf5 => *b"HDF5",
-            Self::Unknown => [0, 0, 0, 0],
+            /// Get the 4-byte identifier
+            pub fn as_bytes(&self) -> [u8; 4] {
+                match self {
+                    $(Self::$variant => {
+                        let mut arr = [0u8; 4];
+                        arr.copy_from_slice($str.as_bytes());
+                        arr
+                    },)*
+                    Self::Unknown => [0, 0, 0, 0],
+                }
+            }
         }
-    }
+    };
 }
+
+ext_type_variants!(
+    (Ccp4, "CCP4"),
+    (Mrco, "MRCO"),
+    (Seri, "SERI"),
+    (Agar, "AGAR"),
+    (Fei1, "FEI1"),
+    (Fei2, "FEI2"),
+    (Hdf5, "HDF5"),
+);
 
 /// Extended header wrapper
 ///

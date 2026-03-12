@@ -256,47 +256,33 @@ pub trait VolumeAccessMut: VolumeAccess + VoxelAccessMut {
         self.in_bounds(x, y, z).then(|| self.set_at(x, y, z, value)).is_some()
     }
 
-    /// Apply a function to each voxel in-place
-    fn for_each<F>(&mut self, mut f: F)
-    where
-        F: FnMut(Self::Voxel) -> Self::Voxel,
-    {
-        for i in 0..self.len() {
-            unsafe {
-                let old = self.get_unchecked(i);
-                self.set_unchecked(i, f(old));
-            }
-        }
-    }
-
     /// Fill all voxels with the same value
     fn fill_volume(&mut self, value: Self::Voxel)
     where
         Self::Voxel: Copy,
     {
-        let len = self.len();
-        for i in 0..len {
-            // SAFETY: i is in bounds since we iterate to len
-            unsafe {
-                self.set_unchecked(i, value);
-            }
-        }
+        (0..self.len()).for_each(|i| unsafe {
+            self.set_unchecked(i, value);
+        });
     }
 
-    /// Apply a transformation to each voxel
-    fn transform<F>(&mut self, f: F)
+    /// Apply a transformation to each voxel in-place
+    fn transform<F>(&mut self, mut f: F)
     where
-        F: Fn(Self::Voxel) -> Self::Voxel,
-        Self::Voxel: Copy,
+        F: FnMut(Self::Voxel) -> Self::Voxel,
     {
-        let len = self.len();
-        for i in 0..len {
-            // SAFETY: i is in bounds since we iterate to len
-            unsafe {
-                let old = self.get_unchecked(i);
-                self.set_unchecked(i, f(old));
-            }
-        }
+        (0..self.len()).for_each(|i| unsafe {
+            let old = self.get_unchecked(i);
+            self.set_unchecked(i, f(old));
+        });
+    }
+
+    /// Apply a function to each voxel in-place (alias for transform)
+    fn for_each<F>(&mut self, f: F)
+    where
+        F: FnMut(Self::Voxel) -> Self::Voxel,
+    {
+        self.transform(f)
     }
 }
 
