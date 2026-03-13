@@ -393,6 +393,15 @@ impl<T: Voxel + Encoding, S: AsMut<[u8]>> Volume<T, S> {
         );
     }
 
+    /// Set a voxel at 3D coordinates, returning false if out of bounds
+    pub fn set_at_opt(&mut self, x: usize, y: usize, z: usize, value: T) -> bool {
+        if x >= self.dimensions[0] || y >= self.dimensions[1] || z >= self.dimensions[2] {
+            return false;
+        }
+        self.set_at(x, y, z, value);
+        true
+    }
+
     /// Set a voxel at 3D coordinates, returning error if out of bounds
     pub fn set_at_checked(&mut self, x: usize, y: usize, z: usize, value: T) -> Result<(), Error> {
         if x >= self.dimensions[0] || y >= self.dimensions[1] || z >= self.dimensions[2] {
@@ -404,6 +413,28 @@ impl<T: Voxel + Encoding, S: AsMut<[u8]>> Volume<T, S> {
         }
         self.set_at(x, y, z, value);
         Ok(())
+    }
+
+    /// Extract a mutable 2D slice from the volume at a specific Z position
+    pub fn slice_mut(&mut self, z: usize) -> Result<Slice2DMut<'_, T>, Error> {
+        check_bounds(z, self.dimensions[2])?;
+
+        let nx = self.dimensions[0];
+        let ny = self.dimensions[1];
+        let slice_size = nx * ny * T::SIZE;
+        let slice_offset = z * nx * ny * T::SIZE;
+
+        let bytes = self.storage.as_mut();
+        let slice_data = &mut bytes[slice_offset..slice_offset + slice_size];
+
+        Ok(Slice2DMut {
+            data: slice_data,
+            width: nx,
+            height: ny,
+            stride: nx,
+            endian: self.header.file_endian(),
+            _marker: core::marker::PhantomData,
+        })
     }
 }
 
@@ -507,6 +538,129 @@ impl<T: Voxel + Encoding> Slice2D<'_, T> {
     #[cfg(feature = "std")]
     pub fn to_bytes(&self) -> Vec<u8> {
         self.data.to_vec()
+    }
+}
+
+// ============================================================================
+// Slice2DMut - Mutable 2D view into a volume
+// ============================================================================
+
+/// Mutable borrowed 2D slice view into a 3D volume
+///
+/// This is a zero-copy mutable view - the data is not owned.
+#[derive(Debug)]
+pub struct Slice2DMut<'a, T: Voxel> {
+    data: &'a mut [u8],
+    width: usize,
+    height: usize,
+    stride: usize,
+    endian: FileEndian,
+    _marker: core::marker::PhantomData<T>,
+}
+
+impl<T: Voxel + Encoding> Slice2DMut<'_, T> {
+    /// Get dimensions
+    pub fn dimensions(&self) -> (usize, usize) {
+        (self.width, self.height)
+    }
+
+    /// Get width
+    pub fn width(&self) -> usize {
+        self.width
+    }
+
+    /// Get height
+    pub fn height(&self) -> usize {
+        self.height
+    }
+
+    /// Get pixel at (x, y)
+    ///
+    /// # Panics
+    /// Panics if coordinates are out of bounds.
+    pub fn get(&self, x: usize, y: usize) -> T {
+        let index = y * self.stride + x;
+        let offset = index * T::SIZE;
+        T::decode(self.endian, &self.data[offset..offset + T::SIZE])
+    }
+
+    /// Get pixel with bounds check
+    pub fn get_opt(&self, x: usize, y: usize) -> Option<T> {
+        if x >= self.width || y >= self.height {
+            return None;
+        }
+        Some(self.get(x, y))
+    }
+
+    /// Get pixel with full error context
+    pub fn get_checked(&self, x: usize, y: usize) -> Result<T, Error> {
+        if x >= self.width || y >= self.height {
+            return Err(Error::IndexOutOfBounds {
+                index: y * self.stride + x,
+                length: self.width * self.height,
+            });
+        }
+        Ok(self.get(x, y))
+    }
+
+    /// Set pixel at (x, y)
+    ///
+    /// # Panics
+    /// Panics if coordinates are out of bounds.
+    pub fn set(&mut self, x: usize, y: usize, value: T) {
+        let index = y * self.stride + x;
+        let offset = index * T::SIZE;
+        value.encode(self.endian, &mut self.data[offset..offset + T::SIZE]);
+    }
+
+    /// Set pixel with bounds check, returns false if out of bounds
+    pub fn set_opt(&mut self, x: usize, y: usize, value: T) -> bool {
+        if x >= self.width || y >= self.height {
+            return false;
+        }
+        self.set(x, y, value);
+        true
+    }
+
+    /// Set pixel with full error context
+    pub fn set_checked(&mut self, x: usize, y: usize, value: T) -> Result<(), Error> {
+        if x >= self.width || y >= self.height {
+            return Err(Error::IndexOutOfBounds {
+                index: y * self.stride + x,
+                length: self.width * self.height,
+            });
+        }
+        self.set(x, y, value);
+        Ok(())
+    }
+
+    /// Fill entire slice with a value
+    pub fn fill(&mut self, value: T)
+    where
+        T: Copy,
+    {
+        for y in 0..self.height {
+            for x in 0..self.width {
+                self.set(x, y, value);
+            }
+        }
+    }
+
+    /// Iterate over pixels in row-major order
+    pub fn iter(&self) -> impl Iterator<Item = T> + '_ {
+        let endian = self.endian;
+        let stride = self.stride;
+        let width = self.width;
+        let height = self.height;
+        let data = &*self.data;
+
+        (0..height).flat_map(move |y| {
+            (0..width).map(move |x| {
+                let index = y * stride + x;
+                let offset = index * T::SIZE;
+                T::decode(endian, &data[offset..offset + T::SIZE])
+            })
+        })
     }
 }
 

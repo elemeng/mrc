@@ -80,8 +80,7 @@ impl MrcWriterBuilder {
         self
     }
 
-    /// Build and write the MRC file
-    pub fn build(self, path: impl AsRef<std::path::Path>) -> Result<(), Error> {
+    fn validate_and_build_header(&self) -> Result<Header, Error> {
         let voxel_count = self.dimensions[0]
             .checked_mul(self.dimensions[1])
             .and_then(|v| v.checked_mul(self.dimensions[2]))
@@ -104,7 +103,7 @@ impl MrcWriterBuilder {
             }
         }
 
-        let header = Header::builder()
+        Ok(Header::builder()
             .dimensions(self.dimensions[0], self.dimensions[1], self.dimensions[2])
             .mode(self.mode)
             .cell_dimensions(
@@ -114,8 +113,30 @@ impl MrcWriterBuilder {
             )
             .origin(self.origin[0], self.origin[1], self.origin[2])
             .extended_header_size(self.ext_header.len())
-            .build();
+            .build())
+    }
 
+    /// Build and return an MrcWriter (two-phase: create writer, write data separately)
+    ///
+    /// This creates the file with header but does not write data.
+    /// Use `writer.write_data()` to write data afterwards.
+    pub fn build(self, path: impl AsRef<std::path::Path>) -> Result<MrcWriter, Error> {
+        let header = self.validate_and_build_header()?;
+        
+        if self.ext_header.is_empty() {
+            MrcWriter::create(path, header)
+        } else {
+            MrcWriter::create_with_ext_header(path, header, &self.ext_header)
+        }
+    }
+
+    /// Build and write in one step (convenience method)
+    ///
+    /// This is equivalent to `build()` + `write_data()` + `finish()`.
+    /// Requires data to be set via `data()`.
+    pub fn write(self, path: impl AsRef<std::path::Path>) -> Result<(), Error> {
+        let header = self.validate_and_build_header()?;
+        
         let mut writer = if self.ext_header.is_empty() {
             MrcWriter::create(path, header)?
         } else {

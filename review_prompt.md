@@ -85,4 +85,3 @@ Prefer designs that are:
 * **composable**
 * **minimal**
 * **idiomatic**
-* **not need backwards compatible**

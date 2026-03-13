@@ -155,7 +155,7 @@ pub trait VolumeAccessMut: VolumeAccess {
     /// Panics if coordinates are out of bounds
     fn set_at(&mut self, x: usize, y: usize, z: usize, value: Self::Voxel);
 
-    /// Set a voxel at 3D coordinates, returning None if out of bounds
+    /// Set a voxel at 3D coordinates, returning false if out of bounds
     fn set_at_opt(&mut self, x: usize, y: usize, z: usize, value: Self::Voxel) -> bool {
         if self.in_bounds(x, y, z) {
             self.set_at(x, y, z, value);

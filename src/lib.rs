@@ -83,12 +83,10 @@ pub use voxel::{
 pub use header::{Header, HeaderBuilder};
 
 #[cfg(feature = "std")]
-pub use access::{
-    Slice2D, Volume, VolumeAccess, VolumeAccessMut, VolumeBuilder, VolumeData, VolumeIter,
-};
+pub use access::{Slice2D, Slice2DMut, Volume, VolumeAccess, VolumeAccessMut, VolumeBuilder, VolumeData};
 
 #[cfg(feature = "std")]
-pub use header::{ExtType, ExtendedHeader};
+pub use header::ExtType;
 
 #[cfg(feature = "std")]
 pub use io::{MrcReader, MrcSink, MrcSource, MrcWriter};

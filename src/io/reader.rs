@@ -2,7 +2,7 @@
 
 use crate::access::{Volume, VolumeData};
 use crate::core::{Error, Mode};
-use crate::header::{ExtendedHeader, Header};
+use crate::header::Header;
 use crate::voxel::{Encoding, Voxel, validate_mode};
 use alloc::vec::Vec;
 
@@ -57,14 +57,9 @@ impl MrcReader {
         &self.header
     }
 
-    /// Get the extended header bytes
+    /// Get the extended header bytes (raw, no parsing)
     pub fn ext_header(&self) -> &[u8] {
         &self.ext_header
-    }
-
-    /// Get parsed extended header
-    pub fn ext_header_parsed(&self) -> ExtendedHeader {
-        ExtendedHeader::from_bytes(&self.header.exttyp(), self.ext_header.clone())
     }
 
     /// Get the mode
@@ -77,7 +72,7 @@ impl MrcReader {
         self.header.dimensions()
     }
 
-    /// Read all data into a vector
+    /// Read all data into a vector (allocates)
     pub fn read_data(&mut self) -> Result<Vec<u8>, Error> {
         let mut data = alloc::vec![0u8; self.data_size];
         self.file
@@ -85,6 +80,26 @@ impl MrcReader {
             .map_err(Error::from)?;
         self.file.read_exact(&mut data).map_err(Error::from)?;
         Ok(data)
+    }
+
+    /// Read data into an existing buffer (no allocation)
+    ///
+    /// The buffer must be at least `header.data_size()` bytes.
+    /// Returns the number of bytes written.
+    pub fn read_into(&mut self, buffer: &mut [u8]) -> Result<usize, Error> {
+        if buffer.len() < self.data_size {
+            return Err(Error::BufferTooSmall {
+                expected: self.data_size,
+                got: buffer.len(),
+            });
+        }
+        self.file
+            .seek(SeekFrom::Start(self.data_offset))
+            .map_err(Error::from)?;
+        self.file
+            .read_exact(&mut buffer[..self.data_size])
+            .map_err(Error::from)?;
+        Ok(self.data_size)
     }
 
     /// Read volume with compile-time type checking
