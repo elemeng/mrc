@@ -654,46 +654,6 @@ impl<T: Voxel + Encoding> Default for VolumeBuilder<T> {
 }
 
 // ============================================================================
-// Implement VolumeAccess trait
-// ============================================================================
-
-use super::traits::{VolumeAccess, VolumeAccessMut};
-
-impl<T: Voxel + Encoding, S: AsRef<[u8]>> VolumeAccess for Volume<T, S> {
-    type Voxel = T;
-
-    fn header(&self) -> &Header {
-        &self.header
-    }
-
-    fn dimensions(&self) -> (usize, usize, usize) {
-        (self.dimensions[0], self.dimensions[1], self.dimensions[2])
-    }
-
-    fn strides(&self) -> (usize, usize, usize) {
-        (self.strides[0], self.strides[1], self.strides[2])
-    }
-
-    fn len(&self) -> usize {
-        self.dimensions[0] * self.dimensions[1] * self.dimensions[2]
-    }
-
-    unsafe fn get_unchecked(&self, index: usize) -> T {
-        let offset = index * T::SIZE;
-        let bytes = self.storage.as_ref();
-        T::decode(self.header.file_endian(), &bytes[offset..offset + T::SIZE])
-    }
-}
-
-impl<T: Voxel + Encoding, S: AsRef<[u8]> + AsMut<[u8]>> VolumeAccessMut for Volume<T, S> {
-    unsafe fn set_unchecked(&mut self, index: usize, value: T) {
-        let offset = index * T::SIZE;
-        let bytes = self.storage.as_mut();
-        value.encode(self.header.file_endian(), &mut bytes[offset..offset + T::SIZE]);
-    }
-}
-
-// ============================================================================
 // IntoIterator implementation
 // ============================================================================
 

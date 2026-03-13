@@ -83,7 +83,7 @@ pub use voxel::{
 pub use header::{Header, HeaderBuilder};
 
 #[cfg(feature = "std")]
-pub use access::{Slice2D, Slice2DMut, Volume, VolumeAccess, VolumeAccessMut, VolumeBuilder, VolumeData};
+pub use access::{Slice2D, Slice2DMut, Volume, VolumeBuilder, VolumeData};
 
 #[cfg(feature = "std")]
 pub use header::ExtType;
