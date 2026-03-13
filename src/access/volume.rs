@@ -1,10 +1,33 @@
 //! Volume container for MRC data
 //!
 //! Generic 3D volume container with compile-time type safety.
-//! For 2D access, use `Slice2D` views extracted from volumes.
 //!
-//! Note: Single voxel access is intentionally not provided.
-//! Use iterators or slices for bulk operations.
+//! # Terminology Note: "Slice"
+//!
+//! The word "slice" has multiple meanings in this module:
+//!
+//! | Term | Meaning | Type |
+//! |------|---------|------|
+//! | `Slice2D` / `Slice2DMut` | **Geometric** 2D plane extracted from 3D volume at Z position | Struct |
+//! | `volume.slice(z)` | Method to extract a `Slice2D` plane | Method |
+//! | `as_slice()` | **Rust** slice view `&[T]` of raw data | Method |
+//!
+//! Example:
+//! ```ignore
+//! // Geometric slice: 2D plane at Z=5 from 3D volume
+//! let plane: Slice2D<f32> = volume.slice(5)?;
+//!
+//! // Rust slice: raw data view for FFT, SIMD, etc.
+//! let data: &[f32] = volume.as_slice()?;
+//! ```
+//!
+//! # Single Voxel Access
+//!
+//! Single voxel access is intentionally not provided.
+//! Use iterators or bulk operations instead:
+//! - `iter()`, `iter_logical()` for iteration
+//! - `as_slice()` for zero-copy `&[T]` view
+//! - `transform()` for in-place modification
 
 use crate::core::{AxisMap, Error, check_bounds};
 use crate::header::Header;
@@ -265,7 +288,10 @@ impl<T: Voxel + Encoding, S: AsRef<[u8]>> Volume<T, S> {
         crate::stats::compute_stats(self.iter().map(|v| v.into()))
     }
 
-    /// Extract a 2D slice from the volume at a specific Z position
+    /// Extract a 2D XY plane from the volume at a specific Z position.
+    ///
+    /// Returns a `Slice2D` - a **geometric plane** in 3D space.
+    /// For a Rust `&[T]` data view, use `as_slice()` instead.
     pub fn slice(&self, z: usize) -> Result<Slice2D<'_, T>, Error> {
         check_bounds(z, self.dimensions[2])?;
 
@@ -349,7 +375,10 @@ impl<T: Voxel + Encoding, S: AsMut<[u8]>> Volume<T, S> {
         self.storage.as_mut()
     }
 
-    /// Extract a mutable 2D slice from the volume at a specific Z position
+    /// Extract a mutable 2D XY plane from the volume at a specific Z position.
+    ///
+    /// Returns a `Slice2DMut` - a **geometric plane** in 3D space.
+    /// For mutable raw byte access, use `as_bytes_mut()` instead.
     pub fn slice_mut(&mut self, z: usize) -> Result<Slice2DMut<'_, T>, Error> {
         check_bounds(z, self.dimensions[2])?;
 
@@ -373,16 +402,33 @@ impl<T: Voxel + Encoding, S: AsMut<[u8]>> Volume<T, S> {
 }
 
 // ============================================================================
-// Slice2D - 2D view into a volume
+// Slice2D - 2D plane extracted from a 3D volume
 // ============================================================================
 
-/// Borrowed 2D slice view into a 3D volume
+/// A 2D plane extracted from a 3D volume at a specific Z position.
 ///
-/// This is a zero-copy view - the data is not owned.
-/// For owned 2D data, extract a subvolume with nz=1.
+/// This is a **geometric slice** (a plane in 3D space), not a Rust `&[T]` slice.
+/// For a Rust slice view of the raw data, use `Volume::as_slice()`.
+///
+/// # Zero-Copy
+///
+/// This is a zero-copy view - the data is not owned or copied.
+/// For owned 2D data, extract a subvolume with `nz=1`.
+///
+/// # Example
+///
+/// ```ignore
+/// // Extract the XY plane at Z=10
+/// let plane: Slice2D<f32> = volume.slice(10)?;
+///
+/// // Iterate over pixels in the plane
+/// for pixel in plane.iter() {
+///     // process pixel
+/// }
+/// ```
 ///
 /// Note: Single pixel access is intentionally not provided.
-/// Use iterators for bulk operations.
+/// Use iterators (`iter()`, `rows()`) for bulk operations.
 #[derive(Debug)]
 pub struct Slice2D<'a, T: Voxel> {
     data: &'a [u8],
@@ -460,15 +506,31 @@ impl<T: Voxel + Encoding> Slice2D<'_, T> {
 }
 
 // ============================================================================
-// Slice2DMut - Mutable 2D view into a volume
+// Slice2DMut - Mutable 2D plane extracted from a 3D volume
 // ============================================================================
 
-/// Mutable borrowed 2D slice view into a 3D volume
+/// A mutable 2D plane extracted from a 3D volume at a specific Z position.
 ///
-/// This is a zero-copy mutable view - the data is not owned.
+/// This is a **geometric slice** (a plane in 3D space), not a Rust `&mut [T]` slice.
+/// For mutable raw byte access, use `Volume::as_bytes_mut()`.
+///
+/// # Zero-Copy
+///
+/// This is a zero-copy mutable view - the data is not owned or copied.
+/// Modifications affect the original volume.
+///
+/// # Example
+///
+/// ```ignore
+/// // Extract a mutable XY plane at Z=10
+/// let mut plane: Slice2DMut<f32> = volume.slice_mut(10)?;
+///
+/// // In-place transformation
+/// plane.transform(|v| v * 2.0);
+/// ```
 ///
 /// Note: Single pixel access is intentionally not provided.
-/// Use iterators for bulk operations.
+/// Use `iter()` for reading, `transform()` for in-place modification.
 #[derive(Debug)]
 pub struct Slice2DMut<'a, T: Voxel> {
     data: &'a mut [u8],
