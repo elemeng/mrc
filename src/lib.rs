@@ -23,12 +23,12 @@
 //!     let mut reader = MrcReader::open("data.mrc")?;
 //!     let volume = reader.read_volume::<f32>()?;
 //!
-//!     // Access voxel data with spatial coordinates
-//!     let value = volume.get_at(10, 20, 5);
+//!     // Access voxel data via iterators
+//!     let sum: f64 = volume.iter().map(|v| v as f64).sum();
 //!
 //!     // Extract a 2D slice
 //!     let slice = volume.slice(5)?;
-//!     let pixel = slice.get(10, 20);
+//!     let row_sum: f32 = slice.rows().next().unwrap().sum();
 //!
 //!     // Or use dynamic dispatch for unknown modes
 //!     let mut reader = MrcReader::open("data.mrc")?;

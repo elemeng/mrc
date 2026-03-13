@@ -1,17 +1,17 @@
 //! Unified volume access traits
 //!
 //! Simplified trait hierarchy:
-//! - `VolumeAccess`: Statically typed 3D volume access with spatial coordinates
+//! - `VolumeAccess`: Statically typed 3D volume access with iterators
 //! - `VolumeAccessMut`: Mutable 3D volume access
 
-use crate::core::{Error, Mode};
+use crate::core::Mode;
 use crate::header::Header;
 use crate::voxel::{Encoding, Voxel};
 
 /// Statically typed 3D volume access (compile-time mode checking)
 ///
-/// This trait provides spatial access to volume data with clear (x, y, z) coordinates.
-/// Linear indexing is not provided - use iterators or coordinates instead.
+/// This trait provides iterator-based access to volume data.
+/// Single voxel access is intentionally not provided - use iterators or slices.
 pub trait VolumeAccess {
     /// The voxel type stored in this volume
     type Voxel: Voxel + Encoding;
@@ -60,29 +60,6 @@ pub trait VolumeAccess {
         x * sx + y * sy + z * sz
     }
 
-    /// Get a voxel at 3D coordinates
-    ///
-    /// # Panics
-    /// Panics if coordinates are out of bounds
-    fn get_at(&self, x: usize, y: usize, z: usize) -> Self::Voxel;
-
-    /// Get a voxel at 3D coordinates, returning None if out of bounds
-    fn get_at_opt(&self, x: usize, y: usize, z: usize) -> Option<Self::Voxel> {
-        self.in_bounds(x, y, z).then(|| self.get_at(x, y, z))
-    }
-
-    /// Get a voxel at 3D coordinates with full error context
-    fn get_at_checked(&self, x: usize, y: usize, z: usize) -> Result<Self::Voxel, Error> {
-        if !self.in_bounds(x, y, z) {
-            let (nx, ny, nz) = self.dimensions();
-            return Err(Error::IndexOutOfBounds {
-                index: self.linear_index(x, y, z),
-                length: nx * ny * nz,
-            });
-        }
-        Ok(self.get_at(x, y, z))
-    }
-
     /// Get voxel without bounds checking
     ///
     /// # Safety
@@ -111,8 +88,10 @@ pub trait VolumeAccess {
         let (nx, ny, nz) = self.dimensions();
         (0..nz).flat_map(move |z| {
             (0..ny).flat_map(move |y| {
+                let (sx, sy, sz) = self.strides();
                 (0..nx).map(move |x| {
-                    let voxel = self.get_at(x, y, z);
+                    let idx = x * sx + y * sy + z * sz;
+                    let voxel = unsafe { self.get_unchecked(idx) };
                     ((x, y, z), voxel)
                 })
             })
@@ -149,69 +128,23 @@ pub trait VolumeAccess {
 
 /// Mutable statically typed 3D volume access
 pub trait VolumeAccessMut: VolumeAccess {
-    /// Set a voxel at 3D coordinates
+    /// Set voxel without bounds checking
     ///
-    /// # Panics
-    /// Panics if coordinates are out of bounds
-    fn set_at(&mut self, x: usize, y: usize, z: usize, value: Self::Voxel);
-
-    /// Set a voxel at 3D coordinates, returning false if out of bounds
-    fn set_at_opt(&mut self, x: usize, y: usize, z: usize, value: Self::Voxel) -> bool {
-        if self.in_bounds(x, y, z) {
-            self.set_at(x, y, z, value);
-            true
-        } else {
-            false
-        }
-    }
-
-    /// Set a voxel at 3D coordinates with full error context
-    fn set_at_checked(
-        &mut self,
-        x: usize,
-        y: usize,
-        z: usize,
-        value: Self::Voxel,
-    ) -> Result<(), Error> {
-        if !self.in_bounds(x, y, z) {
-            let (nx, ny, nz) = self.dimensions();
-            return Err(Error::IndexOutOfBounds {
-                index: self.linear_index(x, y, z),
-                length: nx * ny * nz,
-            });
-        }
-        self.set_at(x, y, z, value);
-        Ok(())
-    }
-
-    /// Fill all voxels with the same value
-    fn fill(&mut self, value: Self::Voxel)
-    where
-        Self::Voxel: Copy,
-    {
-        let (nx, ny, nz) = self.dimensions();
-        for z in 0..nz {
-            for y in 0..ny {
-                for x in 0..nx {
-                    self.set_at(x, y, z, value);
-                }
-            }
-        }
-    }
+    /// # Safety
+    /// Caller must ensure index is within bounds
+    unsafe fn set_unchecked(&mut self, index: usize, value: Self::Voxel);
 
     /// Apply a transformation to each voxel in-place
     fn transform<F>(&mut self, f: F)
     where
         F: FnMut(Self::Voxel) -> Self::Voxel,
     {
-        let (nx, ny, nz) = self.dimensions();
+        let len = self.len();
         let mut f = f;
-        for z in 0..nz {
-            for y in 0..ny {
-                for x in 0..nx {
-                    let old = self.get_at(x, y, z);
-                    self.set_at(x, y, z, f(old));
-                }
+        for i in 0..len {
+            unsafe {
+                let old = self.get_unchecked(i);
+                self.set_unchecked(i, f(old));
             }
         }
     }

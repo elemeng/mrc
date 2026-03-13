@@ -2,6 +2,9 @@
 //!
 //! Generic 3D volume container with compile-time type safety.
 //! For 2D access, use `Slice2D` views extracted from volumes.
+//!
+//! Note: Single voxel access is intentionally not provided.
+//! Use iterators or slices for bulk operations.
 
 use crate::core::{AxisMap, Error, check_bounds};
 use crate::header::Header;
@@ -122,34 +125,19 @@ impl<T: Voxel + Encoding, S: AsRef<[u8]>> Volume<T, S> {
         (self.dimensions[0], self.dimensions[1], self.dimensions[2])
     }
 
-    /// Get a voxel at 3D coordinates (x, y, z)
-    ///
-    /// # Panics
-    /// Panics if coordinates are out of bounds.
-    pub fn get_at(&self, x: usize, y: usize, z: usize) -> T {
-        let index = x * self.strides[0] + y * self.strides[1] + z * self.strides[2];
-        let offset = index * T::SIZE;
-        let bytes = self.storage.as_ref();
-        T::decode(self.header.file_endian(), &bytes[offset..offset + T::SIZE])
+    /// Convert linear index to logical coordinates (x, y, z)
+    pub fn coords_of(&self, index: usize) -> (usize, usize, usize) {
+        let (nx, ny, _) = self.dimensions();
+        let z = index / (nx * ny);
+        let remainder = index % (nx * ny);
+        let y = remainder / nx;
+        let x = remainder % nx;
+        (x, y, z)
     }
 
-    /// Get a voxel at 3D coordinates, returning None if out of bounds
-    pub fn get_at_opt(&self, x: usize, y: usize, z: usize) -> Option<T> {
-        if x >= self.dimensions[0] || y >= self.dimensions[1] || z >= self.dimensions[2] {
-            return None;
-        }
-        Some(self.get_at(x, y, z))
-    }
-
-    /// Get a voxel at 3D coordinates with full error context
-    pub fn get_at_checked(&self, x: usize, y: usize, z: usize) -> Result<T, Error> {
-        if x >= self.dimensions[0] || y >= self.dimensions[1] || z >= self.dimensions[2] {
-            return Err(Error::IndexOutOfBounds {
-                index: self.linear_index(x, y, z),
-                length: self.len(),
-            });
-        }
-        Ok(self.get_at(x, y, z))
+    /// Convert logical coordinates to linear index
+    pub fn linear_index(&self, x: usize, y: usize, z: usize) -> usize {
+        x * self.strides[0] + y * self.strides[1] + z * self.strides[2]
     }
 
     /// Iterate over all voxels in storage order
@@ -269,21 +257,6 @@ impl<T: Voxel + Encoding, S: AsRef<[u8]>> Volume<T, S> {
         self.iter().collect()
     }
 
-    /// Convert linear index to logical coordinates (x, y, z)
-    pub fn coords_of(&self, index: usize) -> (usize, usize, usize) {
-        let (nx, ny, _) = self.dimensions();
-        let z = index / (nx * ny);
-        let remainder = index % (nx * ny);
-        let y = remainder / nx;
-        let x = remainder % nx;
-        (x, y, z)
-    }
-
-    /// Convert logical coordinates to linear index
-    pub fn linear_index(&self, x: usize, y: usize, z: usize) -> usize {
-        x * self.strides[0] + y * self.strides[1] + z * self.strides[2]
-    }
-
     /// Compute statistics (min, max, mean, rms) for the volume data
     pub fn stats(&self) -> crate::stats::Statistics
     where
@@ -324,10 +297,7 @@ impl<T: Voxel + Encoding, S: AsRef<[u8]>> Volume<T, S> {
         y_end: usize,
         z_start: usize,
         z_end: usize,
-    ) -> Result<Volume<T, Vec<u8>>, Error>
-    where
-        T: Default + Clone,
-    {
+    ) -> Result<Volume<T, Vec<u8>>, Error> {
         let validate_range = |start: usize, end: usize, dim: usize| -> Result<usize, Error> {
             if start >= dim || end > dim || start >= end {
                 return Err(Error::IndexOutOfBounds {
@@ -379,42 +349,6 @@ impl<T: Voxel + Encoding, S: AsMut<[u8]>> Volume<T, S> {
         self.storage.as_mut()
     }
 
-    /// Set a voxel at 3D coordinates
-    ///
-    /// # Panics
-    /// Panics if coordinates are out of bounds.
-    pub fn set_at(&mut self, x: usize, y: usize, z: usize, value: T) {
-        let index = x * self.strides[0] + y * self.strides[1] + z * self.strides[2];
-        let offset = index * T::SIZE;
-        let bytes = self.storage.as_mut();
-        value.encode(
-            self.header.file_endian(),
-            &mut bytes[offset..offset + T::SIZE],
-        );
-    }
-
-    /// Set a voxel at 3D coordinates, returning false if out of bounds
-    pub fn set_at_opt(&mut self, x: usize, y: usize, z: usize, value: T) -> bool {
-        if x >= self.dimensions[0] || y >= self.dimensions[1] || z >= self.dimensions[2] {
-            return false;
-        }
-        self.set_at(x, y, z, value);
-        true
-    }
-
-    /// Set a voxel at 3D coordinates, returning error if out of bounds
-    pub fn set_at_checked(&mut self, x: usize, y: usize, z: usize, value: T) -> Result<(), Error> {
-        if x >= self.dimensions[0] || y >= self.dimensions[1] || z >= self.dimensions[2] {
-            let index = x * self.strides[0] + y * self.strides[1] + z * self.strides[2];
-            return Err(Error::IndexOutOfBounds {
-                index,
-                length: self.len(),
-            });
-        }
-        self.set_at(x, y, z, value);
-        Ok(())
-    }
-
     /// Extract a mutable 2D slice from the volume at a specific Z position
     pub fn slice_mut(&mut self, z: usize) -> Result<Slice2DMut<'_, T>, Error> {
         check_bounds(z, self.dimensions[2])?;
@@ -446,6 +380,9 @@ impl<T: Voxel + Encoding, S: AsMut<[u8]>> Volume<T, S> {
 ///
 /// This is a zero-copy view - the data is not owned.
 /// For owned 2D data, extract a subvolume with nz=1.
+///
+/// Note: Single pixel access is intentionally not provided.
+/// Use iterators for bulk operations.
 #[derive(Debug)]
 pub struct Slice2D<'a, T: Voxel> {
     data: &'a [u8],
@@ -472,33 +409,14 @@ impl<T: Voxel + Encoding> Slice2D<'_, T> {
         self.height
     }
 
-    /// Get pixel at (x, y)
-    ///
-    /// # Panics
-    /// Panics if coordinates are out of bounds.
-    pub fn get(&self, x: usize, y: usize) -> T {
-        let index = y * self.stride + x;
-        let offset = index * T::SIZE;
-        T::decode(self.endian, &self.data[offset..offset + T::SIZE])
+    /// Total pixels
+    pub fn len(&self) -> usize {
+        self.width * self.height
     }
 
-    /// Get pixel with bounds check
-    pub fn get_opt(&self, x: usize, y: usize) -> Option<T> {
-        if x >= self.width || y >= self.height {
-            return None;
-        }
-        Some(self.get(x, y))
-    }
-
-    /// Get pixel with full error context
-    pub fn get_checked(&self, x: usize, y: usize) -> Result<T, Error> {
-        if x >= self.width || y >= self.height {
-            return Err(Error::IndexOutOfBounds {
-                index: y * self.stride + x,
-                length: self.width * self.height,
-            });
-        }
-        Ok(self.get(x, y))
+    /// Check if empty
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
     }
 
     /// Iterate over pixels in row-major order
@@ -548,6 +466,9 @@ impl<T: Voxel + Encoding> Slice2D<'_, T> {
 /// Mutable borrowed 2D slice view into a 3D volume
 ///
 /// This is a zero-copy mutable view - the data is not owned.
+///
+/// Note: Single pixel access is intentionally not provided.
+/// Use iterators for bulk operations.
 #[derive(Debug)]
 pub struct Slice2DMut<'a, T: Voxel> {
     data: &'a mut [u8],
@@ -574,76 +495,14 @@ impl<T: Voxel + Encoding> Slice2DMut<'_, T> {
         self.height
     }
 
-    /// Get pixel at (x, y)
-    ///
-    /// # Panics
-    /// Panics if coordinates are out of bounds.
-    pub fn get(&self, x: usize, y: usize) -> T {
-        let index = y * self.stride + x;
-        let offset = index * T::SIZE;
-        T::decode(self.endian, &self.data[offset..offset + T::SIZE])
+    /// Total pixels
+    pub fn len(&self) -> usize {
+        self.width * self.height
     }
 
-    /// Get pixel with bounds check
-    pub fn get_opt(&self, x: usize, y: usize) -> Option<T> {
-        if x >= self.width || y >= self.height {
-            return None;
-        }
-        Some(self.get(x, y))
-    }
-
-    /// Get pixel with full error context
-    pub fn get_checked(&self, x: usize, y: usize) -> Result<T, Error> {
-        if x >= self.width || y >= self.height {
-            return Err(Error::IndexOutOfBounds {
-                index: y * self.stride + x,
-                length: self.width * self.height,
-            });
-        }
-        Ok(self.get(x, y))
-    }
-
-    /// Set pixel at (x, y)
-    ///
-    /// # Panics
-    /// Panics if coordinates are out of bounds.
-    pub fn set(&mut self, x: usize, y: usize, value: T) {
-        let index = y * self.stride + x;
-        let offset = index * T::SIZE;
-        value.encode(self.endian, &mut self.data[offset..offset + T::SIZE]);
-    }
-
-    /// Set pixel with bounds check, returns false if out of bounds
-    pub fn set_opt(&mut self, x: usize, y: usize, value: T) -> bool {
-        if x >= self.width || y >= self.height {
-            return false;
-        }
-        self.set(x, y, value);
-        true
-    }
-
-    /// Set pixel with full error context
-    pub fn set_checked(&mut self, x: usize, y: usize, value: T) -> Result<(), Error> {
-        if x >= self.width || y >= self.height {
-            return Err(Error::IndexOutOfBounds {
-                index: y * self.stride + x,
-                length: self.width * self.height,
-            });
-        }
-        self.set(x, y, value);
-        Ok(())
-    }
-
-    /// Fill entire slice with a value
-    pub fn fill(&mut self, value: T)
-    where
-        T: Copy,
-    {
-        for y in 0..self.height {
-            for x in 0..self.width {
-                self.set(x, y, value);
-            }
-        }
+    /// Check if empty
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
     }
 
     /// Iterate over pixels in row-major order
@@ -661,6 +520,28 @@ impl<T: Voxel + Encoding> Slice2DMut<'_, T> {
                 T::decode(endian, &data[offset..offset + T::SIZE])
             })
         })
+    }
+
+    /// Apply a transformation to each pixel in-place
+    pub fn transform<F>(&mut self, mut f: F)
+    where
+        F: FnMut(T) -> T,
+    {
+        let endian = self.endian;
+        let stride = self.stride;
+        let width = self.width;
+        let height = self.height;
+        let data = &mut *self.data;
+
+        for y in 0..height {
+            for x in 0..width {
+                let index = y * stride + x;
+                let offset = index * T::SIZE;
+                let old = T::decode(endian, &data[offset..offset + T::SIZE]);
+                let new = f(old);
+                new.encode(endian, &mut data[offset..offset + T::SIZE]);
+            }
+        }
     }
 }
 
@@ -797,10 +678,6 @@ impl<T: Voxel + Encoding, S: AsRef<[u8]>> VolumeAccess for Volume<T, S> {
         self.dimensions[0] * self.dimensions[1] * self.dimensions[2]
     }
 
-    fn get_at(&self, x: usize, y: usize, z: usize) -> T {
-        self.get_at(x, y, z)
-    }
-
     unsafe fn get_unchecked(&self, index: usize) -> T {
         let offset = index * T::SIZE;
         let bytes = self.storage.as_ref();
@@ -809,8 +686,10 @@ impl<T: Voxel + Encoding, S: AsRef<[u8]>> VolumeAccess for Volume<T, S> {
 }
 
 impl<T: Voxel + Encoding, S: AsRef<[u8]> + AsMut<[u8]>> VolumeAccessMut for Volume<T, S> {
-    fn set_at(&mut self, x: usize, y: usize, z: usize, value: T) {
-        self.set_at(x, y, z, value);
+    unsafe fn set_unchecked(&mut self, index: usize, value: T) {
+        let offset = index * T::SIZE;
+        let bytes = self.storage.as_mut();
+        value.encode(self.header.file_endian(), &mut bytes[offset..offset + T::SIZE]);
     }
 }
 
