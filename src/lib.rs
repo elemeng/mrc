@@ -33,8 +33,8 @@
 //!     // Or use dynamic dispatch for unknown modes
 //!     let mut reader = MrcReader::open("data.mrc")?;
 //!     let data = reader.read()?;
-//!     if let Some(vol) = data.as_f32() {
-//!         // handle f32
+//!     if let Some(vol) = data.downcast_ref::<f32>() {
+//!         // handle f32 volume
 //!     }
 //!     Ok(())
 //! }
@@ -72,7 +72,7 @@ pub mod stats;
 pub mod io;
 
 // Core re-exports
-pub use core::{AxisMap, Error, Mode, check_bounds};
+pub use core::{AxisMap, Error, Mode};
 
 // Voxel re-exports
 pub use voxel::{
@@ -84,7 +84,7 @@ pub use header::{Header, HeaderBuilder};
 
 #[cfg(feature = "std")]
 pub use access::{
-    Image2D, Slice2D, Volume, VolumeAccess, VolumeAccessMut, VolumeBuilder, VolumeData, VolumeIter,
+    Slice2D, Volume, VolumeAccess, VolumeAccessMut, VolumeBuilder, VolumeData, VolumeIter,
 };
 
 #[cfg(feature = "std")]

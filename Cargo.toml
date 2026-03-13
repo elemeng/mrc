@@ -23,8 +23,7 @@ criterion = { version = "0.5", features = ["html_reports"] }
 tempfile = "3.8"
 
 [features]
-default = ["std", "mmap", "file", "f16"]
+default = ["std", "mmap", "f16"]
 mmap = ["std", "dep:memmap2"]
-file = ["std"]
 std = []
 f16 = ["dep:half"]

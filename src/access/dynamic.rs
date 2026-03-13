@@ -1,14 +1,14 @@
 //! Dynamic dispatch for runtime mode handling
 
-use super::{Volume, VolumeAccess};
+use super::Volume;
 use crate::core::{Error, Mode};
 use crate::header::Header;
 use crate::voxel::{ComplexF32, ComplexI16, Encoding, Packed4Bit, Voxel};
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 
-/// Trait for dynamic volume operations
-pub trait DynVolume {
+/// Internal trait for type-erased volume operations
+trait DynVolume {
     fn header(&self) -> &Header;
     fn mode(&self) -> Mode;
     fn dimensions(&self) -> (usize, usize, usize);
@@ -19,19 +19,19 @@ pub trait DynVolume {
 
 impl<T: Voxel + Encoding> DynVolume for Volume<T, Vec<u8>> {
     fn header(&self) -> &Header {
-        VolumeAccess::header(self)
+        Volume::header(self)
     }
     fn mode(&self) -> Mode {
         self.header().mode()
     }
     fn dimensions(&self) -> (usize, usize, usize) {
-        VolumeAccess::dimensions(self)
+        Volume::dimensions(self)
     }
     fn len(&self) -> usize {
-        Volume::<T, Vec<u8>>::len(self)
+        Volume::len(self)
     }
     fn is_empty(&self) -> bool {
-        Volume::<T, Vec<u8>>::is_empty(self)
+        Volume::is_empty(self)
     }
     fn as_any(&self) -> &dyn core::any::Any {
         self
@@ -93,48 +93,14 @@ impl VolumeData {
     }
 
     /// Downcast to typed volume
+    ///
+    /// # Example
+    /// ```ignore
+    /// if let Some(vol) = data.downcast_ref::<f32>() {
+    ///     // work with f32 volume
+    /// }
+    /// ```
     pub fn downcast_ref<T: Voxel + Encoding>(&self) -> Option<&Volume<T, Vec<u8>>> {
         self.0.as_any().downcast_ref::<Volume<T, Vec<u8>>>()
-    }
-
-    /// Try to get as f32 volume
-    pub fn as_f32(&self) -> Option<&Volume<f32, Vec<u8>>> {
-        self.downcast_ref::<f32>()
-    }
-
-    /// Try to get as i16 volume
-    pub fn as_i16(&self) -> Option<&Volume<i16, Vec<u8>>> {
-        self.downcast_ref::<i16>()
-    }
-
-    /// Try to get as i8 volume
-    pub fn as_i8(&self) -> Option<&Volume<i8, Vec<u8>>> {
-        self.downcast_ref::<i8>()
-    }
-
-    /// Try to get as u16 volume
-    pub fn as_u16(&self) -> Option<&Volume<u16, Vec<u8>>> {
-        self.downcast_ref::<u16>()
-    }
-
-    /// Try to get as ComplexI16 volume
-    pub fn as_complex_i16(&self) -> Option<&Volume<ComplexI16, Vec<u8>>> {
-        self.downcast_ref::<ComplexI16>()
-    }
-
-    /// Try to get as ComplexF32 volume
-    pub fn as_complex_f32(&self) -> Option<&Volume<ComplexF32, Vec<u8>>> {
-        self.downcast_ref::<ComplexF32>()
-    }
-
-    /// Try to get as Packed4Bit volume
-    pub fn as_packed4bit(&self) -> Option<&Volume<Packed4Bit, Vec<u8>>> {
-        self.downcast_ref::<Packed4Bit>()
-    }
-
-    /// Try to get as f16 volume
-    #[cfg(feature = "f16")]
-    pub fn as_f16(&self) -> Option<&Volume<half::f16, Vec<u8>>> {
-        self.downcast_ref::<half::f16>()
     }
 }

@@ -12,6 +12,6 @@ pub mod dynamic;
 pub mod traits;
 pub mod volume;
 
-pub use dynamic::{DynVolume, VolumeData};
+pub use dynamic::VolumeData;
 pub use traits::{VolumeAccess, VolumeAccessMut, VolumeIter};
-pub use volume::{Image2D, Slice2D, Volume, VolumeBuilder};
+pub use volume::{Slice2D, Volume, VolumeBuilder};

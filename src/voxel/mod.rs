@@ -13,12 +13,12 @@ pub use types::{
     ComplexF32, ComplexI16, ComplexVoxel, IntegerVoxel, Packed4Bit, RealVoxel, ScalarVoxel, Voxel,
 };
 
-// FileEndian and EndianConvert are internal
+// Encoding is public for trait bounds, but users typically don't call methods directly
+pub use codex::Encoding;
+
+// Internal types
 pub(crate) use endian::EndianConvert;
 pub(crate) use endian::FileEndian;
-
-// Re-export Encoding for trait bounds (users don't call methods directly)
-pub use codex::Encoding;
 
 use crate::core::{Error, Mode};
 

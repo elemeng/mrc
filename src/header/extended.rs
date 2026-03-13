@@ -2,12 +2,15 @@
 //!
 //! MRC extended headers come beyond the 1024-byte main header.
 //! They contain application-specific metadata and vary by type.
+//!
+//! This module provides minimal parsing - just the type code and raw bytes.
+//! Future versions may add specific parsers for different formats.
 
 extern crate alloc;
 
 use alloc::vec::Vec;
 
-/// Extended header type identifier
+/// Extended header type identifier (4-byte EXTTYP field)
 ///
 /// Common values from MRC2014 spec and implementations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -69,35 +72,86 @@ ext_type_variants!(
     (Hdf5, "HDF5"),
 );
 
-/// Extended header wrapper
+impl ExtType {
+    /// Get the type as a string
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Ccp4 => "CCP4",
+            Self::Mrco => "MRCO",
+            Self::Seri => "SERI",
+            Self::Agar => "AGAR",
+            Self::Fei1 => "FEI1",
+            Self::Fei2 => "FEI2",
+            Self::Hdf5 => "HDF5",
+            Self::Unknown => "",
+        }
+    }
+}
+
+impl core::fmt::Display for ExtType {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+/// Extended header - minimal wrapper for raw bytes
 ///
-/// Provides access to extended header data which EXTTYP.
+/// Provides access to the type code and raw bytes only.
+/// Parsing is left to users or future v2 specific parsers.
+///
+/// # Example
+/// ```ignore
+/// let ext = reader.ext_header();
+/// match ext.code() {
+///     ExtType::Seri => {
+///         // Parse SerialEM format from ext.raw_bytes()
+///     }
+///     _ => {}
+/// }
+/// ```
 #[derive(Debug, Clone)]
 pub struct ExtendedHeader {
-    /// Extended header type identifier
-    pub ext_type: ExtType,
-    /// Raw bytes of the extended header
-    pub data: Vec<u8>,
+    /// Type identifier (from EXTTYP field)
+    code: ExtType,
+    /// Raw bytes of the extended header (from NSYMBT bytes after header)
+    data: Vec<u8>,
 }
 
 impl ExtendedHeader {
     /// Create a new extended header
-    pub fn new(ext_type: ExtType, data: Vec<u8>) -> Self {
-        Self { ext_type, data }
+    pub fn new(code: ExtType, data: Vec<u8>) -> Self {
+        Self { code, data }
     }
 
-    /// Create from raw bytes with EXTTYP identification
+    /// Create from EXTTYP bytes and raw data
     pub fn from_bytes(exttyp: &[u8; 4], data: Vec<u8>) -> Self {
-        let ext_type = ExtType::from_bytes(exttyp);
-        Self { ext_type, data }
+        let code = ExtType::from_bytes(exttyp);
+        Self { code, data }
     }
 
     /// Create an empty extended header
     pub fn empty() -> Self {
         Self {
-            ext_type: ExtType::Unknown,
+            code: ExtType::Unknown,
             data: Vec::new(),
         }
+    }
+
+    /// Get the type code
+    pub fn code(&self) -> ExtType {
+        self.code
+    }
+
+    /// Get the raw bytes
+    pub fn raw_bytes(&self) -> &[u8] {
+        &self.data
+    }
+
+    /// Get the byte range (offset, length) for this header in the file
+    ///
+    /// The extended header starts at offset 1024 (after main header).
+    pub fn bytes_range(&self) -> (usize, usize) {
+        (1024, self.data.len())
     }
 
     /// Get the size in bytes
@@ -112,6 +166,6 @@ impl ExtendedHeader {
 
     /// Get the EXTTYP as bytes
     pub fn exttyp_bytes(&self) -> [u8; 4] {
-        self.ext_type.as_bytes()
+        self.code.as_bytes()
     }
 }

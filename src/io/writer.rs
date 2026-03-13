@@ -80,8 +80,8 @@ impl MrcWriterBuilder {
         self
     }
 
-    /// Build the writer and write to file
-    pub fn write(self, path: impl AsRef<std::path::Path>) -> Result<(), Error> {
+    /// Build and write the MRC file
+    pub fn build(self, path: impl AsRef<std::path::Path>) -> Result<(), Error> {
         let voxel_count = self.dimensions[0]
             .checked_mul(self.dimensions[1])
             .and_then(|v| v.checked_mul(self.dimensions[2]))

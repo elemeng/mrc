@@ -285,7 +285,7 @@ impl<T: Voxel + Encoding, S: AsRef<[u8]>> Volume<T, S> {
     }
 
     /// Compute statistics (min, max, mean, rms) for the volume data
-    pub fn compute_statistics(&self) -> crate::stats::Statistics
+    pub fn stats(&self) -> crate::stats::Statistics
     where
         T: Into<f64>,
     {
@@ -503,42 +503,10 @@ impl<T: Voxel + Encoding> Slice2D<'_, T> {
         })
     }
 
-    /// Convert to owned 2D image (allocates)
+    /// Convert to owned bytes (allocates)
     #[cfg(feature = "std")]
-    pub fn to_owned(&self) -> Image2D<T>
-    where
-        T: Clone,
-    {
-        Image2D {
-            data: self.iter().collect(),
-            width: self.width,
-            height: self.height,
-        }
-    }
-}
-
-/// Owned 2D image
-#[derive(Debug, Clone)]
-pub struct Image2D<T: Voxel> {
-    data: Vec<T>,
-    width: usize,
-    height: usize,
-}
-
-impl<T: Voxel + Copy> Image2D<T> {
-    /// Get dimensions
-    pub fn dimensions(&self) -> (usize, usize) {
-        (self.width, self.height)
-    }
-
-    /// Get pixel at (x, y)
-    pub fn get(&self, x: usize, y: usize) -> T {
-        self.data[y * self.width + x]
-    }
-
-    /// Iterate over pixels
-    pub fn iter(&self) -> impl Iterator<Item = T> + '_ {
-        self.data.iter().copied()
+    pub fn to_bytes(&self) -> Vec<u8> {
+        self.data.to_vec()
     }
 }
 
@@ -626,11 +594,21 @@ impl<T: Voxel + Encoding> VolumeBuilder<T> {
     }
 
     /// Build and allocate storage
+    ///
+    /// Returns an error if the total size would overflow.
     #[cfg(feature = "std")]
-    pub fn build_allocated(self) -> Volume<T, Vec<u8>> {
-        let voxel_count = self.dimensions[0] * self.dimensions[1] * self.dimensions[2];
-        let data = vec![0u8; voxel_count * T::SIZE];
-        self.build(data).unwrap()
+    pub fn build_allocated(self) -> Result<Volume<T, Vec<u8>>, Error> {
+        let voxel_count = self.dimensions[0]
+            .checked_mul(self.dimensions[1])
+            .and_then(|v| v.checked_mul(self.dimensions[2]))
+            .ok_or(Error::InvalidDimensions)?;
+
+        let byte_size = voxel_count
+            .checked_mul(T::SIZE)
+            .ok_or(Error::InvalidDimensions)?;
+
+        let data = vec![0u8; byte_size];
+        self.build(data)
     }
 }
 
@@ -679,6 +657,58 @@ impl<T: Voxel + Encoding, S: AsRef<[u8]>> VolumeAccess for Volume<T, S> {
 impl<T: Voxel + Encoding, S: AsRef<[u8]> + AsMut<[u8]>> VolumeAccessMut for Volume<T, S> {
     fn set_at(&mut self, x: usize, y: usize, z: usize, value: T) {
         self.set_at(x, y, z, value);
+    }
+}
+
+// ============================================================================
+// IntoIterator implementation
+// ============================================================================
+
+/// Iterator over volume voxels (storage order)
+pub struct VolumeIntoIter<T: Voxel + Encoding> {
+    data: Vec<u8>,
+    endian: FileEndian,
+    index: usize,
+    len: usize,
+    _marker: core::marker::PhantomData<T>,
+}
+
+impl<T: Voxel + Encoding> Iterator for VolumeIntoIter<T> {
+    type Item = T;
+
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.index < self.len {
+            let offset = self.index * T::SIZE;
+            self.index += 1;
+            Some(T::decode(self.endian, &self.data[offset..offset + T::SIZE]))
+        } else {
+            None
+        }
+    }
+
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let remaining = self.len - self.index;
+        (remaining, Some(remaining))
+    }
+}
+
+impl<T: Voxel + Encoding> ExactSizeIterator for VolumeIntoIter<T> {}
+
+impl<T: Voxel + Encoding> IntoIterator for Volume<T, Vec<u8>> {
+    type Item = T;
+    type IntoIter = VolumeIntoIter<T>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        let len = self.dimensions[0] * self.dimensions[1] * self.dimensions[2];
+        VolumeIntoIter {
+            data: self.storage,
+            endian: self.header.file_endian(),
+            index: 0,
+            len,
+            _marker: core::marker::PhantomData,
+        }
     }
 }
 

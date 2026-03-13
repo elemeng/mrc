@@ -194,7 +194,8 @@ mod io_tests {
         let volume: Volume<f32, _> = Volume::builder()
             .dimensions(4, 4, 4)
             .voxel_size(1.0, 1.0, 1.0)
-            .build_allocated();
+            .build_allocated()
+            .unwrap();
         
         // Write
         let header = volume.header().clone();
@@ -241,7 +242,8 @@ mod volume_tests {
             .dimensions(64, 64, 64)
             .voxel_size(1.5, 1.5, 2.0)
             .origin(100.0, 100.0, 50.0)
-            .build_allocated();
+            .build_allocated()
+            .unwrap();
         
         assert_eq!(volume.dimensions(), (64, 64, 64));
         assert_eq!(volume.header().mode(), Mode::Float32);
@@ -252,7 +254,8 @@ mod volume_tests {
     fn test_volume_access() {
         let mut volume: Volume<f32, _> = Volume::builder()
             .dimensions(4, 4, 4)
-            .build_allocated();
+            .build_allocated()
+            .unwrap();
         
         // Set a value
         volume.set_at(1, 2, 3, 42.0);
@@ -269,7 +272,8 @@ mod volume_tests {
     fn test_slice_extraction() {
         let mut volume: Volume<f32, _> = Volume::builder()
             .dimensions(4, 4, 4)
-            .build_allocated();
+            .build_allocated()
+            .unwrap();
         
         // Fill with values
         for z in 0..4 {
@@ -292,7 +296,8 @@ mod volume_tests {
     fn test_subvolume() {
         let mut volume: Volume<f32, _> = Volume::builder()
             .dimensions(8, 8, 8)
-            .build_allocated();
+            .build_allocated()
+            .unwrap();
         
         // Fill with values
         for z in 0..8 {
@@ -313,9 +318,10 @@ mod volume_tests {
     
     #[test]
     fn test_iteration() {
-        let volume: Volume<i32, _> = Volume::builder()
+        let volume: Volume<f32, _> = Volume::builder()
             .dimensions(2, 2, 2)
-            .build_allocated();
+            .build_allocated()
+            .unwrap();
         
         let count = volume.iter().count();
         assert_eq!(count, 8);

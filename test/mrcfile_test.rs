@@ -75,7 +75,7 @@ mod file_tests {
             .voxel_size(1.0, 1.0, 1.0)
             .origin(0.0, 0.0, 0.0)
             .data(data)
-            .write(temp.path())
+            .build(temp.path())
             .unwrap();
         
         let mut reader = MrcReader::open(temp.path()).unwrap();
@@ -91,7 +91,8 @@ mod file_tests {
         let mut volume: Volume<f32, _> = Volume::builder()
             .dimensions(8, 8, 8)
             .voxel_size(2.0, 2.0, 2.0)
-            .build_allocated();
+            .build_allocated()
+            .unwrap();
         
         // Set some values
         volume.set_at(0, 0, 0, 1.0);
@@ -117,8 +118,8 @@ mod file_tests {
         
         let volume: Volume<i16, _> = Volume::builder()
             .dimensions(4, 4, 4)
-            .mode(Mode::Int16)
-            .build_allocated();
+            .build_allocated()
+            .unwrap();
         
         let mut writer = MrcWriter::create(temp.path(), volume.header().clone()).unwrap();
         writer.write_data(volume.as_bytes()).unwrap();
@@ -128,7 +129,7 @@ mod file_tests {
         let data = reader.read().unwrap();
         
         assert_eq!(data.mode(), Mode::Int16);
-        assert!(data.as_i16().is_some());
-        assert!(data.as_f32().is_none());
+        assert!(data.downcast_ref::<i16>().is_some());
+        assert!(data.downcast_ref::<f32>().is_none());
     }
 }

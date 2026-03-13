@@ -7,7 +7,6 @@
 use crate::core::{Error, Mode};
 use crate::header::Header;
 use crate::voxel::{Encoding, Voxel};
-use alloc::vec::Vec;
 
 /// Statically typed 3D volume access (compile-time mode checking)
 ///
@@ -120,13 +119,13 @@ pub trait VolumeAccess {
         })
     }
 
-    /// Map voxels to a new vector
-    fn map<F, U>(&self, f: F) -> Vec<U>
+    /// Map voxels to a new type (returns iterator, zero-copy)
+    fn map<'a, F, U>(&'a self, f: F) -> impl Iterator<Item = U> + 'a
     where
-        F: FnMut(Self::Voxel) -> U,
+        F: FnMut(Self::Voxel) -> U + 'a,
         Self: Sized,
     {
-        self.iter().map(f).collect()
+        self.iter().map(f)
     }
 
     /// Fold over all voxels
@@ -139,7 +138,7 @@ pub trait VolumeAccess {
     }
 
     /// Compute statistics for this volume
-    fn compute_stats(&self) -> crate::stats::Statistics
+    fn stats(&self) -> crate::stats::Statistics
     where
         Self::Voxel: Into<f64>,
         Self: Sized,

@@ -7,13 +7,13 @@ use crate::voxel::{ComplexF32, ComplexI16, FileEndian, Packed4Bit, Voxel};
 
 /// Trait for encoding/decoding voxel data with endianness handling
 ///
+/// This trait is sealed via the `Voxel` supertrait and cannot be implemented
+/// outside this crate. It is used internally by `Volume` for type-safe byte
+/// encoding/decoding. Users typically don't interact with this trait directly.
+///
 /// Inherits MODE from Voxel trait. Each implementation knows:
 /// - How to decode bytes to voxels
 /// - How to encode voxels to bytes
-///
-/// Note: The methods in this trait use internal types (`FileEndian`).
-/// Users typically don't call these methods directly - `Volume` handles encoding internally.
-/// The trait bound `T: Voxel + Encoding` is used for compile-time type checking.
 pub trait Encoding: Voxel {
     /// Size of one voxel in bytes
     const SIZE: usize;

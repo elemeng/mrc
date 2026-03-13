@@ -83,24 +83,6 @@ where
     }
 }
 
-/// Compute statistics from a slice
-///
-/// Convenience function for computing statistics from a slice of values.
-///
-/// # Example
-/// ```
-/// use mrc::stats::compute_stats_slice;
-///
-/// let data = [1.0f32, 2.0, 3.0, 4.0, 5.0];
-/// let stats = compute_stats_slice(&data);
-/// ```
-pub fn compute_stats_slice<T>(slice: &[T]) -> Statistics
-where
-    T: Into<f64> + Copy,
-{
-    compute_stats(slice.iter().copied())
-}
-
 /// Compute running statistics incrementally
 ///
 /// This struct allows computing statistics in an incremental fashion,
@@ -213,15 +195,5 @@ mod tests {
         assert_eq!(stats.min, 1.0);
         assert_eq!(stats.max, 3.0);
         assert_eq!(stats.mean, 2.0);
-    }
-
-    #[test]
-    fn test_compute_stats_slice() {
-        let data = [1.0f32, 2.0, 3.0, 4.0, 5.0];
-        let stats = compute_stats_slice(&data);
-
-        assert_eq!(stats.min, 1.0);
-        assert_eq!(stats.max, 5.0);
-        assert_eq!(stats.mean, 3.0);
     }
 }

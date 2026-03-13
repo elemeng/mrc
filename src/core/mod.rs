@@ -10,5 +10,8 @@ pub mod error;
 pub mod mode;
 
 pub use axis::AxisMap;
-pub use error::{Error, check_bounds};
+pub use error::Error;
 pub use mode::{InvalidMode, Mode};
+
+// Internal helpers
+pub(crate) use error::check_bounds;
