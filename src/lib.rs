@@ -26,9 +26,9 @@
 //!     // Access voxel data via iterators
 //!     let sum: f64 = volume.iter().map(|v| v as f64).sum();
 //!
-//!     // Extract a 2D slice
-//!     let slice = volume.slice(5)?;
-//!     let row_sum: f32 = slice.rows().next().unwrap().sum();
+//!     // Extract a 2D plane at Z=5
+//!     let plane = volume.slice(5)?;
+//!     let plane_sum: f32 = plane.iter().sum();
 //!
 //!     // Or use dynamic dispatch for unknown modes
 //!     let mut reader = MrcReader::open("data.mrc")?;

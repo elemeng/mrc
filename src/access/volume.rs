@@ -428,7 +428,7 @@ impl<T: Voxel + Encoding, S: AsMut<[u8]>> Volume<T, S> {
 /// ```
 ///
 /// Note: Single pixel access is intentionally not provided.
-/// Use iterators (`iter()`, `rows()`) for bulk operations.
+/// Use `iter()` for bulk operations.
 #[derive(Debug)]
 pub struct Slice2D<'a, T: Voxel> {
     data: &'a [u8],
@@ -477,22 +477,6 @@ impl<T: Voxel + Encoding> Slice2D<'_, T> {
             (0..width).map(move |x| {
                 let index = y * stride + x;
                 let offset = index * T::SIZE;
-                T::decode(endian, &data[offset..offset + T::SIZE])
-            })
-        })
-    }
-
-    /// Iterate over rows
-    pub fn rows(&self) -> impl Iterator<Item = impl Iterator<Item = T> + '_> + '_ {
-        let endian = self.endian;
-        let stride = self.stride;
-        let width = self.width;
-        let data = self.data;
-
-        (0..self.height).map(move |y| {
-            let row_start = y * stride * T::SIZE;
-            (0..width).map(move |x| {
-                let offset = row_start + x * T::SIZE;
                 T::decode(endian, &data[offset..offset + T::SIZE])
             })
         })
