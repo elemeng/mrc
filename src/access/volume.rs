@@ -38,6 +38,32 @@ use alloc::vec;
 #[cfg(feature = "std")]
 use alloc::vec::Vec;
 
+/// Bounds for subvolume extraction
+///
+/// Used with [`Volume::subvolume`] to specify the region to extract.
+///
+/// # Example
+///
+/// ```ignore
+/// use mrc::Bounds;
+///
+/// let bounds = Bounds {
+///     x: 10..100,
+///     y: 20..200,
+///     z: 0..50,
+/// };
+/// let sub = volume.subvolume(bounds)?;
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Bounds {
+    /// X-axis range
+    pub x: core::ops::Range<usize>,
+    /// Y-axis range
+    pub y: core::ops::Range<usize>,
+    /// Z-axis range
+    pub z: core::ops::Range<usize>,
+}
+
 /// A 3D volume of voxel data
 ///
 /// # Type Parameters
@@ -64,7 +90,7 @@ impl<T, S> Volume<T, S> {
     }
 
     /// Get the axis map
-    pub fn axis_map(&self) -> &AxisMap {
+    pub fn axis_map(&self) -> AxisMap {
         self.header.axis_map()
     }
 
@@ -228,7 +254,7 @@ impl<T: Voxel + Encoding, S: AsRef<[u8]>> Volume<T, S> {
 
     /// Try zero-copy slice, fall back to decoded Vec on failure
     #[cfg(feature = "std")]
-    pub fn to_slice_cow(&self) -> alloc::borrow::Cow<'_, [T]>
+    pub fn as_slice_cow(&self) -> alloc::borrow::Cow<'_, [T]>
     where
         T: bytemuck::Pod + Clone,
     {
@@ -314,55 +340,66 @@ impl<T: Voxel + Encoding, S: AsRef<[u8]>> Volume<T, S> {
     }
 
     /// Extract a subvolume with the specified bounds
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let bounds = Bounds {
+    ///     x: 10..100,
+    ///     y: 20..200,
+    ///     z: 0..50,
+    /// };
+    /// let sub = volume.subvolume(bounds)?;
+    /// ```
     #[cfg(feature = "std")]
-    pub fn subvolume(
-        &self,
-        x_start: usize,
-        x_end: usize,
-        y_start: usize,
-        y_end: usize,
-        z_start: usize,
-        z_end: usize,
-    ) -> Result<Volume<T, Vec<u8>>, Error> {
-        let validate_range = |start: usize, end: usize, dim: usize| -> Result<usize, Error> {
-            if start >= dim || end > dim || start >= end {
-                return Err(Error::IndexOutOfBounds {
-                    index: start,
-                    length: dim,
-                });
-            }
-            Ok(end - start)
-        };
+    pub fn subvolume(&self, bounds: Bounds) -> Result<Volume<T, Vec<u8>>, Error> {
+        let validate_range =
+            |range: &core::ops::Range<usize>, dim: usize| -> Result<usize, Error> {
+                if range.start >= dim || range.end > dim || range.start >= range.end {
+                    return Err(Error::IndexOutOfBounds {
+                        index: range.start,
+                        length: dim,
+                    });
+                }
+                Ok(range.end - range.start)
+            };
 
-        let new_nx = validate_range(x_start, x_end, self.dimensions[0])?;
-        let new_ny = validate_range(y_start, y_end, self.dimensions[1])?;
-        let new_nz = validate_range(z_start, z_end, self.dimensions[2])?;
+        let new_nx = validate_range(&bounds.x, self.dimensions[0])?;
+        let new_ny = validate_range(&bounds.y, self.dimensions[1])?;
+        let new_nz = validate_range(&bounds.z, self.dimensions[2])?;
         let voxel_count = new_nx * new_ny * new_nz;
 
         let mut new_data = vec![0u8; voxel_count * T::SIZE];
 
-        (z_start..z_end).enumerate().for_each(|(new_z, src_z)| {
-            (y_start..y_end).enumerate().for_each(|(new_y, src_y)| {
-                (x_start..x_end).enumerate().for_each(|(new_x, src_x)| {
-                    let src_idx = self.linear_index(src_x, src_y, src_z);
-                    let dst_idx = new_z * new_ny * new_nx + new_y * new_nx + new_x;
+        (bounds.z.start..bounds.z.end)
+            .enumerate()
+            .for_each(|(new_z, src_z)| {
+                (bounds.y.start..bounds.y.end)
+                    .enumerate()
+                    .for_each(|(new_y, src_y)| {
+                        (bounds.x.start..bounds.x.end)
+                            .enumerate()
+                            .for_each(|(new_x, src_x)| {
+                                let src_idx = self.linear_index(src_x, src_y, src_z);
+                                let dst_idx = new_z * new_ny * new_nx + new_y * new_nx + new_x;
 
-                    let src_offset = src_idx * T::SIZE;
-                    let dst_offset = dst_idx * T::SIZE;
+                                let src_offset = src_idx * T::SIZE;
+                                let dst_offset = dst_idx * T::SIZE;
 
-                    new_data[dst_offset..dst_offset + T::SIZE]
-                        .copy_from_slice(&self.storage.as_ref()[src_offset..src_offset + T::SIZE]);
-                });
+                                new_data[dst_offset..dst_offset + T::SIZE].copy_from_slice(
+                                    &self.storage.as_ref()[src_offset..src_offset + T::SIZE],
+                                );
+                            });
+                    });
             });
-        });
 
         let mut new_header = self.header.clone();
         new_header.set_dimensions(new_nx, new_ny, new_nz);
         let (dx, dy, dz) = new_header.voxel_size();
         new_header.set_origin(
-            self.header.xorigin() + x_start as f32 * dx,
-            self.header.yorigin() + y_start as f32 * dy,
-            self.header.zorigin() + z_start as f32 * dz,
+            self.header.xorigin() + bounds.x.start as f32 * dx,
+            self.header.yorigin() + bounds.y.start as f32 * dy,
+            self.header.zorigin() + bounds.z.start as f32 * dz,
         );
 
         Volume::new(new_header, new_data)
@@ -482,6 +519,31 @@ impl<T: Voxel + Encoding> Slice2D<'_, T> {
         })
     }
 
+    /// Zero-copy slice view (native endianness and contiguous data only)
+    ///
+    /// Returns a typed slice view of the pixel data without copying or decoding.
+    /// This only works when:
+    /// 1. The file endianness matches the native system endianness
+    /// 2. The data is properly aligned for type T
+    /// 3. The data is contiguous (stride equals width)
+    pub fn as_slice(&self) -> Result<&[T], Error>
+    where
+        T: bytemuck::Pod,
+    {
+        if !self.endian.is_native() {
+            return Err(Error::EndiannessMismatch { detected: true });
+        }
+
+        if self.stride != self.width {
+            return Err(Error::NonContiguous);
+        }
+
+        bytemuck::try_cast_slice(self.data).map_err(|_| Error::MisalignedData {
+            required: core::mem::align_of::<T>(),
+            actual: self.data.as_ptr().align_offset(core::mem::align_of::<T>()),
+        })
+    }
+
     /// Convert to owned bytes (allocates)
     #[cfg(feature = "std")]
     pub fn to_bytes(&self) -> Vec<u8> {
@@ -565,6 +627,58 @@ impl<T: Voxel + Encoding> Slice2DMut<'_, T> {
                 let offset = index * T::SIZE;
                 T::decode(endian, &data[offset..offset + T::SIZE])
             })
+        })
+    }
+
+    /// Zero-copy slice view (native endianness and contiguous data only)
+    ///
+    /// Returns a typed slice view of the pixel data without copying or decoding.
+    /// This only works when:
+    /// 1. The file endianness matches the native system endianness
+    /// 2. The data is properly aligned for type T
+    /// 3. The data is contiguous (stride equals width)
+    pub fn as_slice(&self) -> Result<&[T], Error>
+    where
+        T: bytemuck::Pod,
+    {
+        if !self.endian.is_native() {
+            return Err(Error::EndiannessMismatch { detected: true });
+        }
+
+        if self.stride != self.width {
+            return Err(Error::NonContiguous);
+        }
+
+        bytemuck::try_cast_slice(&*self.data).map_err(|_| Error::MisalignedData {
+            required: core::mem::align_of::<T>(),
+            actual: self.data.as_ptr().align_offset(core::mem::align_of::<T>()),
+        })
+    }
+
+    /// Zero-copy mutable slice view (native endianness and contiguous data only)
+    ///
+    /// Returns a typed mutable slice view of the pixel data without copying.
+    /// This only works when:
+    /// 1. The file endianness matches the native system endianness
+    /// 2. The data is properly aligned for type T
+    /// 3. The data is contiguous (stride equals width)
+    pub fn as_slice_mut(&mut self) -> Result<&mut [T], Error>
+    where
+        T: bytemuck::Pod,
+    {
+        if !self.endian.is_native() {
+            return Err(Error::EndiannessMismatch { detected: true });
+        }
+
+        if self.stride != self.width {
+            return Err(Error::NonContiguous);
+        }
+
+        let ptr = self.data.as_ptr();
+        let alignment = ptr.align_offset(core::mem::align_of::<T>());
+        bytemuck::try_cast_slice_mut(&mut *self.data).map_err(|_| Error::MisalignedData {
+            required: core::mem::align_of::<T>(),
+            actual: alignment,
         })
     }
 

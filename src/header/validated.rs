@@ -227,6 +227,21 @@ impl Header {
 
     // === Cell angles ===
 
+    #[inline]
+    pub fn alpha(&self) -> f32 {
+        self.alpha
+    }
+
+    #[inline]
+    pub fn beta(&self) -> f32 {
+        self.beta
+    }
+
+    #[inline]
+    pub fn gamma(&self) -> f32 {
+        self.gamma
+    }
+
     pub fn set_cell_angles(&mut self, alpha: f32, beta: f32, gamma: f32) -> &mut Self {
         self.alpha = alpha;
         self.beta = beta;
@@ -267,8 +282,8 @@ impl Header {
     // === Axis mapping ===
 
     #[inline]
-    pub fn axis_map(&self) -> &AxisMap {
-        &self.axis_map
+    pub fn axis_map(&self) -> AxisMap {
+        self.axis_map
     }
 
     pub fn set_axis_map(&mut self, mapc: i32, mapr: i32, maps: i32) -> Result<&mut Self, Error> {
@@ -528,9 +543,9 @@ impl Header {
         set_field!(beta, self.beta);
         set_field!(gamma, self.gamma);
 
-        raw.mapc = (self.axis_map.column as i32).convert_from_file(self.file_endian);
-        raw.mapr = (self.axis_map.row as i32).convert_from_file(self.file_endian);
-        raw.maps = (self.axis_map.section as i32).convert_from_file(self.file_endian);
+        raw.mapc = (self.axis_map.column() as i32).convert_from_file(self.file_endian);
+        raw.mapr = (self.axis_map.row() as i32).convert_from_file(self.file_endian);
+        raw.maps = (self.axis_map.section() as i32).convert_from_file(self.file_endian);
 
         set_field!(dmin, self.dmin);
         set_field!(dmax, self.dmax);
@@ -620,9 +635,9 @@ impl HeaderBuilder {
         self
     }
 
-    pub fn axis_map(mut self, mapc: i32, mapr: i32, maps: i32) -> Self {
-        let _ = self.header.set_axis_map(mapc, mapr, maps);
-        self
+    pub fn axis_map(mut self, mapc: i32, mapr: i32, maps: i32) -> Result<Self, Error> {
+        self.header.set_axis_map(mapc, mapr, maps)?;
+        Ok(self)
     }
 
     pub fn statistics(mut self, dmin: f32, dmax: f32, dmean: f32, rms: f32) -> Self {
@@ -645,9 +660,9 @@ impl HeaderBuilder {
         self
     }
 
-    pub fn label(mut self, index: usize, text: &str) -> Self {
-        let _ = self.header.set_label(index, text);
-        self
+    pub fn label(mut self, index: usize, text: &str) -> Result<Self, Error> {
+        self.header.set_label(index, text)?;
+        Ok(self)
     }
 
     pub fn build(self) -> Header {

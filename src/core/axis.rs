@@ -16,11 +16,11 @@ use core::fmt;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AxisMap {
     /// Column axis (fastest varying in memory)
-    pub column: usize,
+    column: usize,
     /// Row axis
-    pub row: usize,
+    row: usize,
     /// Section axis (slowest varying in memory)
-    pub section: usize,
+    section: usize,
 }
 
 impl Default for AxisMap {
@@ -37,6 +37,24 @@ impl AxisMap {
         row: 2,
         section: 3,
     };
+
+    /// Get the column axis (fastest varying in memory)
+    #[inline]
+    pub const fn column(&self) -> usize {
+        self.column
+    }
+
+    /// Get the row axis
+    #[inline]
+    pub const fn row(&self) -> usize {
+        self.row
+    }
+
+    /// Get the section axis (slowest varying in memory)
+    #[inline]
+    pub const fn section(&self) -> usize {
+        self.section
+    }
 
     /// Create from MAPC, MAPR, MAPS values without validation
     #[inline]

@@ -1,7 +1,22 @@
 //! Statistics computation for volume data
 //!
-//! This module provides generic functions for computing statistics
-//! (min, max, mean, RMS) over voxel data.
+//! This module provides two approaches for computing statistics:
+//!
+//! - [`compute_stats`]: One-pass computation over an iterator. Use when you have
+//!   all data available and want immediate results.
+//!
+//! - [`RunningStats`]: Incremental computation. Use when data arrives in chunks,
+//!   when the full dataset doesn't fit in memory, or when you need to combine
+//!   statistics from multiple sources.
+//!
+//! # When to Use Which
+//!
+//! | Scenario | Recommended API |
+//! |----------|-----------------|
+//! | Single pass over `Volume::iter()` | `compute_stats` |
+//! | Streaming/incremental data | `RunningStats` |
+//! | Memory-constrained environment | `RunningStats` |
+//! | Combining stats from multiple volumes | `RunningStats` |
 
 /// Statistics computed from volume data
 #[derive(Debug, Clone, Copy, PartialEq)]

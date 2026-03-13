@@ -159,7 +159,7 @@ impl Encoding for Packed4Bit {
 
     #[inline]
     unsafe fn encode_unchecked(self, _endian: FileEndian, bytes: &mut [u8]) {
-        bytes[0] = self.byte;
+        bytes[0] = self.byte();
     }
 }
 

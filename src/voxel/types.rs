@@ -505,7 +505,7 @@ impl Voxel for half::f16 {
 /// Packed 4-bit values (Mode 101)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Packed4Bit {
-    pub byte: u8,
+    byte: u8,
 }
 
 impl Packed4Bit {
@@ -513,6 +513,12 @@ impl Packed4Bit {
     #[inline]
     pub const fn new(byte: u8) -> Self {
         Self { byte }
+    }
+
+    /// Get the raw byte value
+    #[inline]
+    pub const fn byte(&self) -> u8 {
+        self.byte
     }
 
     /// Create from two values

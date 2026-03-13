@@ -24,6 +24,9 @@ pub enum Mode {
 }
 
 /// Error for invalid mode values
+///
+/// This type is returned by [`Mode::try_from`] when the input value
+/// doesn't correspond to a valid MRC mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct InvalidMode(pub i32);
 

@@ -15,7 +15,6 @@ readme = "README.md"
 [dependencies]
 bytemuck = { version = "1.15", default-features = false, features = ["derive"] }
 half = { version = "2.4", default-features = false, optional = true }
-memmap2 = { version = "0.9", optional = true }
 thiserror = { version = "2.0.16", default-features = false }
 
 [dev-dependencies]
@@ -23,7 +22,6 @@ criterion = { version = "0.5", features = ["html_reports"] }
 tempfile = "3.8"
 
 [features]
-default = ["std", "mmap", "f16"]
-mmap = ["std", "dep:memmap2"]
+default = ["std", "f16"]
 std = []
 f16 = ["dep:half"]

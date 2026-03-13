@@ -11,9 +11,11 @@ use std::fs::File;
 #[cfg(feature = "std")]
 use std::io::{Seek, SeekFrom, Write};
 
-/// Builder for creating MRC files
+/// Builder for creating MRC files (internal)
+///
+/// Use [`MrcWriter::builder()`] to create a builder instance.
 #[cfg(feature = "std")]
-pub struct MrcWriterBuilder {
+pub(crate) struct MrcWriterBuilder {
     dimensions: [usize; 3],
     mode: Mode,
     voxel_size: [f32; 3],
@@ -24,9 +26,10 @@ pub struct MrcWriterBuilder {
 }
 
 #[cfg(feature = "std")]
+#[allow(dead_code)]
 impl MrcWriterBuilder {
     /// Create a new builder
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             dimensions: [1, 1, 1],
             mode: Mode::Float32,
@@ -39,43 +42,43 @@ impl MrcWriterBuilder {
     }
 
     /// Set the dimensions (nx, ny, nz)
-    pub fn dimensions(mut self, nx: usize, ny: usize, nz: usize) -> Self {
+    pub(crate) fn dimensions(mut self, nx: usize, ny: usize, nz: usize) -> Self {
         self.dimensions = [nx, ny, nz];
         self
     }
 
     /// Set the mode
-    pub fn mode(mut self, mode: Mode) -> Self {
+    pub(crate) fn mode(mut self, mode: Mode) -> Self {
         self.mode = mode;
         self
     }
 
     /// Set voxel size in Angstroms
-    pub fn voxel_size(mut self, dx: f32, dy: f32, dz: f32) -> Self {
+    pub(crate) fn voxel_size(mut self, dx: f32, dy: f32, dz: f32) -> Self {
         self.voxel_size = [dx, dy, dz];
         self
     }
 
     /// Set origin in Angstroms
-    pub fn origin(mut self, x: f32, y: f32, z: f32) -> Self {
+    pub(crate) fn origin(mut self, x: f32, y: f32, z: f32) -> Self {
         self.origin = [x, y, z];
         self
     }
 
     /// Set cell angles in degrees
-    pub fn cell_angles(mut self, alpha: f32, beta: f32, gamma: f32) -> Self {
+    pub(crate) fn cell_angles(mut self, alpha: f32, beta: f32, gamma: f32) -> Self {
         self.cell_angles = [alpha, beta, gamma];
         self
     }
 
     /// Set extended header bytes
-    pub fn ext_header(mut self, data: Vec<u8>) -> Self {
+    pub(crate) fn ext_header(mut self, data: Vec<u8>) -> Self {
         self.ext_header = data;
         self
     }
 
     /// Set the data bytes
-    pub fn data(mut self, data: Vec<u8>) -> Self {
+    pub(crate) fn data(mut self, data: Vec<u8>) -> Self {
         self.data = Some(data);
         self
     }
@@ -120,9 +123,9 @@ impl MrcWriterBuilder {
     ///
     /// This creates the file with header but does not write data.
     /// Use `writer.write_data()` to write data afterwards.
-    pub fn build(self, path: impl AsRef<std::path::Path>) -> Result<MrcWriter, Error> {
+    pub(crate) fn build(self, path: impl AsRef<std::path::Path>) -> Result<MrcWriter, Error> {
         let header = self.validate_and_build_header()?;
-        
+
         if self.ext_header.is_empty() {
             MrcWriter::create(path, header)
         } else {
@@ -134,9 +137,9 @@ impl MrcWriterBuilder {
     ///
     /// This is equivalent to `build()` + `write_data()` + `finish()`.
     /// Requires data to be set via `data()`.
-    pub fn write(self, path: impl AsRef<std::path::Path>) -> Result<(), Error> {
+    pub(crate) fn write(self, path: impl AsRef<std::path::Path>) -> Result<(), Error> {
         let header = self.validate_and_build_header()?;
-        
+
         let mut writer = if self.ext_header.is_empty() {
             MrcWriter::create(path, header)?
         } else {
@@ -239,6 +242,15 @@ impl MrcWriter {
         self.file.seek(SeekFrom::Start(0)).map_err(Error::from)?;
         self.file.write_all(&header_bytes).map_err(Error::from)?;
         Ok(())
+    }
+
+    /// Flush all data to disk and consume the writer
+    ///
+    /// This method ensures all buffered data is written to disk before
+    /// returning. It's equivalent to calling `flush()` but provides a
+    /// clearer intent when finishing file writing.
+    pub fn finish(self) -> Result<(), Error> {
+        self.file.sync_all().map_err(Error::from)
     }
 }
 

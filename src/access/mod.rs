@@ -5,6 +5,7 @@
 //! - `Slice2D` / `Slice2DMut`: 2D plane extracted from 3D volume at Z position
 //! - `VolumeBuilder`: Fluent volume construction
 //! - `VolumeData`: Dynamic dispatch for runtime mode handling
+//! - `Bounds`: Region specification for subvolume extraction
 //!
 //! # Terminology: "Slice"
 //!
@@ -19,4 +20,4 @@ pub mod dynamic;
 pub mod volume;
 
 pub use dynamic::VolumeData;
-pub use volume::{Slice2D, Slice2DMut, Volume, VolumeBuilder};
+pub use volume::{Bounds, Slice2D, Slice2DMut, Volume, VolumeBuilder};

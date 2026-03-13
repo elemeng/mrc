@@ -13,8 +13,8 @@ pub use types::{
     ComplexF32, ComplexI16, ComplexVoxel, IntegerVoxel, Packed4Bit, RealVoxel, ScalarVoxel, Voxel,
 };
 
-// Encoding is public for trait bounds, but users typically don't call methods directly
-pub use codex::Encoding;
+// Encoding is internal - used by Volume for type-safe byte encoding/decoding
+pub(crate) use codex::Encoding;
 
 // Internal types
 pub(crate) use endian::EndianConvert;

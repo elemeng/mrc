@@ -1,4 +1,4 @@
-//! IO traits for abstracting over different data sources
+//! IO traits for abstracting over different data sources (internal)
 
 use crate::access::Volume;
 use crate::core::Error;
@@ -7,8 +7,13 @@ use crate::voxel::{Encoding, Voxel, validate_mode};
 use alloc::vec;
 use alloc::vec::Vec;
 
-/// Trait for sources that can provide MRC data
-pub trait MrcSource {
+/// Trait for sources that can provide MRC data (internal)
+///
+/// This trait is used internally for abstracting over different data sources.
+/// It may be stabilized and made public in a future version if there's demand
+/// for custom data source implementations.
+#[allow(dead_code)]
+pub(crate) trait MrcSource {
     /// Read the MRC header
     fn read_header(&mut self) -> Result<Header, Error>;
 
@@ -38,8 +43,13 @@ pub trait MrcSource {
     }
 }
 
-/// Trait for sinks that can receive MRC data
-pub trait MrcSink {
+/// Trait for sinks that can receive MRC data (internal)
+///
+/// This trait is used internally for abstracting over different data sinks.
+/// It may be stabilized and made public in a future version if there's demand
+/// for custom data sink implementations.
+#[allow(dead_code)]
+pub(crate) trait MrcSink {
     /// Write the MRC header
     fn write_header(&mut self, header: &Header) -> Result<(), Error>;
 

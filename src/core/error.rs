@@ -31,9 +31,6 @@ pub enum Error {
     /// IO error
     #[cfg(feature = "std")]
     Io(alloc::boxed::Box<dyn std::error::Error + Send + Sync>),
-    /// Memory mapping error
-    #[cfg(feature = "mmap")]
-    Mmap,
     /// Feature not enabled
     FeatureDisabled { feature: &'static str },
 }
@@ -64,8 +61,6 @@ impl fmt::Display for Error {
             }
             #[cfg(feature = "std")]
             Self::Io(err) => write!(f, "IO error: {err}"),
-            #[cfg(feature = "mmap")]
-            Self::Mmap => write!(f, "Memory mapping error"),
             Self::FeatureDisabled { feature } => {
                 write!(f, "Feature '{feature}' is not enabled")
             }
@@ -140,8 +135,6 @@ impl Clone for Error {
             Self::Io(_) => Self::Io(alloc::boxed::Box::new(std::io::Error::other(
                 "IO error (cloned)",
             ))),
-            #[cfg(feature = "mmap")]
-            Self::Mmap => Self::Mmap,
         }
     }
 }
@@ -162,10 +155,6 @@ impl PartialEq for Error {
             || {
                 #[cfg(feature = "std")]
                 if let (Self::Io(_), Self::Io(_)) = (self, other) {
-                    return true;
-                }
-                #[cfg(feature = "mmap")]
-                if let (Self::Mmap, Self::Mmap) = (self, other) {
                     return true;
                 }
                 false

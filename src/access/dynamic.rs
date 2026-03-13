@@ -15,6 +15,7 @@ trait DynVolume {
     fn len(&self) -> usize;
     fn is_empty(&self) -> bool;
     fn as_any(&self) -> &dyn core::any::Any;
+    fn as_any_mut(&mut self) -> &mut dyn core::any::Any;
 }
 
 impl<T: Voxel + Encoding> DynVolume for Volume<T, Vec<u8>> {
@@ -34,6 +35,9 @@ impl<T: Voxel + Encoding> DynVolume for Volume<T, Vec<u8>> {
         Volume::is_empty(self)
     }
     fn as_any(&self) -> &dyn core::any::Any {
+        self
+    }
+    fn as_any_mut(&mut self) -> &mut dyn core::any::Any {
         self
     }
 }
@@ -102,5 +106,32 @@ impl VolumeData {
     /// ```
     pub fn downcast_ref<T: Voxel + Encoding>(&self) -> Option<&Volume<T, Vec<u8>>> {
         self.0.as_any().downcast_ref::<Volume<T, Vec<u8>>>()
+    }
+
+    /// Downcast to mutable typed volume
+    ///
+    /// # Example
+    /// ```ignore
+    /// if let Some(vol) = data.downcast_mut::<f32>() {
+    ///     // modify f32 volume
+    /// }
+    /// ```
+    pub fn downcast_mut<T: Voxel + Encoding>(&mut self) -> Option<&mut Volume<T, Vec<u8>>> {
+        self.0.as_any_mut().downcast_mut::<Volume<T, Vec<u8>>>()
+    }
+
+    /// Get an iterator over f32 values if the volume is Float32 mode
+    ///
+    /// Returns `None` if the volume is not Float32 mode.
+    ///
+    /// # Example
+    /// ```ignore
+    /// if let Some(iter) = data.iter_f32() {
+    ///     let sum: f32 = iter.sum();
+    /// }
+    /// ```
+    pub fn iter_f32(&self) -> Option<impl Iterator<Item = f32> + '_> {
+        let vol = self.downcast_ref::<f32>()?;
+        Some(vol.iter())
     }
 }
