@@ -134,4 +134,44 @@ impl VolumeData {
         let vol = self.downcast_ref::<f32>()?;
         Some(vol.iter())
     }
+
+    /// Get an iterator over i8 values if the volume is Int8 mode
+    ///
+    /// Returns `None` if the volume is not Int8 mode.
+    pub fn iter_i8(&self) -> Option<impl Iterator<Item = i8> + '_> {
+        let vol = self.downcast_ref::<i8>()?;
+        Some(vol.iter())
+    }
+
+    /// Get an iterator over i16 values if the volume is Int16 mode
+    ///
+    /// Returns `None` if the volume is not Int16 mode.
+    pub fn iter_i16(&self) -> Option<impl Iterator<Item = i16> + '_> {
+        let vol = self.downcast_ref::<i16>()?;
+        Some(vol.iter())
+    }
+
+    /// Get an iterator over u16 values if the volume is Uint16 mode
+    ///
+    /// Returns `None` if the volume is not Uint16 mode.
+    pub fn iter_u16(&self) -> Option<impl Iterator<Item = u16> + '_> {
+        let vol = self.downcast_ref::<u16>()?;
+        Some(vol.iter())
+    }
+
+    /// Get an iterator over ComplexI16 values if the volume is Int16Complex mode
+    ///
+    /// Returns `None` if the volume is not Int16Complex mode.
+    pub fn iter_complex_i16(&self) -> Option<impl Iterator<Item = ComplexI16> + '_> {
+        let vol = self.downcast_ref::<ComplexI16>()?;
+        Some(vol.iter())
+    }
+
+    /// Get an iterator over ComplexF32 values if the volume is Float32Complex mode
+    ///
+    /// Returns `None` if the volume is not Float32Complex mode.
+    pub fn iter_complex_f32(&self) -> Option<impl Iterator<Item = ComplexF32> + '_> {
+        let vol = self.downcast_ref::<ComplexF32>()?;
+        Some(vol.iter())
+    }
 }

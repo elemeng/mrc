@@ -1,4 +1,4 @@
-//! IO traits for abstracting over different data sources (internal)
+//! IO traits for abstracting over different data sources
 
 use crate::access::Volume;
 use crate::core::Error;
@@ -7,13 +7,26 @@ use crate::voxel::{Encoding, Voxel, validate_mode};
 use alloc::vec;
 use alloc::vec::Vec;
 
-/// Trait for sources that can provide MRC data (internal)
+/// Trait for sources that can provide MRC data
 ///
-/// This trait is used internally for abstracting over different data sources.
-/// It may be stabilized and made public in a future version if there's demand
-/// for custom data source implementations.
-#[allow(dead_code)]
-pub(crate) trait MrcSource {
+/// This trait abstracts over different data sources, allowing custom implementations
+/// for reading MRC data from various sources such as network streams, compressed files,
+/// or other storage backends.
+///
+/// # Example
+///
+/// ```ignore
+/// use mrc::io::MrcSource;
+///
+/// struct NetworkSource { ... }
+///
+/// impl MrcSource for NetworkSource {
+///     fn read_header(&mut self) -> Result<Header, Error> { ... }
+///     fn read_data_bytes(&mut self, header: &Header) -> Result<Vec<u8>, Error> { ... }
+///     fn read_exact(&mut self, buf: &mut [u8]) -> Result<(), Error> { ... }
+/// }
+/// ```
+pub trait MrcSource {
     /// Read the MRC header
     fn read_header(&mut self) -> Result<Header, Error>;
 
@@ -43,13 +56,27 @@ pub(crate) trait MrcSource {
     }
 }
 
-/// Trait for sinks that can receive MRC data (internal)
+/// Trait for sinks that can receive MRC data
 ///
-/// This trait is used internally for abstracting over different data sinks.
-/// It may be stabilized and made public in a future version if there's demand
-/// for custom data sink implementations.
-#[allow(dead_code)]
-pub(crate) trait MrcSink {
+/// This trait abstracts over different data sinks, allowing custom implementations
+/// for writing MRC data to various destinations such as network streams, compressed files,
+/// or other storage backends.
+///
+/// # Example
+///
+/// ```ignore
+/// use mrc::io::MrcSink;
+///
+/// struct NetworkSink { ... }
+///
+/// impl MrcSink for NetworkSink {
+///     fn write_header(&mut self, header: &Header) -> Result<(), Error> { ... }
+///     fn write_data_bytes(&mut self, header: &Header, data: &[u8]) -> Result<(), Error> { ... }
+///     fn write_all(&mut self, buf: &[u8]) -> Result<(), Error> { ... }
+///     fn flush(&mut self) -> Result<(), Error> { ... }
+/// }
+/// ```
+pub trait MrcSink {
     /// Write the MRC header
     fn write_header(&mut self, header: &Header) -> Result<(), Error>;
 

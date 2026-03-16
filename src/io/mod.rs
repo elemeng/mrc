@@ -5,4 +5,5 @@ mod traits;
 mod writer;
 
 pub use reader::MrcReader;
-pub use writer::MrcWriter;
+pub use traits::{MrcSink, MrcSource};
+pub use writer::{MrcWriter, MrcWriterBuilder};

@@ -106,16 +106,6 @@ impl AxisMap {
         }
     }
 
-    /// Get the axis index for a given dimension, panicking on invalid input
-    ///
-    /// # Panics
-    /// Panics if `dim` is not 0, 1, or 2.
-    #[inline]
-    pub fn axis_index_unchecked(&self, dim: usize) -> usize {
-        self.axis_index(dim)
-            .unwrap_or_else(|| panic!("Invalid dimension: {dim}"))
-    }
-
     /// Get stride multipliers for indexing
     ///
     /// Returns [stride_x, stride_y, stride_z] for computing linear indices
@@ -135,15 +125,6 @@ impl AxisMap {
             stride_options[idx(self.row)],
             stride_options[idx(self.section)],
         ]
-    }
-
-    /// Get stride multipliers as tuple
-    ///
-    /// Returns (stride_x, stride_y, stride_z) for computing linear indices
-    #[inline]
-    pub fn strides_tuple(&self, dimensions: (usize, usize, usize)) -> (usize, usize, usize) {
-        let arr = self.strides([dimensions.0, dimensions.1, dimensions.2]);
-        (arr[0], arr[1], arr[2])
     }
 }
 

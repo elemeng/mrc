@@ -587,42 +587,11 @@ impl Packed4Bit {
         self.byte = first | (second << 4);
     }
 
-    /// Check if both values are valid
+    /// Check if both values are valid (always true due to bit masking)
     #[inline]
+    #[deprecated(since = "0.3.0", note = "Values are always valid due to bit masking")]
     pub const fn is_valid(&self) -> bool {
-        self.first() <= 15 && self.second() <= 15
-    }
-
-    /// Get the nth value
-    #[inline]
-    pub const fn get(&self, index: usize) -> Option<u8> {
-        match index {
-            0 => Some(self.first()),
-            1 => Some(self.second()),
-            _ => None,
-        }
-    }
-
-    /// Sum of both values
-    #[inline]
-    pub const fn sum(&self) -> u8 {
-        self.first() + self.second()
-    }
-
-    /// Maximum of both values
-    #[inline]
-    pub const fn max(&self) -> u8 {
-        let first = self.first();
-        let second = self.second();
-        if first > second { first } else { second }
-    }
-
-    /// Minimum of both values
-    #[inline]
-    pub const fn min(&self) -> u8 {
-        let first = self.first();
-        let second = self.second();
-        if first < second { first } else { second }
+        true
     }
 }
 

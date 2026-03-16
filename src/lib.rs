@@ -27,7 +27,7 @@
 //!     let sum: f64 = volume.iter().map(|v| v as f64).sum();
 //!
 //!     // Extract a 2D plane at Z=5
-//!     let plane = volume.slice(5)?;
+//!     let plane = volume.plane(5)?;
 //!     let plane_sum: f32 = plane.iter().sum();
 //!
 //!     // Or use dynamic dispatch for unknown modes
@@ -41,7 +41,6 @@
 //! ```
 
 #![no_std]
-#![allow(private_interfaces)]
 
 #[cfg(feature = "f16")]
 extern crate half;
@@ -77,13 +76,14 @@ pub use core::{AxisMap, Error, Mode};
 // Voxel re-exports
 pub use voxel::{
     ComplexF32, ComplexI16, ComplexVoxel, IntegerVoxel, Packed4Bit, RealVoxel, ScalarVoxel, Voxel,
+    validate_mode,
 };
 
 // Header re-exports
 pub use header::{Header, HeaderBuilder};
 
 #[cfg(feature = "std")]
-pub use access::{Bounds, Slice2D, Slice2DMut, Volume, VolumeBuilder, VolumeData};
+pub use access::{Bounds, Plane2D, Plane2DMut, Volume, VolumeBuilder, VolumeData};
 
 #[cfg(feature = "std")]
 pub use header::ExtType;

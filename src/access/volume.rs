@@ -316,21 +316,21 @@ impl<T: Voxel + Encoding, S: AsRef<[u8]>> Volume<T, S> {
 
     /// Extract a 2D XY plane from the volume at a specific Z position.
     ///
-    /// Returns a `Slice2D` - a **geometric plane** in 3D space.
+    /// Returns a `Plane2D` - a **geometric plane** in 3D space.
     /// For a Rust `&[T]` data view, use `as_slice()` instead.
-    pub fn slice(&self, z: usize) -> Result<Slice2D<'_, T>, Error> {
+    pub fn plane(&self, z: usize) -> Result<Plane2D<'_, T>, Error> {
         check_bounds(z, self.dimensions[2])?;
 
         let nx = self.dimensions[0];
         let ny = self.dimensions[1];
-        let slice_size = nx * ny * T::SIZE;
-        let slice_offset = z * nx * ny * T::SIZE;
+        let plane_size = nx * ny * T::SIZE;
+        let plane_offset = z * nx * ny * T::SIZE;
 
         let bytes = self.storage.as_ref();
-        let slice_data = &bytes[slice_offset..slice_offset + slice_size];
+        let plane_data = &bytes[plane_offset..plane_offset + plane_size];
 
-        Ok(Slice2D {
-            data: slice_data,
+        Ok(Plane2D {
+            data: plane_data,
             width: nx,
             height: ny,
             stride: nx,
@@ -414,21 +414,21 @@ impl<T: Voxel + Encoding, S: AsMut<[u8]>> Volume<T, S> {
 
     /// Extract a mutable 2D XY plane from the volume at a specific Z position.
     ///
-    /// Returns a `Slice2DMut` - a **geometric plane** in 3D space.
+    /// Returns a `Plane2DMut` - a **geometric plane** in 3D space.
     /// For mutable raw byte access, use `as_bytes_mut()` instead.
-    pub fn slice_mut(&mut self, z: usize) -> Result<Slice2DMut<'_, T>, Error> {
+    pub fn plane_mut(&mut self, z: usize) -> Result<Plane2DMut<'_, T>, Error> {
         check_bounds(z, self.dimensions[2])?;
 
         let nx = self.dimensions[0];
         let ny = self.dimensions[1];
-        let slice_size = nx * ny * T::SIZE;
-        let slice_offset = z * nx * ny * T::SIZE;
+        let plane_size = nx * ny * T::SIZE;
+        let plane_offset = z * nx * ny * T::SIZE;
 
         let bytes = self.storage.as_mut();
-        let slice_data = &mut bytes[slice_offset..slice_offset + slice_size];
+        let plane_data = &mut bytes[plane_offset..plane_offset + plane_size];
 
-        Ok(Slice2DMut {
-            data: slice_data,
+        Ok(Plane2DMut {
+            data: plane_data,
             width: nx,
             height: ny,
             stride: nx,
@@ -444,7 +444,7 @@ impl<T: Voxel + Encoding, S: AsMut<[u8]>> Volume<T, S> {
 
 /// A 2D plane extracted from a 3D volume at a specific Z position.
 ///
-/// This is a **geometric slice** (a plane in 3D space), not a Rust `&[T]` slice.
+/// This is a **geometric plane** (a 2D plane in 3D space), not a Rust `&[T]` slice.
 /// For a Rust slice view of the raw data, use `Volume::as_slice()`.
 ///
 /// # Zero-Copy
@@ -456,7 +456,7 @@ impl<T: Voxel + Encoding, S: AsMut<[u8]>> Volume<T, S> {
 ///
 /// ```ignore
 /// // Extract the XY plane at Z=10
-/// let plane: Slice2D<f32> = volume.slice(10)?;
+/// let plane: Plane2D<f32> = volume.plane(10)?;
 ///
 /// // Iterate over pixels in the plane
 /// for pixel in plane.iter() {
@@ -467,7 +467,7 @@ impl<T: Voxel + Encoding, S: AsMut<[u8]>> Volume<T, S> {
 /// Note: Single pixel access is intentionally not provided.
 /// Use `iter()` for bulk operations.
 #[derive(Debug)]
-pub struct Slice2D<'a, T: Voxel> {
+pub struct Plane2D<'a, T: Voxel> {
     data: &'a [u8],
     width: usize,
     height: usize,
@@ -476,7 +476,7 @@ pub struct Slice2D<'a, T: Voxel> {
     _marker: core::marker::PhantomData<T>,
 }
 
-impl<T: Voxel + Encoding> Slice2D<'_, T> {
+impl<T: Voxel + Encoding> Plane2D<'_, T> {
     /// Get dimensions
     pub fn dimensions(&self) -> (usize, usize) {
         (self.width, self.height)
@@ -552,12 +552,12 @@ impl<T: Voxel + Encoding> Slice2D<'_, T> {
 }
 
 // ============================================================================
-// Slice2DMut - Mutable 2D plane extracted from a 3D volume
+// Plane2DMut - Mutable 2D plane extracted from a 3D volume
 // ============================================================================
 
 /// A mutable 2D plane extracted from a 3D volume at a specific Z position.
 ///
-/// This is a **geometric slice** (a plane in 3D space), not a Rust `&mut [T]` slice.
+/// This is a **geometric plane** (a 2D plane in 3D space), not a Rust `&mut [T]` slice.
 /// For mutable raw byte access, use `Volume::as_bytes_mut()`.
 ///
 /// # Zero-Copy
@@ -569,7 +569,7 @@ impl<T: Voxel + Encoding> Slice2D<'_, T> {
 ///
 /// ```ignore
 /// // Extract a mutable XY plane at Z=10
-/// let mut plane: Slice2DMut<f32> = volume.slice_mut(10)?;
+/// let mut plane: Plane2DMut<f32> = volume.plane_mut(10)?;
 ///
 /// // In-place transformation
 /// plane.transform(|v| v * 2.0);
@@ -578,7 +578,7 @@ impl<T: Voxel + Encoding> Slice2D<'_, T> {
 /// Note: Single pixel access is intentionally not provided.
 /// Use `iter()` for reading, `transform()` for in-place modification.
 #[derive(Debug)]
-pub struct Slice2DMut<'a, T: Voxel> {
+pub struct Plane2DMut<'a, T: Voxel> {
     data: &'a mut [u8],
     width: usize,
     height: usize,
@@ -587,7 +587,7 @@ pub struct Slice2DMut<'a, T: Voxel> {
     _marker: core::marker::PhantomData<T>,
 }
 
-impl<T: Voxel + Encoding> Slice2DMut<'_, T> {
+impl<T: Voxel + Encoding> Plane2DMut<'_, T> {
     /// Get dimensions
     pub fn dimensions(&self) -> (usize, usize) {
         (self.width, self.height)

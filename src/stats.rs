@@ -152,8 +152,8 @@ impl RunningStats {
         let (mean, rms) = calculate_mean_and_rms(self.count, self.sum, self.sum_sq);
 
         Statistics {
-            min: if self.count > 0 { self.min } else { 0.0 },
-            max: if self.count > 0 { self.max } else { 0.0 },
+            min: self.min,
+            max: self.max,
             mean,
             rms,
         }
