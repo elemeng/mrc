@@ -1,8 +1,7 @@
 //! MRC file reader with iterator-centric API
 
-use crate::decode::{decode_f32, decode_i16};
 use crate::iter::{BlockIter, SliceIter, SlabIter};
-use crate::{Error, FileEndian, Header, Mode, VolumeShape};
+use crate::{Decode, Error, FileEndian, Header, Mode, VolumeShape};
 
 use alloc::vec::Vec;
 
@@ -122,7 +121,7 @@ impl Reader {
         }
         let mut result = alloc::vec![0f32; bytes.len() / 4];
         for i in 0..result.len() {
-            result[i] = decode_f32(bytes, i * 4, self.endian);
+            result[i] = f32::decode(bytes, i * 4, self.endian);
         }
         Ok(result)
     }
@@ -133,7 +132,7 @@ impl Reader {
         }
         let mut result = alloc::vec![0i16; bytes.len() / 2];
         for i in 0..result.len() {
-            result[i] = decode_i16(bytes, i * 2, self.endian);
+            result[i] = i16::decode(bytes, i * 2, self.endian);
         }
         Ok(result)
     }

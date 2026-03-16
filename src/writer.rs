@@ -1,7 +1,6 @@
 //! MRC file writer with block-based API
 
-use crate::encode::encode_f32;
-use crate::{block::VoxelBlock, Error, FileEndian, Header, Mode, VolumeShape};
+use crate::{block::VoxelBlock, Encode, Error, FileEndian, Header, Mode, VolumeShape};
 
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
@@ -137,7 +136,7 @@ impl Writer {
 
         // Encode and write to buffer
         for (i, &val) in block.data.iter().enumerate() {
-            encode_f32(val, &mut self.data, start_offset + i * 4, FileEndian::LittleEndian);
+            val.encode(&mut self.data, start_offset + i * 4, FileEndian::LittleEndian);
         }
 
         Ok(())

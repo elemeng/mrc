@@ -79,42 +79,10 @@ pub struct Int16Complex {
     pub imag: i16,
 }
 
-impl Int16Complex {
-    pub fn decode(endian: crate::endian::FileEndian, bytes: &[u8]) -> Self {
-        use crate::decode::decode_i16;
-        Self {
-            real: decode_i16(bytes, 0, endian),
-            imag: decode_i16(bytes, 2, endian),
-        }
-    }
-
-    pub fn encode(self, endian: crate::endian::FileEndian, out: &mut [u8]) {
-        use crate::encode::encode_i16;
-        encode_i16(self.real, out, 0, endian);
-        encode_i16(self.imag, out, 2, endian);
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Float32Complex {
     pub real: f32,
     pub imag: f32,
-}
-
-impl Float32Complex {
-    pub fn decode(endian: crate::endian::FileEndian, bytes: &[u8]) -> Self {
-        use crate::decode::decode_f32;
-        Self {
-            real: decode_f32(bytes, 0, endian),
-            imag: decode_f32(bytes, 4, endian),
-        }
-    }
-
-    pub fn encode(self, endian: crate::endian::FileEndian, out: &mut [u8]) {
-        use crate::encode::encode_f32;
-        encode_f32(self.real, out, 0, endian);
-        encode_f32(self.imag, out, 4, endian);
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -139,6 +107,31 @@ impl Packed4Bit {
 
     pub fn encode(self, endian: crate::endian::FileEndian, out: &mut [u8]) {
         out[0] = if endian == crate::endian::FileEndian::LittleEndian {
+            self.0
+        } else {
+            self.0.reverse_bits()
+        };
+    }
+}
+
+impl crate::Decode for Packed4Bit {
+    const BYTE_SIZE: usize = 1;
+    #[inline]
+    fn decode(bytes: &[u8], offset: usize, endian: crate::endian::FileEndian) -> Self {
+        let byte = bytes[offset];
+        Self(if endian == crate::endian::FileEndian::LittleEndian {
+            byte
+        } else {
+            byte.reverse_bits()
+        })
+    }
+}
+
+impl crate::Encode for Packed4Bit {
+    const BYTE_SIZE: usize = 1;
+    #[inline]
+    fn encode(&self, bytes: &mut [u8], offset: usize, endian: crate::endian::FileEndian) {
+        bytes[offset] = if endian == crate::endian::FileEndian::LittleEndian {
             self.0
         } else {
             self.0.reverse_bits()
