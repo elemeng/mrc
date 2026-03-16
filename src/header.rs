@@ -239,9 +239,10 @@ impl Header {
     ///
     /// This value is a numeric i32 and respects the file's endianness.
     pub fn nversion(&self) -> i32 {
-        use crate::DecodeFromFile;
+        use crate::decode::decode_i32;
+        use crate::endian::FileEndian;
         let file_endian = self.detect_endian();
-        i32::decode(file_endian, &self.extra[12..16])
+        decode_i32(&self.extra[12..16], 0, file_endian)
     }
 
     #[inline]
@@ -249,27 +250,28 @@ impl Header {
     ///
     /// This value is a numeric i32 and respects the file's endianness.
     pub fn set_nversion(&mut self, value: i32) {
-        use crate::EncodeToFile;
+        use crate::encode::encode_i32;
+        use crate::endian::FileEndian;
         let file_endian = self.detect_endian();
-        value.encode(file_endian, &mut self.extra[12..16]);
+        encode_i32(value, &mut self.extra[12..16], 0, file_endian);
     }
 
     #[inline]
     /// Detect the file endianness from the MACHST machine stamp
-    pub fn detect_endian(&self) -> crate::FileEndian {
-        crate::FileEndian::from_machst(&self.machst)
+    pub fn detect_endian(&self) -> crate::endian::FileEndian {
+        crate::endian::FileEndian::from_machst(&self.machst)
     }
 
     #[inline]
     /// Check if the file is little-endian
     pub fn is_little_endian(&self) -> bool {
-        self.detect_endian() == crate::FileEndian::LittleEndian
+        self.detect_endian() == crate::endian::FileEndian::LittleEndian
     }
 
     #[inline]
     /// Check if the file is big-endian
     pub fn is_big_endian(&self) -> bool {
-        self.detect_endian() == crate::FileEndian::BigEndian
+        self.detect_endian() == crate::endian::FileEndian::BigEndian
     }
 
     #[inline]
@@ -282,7 +284,7 @@ impl Header {
     /// # Note
     /// Per crate policy, new MRC files are always written in little-endian format.
     /// This method is not intended for creating big-endian files from scratch.
-    pub fn set_file_endian(&mut self, endian: crate::FileEndian) {
+    pub fn set_file_endian(&mut self, endian: crate::endian::FileEndian) {
         self.machst = endian.to_machst();
     }
 
@@ -294,7 +296,8 @@ impl Header {
     /// # Safety
     /// The input slice must be exactly 1024 bytes.
     pub fn decode_from_bytes(bytes: &[u8; 1024]) -> Self {
-        use crate::FileEndian;
+        use crate::decode::{decode_f32, decode_i32};
+        use crate::endian::FileEndian;
 
         // Detect endianness from MACHST (bytes 212-215)
         let machst = [bytes[212], bytes[213], bytes[214], bytes[215]];
@@ -302,74 +305,47 @@ impl Header {
 
         let mut header = Self::new();
 
-        // Helper to decode values
-        let decode_i32 = |offset: usize| -> i32 {
-            let arr = [
-                bytes[offset],
-                bytes[offset + 1],
-                bytes[offset + 2],
-                bytes[offset + 3],
-            ];
-            match file_endian {
-                FileEndian::LittleEndian => i32::from_le_bytes(arr),
-                FileEndian::BigEndian => i32::from_be_bytes(arr),
-            }
-        };
-
-        let decode_f32 = |offset: usize| -> f32 {
-            let arr = [
-                bytes[offset],
-                bytes[offset + 1],
-                bytes[offset + 2],
-                bytes[offset + 3],
-            ];
-            match file_endian {
-                FileEndian::LittleEndian => f32::from_le_bytes(arr),
-                FileEndian::BigEndian => f32::from_be_bytes(arr),
-            }
-        };
-
         // Read all i32 fields
-        header.nx = decode_i32(0);
-        header.ny = decode_i32(4);
-        header.nz = decode_i32(8);
-        header.mode = decode_i32(12);
-        header.nxstart = decode_i32(16);
-        header.nystart = decode_i32(20);
-        header.nzstart = decode_i32(24);
-        header.mx = decode_i32(28);
-        header.my = decode_i32(32);
-        header.mz = decode_i32(36);
+        header.nx = decode_i32(bytes, 0, file_endian);
+        header.ny = decode_i32(bytes, 4, file_endian);
+        header.nz = decode_i32(bytes, 8, file_endian);
+        header.mode = decode_i32(bytes, 12, file_endian);
+        header.nxstart = decode_i32(bytes, 16, file_endian);
+        header.nystart = decode_i32(bytes, 20, file_endian);
+        header.nzstart = decode_i32(bytes, 24, file_endian);
+        header.mx = decode_i32(bytes, 28, file_endian);
+        header.my = decode_i32(bytes, 32, file_endian);
+        header.mz = decode_i32(bytes, 36, file_endian);
 
         // Read all f32 fields
-        header.xlen = decode_f32(40);
-        header.ylen = decode_f32(44);
-        header.zlen = decode_f32(48);
-        header.alpha = decode_f32(52);
-        header.beta = decode_f32(56);
-        header.gamma = decode_f32(60);
+        header.xlen = decode_f32(bytes, 40, file_endian);
+        header.ylen = decode_f32(bytes, 44, file_endian);
+        header.zlen = decode_f32(bytes, 48, file_endian);
+        header.alpha = decode_f32(bytes, 52, file_endian);
+        header.beta = decode_f32(bytes, 56, file_endian);
+        header.gamma = decode_f32(bytes, 60, file_endian);
 
         // Read axis mapping fields
-        header.mapc = decode_i32(64);
-        header.mapr = decode_i32(68);
-        header.maps = decode_i32(72);
+        header.mapc = decode_i32(bytes, 64, file_endian);
+        header.mapr = decode_i32(bytes, 68, file_endian);
+        header.maps = decode_i32(bytes, 72, file_endian);
 
         // Read density statistics
-        header.dmin = decode_f32(76);
-        header.dmax = decode_f32(80);
-        header.dmean = decode_f32(84);
+        header.dmin = decode_f32(bytes, 76, file_endian);
+        header.dmax = decode_f32(bytes, 80, file_endian);
+        header.dmean = decode_f32(bytes, 84, file_endian);
 
         // Read space group and extended header size
-        header.ispg = decode_i32(88);
-        header.nsymbt = decode_i32(92);
+        header.ispg = decode_i32(bytes, 88, file_endian);
+        header.nsymbt = decode_i32(bytes, 92, file_endian);
 
         // Read extra bytes (bytes 96-195)
         header.extra.copy_from_slice(&bytes[96..196]);
 
         // Read origin coordinates
-        header.origin[0] = decode_f32(196);
-        header.origin[1] = decode_f32(200);
-        header.origin[2] = decode_f32(204);
+        header.origin[0] = decode_f32(bytes, 196, file_endian);
+        header.origin[1] = decode_f32(bytes, 200, file_endian);
+        header.origin[2] = decode_f32(bytes, 204, file_endian);
 
         // Read MAP identifier (bytes 208-211) - ASCII, no endian conversion
         header.map.copy_from_slice(&bytes[208..212]);
@@ -378,10 +354,10 @@ impl Header {
         header.machst.copy_from_slice(&bytes[212..216]);
 
         // Read RMS
-        header.rms = decode_f32(216);
+        header.rms = decode_f32(bytes, 216, file_endian);
 
         // Read label count
-        header.nlabl = decode_i32(220);
+        header.nlabl = decode_i32(bytes, 220, file_endian);
 
         // Read labels (bytes 224-1023) - ASCII, no endian conversion
         header.label.copy_from_slice(&bytes[224..1024]);
@@ -397,72 +373,52 @@ impl Header {
     /// # Safety
     /// The output slice must be exactly 1024 bytes.
     pub fn encode_to_bytes(&self, out: &mut [u8; 1024]) {
-        use crate::FileEndian;
+        use crate::encode::{encode_f32, encode_i32};
+        use crate::endian::FileEndian;
 
         let file_endian = self.detect_endian();
 
-        // Helper macros to encode values
-        macro_rules! encode_i32 {
-            ($offset:expr, $value:expr) => {
-                let bytes = match file_endian {
-                    FileEndian::LittleEndian => $value.to_le_bytes(),
-                    FileEndian::BigEndian => $value.to_be_bytes(),
-                };
-                out[$offset..$offset + 4].copy_from_slice(&bytes);
-            };
-        }
-
-        macro_rules! encode_f32 {
-            ($offset:expr, $value:expr) => {
-                let bytes = match file_endian {
-                    FileEndian::LittleEndian => $value.to_le_bytes(),
-                    FileEndian::BigEndian => $value.to_be_bytes(),
-                };
-                out[$offset..$offset + 4].copy_from_slice(&bytes);
-            };
-        }
-
         // Write all i32 fields
-        encode_i32!(0, self.nx);
-        encode_i32!(4, self.ny);
-        encode_i32!(8, self.nz);
-        encode_i32!(12, self.mode);
-        encode_i32!(16, self.nxstart);
-        encode_i32!(20, self.nystart);
-        encode_i32!(24, self.nzstart);
-        encode_i32!(28, self.mx);
-        encode_i32!(32, self.my);
-        encode_i32!(36, self.mz);
+        encode_i32(self.nx, out, 0, file_endian);
+        encode_i32(self.ny, out, 4, file_endian);
+        encode_i32(self.nz, out, 8, file_endian);
+        encode_i32(self.mode, out, 12, file_endian);
+        encode_i32(self.nxstart, out, 16, file_endian);
+        encode_i32(self.nystart, out, 20, file_endian);
+        encode_i32(self.nzstart, out, 24, file_endian);
+        encode_i32(self.mx, out, 28, file_endian);
+        encode_i32(self.my, out, 32, file_endian);
+        encode_i32(self.mz, out, 36, file_endian);
 
         // Write all f32 fields
-        encode_f32!(40, self.xlen);
-        encode_f32!(44, self.ylen);
-        encode_f32!(48, self.zlen);
-        encode_f32!(52, self.alpha);
-        encode_f32!(56, self.beta);
-        encode_f32!(60, self.gamma);
+        encode_f32(self.xlen, out, 40, file_endian);
+        encode_f32(self.ylen, out, 44, file_endian);
+        encode_f32(self.zlen, out, 48, file_endian);
+        encode_f32(self.alpha, out, 52, file_endian);
+        encode_f32(self.beta, out, 56, file_endian);
+        encode_f32(self.gamma, out, 60, file_endian);
 
         // Write axis mapping fields
-        encode_i32!(64, self.mapc);
-        encode_i32!(68, self.mapr);
-        encode_i32!(72, self.maps);
+        encode_i32(self.mapc, out, 64, file_endian);
+        encode_i32(self.mapr, out, 68, file_endian);
+        encode_i32(self.maps, out, 72, file_endian);
 
         // Write density statistics
-        encode_f32!(76, self.dmin);
-        encode_f32!(80, self.dmax);
-        encode_f32!(84, self.dmean);
+        encode_f32(self.dmin, out, 76, file_endian);
+        encode_f32(self.dmax, out, 80, file_endian);
+        encode_f32(self.dmean, out, 84, file_endian);
 
         // Write space group and extended header size
-        encode_i32!(88, self.ispg);
-        encode_i32!(92, self.nsymbt);
+        encode_i32(self.ispg, out, 88, file_endian);
+        encode_i32(self.nsymbt, out, 92, file_endian);
 
         // Write extra bytes (bytes 96-195)
         out[96..196].copy_from_slice(&self.extra);
 
         // Write origin coordinates
-        encode_f32!(196, self.origin[0]);
-        encode_f32!(200, self.origin[1]);
-        encode_f32!(204, self.origin[2]);
+        encode_f32(self.origin[0], out, 196, file_endian);
+        encode_f32(self.origin[1], out, 200, file_endian);
+        encode_f32(self.origin[2], out, 204, file_endian);
 
         // Write MAP identifier (bytes 208-211) - ASCII, no endian conversion
         out[208..212].copy_from_slice(&self.map);
@@ -471,12 +427,71 @@ impl Header {
         out[212..216].copy_from_slice(&self.machst);
 
         // Write RMS
-        encode_f32!(216, self.rms);
+        encode_f32(self.rms, out, 216, file_endian);
 
         // Write label count
-        encode_i32!(220, self.nlabl);
+        encode_i32(self.nlabl, out, 220, file_endian);
 
         // Write labels (bytes 224-1023) - ASCII, no endian conversion
         out[224..1024].copy_from_slice(&self.label);
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct ExtHeader<'a> {
+    bytes: &'a [u8],
+}
+
+impl<'a> ExtHeader<'a> {
+    #[inline]
+    pub fn new(bytes: &'a [u8]) -> Self {
+        Self { bytes }
+    }
+
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.bytes.len()
+    }
+
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.bytes.is_empty()
+    }
+
+    #[inline]
+    pub fn as_bytes(&self) -> &'a [u8] {
+        self.bytes
+    }
+}
+
+#[derive(Debug)]
+pub struct ExtHeaderMut<'a> {
+    bytes: &'a mut [u8],
+}
+
+impl<'a> ExtHeaderMut<'a> {
+    #[inline]
+    pub fn new(bytes: &'a mut [u8]) -> Self {
+        Self { bytes }
+    }
+
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.bytes.len()
+    }
+
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.bytes.is_empty()
+    }
+
+    #[inline]
+    pub fn as_bytes(&self) -> &[u8] {
+        self.bytes
+    }
+
+    #[inline]
+    pub fn as_bytes_mut(&mut self) -> &mut [u8] {
+        self.bytes
     }
 }

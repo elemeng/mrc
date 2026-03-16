@@ -318,6 +318,7 @@ dependencies = [
  "bytemuck",
  "criterion",
  "memmap2",
+ "rayon",
  "tempfile",
  "thiserror",
 ]

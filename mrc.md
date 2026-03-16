@@ -576,7 +576,9 @@ mrc
  ├── encode
  ├── simd
  ├── io
+ ├── endian
  └── error
+ 
 ```
 
 Each module remains small and focused.

@@ -72,3 +72,76 @@ impl Mode {
         matches!(self, Self::Float32 | Self::Float32Complex | Self::Float16)
     }
 }
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Int16Complex {
+    pub real: i16,
+    pub imag: i16,
+}
+
+impl Int16Complex {
+    pub fn decode(endian: crate::endian::FileEndian, bytes: &[u8]) -> Self {
+        use crate::decode::decode_i16;
+        Self {
+            real: decode_i16(bytes, 0, endian),
+            imag: decode_i16(bytes, 2, endian),
+        }
+    }
+
+    pub fn encode(self, endian: crate::endian::FileEndian, out: &mut [u8]) {
+        use crate::encode::encode_i16;
+        encode_i16(self.real, out, 0, endian);
+        encode_i16(self.imag, out, 2, endian);
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Float32Complex {
+    pub real: f32,
+    pub imag: f32,
+}
+
+impl Float32Complex {
+    pub fn decode(endian: crate::endian::FileEndian, bytes: &[u8]) -> Self {
+        use crate::decode::decode_f32;
+        Self {
+            real: decode_f32(bytes, 0, endian),
+            imag: decode_f32(bytes, 4, endian),
+        }
+    }
+
+    pub fn encode(self, endian: crate::endian::FileEndian, out: &mut [u8]) {
+        use crate::encode::encode_f32;
+        encode_f32(self.real, out, 0, endian);
+        encode_f32(self.imag, out, 4, endian);
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Packed4Bit(u8);
+
+impl Packed4Bit {
+    pub fn decode(endian: crate::endian::FileEndian, bytes: &[u8]) -> Self {
+        Self(if endian == crate::endian::FileEndian::LittleEndian {
+            bytes[0]
+        } else {
+            bytes[0].reverse_bits()
+        })
+    }
+
+    pub fn first(&self) -> u8 {
+        self.0 & 0x0F
+    }
+
+    pub fn second(&self) -> u8 {
+        (self.0 >> 4) & 0x0F
+    }
+
+    pub fn encode(self, endian: crate::endian::FileEndian, out: &mut [u8]) {
+        out[0] = if endian == crate::endian::FileEndian::LittleEndian {
+            self.0
+        } else {
+            self.0.reverse_bits()
+        };
+    }
+}
