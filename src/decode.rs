@@ -133,3 +133,63 @@ pub(crate) fn decode_slice<T: Decode + Send + Copy>(bytes: &[u8], endian: FileEn
     
     result
 }
+
+/// SIMD-accelerated decode for i16 with endian conversion
+#[cfg(feature = "std")]
+pub(crate) fn decode_i16_slice_simd(bytes: &[u8], endian: FileEndian) -> Vec<i16> {
+    use crate::simd::swap_endian_i16;
+    
+    let n = bytes.len() / 2;
+    let mut result: Vec<i16> = Vec::with_capacity(n);
+    result.resize(n, 0);
+    
+    unsafe {
+        let ptr = result.as_mut_ptr() as *mut u8;
+        core::ptr::copy_nonoverlapping(bytes.as_ptr(), ptr, bytes.len());
+    }
+    
+    // Apply endian conversion with SIMD
+    if endian == FileEndian::BigEndian && cfg!(target_endian = "little") {
+        swap_endian_i16(&mut result);
+    }
+    
+    result
+}
+
+/// SIMD-accelerated decode for f32 with endian conversion
+#[cfg(feature = "std")]
+pub(crate) fn decode_f32_slice_simd(bytes: &[u8], endian: FileEndian) -> Vec<f32> {
+    use crate::simd::swap_endian_f32;
+    
+    let n = bytes.len() / 4;
+    let mut result: Vec<f32> = Vec::with_capacity(n);
+    result.resize(n, 0.0);
+    
+    unsafe {
+        let ptr = result.as_mut_ptr() as *mut u8;
+        core::ptr::copy_nonoverlapping(bytes.as_ptr(), ptr, bytes.len());
+    }
+    
+    // Apply endian conversion with SIMD
+    if endian == FileEndian::BigEndian && cfg!(target_endian = "little") {
+        swap_endian_f32(&mut result);
+    }
+    
+    result
+}
+
+/// SIMD-accelerated decode for i16 to f32 conversion
+#[cfg(feature = "std")]
+pub(crate) fn decode_i16_to_f32_simd(bytes: &[u8], endian: FileEndian) -> Vec<f32> {
+    use crate::simd::convert_i16_to_f32;
+    
+    // First decode as i16
+    let i16_data = decode_i16_slice_simd(bytes, endian);
+    
+    // Convert to f32 with SIMD
+    let mut f32_data = Vec::with_capacity(i16_data.len());
+    f32_data.resize(i16_data.len(), 0.0);
+    convert_i16_to_f32(&i16_data, &mut f32_data);
+    
+    f32_data
+}

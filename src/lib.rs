@@ -21,6 +21,7 @@ mod reader;
 mod writer;
 mod error;
 mod endian;
+mod simd;
 
 pub use header::{Header, ExtHeader, ExtHeaderMut};
 pub use mode::{Mode, Int16Complex, Float32Complex, Packed4Bit};
