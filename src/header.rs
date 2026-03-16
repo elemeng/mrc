@@ -239,7 +239,7 @@ impl Header {
     ///
     /// This value is a numeric i32 and respects the file's endianness.
     pub fn nversion(&self) -> i32 {
-        use crate::Decode;
+        use crate::decode::Decode;
         let file_endian = self.detect_endian();
         i32::decode(&self.extra[12..16], 0, file_endian)
     }
@@ -249,7 +249,7 @@ impl Header {
     ///
     /// This value is a numeric i32 and respects the file's endianness.
     pub fn set_nversion(&mut self, value: i32) {
-        use crate::Encode;
+        use crate::encode::Encode;
         let file_endian = self.detect_endian();
         value.encode(&mut self.extra[12..16], 0, file_endian);
     }
@@ -294,7 +294,7 @@ impl Header {
     /// # Safety
     /// The input slice must be exactly 1024 bytes.
     pub fn decode_from_bytes(bytes: &[u8; 1024]) -> Self {
-        use crate::Decode;
+        use crate::decode::Decode;
         use crate::endian::FileEndian;
 
         // Detect endianness from MACHST (bytes 212-215)
@@ -371,8 +371,8 @@ impl Header {
     /// # Safety
     /// The output slice must be exactly 1024 bytes.
     pub fn encode_to_bytes(&self, out: &mut [u8; 1024]) {
-        use crate::Encode;
-        use crate::endian::FileEndian;
+        use crate::encode::Encode;
+        
 
         let file_endian = self.detect_endian();
 

@@ -114,7 +114,10 @@ impl Packed4Bit {
     }
 }
 
-impl crate::Decode for Packed4Bit {
+use crate::decode::Decode;
+use crate::encode::Encode;
+
+impl Decode for Packed4Bit {
     const BYTE_SIZE: usize = 1;
     #[inline]
     fn decode(bytes: &[u8], offset: usize, endian: crate::endian::FileEndian) -> Self {
@@ -127,7 +130,7 @@ impl crate::Decode for Packed4Bit {
     }
 }
 
-impl crate::Encode for Packed4Bit {
+impl Encode for Packed4Bit {
     const BYTE_SIZE: usize = 1;
     #[inline]
     fn encode(&self, bytes: &mut [u8], offset: usize, endian: crate::endian::FileEndian) {

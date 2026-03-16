@@ -1,12 +1,12 @@
 //! MRC file writer with block-based API
 
-use crate::{block::VoxelBlock, Encode, Error, FileEndian, Header, Mode, VolumeShape};
+use crate::{block::VoxelBlock, Error, FileEndian, Header, Mode, VolumeShape};
+use crate::encode::Encode;
 
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
 #[cfg(feature = "mmap")]
-use memmap2;
 
 pub struct WriterBuilder {
     path: String,
@@ -53,6 +53,8 @@ pub struct Writer {
     bytes_per_voxel: usize,
     shape: VolumeShape,
     data: Vec<u8>,
+    #[cfg(feature = "parallel")]
+    parallel_writes: bool,  // Track if parallel writes were used
 }
 
 impl Writer {
@@ -103,6 +105,8 @@ impl Writer {
                 bytes_per_voxel,
                 shape,
                 data,
+                #[cfg(feature = "parallel")]
+                parallel_writes: false,
             })
         }
 
@@ -158,14 +162,61 @@ impl Writer {
         }
     }
 
+    /// Write a block with parallel encoding and file I/O
+    #[cfg(all(feature = "parallel", feature = "std"))]
+    pub fn write_block_parallel(&mut self, block: &VoxelBlock<f32>) -> Result<(), Error> {
+        use crate::encode::encode_block_parallel;
+        use rayon::prelude::*;
+        use std::os::unix::fs::FileExt;
+        
+        let [nx, ny, nz] = [self.shape.nx, self.shape.ny, self.shape.nz];
+        let [ox, oy, oz] = block.offset;
+        let [sx, sy, sz] = block.shape;
+
+        if ox + sx > nx || oy + sy > ny || oz + sz > nz {
+            return Err(Error::BoundsError);
+        }
+
+        let chunk_size = 1024 * 1024; // 1M voxels per chunk
+        let base_offset = ((ox + oy * nx + oz * nx * ny) * self.bytes_per_voxel) as u64;
+        
+        // Mark that parallel writes were used
+        self.parallel_writes = true;
+        
+        // Encode in parallel and write to file
+        let encoded_chunks = encode_block_parallel(&block.data, chunk_size, FileEndian::LittleEndian);
+        
+        // Write chunks in parallel using pwrite
+        encoded_chunks.par_iter().for_each(|(chunk_idx, encoded)| {
+            let offset = base_offset + (*chunk_idx * chunk_size * self.bytes_per_voxel) as u64;
+            self.file.write_all_at(encoded, offset).unwrap();
+        });
+        
+        Ok(())
+    }
+
     pub fn finalize(&mut self) -> Result<(), Error> {
         use std::io::{Seek, SeekFrom, Write};
 
         // Write all data to file
-        self.file
-            .seek(SeekFrom::Start(self.data_offset))
-            .map_err(|_| Error::Io)?;
-        self.file.write_all(&self.data).map_err(|_| Error::Io)?;
+        #[cfg(feature = "parallel")]
+        {
+            if !self.parallel_writes {
+                // Only write buffered data if parallel writes weren't used
+                self.file
+                    .seek(SeekFrom::Start(self.data_offset))
+                    .map_err(|_| Error::Io)?;
+                self.file.write_all(&self.data).map_err(|_| Error::Io)?;
+            }
+        }
+        
+        #[cfg(not(feature = "parallel"))]
+        {
+            self.file
+                .seek(SeekFrom::Start(self.data_offset))
+                .map_err(|_| Error::Io)?;
+            self.file.write_all(&self.data).map_err(|_| Error::Io)?;
+        }
 
         // Rewrite header
         self.file.seek(SeekFrom::Start(0)).map_err(|_| Error::Io)?;
@@ -266,6 +317,50 @@ impl MmapWriter {
         };
 
         self.mmap[start_offset..end_offset].copy_from_slice(data_bytes);
+        Ok(())
+    }
+
+    /// Write a block with parallel encoding to memory-mapped region
+    /// This is extremely fast as it requires no syscalls
+    #[cfg(all(feature = "parallel", feature = "std"))]
+    pub fn write_block_parallel(&mut self, block: &VoxelBlock<f32>) -> Result<(), Error> {
+        use rayon::prelude::*;
+        
+        let [nx, ny, nz] = [self.shape.nx, self.shape.ny, self.shape.nz];
+        let [ox, oy, oz] = block.offset;
+        let [sx, sy, sz] = block.shape;
+
+        if ox + sx > nx || oy + sy > ny || oz + sz > nz {
+            return Err(Error::BoundsError);
+        }
+
+        let chunk_size = 1024 * 1024; // 1M voxels per chunk
+        let base_offset = self.data_offset + (ox + oy * nx + oz * nx * ny) * self.bytes_per_voxel;
+        
+        // Get raw pointer as usize for parallel writes
+        // This is safe because each thread writes to a different region
+        let mmap_ptr = self.mmap.as_mut_ptr() as usize;
+        
+        // Encode and write to mmap in parallel
+        block.data
+            .par_chunks(chunk_size)
+            .enumerate()
+            .for_each(|(chunk_idx, chunk)| {
+                let start_offset = base_offset + chunk_idx * chunk_size * self.bytes_per_voxel;
+                let ptr = (mmap_ptr + start_offset) as *mut u8;
+                let dst = unsafe {
+                    core::slice::from_raw_parts_mut(
+                        ptr,
+                        chunk.len() * self.bytes_per_voxel
+                    )
+                };
+                
+                // Encode chunk directly to mmap
+                for (i, &val) in chunk.iter().enumerate() {
+                    val.encode(dst, i * 4, FileEndian::LittleEndian);
+                }
+            });
+        
         Ok(())
     }
 

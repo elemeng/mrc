@@ -1,7 +1,8 @@
 //! MRC file reader with iterator-centric API
 
 use crate::iter::{BlockIter, SliceIter, SlabIter};
-use crate::{Decode, Error, FileEndian, Header, Mode, VolumeShape};
+use crate::{Error, FileEndian, Header, Mode, VolumeShape};
+use crate::decode::Decode;
 
 use alloc::vec::Vec;
 
@@ -76,19 +77,19 @@ impl Reader {
         &self.header
     }
 
-    pub fn slices<T>(&self) -> SliceIter<T> {
+    pub fn slices<T>(&self) -> SliceIter<'_, T> {
         SliceIter::new(self, self.shape)
     }
 
-    pub fn slabs<T>(&self, k: usize) -> SlabIter<T> {
+    pub fn slabs<T>(&self, k: usize) -> SlabIter<'_, T> {
         SlabIter::new(self, self.shape, k)
     }
 
-    pub fn blocks<T>(&self, chunk_shape: [usize; 3]) -> BlockIter<T> {
+    pub fn blocks<T>(&self, chunk_shape: [usize; 3]) -> BlockIter<'_, T> {
         BlockIter::new(self, self.shape, chunk_shape)
     }
 
-    pub fn read_voxels(&self, offset: [usize; 3], shape: [usize; 3]) -> Result<Vec<u8>, Error> {
+    pub(crate) fn read_voxels(&self, offset: [usize; 3], shape: [usize; 3]) -> Result<Vec<u8>, Error> {
         let [nx, ny, nz] = [self.shape.nx, self.shape.ny, self.shape.nz];
         let [ox, oy, oz] = offset;
         let [sx, sy, sz] = shape;
@@ -115,7 +116,7 @@ impl Reader {
         Ok(self.data[start_byte..end_byte].to_vec())
     }
 
-    pub fn decode_block_f32(&self, bytes: &[u8]) -> Result<Vec<f32>, Error> {
+    pub(crate) fn decode_block_f32(&self, bytes: &[u8]) -> Result<Vec<f32>, Error> {
         if self.mode() != Mode::Float32 {
             return Err(Error::UnsupportedMode);
         }
@@ -126,7 +127,7 @@ impl Reader {
         Ok(result)
     }
 
-    pub fn decode_block_i16(&self, bytes: &[u8]) -> Result<Vec<i16>, Error> {
+    pub(crate) fn decode_block_i16(&self, bytes: &[u8]) -> Result<Vec<i16>, Error> {
         if self.mode() != Mode::Int16 {
             return Err(Error::UnsupportedMode);
         }
@@ -137,7 +138,7 @@ impl Reader {
         Ok(result)
     }
 
-    pub fn decode_block_generic<T: Clone>(&self, bytes: &[u8]) -> Result<Vec<T>, Error> {
+    pub(crate) fn decode_block_generic<T: Clone>(&self, bytes: &[u8]) -> Result<Vec<T>, Error> {
         match self.mode() {
             Mode::Float32 => {
                 let f32_data = self.decode_block_f32(bytes)?;

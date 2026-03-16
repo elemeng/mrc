@@ -29,8 +29,6 @@ pub use reader::Reader;
 pub use writer::{Writer, WriterBuilder};
 pub use error::Error;
 pub use endian::FileEndian;
-pub use decode::Decode;
-pub use encode::Encode;
 
 #[cfg(feature = "mmap")]
 pub use writer::MmapWriter;

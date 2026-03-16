@@ -5,7 +5,7 @@ use crate::mode::{Int16Complex, Float32Complex};
 
 use alloc::vec::Vec;
 
-pub trait Decode: Sized {
+pub(crate) trait Decode: Sized {
     const BYTE_SIZE: usize;
     fn decode(bytes: &[u8], offset: usize, endian: FileEndian) -> Self;
 }
@@ -104,14 +104,32 @@ impl Decode for f16 {
 
 /// Decode slice with SIMD (generic)
 #[cfg(feature = "std")]
-pub fn decode_slice<T: Decode>(bytes: &[u8], endian: FileEndian) -> Vec<T> {
+pub(crate) fn decode_slice<T: Decode + Send + Copy>(bytes: &[u8], endian: FileEndian) -> Vec<T> {
     let n = bytes.len() / T::BYTE_SIZE;
     let mut result = Vec::with_capacity(n);
-
-    result.reserve_exact(n);
-    for i in 0..n {
-        result.push(T::decode(bytes, i * T::BYTE_SIZE, endian));
+    result.resize(n, unsafe { core::mem::zeroed() });
+    
+    const CHUNK_SIZE: usize = 4096;  // Process 4KB chunks for better cache utilization
+    
+    #[cfg(feature = "parallel")]
+    {
+        use rayon::prelude::*;
+        result
+            .par_chunks_mut(CHUNK_SIZE)
+            .zip(bytes.par_chunks(CHUNK_SIZE * T::BYTE_SIZE))
+            .for_each(|(dst, src)| {
+                for (i, val) in dst.iter_mut().enumerate() {
+                    *val = T::decode(src, i * T::BYTE_SIZE, endian);
+                }
+            });
     }
-
+    
+    #[cfg(not(feature = "parallel"))]
+    {
+        for i in 0..n {
+            result[i] = T::decode(bytes, i * T::BYTE_SIZE, endian);
+        }
+    }
+    
     result
 }
