@@ -1,5 +1,40 @@
 use crate::Mode;
 
+// Header field offsets (MRC2014 format)
+const OFFSET_NX: usize = 0;
+const OFFSET_NY: usize = 4;
+const OFFSET_NZ: usize = 8;
+const OFFSET_MODE: usize = 12;
+const OFFSET_NXSTART: usize = 16;
+const OFFSET_NYSTART: usize = 20;
+const OFFSET_NZSTART: usize = 24;
+const OFFSET_MX: usize = 28;
+const OFFSET_MY: usize = 32;
+const OFFSET_MZ: usize = 36;
+const OFFSET_XLEN: usize = 40;
+const OFFSET_YLEN: usize = 44;
+const OFFSET_ZLEN: usize = 48;
+const OFFSET_ALPHA: usize = 52;
+const OFFSET_BETA: usize = 56;
+const OFFSET_GAMMA: usize = 60;
+const OFFSET_MAPC: usize = 64;
+const OFFSET_MAPR: usize = 68;
+const OFFSET_MAPS: usize = 72;
+const OFFSET_DMIN: usize = 76;
+const OFFSET_DMAX: usize = 80;
+const OFFSET_DMEAN: usize = 84;
+const OFFSET_ISPG: usize = 88;
+const OFFSET_NSYMBT: usize = 92;
+const OFFSET_EXTRA: usize = 96;
+const OFFSET_EXTTYP: usize = 104; // extra[8..12]
+const OFFSET_NVERSION: usize = 108; // extra[12..16]
+const OFFSET_ORIGIN: usize = 196;
+const OFFSET_MAP: usize = 208;
+const OFFSET_MACHST: usize = 212;
+const OFFSET_RMS: usize = 216;
+const OFFSET_NLABL: usize = 220;
+const OFFSET_LABEL: usize = 224;
+
 #[repr(C, align(4))]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Header {
@@ -161,7 +196,7 @@ impl Header {
         self.nx > 0
             && self.ny > 0
             && self.nz > 0
-            && matches!(self.mode, 0 | 1 | 2 | 3 | 4 | 6 | 12 | 101)
+            && Mode::from_i32(self.mode).is_some()
             && self.validate_map()
             // Validate ISPG: 0 (2D/stack), 1-230 (crystallographic), or 400-630 (volume stacks)
             && (self.ispg == 0 || (self.ispg >= 1 && self.ispg <= 230) || (self.ispg >= 400 && self.ispg <= 630))
@@ -209,7 +244,12 @@ impl Header {
     /// EXTTYP is a 4-byte ASCII string indicating the type of extended header.
     /// Common values: "CCP4", "MRCO", "SERI", "AGAR", "FEI1", "FEI2", "HDF5".
     pub fn exttyp(&self) -> [u8; 4] {
-        [self.extra[8], self.extra[9], self.extra[10], self.extra[11]]
+        [
+            self.extra[OFFSET_EXTTYP - OFFSET_EXTRA],
+            self.extra[OFFSET_EXTTYP - OFFSET_EXTRA + 1],
+            self.extra[OFFSET_EXTTYP - OFFSET_EXTRA + 2],
+            self.extra[OFFSET_EXTTYP - OFFSET_EXTRA + 3],
+        ]
     }
 
     #[inline]
@@ -217,13 +257,15 @@ impl Header {
     ///
     /// EXTTYP is a 4-byte ASCII string indicating the type of extended header.
     pub fn set_exttyp(&mut self, value: [u8; 4]) {
-        self.extra[8..12].copy_from_slice(&value);
+        let start = OFFSET_EXTTYP - OFFSET_EXTRA;
+        self.extra[start..start + 4].copy_from_slice(&value);
     }
 
     #[inline]
     /// Interprets EXTTYP as an ASCII string.
     pub fn exttyp_str(&self) -> Result<&str, core::str::Utf8Error> {
-        core::str::from_utf8(&self.extra[8..12])
+        let start = OFFSET_EXTTYP - OFFSET_EXTRA;
+        core::str::from_utf8(&self.extra[start..start + 4])
     }
 
     #[inline]
@@ -233,7 +275,8 @@ impl Header {
             return Err("EXTTYP must be exactly 4 characters");
         }
         let bytes = value.as_bytes();
-        self.extra[8..12].copy_from_slice(bytes);
+        let start = OFFSET_EXTTYP - OFFSET_EXTRA;
+        self.extra[start..start + 4].copy_from_slice(bytes);
         Ok(())
     }
 
@@ -244,7 +287,8 @@ impl Header {
     pub fn nversion(&self) -> i32 {
         use crate::engine::codec::EndianCodec;
         let file_endian = self.detect_endian();
-        i32::decode(&self.extra[12..16], 0, file_endian)
+        let start = OFFSET_NVERSION - OFFSET_EXTRA;
+        i32::decode(&self.extra[start..start + 4], 0, file_endian)
     }
 
     #[inline]
@@ -254,25 +298,14 @@ impl Header {
     pub fn set_nversion(&mut self, value: i32) {
         use crate::engine::codec::EndianCodec;
         let file_endian = self.detect_endian();
-        value.encode(&mut self.extra[12..16], 0, file_endian);
+        let start = OFFSET_NVERSION - OFFSET_EXTRA;
+        value.encode(&mut self.extra[start..start + 4], 0, file_endian);
     }
 
     #[inline]
     /// Detect the file endianness from the MACHST machine stamp
     pub fn detect_endian(&self) -> crate::FileEndian {
         crate::FileEndian::from_machst(&self.machst)
-    }
-
-    #[inline]
-    /// Check if the file is little-endian
-    pub fn is_little_endian(&self) -> bool {
-        self.machst[0] == 0x44 && self.machst[1] == 0x44
-    }
-
-    #[inline]
-    /// Check if the file is big-endian
-    pub fn is_big_endian(&self) -> bool {
-        self.machst[0] == 0x11 && self.machst[1] == 0x11
     }
 
     #[inline]
@@ -300,68 +333,68 @@ impl Header {
         use crate::engine::codec::EndianCodec;
         use crate::engine::endian::FileEndian;
 
-        // Detect endianness from MACHST (bytes 212-215)
-        let machst = [bytes[212], bytes[213], bytes[214], bytes[215]];
+        // Detect endianness from MACHST
+        let machst = [bytes[OFFSET_MACHST], bytes[OFFSET_MACHST + 1], bytes[OFFSET_MACHST + 2], bytes[OFFSET_MACHST + 3]];
         let file_endian = FileEndian::from_machst(&machst);
 
         let mut header = Self::new();
 
         // Read all i32 fields
-        header.nx = i32::decode(bytes, 0, file_endian);
-        header.ny = i32::decode(bytes, 4, file_endian);
-        header.nz = i32::decode(bytes, 8, file_endian);
-        header.mode = i32::decode(bytes, 12, file_endian);
-        header.nxstart = i32::decode(bytes, 16, file_endian);
-        header.nystart = i32::decode(bytes, 20, file_endian);
-        header.nzstart = i32::decode(bytes, 24, file_endian);
-        header.mx = i32::decode(bytes, 28, file_endian);
-        header.my = i32::decode(bytes, 32, file_endian);
-        header.mz = i32::decode(bytes, 36, file_endian);
+        header.nx = i32::decode(bytes, OFFSET_NX, file_endian);
+        header.ny = i32::decode(bytes, OFFSET_NY, file_endian);
+        header.nz = i32::decode(bytes, OFFSET_NZ, file_endian);
+        header.mode = i32::decode(bytes, OFFSET_MODE, file_endian);
+        header.nxstart = i32::decode(bytes, OFFSET_NXSTART, file_endian);
+        header.nystart = i32::decode(bytes, OFFSET_NYSTART, file_endian);
+        header.nzstart = i32::decode(bytes, OFFSET_NZSTART, file_endian);
+        header.mx = i32::decode(bytes, OFFSET_MX, file_endian);
+        header.my = i32::decode(bytes, OFFSET_MY, file_endian);
+        header.mz = i32::decode(bytes, OFFSET_MZ, file_endian);
 
         // Read all f32 fields
-        header.xlen = f32::decode(bytes, 40, file_endian);
-        header.ylen = f32::decode(bytes, 44, file_endian);
-        header.zlen = f32::decode(bytes, 48, file_endian);
-        header.alpha = f32::decode(bytes, 52, file_endian);
-        header.beta = f32::decode(bytes, 56, file_endian);
-        header.gamma = f32::decode(bytes, 60, file_endian);
+        header.xlen = f32::decode(bytes, OFFSET_XLEN, file_endian);
+        header.ylen = f32::decode(bytes, OFFSET_YLEN, file_endian);
+        header.zlen = f32::decode(bytes, OFFSET_ZLEN, file_endian);
+        header.alpha = f32::decode(bytes, OFFSET_ALPHA, file_endian);
+        header.beta = f32::decode(bytes, OFFSET_BETA, file_endian);
+        header.gamma = f32::decode(bytes, OFFSET_GAMMA, file_endian);
 
         // Read axis mapping fields
-        header.mapc = i32::decode(bytes, 64, file_endian);
-        header.mapr = i32::decode(bytes, 68, file_endian);
-        header.maps = i32::decode(bytes, 72, file_endian);
+        header.mapc = i32::decode(bytes, OFFSET_MAPC, file_endian);
+        header.mapr = i32::decode(bytes, OFFSET_MAPR, file_endian);
+        header.maps = i32::decode(bytes, OFFSET_MAPS, file_endian);
 
         // Read density statistics
-        header.dmin = f32::decode(bytes, 76, file_endian);
-        header.dmax = f32::decode(bytes, 80, file_endian);
-        header.dmean = f32::decode(bytes, 84, file_endian);
+        header.dmin = f32::decode(bytes, OFFSET_DMIN, file_endian);
+        header.dmax = f32::decode(bytes, OFFSET_DMAX, file_endian);
+        header.dmean = f32::decode(bytes, OFFSET_DMEAN, file_endian);
 
         // Read space group and extended header size
-        header.ispg = i32::decode(bytes, 88, file_endian);
-        header.nsymbt = i32::decode(bytes, 92, file_endian);
+        header.ispg = i32::decode(bytes, OFFSET_ISPG, file_endian);
+        header.nsymbt = i32::decode(bytes, OFFSET_NSYMBT, file_endian);
 
-        // Read extra bytes (bytes 96-195)
-        header.extra.copy_from_slice(&bytes[96..196]);
+        // Read extra bytes
+        header.extra.copy_from_slice(&bytes[OFFSET_EXTRA..OFFSET_ORIGIN]);
 
         // Read origin coordinates
-        header.origin[0] = f32::decode(bytes, 196, file_endian);
-        header.origin[1] = f32::decode(bytes, 200, file_endian);
-        header.origin[2] = f32::decode(bytes, 204, file_endian);
+        header.origin[0] = f32::decode(bytes, OFFSET_ORIGIN, file_endian);
+        header.origin[1] = f32::decode(bytes, OFFSET_ORIGIN + 4, file_endian);
+        header.origin[2] = f32::decode(bytes, OFFSET_ORIGIN + 8, file_endian);
 
-        // Read MAP identifier (bytes 208-211) - ASCII, no endian conversion
-        header.map.copy_from_slice(&bytes[208..212]);
+        // Read MAP identifier - ASCII, no endian conversion
+        header.map.copy_from_slice(&bytes[OFFSET_MAP..OFFSET_MACHST]);
 
-        // Read MACHST (bytes 212-215) - byte signature, no endian conversion
-        header.machst.copy_from_slice(&bytes[212..216]);
+        // Read MACHST - byte signature, no endian conversion
+        header.machst.copy_from_slice(&bytes[OFFSET_MACHST..OFFSET_RMS]);
 
         // Read RMS
-        header.rms = f32::decode(bytes, 216, file_endian);
+        header.rms = f32::decode(bytes, OFFSET_RMS, file_endian);
 
         // Read label count
-        header.nlabl = i32::decode(bytes, 220, file_endian);
+        header.nlabl = i32::decode(bytes, OFFSET_NLABL, file_endian);
 
-        // Read labels (bytes 224-1023) - ASCII, no endian conversion
-        header.label.copy_from_slice(&bytes[224..1024]);
+        // Read labels - ASCII, no endian conversion
+        header.label.copy_from_slice(&bytes[OFFSET_LABEL..1024]);
 
         header
     }
@@ -379,61 +412,61 @@ impl Header {
         let file_endian = self.detect_endian();
 
         // Write all i32 fields
-        self.nx.encode(out, 0, file_endian);
-        self.ny.encode(out, 4, file_endian);
-        self.nz.encode(out, 8, file_endian);
-        self.mode.encode(out, 12, file_endian);
-        self.nxstart.encode(out, 16, file_endian);
-        self.nystart.encode(out, 20, file_endian);
-        self.nzstart.encode(out, 24, file_endian);
-        self.mx.encode(out, 28, file_endian);
-        self.my.encode(out, 32, file_endian);
-        self.mz.encode(out, 36, file_endian);
+        self.nx.encode(out, OFFSET_NX, file_endian);
+        self.ny.encode(out, OFFSET_NY, file_endian);
+        self.nz.encode(out, OFFSET_NZ, file_endian);
+        self.mode.encode(out, OFFSET_MODE, file_endian);
+        self.nxstart.encode(out, OFFSET_NXSTART, file_endian);
+        self.nystart.encode(out, OFFSET_NYSTART, file_endian);
+        self.nzstart.encode(out, OFFSET_NZSTART, file_endian);
+        self.mx.encode(out, OFFSET_MX, file_endian);
+        self.my.encode(out, OFFSET_MY, file_endian);
+        self.mz.encode(out, OFFSET_MZ, file_endian);
 
         // Write all f32 fields
-        self.xlen.encode(out, 40, file_endian);
-        self.ylen.encode(out, 44, file_endian);
-        self.zlen.encode(out, 48, file_endian);
-        self.alpha.encode(out, 52, file_endian);
-        self.beta.encode(out, 56, file_endian);
-        self.gamma.encode(out, 60, file_endian);
+        self.xlen.encode(out, OFFSET_XLEN, file_endian);
+        self.ylen.encode(out, OFFSET_YLEN, file_endian);
+        self.zlen.encode(out, OFFSET_ZLEN, file_endian);
+        self.alpha.encode(out, OFFSET_ALPHA, file_endian);
+        self.beta.encode(out, OFFSET_BETA, file_endian);
+        self.gamma.encode(out, OFFSET_GAMMA, file_endian);
 
         // Write axis mapping fields
-        self.mapc.encode(out, 64, file_endian);
-        self.mapr.encode(out, 68, file_endian);
-        self.maps.encode(out, 72, file_endian);
+        self.mapc.encode(out, OFFSET_MAPC, file_endian);
+        self.mapr.encode(out, OFFSET_MAPR, file_endian);
+        self.maps.encode(out, OFFSET_MAPS, file_endian);
 
         // Write density statistics
-        self.dmin.encode(out, 76, file_endian);
-        self.dmax.encode(out, 80, file_endian);
-        self.dmean.encode(out, 84, file_endian);
+        self.dmin.encode(out, OFFSET_DMIN, file_endian);
+        self.dmax.encode(out, OFFSET_DMAX, file_endian);
+        self.dmean.encode(out, OFFSET_DMEAN, file_endian);
 
         // Write space group and extended header size
-        self.ispg.encode(out, 88, file_endian);
-        self.nsymbt.encode(out, 92, file_endian);
+        self.ispg.encode(out, OFFSET_ISPG, file_endian);
+        self.nsymbt.encode(out, OFFSET_NSYMBT, file_endian);
 
-        // Write extra bytes (bytes 96-195)
-        out[96..196].copy_from_slice(&self.extra);
+        // Write extra bytes
+        out[OFFSET_EXTRA..OFFSET_ORIGIN].copy_from_slice(&self.extra);
 
         // Write origin coordinates
-        self.origin[0].encode(out, 196, file_endian);
-        self.origin[1].encode(out, 200, file_endian);
-        self.origin[2].encode(out, 204, file_endian);
+        self.origin[0].encode(out, OFFSET_ORIGIN, file_endian);
+        self.origin[1].encode(out, OFFSET_ORIGIN + 4, file_endian);
+        self.origin[2].encode(out, OFFSET_ORIGIN + 8, file_endian);
 
-        // Write MAP identifier (bytes 208-211) - ASCII, no endian conversion
-        out[208..212].copy_from_slice(&self.map);
+        // Write MAP identifier - ASCII, no endian conversion
+        out[OFFSET_MAP..OFFSET_MACHST].copy_from_slice(&self.map);
 
-        // Write MACHST (bytes 212-215) - byte signature, no endian conversion
-        out[212..216].copy_from_slice(&self.machst);
+        // Write MACHST - byte signature, no endian conversion
+        out[OFFSET_MACHST..OFFSET_RMS].copy_from_slice(&self.machst);
 
         // Write RMS
-        self.rms.encode(out, 216, file_endian);
+        self.rms.encode(out, OFFSET_RMS, file_endian);
 
         // Write label count
-        self.nlabl.encode(out, 220, file_endian);
+        self.nlabl.encode(out, OFFSET_NLABL, file_endian);
 
-        // Write labels (bytes 224-1023) - ASCII, no endian conversion
-        out[224..1024].copy_from_slice(&self.label);
+        // Write labels - ASCII, no endian conversion
+        out[OFFSET_LABEL..1024].copy_from_slice(&self.label);
     }
 }
 

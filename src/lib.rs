@@ -36,15 +36,21 @@ pub use engine::endian::FileEndian;
 // Re-export codec trait for advanced users who need custom voxel types
 pub use engine::codec::EndianCodec;
 
-// Re-export conversion utilities
+// Re-export conversion trait and pipeline types for type conversion
 pub use engine::convert::Convert;
 pub use engine::pipeline::{ConversionPath, get_conversion_path, is_zero_copy};
+
+// Re-export SliceAccess trait for writers
+pub use engine::block::SliceAccess;
 
 pub use error::Error;
 pub use header::{ExtHeader, ExtHeaderMut, Header};
 pub use mode::{Float32Complex, Int16Complex, Mode, Packed4Bit, Voxel};
 pub use reader::Reader;
 pub use writer::{Writer, WriterBuilder};
+
+// Re-export conversion-enabled iterators
+pub use iter::{SliceIterConverted, SlabIterConverted};
 
 #[cfg(feature = "mmap")]
 pub use writer::MmapWriter;

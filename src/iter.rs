@@ -6,7 +6,7 @@ use crate::engine::codec::EndianCodec;
 
 /// Helper to read and decode a voxel block from the reader.
 #[inline]
-fn read_and_decode<T: EndianCodec + Send + Copy + Default>(
+fn read_and_decode<T: EndianCodec + Send + Copy + Default + crate::mode::Voxel>(
     reader: &crate::Reader,
     offset: [usize; 3],
     shape: [usize; 3],
@@ -44,7 +44,7 @@ impl<'a, T> SliceIter<'a, T> {
 
 impl<'a, T> Iterator for SliceIter<'a, T>
 where
-    T: EndianCodec + Send + Copy + Default,
+    T: EndianCodec + Send + Copy + Default + crate::mode::Voxel,
 {
     type Item = Result<VoxelBlock<T>, Error>;
 
@@ -95,7 +95,7 @@ impl<'a, T> SlabIter<'a, T> {
 
 impl<'a, T> Iterator for SlabIter<'a, T>
 where
-    T: EndianCodec + Send + Copy + Default,
+    T: EndianCodec + Send + Copy + Default + crate::mode::Voxel,
 {
     type Item = Result<VoxelBlock<T>, Error>;
 
@@ -143,7 +143,7 @@ impl<'a, T> BlockIter<'a, T> {
 
 impl<'a, T> Iterator for BlockIter<'a, T>
 where
-    T: EndianCodec + Send + Copy + Default,
+    T: EndianCodec + Send + Copy + Default + crate::mode::Voxel,
 {
     type Item = Result<VoxelBlock<T>, Error>;
 
@@ -172,5 +172,134 @@ where
         }
 
         Some(read_and_decode(self.reader, [px, py, pz], [sx, sy, sz]))
+    }
+}
+
+// ============================================================================
+// Conversion-enabled Iterators
+// ============================================================================
+
+use crate::engine::convert::Convert;
+
+/// Helper to read and convert a voxel block from the reader.
+#[inline]
+fn read_and_convert<S, D>(
+    reader: &crate::Reader,
+    offset: [usize; 3],
+    shape: [usize; 3],
+) -> Result<VoxelBlock<D>, Error>
+where
+    S: EndianCodec + Send + Copy + Default + crate::mode::Voxel,
+    D: Convert<S> + EndianCodec + Copy + Default + crate::mode::Voxel,
+{
+    reader.read_converted::<S, D>(offset, shape)
+}
+
+/// Slice iterator with type conversion support.
+///
+/// Reads slices in the file's native format (S) and converts to destination format (D).
+pub struct SliceIterConverted<'a, S, D> {
+    reader: &'a crate::Reader,
+    z: usize,
+    nz: usize,
+    nx: usize,
+    ny: usize,
+    _phantom: core::marker::PhantomData<(S, D)>,
+}
+
+impl<'a, S, D> SliceIterConverted<'a, S, D> {
+    pub fn new(reader: &'a crate::Reader, shape: VolumeShape) -> Self {
+        Self {
+            reader,
+            z: 0,
+            nz: shape.nz,
+            nx: shape.nx,
+            ny: shape.ny,
+            _phantom: core::marker::PhantomData,
+        }
+    }
+}
+
+impl<'a, S, D> Iterator for SliceIterConverted<'a, S, D>
+where
+    S: EndianCodec + Send + Copy + Default + crate::mode::Voxel,
+    D: Convert<S> + EndianCodec + Copy + Default + crate::mode::Voxel,
+{
+    type Item = Result<VoxelBlock<D>, Error>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.z >= self.nz {
+            return None;
+        }
+
+        let z = self.z;
+        self.z += 1;
+
+        Some(read_and_convert::<S, D>(
+            self.reader,
+            [0, 0, z],
+            [self.nx, self.ny, 1],
+        ))
+    }
+
+    fn nth(&mut self, n: usize) -> Option<Self::Item> {
+        self.z = n;
+        self.next()
+    }
+}
+
+/// Slab iterator with type conversion support.
+///
+/// Reads slabs in the file's native format (S) and converts to destination format (D).
+pub struct SlabIterConverted<'a, S, D> {
+    reader: &'a crate::Reader,
+    z: usize,
+    nz: usize,
+    nx: usize,
+    ny: usize,
+    slab_size: usize,
+    _phantom: core::marker::PhantomData<(S, D)>,
+}
+
+impl<'a, S, D> SlabIterConverted<'a, S, D> {
+    pub fn new(reader: &'a crate::Reader, shape: VolumeShape, k: usize) -> Self {
+        Self {
+            reader,
+            z: 0,
+            nz: shape.nz,
+            nx: shape.nx,
+            ny: shape.ny,
+            slab_size: k,
+            _phantom: core::marker::PhantomData,
+        }
+    }
+}
+
+impl<'a, S, D> Iterator for SlabIterConverted<'a, S, D>
+where
+    S: EndianCodec + Send + Copy + Default + crate::mode::Voxel,
+    D: Convert<S> + EndianCodec + Copy + Default + crate::mode::Voxel,
+{
+    type Item = Result<VoxelBlock<D>, Error>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.z >= self.nz {
+            return None;
+        }
+
+        let z = self.z;
+        let size = self.slab_size.min(self.nz - z);
+        self.z += size;
+
+        Some(read_and_convert::<S, D>(
+            self.reader,
+            [0, 0, z],
+            [self.nx, self.ny, size],
+        ))
+    }
+
+    fn nth(&mut self, n: usize) -> Option<Self::Item> {
+        self.z = n * self.slab_size;
+        self.next()
     }
 }

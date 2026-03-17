@@ -12,8 +12,10 @@
 //! - Float16 → Float32
 //! - Float32 → Int16
 //! - Int16Complex ↔ Float32Complex
+//! - Packed4Bit → all integer types
+//! - u8 → all types
 
-use crate::mode::{Float32Complex, Int16Complex};
+use crate::mode::{Float32Complex, Int16Complex, Packed4Bit};
 
 /// Trait for converting between voxel types.
 ///
@@ -28,6 +30,13 @@ pub trait Convert<S>: Sized {
 impl Convert<i8> for f32 {
     #[inline]
     fn convert(src: i8) -> Self {
+        src as f32
+    }
+}
+
+impl Convert<u8> for f32 {
+    #[inline]
+    fn convert(src: u8) -> Self {
         src as f32
     }
 }
@@ -67,6 +76,13 @@ impl Convert<f32> for i8 {
     #[inline]
     fn convert(src: f32) -> Self {
         src.clamp(i8::MIN as f32, i8::MAX as f32) as i8
+    }
+}
+
+impl Convert<f32> for u8 {
+    #[inline]
+    fn convert(src: f32) -> Self {
+        src.clamp(u8::MIN as f32, u8::MAX as f32) as u8
     }
 }
 
@@ -147,6 +163,117 @@ impl Convert<Int16Complex> for Int16Complex {
 impl Convert<Float32Complex> for Float32Complex {
     #[inline]
     fn convert(src: Float32Complex) -> Self {
+        src
+    }
+}
+
+// === Integer-to-Integer Conversions ===
+
+impl Convert<i8> for i16 {
+    #[inline]
+    fn convert(src: i8) -> Self {
+        src as i16
+    }
+}
+
+impl Convert<i16> for i8 {
+    #[inline]
+    fn convert(src: i16) -> Self {
+        src.clamp(i8::MIN as i16, i8::MAX as i16) as i8
+    }
+}
+
+impl Convert<u8> for i16 {
+    #[inline]
+    fn convert(src: u8) -> Self {
+        src as i16
+    }
+}
+
+impl Convert<i16> for u8 {
+    #[inline]
+    fn convert(src: i16) -> Self {
+        src.clamp(u8::MIN as i16, u8::MAX as i16) as u8
+    }
+}
+
+impl Convert<u8> for u16 {
+    #[inline]
+    fn convert(src: u8) -> Self {
+        src as u16
+    }
+}
+
+impl Convert<u16> for u8 {
+    #[inline]
+    fn convert(src: u16) -> Self {
+        src.clamp(u8::MIN as u16, u8::MAX as u16) as u8
+    }
+}
+
+impl Convert<i8> for u16 {
+    #[inline]
+    fn convert(src: i8) -> Self {
+        src.max(0) as u16
+    }
+}
+
+impl Convert<u16> for i8 {
+    #[inline]
+    fn convert(src: u16) -> Self {
+        (src as i16).clamp(i8::MIN as i16, i8::MAX as i16) as i8
+    }
+}
+
+impl Convert<i16> for u16 {
+    #[inline]
+    fn convert(src: i16) -> Self {
+        src.max(0) as u16
+    }
+}
+
+impl Convert<u16> for i16 {
+    #[inline]
+    fn convert(src: u16) -> Self {
+        src.min(i16::MAX as u16) as i16
+    }
+}
+
+// === Packed4Bit Conversions ===
+
+impl Convert<Packed4Bit> for u8 {
+    #[inline]
+    fn convert(src: Packed4Bit) -> Self {
+        src.first()
+    }
+}
+
+impl Convert<Packed4Bit> for i8 {
+    #[inline]
+    fn convert(src: Packed4Bit) -> Self {
+        // Treat as signed: 0-7 positive, 8-15 negative (two's complement)
+        let val = src.first();
+        if val & 0x08 != 0 {
+            (val | 0xF0) as i8 // Sign extend
+        } else {
+            val as i8
+        }
+    }
+}
+
+impl Convert<Packed4Bit> for f32 {
+    #[inline]
+    fn convert(src: Packed4Bit) -> Self {
+        // Treat as unsigned 4-bit value
+        src.first() as f32
+    }
+}
+
+// === Identity Conversions (completing the matrix) ===
+
+impl Convert<u8> for u8 {
+    #[inline]
+    fn convert(src: u8) -> Self {
         src
     }
 }

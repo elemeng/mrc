@@ -1,10 +1,12 @@
 //! Error types for MRC operations
 
+use alloc::string::String;
+
 /// Error type
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
-    #[error("IO error")]
-    Io,
+    #[error("IO error: {0}")]
+    Io(String),
     #[error("Invalid MRC header")]
     InvalidHeader,
     #[error("Unsupported mode")]
