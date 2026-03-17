@@ -34,7 +34,6 @@ impl Reader {
                 return Err(Error::InvalidHeader);
             }
 
-            let _data_offset = header.data_offset();
             let data_size = header.data_size();
 
             let ext_size = header.nsymbt as usize;

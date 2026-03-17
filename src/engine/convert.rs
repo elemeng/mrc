@@ -7,10 +7,13 @@
 //!
 //! Conversions include:
 //! - Int8 → Float32
-//! - Int16 → Float32  
+//! - Int16 → Float32
 //! - Uint16 → Float32
 //! - Float16 → Float32
 //! - Float32 → Int16
+//! - Int16Complex ↔ Float32Complex
+
+use crate::mode::{Int16Complex, Float32Complex};
 
 /// Trait for converting between voxel types.
 ///
@@ -108,6 +111,42 @@ impl Convert<i16> for i16 {
 impl Convert<u16> for u16 {
     #[inline]
     fn convert(src: u16) -> Self {
+        src
+    }
+}
+
+// === Complex type conversions ===
+
+impl Convert<Int16Complex> for Float32Complex {
+    #[inline]
+    fn convert(src: Int16Complex) -> Self {
+        Self {
+            real: src.real as f32,
+            imag: src.imag as f32,
+        }
+    }
+}
+
+impl Convert<Float32Complex> for Int16Complex {
+    #[inline]
+    fn convert(src: Float32Complex) -> Self {
+        Self {
+            real: src.real.clamp(i16::MIN as f32, i16::MAX as f32) as i16,
+            imag: src.imag.clamp(i16::MIN as f32, i16::MAX as f32) as i16,
+        }
+    }
+}
+
+impl Convert<Int16Complex> for Int16Complex {
+    #[inline]
+    fn convert(src: Int16Complex) -> Self {
+        src
+    }
+}
+
+impl Convert<Float32Complex> for Float32Complex {
+    #[inline]
+    fn convert(src: Float32Complex) -> Self {
         src
     }
 }

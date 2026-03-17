@@ -140,9 +140,19 @@ impl Writer {
 
     /// Get a mutable slice of voxels at the given z-index.
     ///
-    /// # Safety
-    /// The caller must ensure the type T matches the file's voxel mode.
-    /// Using the wrong type will produce incorrect results.
+    /// # Warning
+    /// The caller must ensure the type T matches the file's voxel mode exactly.
+    /// Using the wrong type will produce incorrect data without any runtime error.
+    /// For type-safe access, use `write_block` instead.
+    ///
+    /// # Example
+    /// ```ignore
+    /// // Correct: file was created with mode f32
+    /// let slice = writer.slice_mut::<f32>(0)?;
+    ///
+    /// // Wrong: undefined behavior if file mode is not i16
+    /// let slice = writer.slice_mut::<i16>(0)?; // Don't do this!
+    /// ```
     pub fn slice_mut<T: crate::engine::codec::EndianCodec>(&mut self, z: usize) -> Result<&mut [T], Error> {
         let [nx, ny, nz] = [self.shape.nx, self.shape.ny, self.shape.nz];
         if z >= nz {
@@ -358,9 +368,19 @@ impl MmapWriter {
 
     /// Get a mutable slice of voxels at the given z-index.
     ///
-    /// # Safety
-    /// The caller must ensure the type T matches the file's voxel mode.
-    /// Using the wrong type will produce incorrect results.
+    /// # Warning
+    /// The caller must ensure the type T matches the file's voxel mode exactly.
+    /// Using the wrong type will produce incorrect data without any runtime error.
+    /// For type-safe access, use `write_block` instead.
+    ///
+    /// # Example
+    /// ```ignore
+    /// // Correct: file was created with mode f32
+    /// let slice = writer.slice_mut::<f32>(0)?;
+    ///
+    /// // Wrong: undefined behavior if file mode is not i16
+    /// let slice = writer.slice_mut::<i16>(0)?; // Don't do this!
+    /// ```
     pub fn slice_mut<T: crate::engine::codec::EndianCodec>(&mut self, z: usize) -> Result<&mut [T], Error> {
         let [nx, ny, nz] = [self.shape.nx, self.shape.ny, self.shape.nz];
         if z >= nz {

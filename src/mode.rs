@@ -71,38 +71,6 @@ impl Mode {
     pub fn is_float(&self) -> bool {
         matches!(self, Self::Float32 | Self::Float32Complex | Self::Float16)
     }
-
-    /// Returns a sequential index (0-7) for conversion matrix lookup.
-    /// This maps the 8 MRC modes to compact array indices.
-    #[inline]
-    pub fn index(&self) -> usize {
-        match self {
-            Self::Int8 => 0,
-            Self::Int16 => 1,
-            Self::Float32 => 2,
-            Self::Int16Complex => 3,
-            Self::Float32Complex => 4,
-            Self::Uint16 => 5,
-            Self::Float16 => 6,
-            Self::Packed4Bit => 7,
-        }
-    }
-
-    /// Returns the mode from a sequential index (inverse of index()).
-    #[inline]
-    pub fn from_index(idx: usize) -> Option<Self> {
-        match idx {
-            0 => Some(Self::Int8),
-            1 => Some(Self::Int16),
-            2 => Some(Self::Float32),
-            3 => Some(Self::Int16Complex),
-            4 => Some(Self::Float32Complex),
-            5 => Some(Self::Uint16),
-            6 => Some(Self::Float16),
-            7 => Some(Self::Packed4Bit),
-            _ => None,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]

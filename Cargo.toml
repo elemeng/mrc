@@ -26,9 +26,8 @@ tempfile = "3.8"
 
 
 [features]
-default = ["std", "mmap", "file", "f16", "parallel"]
+default = ["std", "mmap", "f16", "parallel"]
 mmap = ["std", "dep:memmap2"]
-file = ["std"]
 std = ["dep:once_cell"]
 f16 = []
 parallel = ["std", "dep:rayon"]
