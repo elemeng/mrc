@@ -86,6 +86,21 @@ pub fn convert_u8_slice_to_f32(src: &[u8]) -> Vec<f32> {
     src.iter().map(|&x| x as f32).collect()
 }
 
+/// Batch conversion from f16 to f32.
+#[cfg(feature = "f16")]
+pub fn convert_f16_slice_to_f32(src: &[f16]) -> Vec<f32> {
+    // Note: AVX-512 FP16 would provide hardware acceleration but requires
+    // very recent CPUs. For now, use scalar conversion which is fast enough
+    // for typical cryo-EM intermediate files.
+    src.iter().map(|&x| x as f32).collect()
+}
+
+/// Batch conversion from f32 to f16.
+#[cfg(feature = "f16")]
+pub fn convert_f32_slice_to_f16(src: &[f32]) -> Vec<f16> {
+    src.iter().map(|&x| x as f16).collect()
+}
+
 impl Convert<u8> for f32 {
     #[inline]
     fn convert(src: u8) -> Self {

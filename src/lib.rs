@@ -44,6 +44,10 @@ pub use engine::pipeline::{ConversionPath, get_conversion_path, is_zero_copy};
 #[cfg(feature = "simd")]
 pub use engine::convert::{convert_i8_slice_to_f32, convert_i16_slice_to_f32, convert_u16_slice_to_f32, convert_u8_slice_to_f32};
 
+// Re-export f16 batch conversions when f16 feature is enabled
+#[cfg(feature = "f16")]
+pub use engine::convert::{convert_f16_slice_to_f32, convert_f32_slice_to_f16};
+
 // Re-export SliceAccess trait for writers
 pub use engine::block::SliceAccess;
 
