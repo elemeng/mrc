@@ -1,7 +1,7 @@
 //! MRC file reader with iterator-centric API
 
 use crate::engine::block::VolumeShape;
-use crate::engine::codec::{EndianCodec, DefaultValue, decode_slice};
+use crate::engine::codec::{EndianCodec, decode_slice};
 use crate::engine::endian::FileEndian;
 use crate::engine::pipeline::is_zero_copy;
 use crate::iter::{BlockIter, SlabIter, SliceIter};
@@ -123,7 +123,7 @@ impl Reader {
     /// Uses zero-copy fast path when:
     /// - src_mode == dst_mode (T matches file mode)
     /// - file_endian == native
-    pub(crate) fn decode_block<T: EndianCodec + Send + Copy + DefaultValue>(
+    pub(crate) fn decode_block<T: EndianCodec + Send + Copy + Default>(
         &self,
         bytes: &[u8],
     ) -> Result<Vec<T>, Error> {

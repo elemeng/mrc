@@ -28,16 +28,8 @@ impl WriterBuilder {
         self
     }
 
-    pub fn mode<T>(mut self) -> Self {
-        let mode = match core::any::type_name::<T>() {
-            "i8" => 0,
-            "i16" => 1,
-            "f32" => 2,
-            "u16" => 6,
-            "f16" => 12,
-            _ => 2,
-        };
-        self.header.mode = mode;
+    pub fn mode<T: crate::mode::Voxel>(mut self) -> Self {
+        self.header.mode = T::MODE as i32;
         self
     }
 
@@ -113,11 +105,14 @@ impl Writer {
         self.shape
     }
 
-    /// Write a block of f32 voxels to the file.
+    /// Write a block of voxels to the file.
     ///
     /// This is the unified encode pipeline that handles:
     /// - Typed values → Endian encoding → Raw bytes
-    pub fn write_block(&mut self, block: &VoxelBlock<f32>) -> Result<(), Error> {
+    pub fn write_block<T: crate::engine::codec::EndianCodec + Sync>(
+        &mut self,
+        block: &VoxelBlock<T>,
+    ) -> Result<(), Error> {
         let [nx, ny, nz] = [self.shape.nx, self.shape.ny, self.shape.nz];
         let [ox, oy, oz] = block.offset;
         let [sx, sy, sz] = block.shape;
@@ -143,7 +138,12 @@ impl Writer {
         Ok(())
     }
 
-    pub fn slice_mut(&mut self, z: usize) -> Result<&mut [f32], Error> {
+    /// Get a mutable slice of voxels at the given z-index.
+    ///
+    /// # Safety
+    /// The caller must ensure the type T matches the file's voxel mode.
+    /// Using the wrong type will produce incorrect results.
+    pub fn slice_mut<T: crate::engine::codec::EndianCodec>(&mut self, z: usize) -> Result<&mut [T], Error> {
         let [nx, ny, nz] = [self.shape.nx, self.shape.ny, self.shape.nz];
         if z >= nz {
             return Err(Error::BoundsError);
@@ -154,14 +154,17 @@ impl Writer {
 
         let bytes = &mut self.data[start_offset..end_offset];
         unsafe {
-            let ptr = bytes.as_mut_ptr() as *mut f32;
+            let ptr = bytes.as_mut_ptr() as *mut T;
             Ok(core::slice::from_raw_parts_mut(ptr, nx * ny))
         }
     }
 
     /// Write a block with parallel encoding and file I/O
     #[cfg(all(feature = "parallel", feature = "std"))]
-    pub fn write_block_parallel(&mut self, block: &VoxelBlock<f32>) -> Result<(), Error> {
+    pub fn write_block_parallel<T: crate::engine::codec::EndianCodec + Sync + Clone>(
+        &mut self,
+        block: &VoxelBlock<T>,
+    ) -> Result<(), Error> {
         use rayon::prelude::*;
         use std::os::unix::fs::FileExt;
 
@@ -284,7 +287,10 @@ impl MmapWriter {
         self.shape
     }
 
-    pub fn write_block(&mut self, block: &VoxelBlock<f32>) -> Result<(), Error> {
+    pub fn write_block<T: crate::engine::codec::EndianCodec + Sync>(
+        &mut self,
+        block: &VoxelBlock<T>,
+    ) -> Result<(), Error> {
         let [nx, ny, nz] = [self.shape.nx, self.shape.ny, self.shape.nz];
         let [ox, oy, oz] = block.offset;
         let [sx, sy, sz] = block.shape;
@@ -311,7 +317,10 @@ impl MmapWriter {
 
     /// Write a block with parallel encoding to memory-mapped region
     #[cfg(all(feature = "parallel", feature = "std"))]
-    pub fn write_block_parallel(&mut self, block: &VoxelBlock<f32>) -> Result<(), Error> {
+    pub fn write_block_parallel<T: crate::engine::codec::EndianCodec + Sync>(
+        &mut self,
+        block: &VoxelBlock<T>,
+    ) -> Result<(), Error> {
         use rayon::prelude::*;
 
         let [nx, ny, nz] = [self.shape.nx, self.shape.ny, self.shape.nz];
@@ -347,7 +356,12 @@ impl MmapWriter {
         Ok(())
     }
 
-    pub fn slice_mut(&mut self, z: usize) -> Result<&mut [f32], Error> {
+    /// Get a mutable slice of voxels at the given z-index.
+    ///
+    /// # Safety
+    /// The caller must ensure the type T matches the file's voxel mode.
+    /// Using the wrong type will produce incorrect results.
+    pub fn slice_mut<T: crate::engine::codec::EndianCodec>(&mut self, z: usize) -> Result<&mut [T], Error> {
         let [nx, ny, nz] = [self.shape.nx, self.shape.ny, self.shape.nz];
         if z >= nz {
             return Err(Error::BoundsError);
@@ -358,7 +372,7 @@ impl MmapWriter {
 
         let bytes = &mut self.mmap[start_offset..end_offset];
         unsafe {
-            let ptr = bytes.as_mut_ptr() as *mut f32;
+            let ptr = bytes.as_mut_ptr() as *mut T;
             Ok(core::slice::from_raw_parts_mut(ptr, nx * ny))
         }
     }

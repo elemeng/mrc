@@ -2,7 +2,23 @@
 
 use crate::Error;
 use crate::engine::block::{VolumeShape, VoxelBlock};
-use crate::engine::codec::{EndianCodec, DefaultValue};
+use crate::engine::codec::EndianCodec;
+
+/// Helper to read and decode a voxel block from the reader.
+#[inline]
+fn read_and_decode<T: EndianCodec + Send + Copy + Default>(
+    reader: &crate::Reader,
+    offset: [usize; 3],
+    shape: [usize; 3],
+) -> Result<VoxelBlock<T>, Error> {
+    let bytes = reader.read_voxels(offset, shape)?;
+    let data = reader.decode_block::<T>(&bytes)?;
+    Ok(VoxelBlock {
+        offset,
+        shape,
+        data,
+    })
+}
 
 pub struct SliceIter<'a, T> {
     reader: &'a crate::Reader,
@@ -28,7 +44,7 @@ impl<'a, T> SliceIter<'a, T> {
 
 impl<'a, T> Iterator for SliceIter<'a, T>
 where
-    T: EndianCodec + Send + Copy + DefaultValue,
+    T: EndianCodec + Send + Copy + Default,
 {
     type Item = Result<VoxelBlock<T>, Error>;
 
@@ -37,27 +53,10 @@ where
             return None;
         }
 
-        let result = self
-            .reader
-            .read_voxels([0, 0, self.z], [self.nx, self.ny, 1]);
+        let z = self.z;
         self.z += 1;
 
-        match result {
-            Ok(bytes) => {
-                let decoded = match self.reader.decode_block::<T>(&bytes) {
-                    Ok(data) => data,
-                    Err(e) => return Some(Err(e)),
-                };
-
-                let block = VoxelBlock {
-                    offset: [0, 0, self.z - 1],
-                    shape: [self.nx, self.ny, 1],
-                    data: decoded,
-                };
-                Some(Ok(block))
-            }
-            Err(e) => Some(Err(e)),
-        }
+        Some(read_and_decode(self.reader, [0, 0, z], [self.nx, self.ny, 1]))
     }
 
     fn nth(&mut self, n: usize) -> Option<Self::Item> {
@@ -92,7 +91,7 @@ impl<'a, T> SlabIter<'a, T> {
 
 impl<'a, T> Iterator for SlabIter<'a, T>
 where
-    T: EndianCodec + Send + Copy + DefaultValue,
+    T: EndianCodec + Send + Copy + Default,
 {
     type Item = Result<VoxelBlock<T>, Error>;
 
@@ -101,30 +100,11 @@ where
             return None;
         }
 
-        let remaining = self.nz - self.z;
-        let size = self.slab_size.min(remaining);
-
-        let result = self
-            .reader
-            .read_voxels([0, 0, self.z], [self.nx, self.ny, size]);
+        let z = self.z;
+        let size = self.slab_size.min(self.nz - z);
         self.z += size;
 
-        match result {
-            Ok(bytes) => {
-                let decoded = match self.reader.decode_block::<T>(&bytes) {
-                    Ok(data) => data,
-                    Err(e) => return Some(Err(e)),
-                };
-
-                let block = VoxelBlock {
-                    offset: [0, 0, self.z - size],
-                    shape: [self.nx, self.ny, size],
-                    data: decoded,
-                };
-                Some(Ok(block))
-            }
-            Err(e) => Some(Err(e)),
-        }
+        Some(read_and_decode(self.reader, [0, 0, z], [self.nx, self.ny, size]))
     }
 
     fn nth(&mut self, n: usize) -> Option<Self::Item> {
@@ -155,7 +135,7 @@ impl<'a, T> BlockIter<'a, T> {
 
 impl<'a, T> Iterator for BlockIter<'a, T>
 where
-    T: EndianCodec + Send + Copy + DefaultValue,
+    T: EndianCodec + Send + Copy + Default,
 {
     type Item = Result<VoxelBlock<T>, Error>;
 
@@ -172,8 +152,6 @@ where
         let sy = cy.min(ny - py);
         let sz = cz.min(nz - pz);
 
-        let result = self.reader.read_voxels([px, py, pz], [sx, sy, sz]);
-
         // Update position
         self.position[0] += cx;
         if self.position[0] >= nx {
@@ -185,21 +163,6 @@ where
             }
         }
 
-        match result {
-            Ok(bytes) => {
-                let decoded = match self.reader.decode_block::<T>(&bytes) {
-                    Ok(data) => data,
-                    Err(e) => return Some(Err(e)),
-                };
-
-                let block = VoxelBlock {
-                    offset: [px, py, pz],
-                    shape: [sx, sy, sz],
-                    data: decoded,
-                };
-                Some(Ok(block))
-            }
-            Err(e) => Some(Err(e)),
-        }
+        Some(read_and_decode(self.reader, [px, py, pz], [sx, sy, sz]))
     }
 }

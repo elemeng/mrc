@@ -111,14 +111,32 @@ pub struct Int16Complex {
     pub imag: i16,
 }
 
+impl Default for Int16Complex {
+    fn default() -> Self {
+        Self { real: 0, imag: 0 }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Float32Complex {
     pub real: f32,
     pub imag: f32,
 }
 
+impl Default for Float32Complex {
+    fn default() -> Self {
+        Self { real: 0.0, imag: 0.0 }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Packed4Bit(u8);
+
+impl Default for Packed4Bit {
+    fn default() -> Self {
+        Self(0)
+    }
+}
 
 impl Packed4Bit {
     /// Create a new Packed4Bit value
@@ -141,74 +159,58 @@ impl Packed4Bit {
 ///
 /// Each voxel type knows its MRC mode constant, enabling the conversion matrix
 /// to dispatch kernels without runtime branching.
-pub trait Voxel: Copy + Send + Sync + 'static {
+///
+/// Note: BYTE_SIZE is inherited from EndianCodec supertrait.
+pub trait Voxel: crate::engine::codec::EndianCodec + Copy + Send + Sync + 'static {
     /// The MRC mode constant for this voxel type
     const MODE: Mode;
-    /// Size in bytes for one voxel value
-    const BYTE_SIZE: usize;
 }
 
 impl Voxel for i8 {
     const MODE: Mode = Mode::Int8;
-    const BYTE_SIZE: usize = 1;
 }
 
 impl Voxel for i16 {
     const MODE: Mode = Mode::Int16;
-    const BYTE_SIZE: usize = 2;
 }
 
 impl Voxel for f32 {
     const MODE: Mode = Mode::Float32;
-    const BYTE_SIZE: usize = 4;
 }
 
 impl Voxel for Int16Complex {
     const MODE: Mode = Mode::Int16Complex;
-    const BYTE_SIZE: usize = 4;
 }
 
 impl Voxel for Float32Complex {
     const MODE: Mode = Mode::Float32Complex;
-    const BYTE_SIZE: usize = 8;
 }
 
 impl Voxel for u16 {
     const MODE: Mode = Mode::Uint16;
-    const BYTE_SIZE: usize = 2;
 }
 
 #[cfg(feature = "f16")]
 impl Voxel for f16 {
     const MODE: Mode = Mode::Float16;
-    const BYTE_SIZE: usize = 2;
 }
 
 impl Voxel for Packed4Bit {
     const MODE: Mode = Mode::Packed4Bit;
-    const BYTE_SIZE: usize = 1;
 }
 
 // Implement EndianCodec directly - this provides both decode and encode
+// Note: Packed4Bit is endian-independent since it's byte-level packing (2 values per byte)
 impl crate::engine::codec::EndianCodec for Packed4Bit {
     const BYTE_SIZE: usize = 1;
-    
+
     #[inline]
-    fn from_bytes(bytes: &[u8], offset: usize, endian: crate::FileEndian) -> Self {
-        let byte = bytes[offset];
-        Self(if endian == crate::FileEndian::LittleEndian {
-            byte
-        } else {
-            byte.reverse_bits()
-        })
+    fn from_bytes(bytes: &[u8], offset: usize, _endian: crate::FileEndian) -> Self {
+        Self(bytes[offset])
     }
-    
+
     #[inline]
-    fn to_bytes(&self, bytes: &mut [u8], offset: usize, endian: crate::FileEndian) {
-        bytes[offset] = if endian == crate::FileEndian::LittleEndian {
-            self.0
-        } else {
-            self.0.reverse_bits()
-        };
+    fn to_bytes(&self, bytes: &mut [u8], offset: usize, _endian: crate::FileEndian) {
+        bytes[offset] = self.0;
     }
 }

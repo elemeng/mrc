@@ -14,52 +14,6 @@ use crate::mode::{Int16Complex, Float32Complex};
 use alloc::vec::Vec;
 
 // ============================================================================
-// DefaultValue Trait - Safe initialization for decoding
-// ============================================================================
-
-/// Trait for types with a default value for safe initialization.
-pub trait DefaultValue: Sized {
-    fn default_value() -> Self;
-}
-
-impl DefaultValue for i8 {
-    #[inline] fn default_value() -> Self { 0 }
-}
-
-impl DefaultValue for i16 {
-    #[inline] fn default_value() -> Self { 0 }
-}
-
-impl DefaultValue for u16 {
-    #[inline] fn default_value() -> Self { 0 }
-}
-
-impl DefaultValue for i32 {
-    #[inline] fn default_value() -> Self { 0 }
-}
-
-impl DefaultValue for f32 {
-    #[inline] fn default_value() -> Self { 0.0 }
-}
-
-#[cfg(feature = "f16")]
-impl DefaultValue for f16 {
-    #[inline] fn default_value() -> Self { f16::from_bits(0) }
-}
-
-impl DefaultValue for Int16Complex {
-    #[inline] fn default_value() -> Self { Self { real: 0, imag: 0 } }
-}
-
-impl DefaultValue for Float32Complex {
-    #[inline] fn default_value() -> Self { Self { real: 0.0, imag: 0.0 } }
-}
-
-impl DefaultValue for crate::mode::Packed4Bit {
-    #[inline] fn default_value() -> Self { crate::mode::Packed4Bit::new(0) }
-}
-
-// ============================================================================
 // EndianCodec Trait - Bidirectional endian conversion
 // ============================================================================
 
@@ -284,13 +238,13 @@ impl EndianCodec for f16 {
 /// This is the primary entry point for Layer 2 decoding.
 /// Uses 1MB chunks for optimal cache behavior.
 #[cfg(feature = "std")]
-pub fn decode_slice<T: EndianCodec + Send + Copy + DefaultValue>(
-    bytes: &[u8], 
+pub fn decode_slice<T: EndianCodec + Send + Copy + Default>(
+    bytes: &[u8],
     endian: FileEndian
 ) -> Vec<T> {
     let n = bytes.len() / T::BYTE_SIZE;
     let mut result = Vec::with_capacity(n);
-    result.resize(n, T::default_value());
+    result.resize(n, T::default());
     
     // 1MB chunks for cache efficiency
     const CHUNK_VOXELS: usize = 262_144;
@@ -328,8 +282,8 @@ pub fn decode_slice<T: EndianCodec + Send + Copy + DefaultValue>(
 /// Uses 1MB chunks for optimal cache behavior.
 #[cfg(feature = "std")]
 pub fn encode_slice<T: EndianCodec + Sync>(
-    values: &[T], 
-    bytes: &mut [u8], 
+    values: &[T],
+    bytes: &mut [u8],
     endian: FileEndian
 ) {
     assert_eq!(values.len() * T::BYTE_SIZE, bytes.len());

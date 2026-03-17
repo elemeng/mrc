@@ -266,13 +266,13 @@ impl Header {
     #[inline]
     /// Check if the file is little-endian
     pub fn is_little_endian(&self) -> bool {
-        self.detect_endian() == crate::FileEndian::LittleEndian
+        self.machst[0] == 0x44 && self.machst[1] == 0x44
     }
 
     #[inline]
     /// Check if the file is big-endian
     pub fn is_big_endian(&self) -> bool {
-        self.detect_endian() == crate::FileEndian::BigEndian
+        self.machst[0] == 0x11 && self.machst[1] == 0x11
     }
 
     #[inline]
