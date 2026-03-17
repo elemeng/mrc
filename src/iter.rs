@@ -56,7 +56,11 @@ where
         let z = self.z;
         self.z += 1;
 
-        Some(read_and_decode(self.reader, [0, 0, z], [self.nx, self.ny, 1]))
+        Some(read_and_decode(
+            self.reader,
+            [0, 0, z],
+            [self.nx, self.ny, 1],
+        ))
     }
 
     fn nth(&mut self, n: usize) -> Option<Self::Item> {
@@ -104,7 +108,11 @@ where
         let size = self.slab_size.min(self.nz - z);
         self.z += size;
 
-        Some(read_and_decode(self.reader, [0, 0, z], [self.nx, self.ny, size]))
+        Some(read_and_decode(
+            self.reader,
+            [0, 0, z],
+            [self.nx, self.ny, size],
+        ))
     }
 
     fn nth(&mut self, n: usize) -> Option<Self::Item> {

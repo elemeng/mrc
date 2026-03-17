@@ -153,7 +153,10 @@ impl Writer {
     /// // Wrong: undefined behavior if file mode is not i16
     /// let slice = writer.slice_mut::<i16>(0)?; // Don't do this!
     /// ```
-    pub fn slice_mut<T: crate::engine::codec::EndianCodec>(&mut self, z: usize) -> Result<&mut [T], Error> {
+    pub fn slice_mut<T: crate::engine::codec::EndianCodec>(
+        &mut self,
+        z: usize,
+    ) -> Result<&mut [T], Error> {
         let [nx, ny, nz] = [self.shape.nx, self.shape.ny, self.shape.nz];
         if z >= nz {
             return Err(Error::BoundsError);
@@ -263,6 +266,7 @@ impl MmapWriter {
             .read(true)
             .write(true)
             .create(true)
+            .truncate(true)
             .open(path)
             .map_err(|_| Error::Io)?;
 
@@ -381,7 +385,10 @@ impl MmapWriter {
     /// // Wrong: undefined behavior if file mode is not i16
     /// let slice = writer.slice_mut::<i16>(0)?; // Don't do this!
     /// ```
-    pub fn slice_mut<T: crate::engine::codec::EndianCodec>(&mut self, z: usize) -> Result<&mut [T], Error> {
+    pub fn slice_mut<T: crate::engine::codec::EndianCodec>(
+        &mut self,
+        z: usize,
+    ) -> Result<&mut [T], Error> {
         let [nx, ny, nz] = [self.shape.nx, self.shape.ny, self.shape.nz];
         if z >= nz {
             return Err(Error::BoundsError);

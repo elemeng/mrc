@@ -9,7 +9,7 @@
 //! guaranteeing that encoding and decoding are always consistent.
 
 use super::endian::FileEndian;
-use crate::mode::{Int16Complex, Float32Complex};
+use crate::mode::{Float32Complex, Int16Complex};
 
 use alloc::vec::Vec;
 
@@ -36,19 +36,19 @@ use alloc::vec::Vec;
 pub trait EndianCodec: Sized {
     /// Size in bytes for one value of this type
     const BYTE_SIZE: usize;
-    
+
     /// Decode: bytes → value (read from bytes at offset)
     fn from_bytes(bytes: &[u8], offset: usize, endian: FileEndian) -> Self;
-    
+
     /// Encode: value → bytes (write to bytes at offset)
     fn to_bytes(&self, bytes: &mut [u8], offset: usize, endian: FileEndian);
-    
+
     /// Decode alias: bytes → value
     #[inline]
     fn decode(bytes: &[u8], offset: usize, endian: FileEndian) -> Self {
         Self::from_bytes(bytes, offset, endian)
     }
-    
+
     /// Encode alias: value → bytes
     #[inline]
     fn encode(&self, bytes: &mut [u8], offset: usize, endian: FileEndian) {
@@ -62,12 +62,12 @@ pub trait EndianCodec: Sized {
 
 impl EndianCodec for i8 {
     const BYTE_SIZE: usize = 1;
-    
+
     #[inline]
     fn from_bytes(bytes: &[u8], offset: usize, _endian: FileEndian) -> Self {
         bytes[offset] as i8
     }
-    
+
     #[inline]
     fn to_bytes(&self, bytes: &mut [u8], offset: usize, _endian: FileEndian) {
         bytes[offset] = *self as u8;
@@ -76,7 +76,7 @@ impl EndianCodec for i8 {
 
 impl EndianCodec for i16 {
     const BYTE_SIZE: usize = 2;
-    
+
     #[inline]
     fn from_bytes(bytes: &[u8], offset: usize, endian: FileEndian) -> Self {
         let arr: [u8; 2] = [bytes[offset], bytes[offset + 1]];
@@ -85,7 +85,7 @@ impl EndianCodec for i16 {
             FileEndian::BigEndian => Self::from_be_bytes(arr),
         }
     }
-    
+
     #[inline]
     fn to_bytes(&self, bytes: &mut [u8], offset: usize, endian: FileEndian) {
         let arr = match endian {
@@ -98,7 +98,7 @@ impl EndianCodec for i16 {
 
 impl EndianCodec for u16 {
     const BYTE_SIZE: usize = 2;
-    
+
     #[inline]
     fn from_bytes(bytes: &[u8], offset: usize, endian: FileEndian) -> Self {
         let arr: [u8; 2] = [bytes[offset], bytes[offset + 1]];
@@ -107,7 +107,7 @@ impl EndianCodec for u16 {
             FileEndian::BigEndian => Self::from_be_bytes(arr),
         }
     }
-    
+
     #[inline]
     fn to_bytes(&self, bytes: &mut [u8], offset: usize, endian: FileEndian) {
         let arr = match endian {
@@ -120,17 +120,21 @@ impl EndianCodec for u16 {
 
 impl EndianCodec for i32 {
     const BYTE_SIZE: usize = 4;
-    
+
     #[inline]
     fn from_bytes(bytes: &[u8], offset: usize, endian: FileEndian) -> Self {
-        let arr: [u8; 4] = [bytes[offset], bytes[offset + 1], 
-                           bytes[offset + 2], bytes[offset + 3]];
+        let arr: [u8; 4] = [
+            bytes[offset],
+            bytes[offset + 1],
+            bytes[offset + 2],
+            bytes[offset + 3],
+        ];
         match endian {
             FileEndian::LittleEndian => Self::from_le_bytes(arr),
             FileEndian::BigEndian => Self::from_be_bytes(arr),
         }
     }
-    
+
     #[inline]
     fn to_bytes(&self, bytes: &mut [u8], offset: usize, endian: FileEndian) {
         let arr = match endian {
@@ -143,17 +147,21 @@ impl EndianCodec for i32 {
 
 impl EndianCodec for f32 {
     const BYTE_SIZE: usize = 4;
-    
+
     #[inline]
     fn from_bytes(bytes: &[u8], offset: usize, endian: FileEndian) -> Self {
-        let arr: [u8; 4] = [bytes[offset], bytes[offset + 1],
-                           bytes[offset + 2], bytes[offset + 3]];
+        let arr: [u8; 4] = [
+            bytes[offset],
+            bytes[offset + 1],
+            bytes[offset + 2],
+            bytes[offset + 3],
+        ];
         match endian {
             FileEndian::LittleEndian => Self::from_le_bytes(arr),
             FileEndian::BigEndian => Self::from_be_bytes(arr),
         }
     }
-    
+
     #[inline]
     fn to_bytes(&self, bytes: &mut [u8], offset: usize, endian: FileEndian) {
         let arr = match endian {
@@ -170,7 +178,7 @@ impl EndianCodec for f32 {
 
 impl EndianCodec for Int16Complex {
     const BYTE_SIZE: usize = 4;
-    
+
     #[inline]
     fn from_bytes(bytes: &[u8], offset: usize, endian: FileEndian) -> Self {
         Self {
@@ -178,7 +186,7 @@ impl EndianCodec for Int16Complex {
             imag: i16::from_bytes(bytes, offset + 2, endian),
         }
     }
-    
+
     #[inline]
     fn to_bytes(&self, bytes: &mut [u8], offset: usize, endian: FileEndian) {
         self.real.to_bytes(bytes, offset, endian);
@@ -188,7 +196,7 @@ impl EndianCodec for Int16Complex {
 
 impl EndianCodec for Float32Complex {
     const BYTE_SIZE: usize = 8;
-    
+
     #[inline]
     fn from_bytes(bytes: &[u8], offset: usize, endian: FileEndian) -> Self {
         Self {
@@ -196,7 +204,7 @@ impl EndianCodec for Float32Complex {
             imag: f32::from_bytes(bytes, offset + 4, endian),
         }
     }
-    
+
     #[inline]
     fn to_bytes(&self, bytes: &mut [u8], offset: usize, endian: FileEndian) {
         self.real.to_bytes(bytes, offset, endian);
@@ -207,7 +215,7 @@ impl EndianCodec for Float32Complex {
 #[cfg(feature = "f16")]
 impl EndianCodec for f16 {
     const BYTE_SIZE: usize = 2;
-    
+
     #[inline]
     fn from_bytes(bytes: &[u8], offset: usize, endian: FileEndian) -> Self {
         let arr: [u8; 2] = [bytes[offset], bytes[offset + 1]];
@@ -217,7 +225,7 @@ impl EndianCodec for f16 {
         };
         Self::from_bits(bits)
     }
-    
+
     #[inline]
     fn to_bytes(&self, bytes: &mut [u8], offset: usize, endian: FileEndian) {
         let bits = self.to_bits();
@@ -240,15 +248,15 @@ impl EndianCodec for f16 {
 #[cfg(feature = "std")]
 pub fn decode_slice<T: EndianCodec + Send + Copy + Default>(
     bytes: &[u8],
-    endian: FileEndian
+    endian: FileEndian,
 ) -> Vec<T> {
     let n = bytes.len() / T::BYTE_SIZE;
     let mut result = Vec::with_capacity(n);
     result.resize(n, T::default());
-    
+
     // 1MB chunks for cache efficiency
     const CHUNK_VOXELS: usize = 262_144;
-    
+
     #[cfg(feature = "parallel")]
     {
         use rayon::prelude::*;
@@ -261,14 +269,14 @@ pub fn decode_slice<T: EndianCodec + Send + Copy + Default>(
                 }
             });
     }
-    
+
     #[cfg(not(feature = "parallel"))]
     {
         for i in 0..n {
             result[i] = T::from_bytes(bytes, i * T::BYTE_SIZE, endian);
         }
     }
-    
+
     result
 }
 
@@ -281,16 +289,12 @@ pub fn decode_slice<T: EndianCodec + Send + Copy + Default>(
 /// This is the primary entry point for Layer 2 encoding.
 /// Uses 1MB chunks for optimal cache behavior.
 #[cfg(feature = "std")]
-pub fn encode_slice<T: EndianCodec + Sync>(
-    values: &[T],
-    bytes: &mut [u8],
-    endian: FileEndian
-) {
+pub fn encode_slice<T: EndianCodec + Sync>(values: &[T], bytes: &mut [u8], endian: FileEndian) {
     assert_eq!(values.len() * T::BYTE_SIZE, bytes.len());
-    
+
     // 1MB chunks for cache efficiency
     const CHUNK_VOXELS: usize = 262_144;
-    
+
     #[cfg(feature = "parallel")]
     {
         use rayon::prelude::*;
@@ -303,7 +307,7 @@ pub fn encode_slice<T: EndianCodec + Sync>(
                 }
             });
     }
-    
+
     #[cfg(not(feature = "parallel"))]
     {
         for (i, val) in values.iter().enumerate() {
@@ -321,7 +325,7 @@ use std::thread_local;
 
 #[cfg(all(feature = "std", feature = "parallel"))]
 thread_local! {
-    static ENCODE_BUFFER: std::cell::RefCell<Vec<u8>> = 
+    static ENCODE_BUFFER: std::cell::RefCell<Vec<u8>> =
         std::cell::RefCell::new(Vec::with_capacity(4 * 1024 * 1024));
 }
 
@@ -333,25 +337,25 @@ pub fn encode_block_parallel<T: EndianCodec + Sync + Clone>(
     endian: FileEndian,
 ) -> Vec<(usize, Vec<u8>)> {
     use rayon::prelude::*;
-    
-    let chunk_count = (values.len() + chunk_size - 1) / chunk_size;
-    
+
+    let chunk_count = values.len().div_ceil(chunk_size);
+
     (0..chunk_count)
         .into_par_iter()
         .map(|chunk_idx| {
             let start = chunk_idx * chunk_size;
             let end = (start + chunk_size).min(values.len());
             let chunk = &values[start..end];
-            
+
             ENCODE_BUFFER.with(|buf| {
                 let mut buffer = buf.borrow_mut();
                 buffer.clear();
                 buffer.resize(chunk.len() * T::BYTE_SIZE, 0);
-                
+
                 for (i, val) in chunk.iter().enumerate() {
                     val.to_bytes(&mut buffer, i * T::BYTE_SIZE, endian);
                 }
-                
+
                 (chunk_idx, buffer.clone())
             })
         })

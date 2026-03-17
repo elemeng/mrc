@@ -73,16 +73,10 @@ impl Mode {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct Int16Complex {
     pub real: i16,
     pub imag: i16,
-}
-
-impl Default for Int16Complex {
-    fn default() -> Self {
-        Self { real: 0, imag: 0 }
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -93,18 +87,15 @@ pub struct Float32Complex {
 
 impl Default for Float32Complex {
     fn default() -> Self {
-        Self { real: 0.0, imag: 0.0 }
+        Self {
+            real: 0.0,
+            imag: 0.0,
+        }
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct Packed4Bit(u8);
-
-impl Default for Packed4Bit {
-    fn default() -> Self {
-        Self(0)
-    }
-}
 
 impl Packed4Bit {
     /// Create a new Packed4Bit value
@@ -120,8 +111,6 @@ impl Packed4Bit {
         (self.0 >> 4) & 0x0F
     }
 }
-
-
 
 /// Trait for MRC voxel types with compile-time mode tracking.
 ///

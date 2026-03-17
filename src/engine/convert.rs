@@ -13,7 +13,7 @@
 //! - Float32 → Int16
 //! - Int16Complex ↔ Float32Complex
 
-use crate::mode::{Int16Complex, Float32Complex};
+use crate::mode::{Float32Complex, Int16Complex};
 
 /// Trait for converting between voxel types.
 ///
