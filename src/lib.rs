@@ -40,6 +40,10 @@ pub use engine::codec::EndianCodec;
 pub use engine::convert::Convert;
 pub use engine::pipeline::{ConversionPath, get_conversion_path, is_zero_copy};
 
+// Re-export SIMD batch conversions when available
+#[cfg(feature = "simd")]
+pub use engine::convert::{convert_i8_slice_to_f32, convert_i16_slice_to_f32, convert_u16_slice_to_f32, convert_u8_slice_to_f32};
+
 // Re-export SliceAccess trait for writers
 pub use engine::block::SliceAccess;
 

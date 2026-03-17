@@ -16,6 +16,10 @@
 //! - u8 → all types
 
 use crate::mode::{Float32Complex, Int16Complex, Packed4Bit};
+use alloc::vec::Vec;
+
+#[cfg(feature = "simd")]
+use super::simd;
 
 /// Trait for converting between voxel types.
 ///
@@ -32,6 +36,54 @@ impl Convert<i8> for f32 {
     fn convert(src: i8) -> Self {
         src as f32
     }
+}
+
+/// Batch conversion from i8 to f32 using SIMD when available.
+#[cfg(feature = "simd")]
+pub fn convert_i8_slice_to_f32(src: &[i8]) -> Vec<f32> {
+    simd::convert_i8_to_f32_simd(src)
+}
+
+/// Batch conversion from i8 to f32 (scalar fallback).
+#[cfg(not(feature = "simd"))]
+pub fn convert_i8_slice_to_f32(src: &[i8]) -> Vec<f32> {
+    src.iter().map(|&x| x as f32).collect()
+}
+
+/// Batch conversion from i16 to f32 using SIMD when available.
+#[cfg(feature = "simd")]
+pub fn convert_i16_slice_to_f32(src: &[i16]) -> Vec<f32> {
+    simd::convert_i16_to_f32_simd(src)
+}
+
+/// Batch conversion from i16 to f32 (scalar fallback).
+#[cfg(not(feature = "simd"))]
+pub fn convert_i16_slice_to_f32(src: &[i16]) -> Vec<f32> {
+    src.iter().map(|&x| x as f32).collect()
+}
+
+/// Batch conversion from u16 to f32 using SIMD when available.
+#[cfg(feature = "simd")]
+pub fn convert_u16_slice_to_f32(src: &[u16]) -> Vec<f32> {
+    simd::convert_u16_to_f32_simd(src)
+}
+
+/// Batch conversion from u16 to f32 (scalar fallback).
+#[cfg(not(feature = "simd"))]
+pub fn convert_u16_slice_to_f32(src: &[u16]) -> Vec<f32> {
+    src.iter().map(|&x| x as f32).collect()
+}
+
+/// Batch conversion from u8 to f32 using SIMD when available.
+#[cfg(feature = "simd")]
+pub fn convert_u8_slice_to_f32(src: &[u8]) -> Vec<f32> {
+    simd::convert_u8_to_f32_simd(src)
+}
+
+/// Batch conversion from u8 to f32 (scalar fallback).
+#[cfg(not(feature = "simd"))]
+pub fn convert_u8_slice_to_f32(src: &[u8]) -> Vec<f32> {
+    src.iter().map(|&x| x as f32).collect()
 }
 
 impl Convert<u8> for f32 {

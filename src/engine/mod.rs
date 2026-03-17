@@ -12,3 +12,6 @@ pub mod codec;
 pub mod convert;
 pub mod endian;
 pub mod pipeline;
+
+#[cfg(feature = "simd")]
+pub mod simd;
