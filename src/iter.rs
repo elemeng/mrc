@@ -1,6 +1,8 @@
 //! Iterator engine for reading MRC files
 
-use crate::{Error, VolumeShape, VoxelBlock};
+use crate::Error;
+use crate::engine::block::{VolumeShape, VoxelBlock};
+use crate::engine::codec::{EndianCodec, DefaultValue};
 
 pub struct SliceIter<'a, T> {
     reader: &'a crate::Reader,
@@ -26,7 +28,7 @@ impl<'a, T> SliceIter<'a, T> {
 
 impl<'a, T> Iterator for SliceIter<'a, T>
 where
-    T: Clone,
+    T: EndianCodec + Send + Copy + DefaultValue,
 {
     type Item = Result<VoxelBlock<T>, Error>;
 
@@ -35,12 +37,14 @@ where
             return None;
         }
 
-        let result = self.reader.read_voxels([0, 0, self.z], [self.nx, self.ny, 1]);
+        let result = self
+            .reader
+            .read_voxels([0, 0, self.z], [self.nx, self.ny, 1]);
         self.z += 1;
 
         match result {
             Ok(bytes) => {
-                let decoded = match self.reader.decode_block_generic(&bytes) {
+                let decoded = match self.reader.decode_block::<T>(&bytes) {
                     Ok(data) => data,
                     Err(e) => return Some(Err(e)),
                 };
@@ -88,7 +92,7 @@ impl<'a, T> SlabIter<'a, T> {
 
 impl<'a, T> Iterator for SlabIter<'a, T>
 where
-    T: Clone,
+    T: EndianCodec + Send + Copy + DefaultValue,
 {
     type Item = Result<VoxelBlock<T>, Error>;
 
@@ -100,12 +104,14 @@ where
         let remaining = self.nz - self.z;
         let size = self.slab_size.min(remaining);
 
-        let result = self.reader.read_voxels([0, 0, self.z], [self.nx, self.ny, size]);
+        let result = self
+            .reader
+            .read_voxels([0, 0, self.z], [self.nx, self.ny, size]);
         self.z += size;
 
         match result {
             Ok(bytes) => {
-                let decoded = match self.reader.decode_block_generic(&bytes) {
+                let decoded = match self.reader.decode_block::<T>(&bytes) {
                     Ok(data) => data,
                     Err(e) => return Some(Err(e)),
                 };
@@ -149,7 +155,7 @@ impl<'a, T> BlockIter<'a, T> {
 
 impl<'a, T> Iterator for BlockIter<'a, T>
 where
-    T: Clone,
+    T: EndianCodec + Send + Copy + DefaultValue,
 {
     type Item = Result<VoxelBlock<T>, Error>;
 
@@ -181,7 +187,7 @@ where
 
         match result {
             Ok(bytes) => {
-                let decoded = match self.reader.decode_block_generic(&bytes) {
+                let decoded = match self.reader.decode_block::<T>(&bytes) {
                     Ok(data) => data,
                     Err(e) => return Some(Err(e)),
                 };

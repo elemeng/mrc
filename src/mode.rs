@@ -71,6 +71,38 @@ impl Mode {
     pub fn is_float(&self) -> bool {
         matches!(self, Self::Float32 | Self::Float32Complex | Self::Float16)
     }
+
+    /// Returns a sequential index (0-7) for conversion matrix lookup.
+    /// This maps the 8 MRC modes to compact array indices.
+    #[inline]
+    pub fn index(&self) -> usize {
+        match self {
+            Self::Int8 => 0,
+            Self::Int16 => 1,
+            Self::Float32 => 2,
+            Self::Int16Complex => 3,
+            Self::Float32Complex => 4,
+            Self::Uint16 => 5,
+            Self::Float16 => 6,
+            Self::Packed4Bit => 7,
+        }
+    }
+
+    /// Returns the mode from a sequential index (inverse of index()).
+    #[inline]
+    pub fn from_index(idx: usize) -> Option<Self> {
+        match idx {
+            0 => Some(Self::Int8),
+            1 => Some(Self::Int16),
+            2 => Some(Self::Float32),
+            3 => Some(Self::Int16Complex),
+            4 => Some(Self::Float32Complex),
+            5 => Some(Self::Uint16),
+            6 => Some(Self::Float16),
+            7 => Some(Self::Packed4Bit),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -89,12 +121,9 @@ pub struct Float32Complex {
 pub struct Packed4Bit(u8);
 
 impl Packed4Bit {
-    pub fn decode(endian: crate::endian::FileEndian, bytes: &[u8]) -> Self {
-        Self(if endian == crate::endian::FileEndian::LittleEndian {
-            bytes[0]
-        } else {
-            bytes[0].reverse_bits()
-        })
+    /// Create a new Packed4Bit value
+    pub fn new(value: u8) -> Self {
+        Self(value)
     }
 
     pub fn first(&self) -> u8 {
@@ -104,37 +133,79 @@ impl Packed4Bit {
     pub fn second(&self) -> u8 {
         (self.0 >> 4) & 0x0F
     }
-
-    pub fn encode(self, endian: crate::endian::FileEndian, out: &mut [u8]) {
-        out[0] = if endian == crate::endian::FileEndian::LittleEndian {
-            self.0
-        } else {
-            self.0.reverse_bits()
-        };
-    }
 }
 
-use crate::decode::Decode;
-use crate::encode::Encode;
 
-impl Decode for Packed4Bit {
+
+/// Trait for MRC voxel types with compile-time mode tracking.
+///
+/// Each voxel type knows its MRC mode constant, enabling the conversion matrix
+/// to dispatch kernels without runtime branching.
+pub trait Voxel: Copy + Send + Sync + 'static {
+    /// The MRC mode constant for this voxel type
+    const MODE: Mode;
+    /// Size in bytes for one voxel value
+    const BYTE_SIZE: usize;
+}
+
+impl Voxel for i8 {
+    const MODE: Mode = Mode::Int8;
     const BYTE_SIZE: usize = 1;
+}
+
+impl Voxel for i16 {
+    const MODE: Mode = Mode::Int16;
+    const BYTE_SIZE: usize = 2;
+}
+
+impl Voxel for f32 {
+    const MODE: Mode = Mode::Float32;
+    const BYTE_SIZE: usize = 4;
+}
+
+impl Voxel for Int16Complex {
+    const MODE: Mode = Mode::Int16Complex;
+    const BYTE_SIZE: usize = 4;
+}
+
+impl Voxel for Float32Complex {
+    const MODE: Mode = Mode::Float32Complex;
+    const BYTE_SIZE: usize = 8;
+}
+
+impl Voxel for u16 {
+    const MODE: Mode = Mode::Uint16;
+    const BYTE_SIZE: usize = 2;
+}
+
+#[cfg(feature = "f16")]
+impl Voxel for f16 {
+    const MODE: Mode = Mode::Float16;
+    const BYTE_SIZE: usize = 2;
+}
+
+impl Voxel for Packed4Bit {
+    const MODE: Mode = Mode::Packed4Bit;
+    const BYTE_SIZE: usize = 1;
+}
+
+// Implement EndianCodec directly - this provides both decode and encode
+impl crate::engine::codec::EndianCodec for Packed4Bit {
+    const BYTE_SIZE: usize = 1;
+    
     #[inline]
-    fn decode(bytes: &[u8], offset: usize, endian: crate::endian::FileEndian) -> Self {
+    fn from_bytes(bytes: &[u8], offset: usize, endian: crate::FileEndian) -> Self {
         let byte = bytes[offset];
-        Self(if endian == crate::endian::FileEndian::LittleEndian {
+        Self(if endian == crate::FileEndian::LittleEndian {
             byte
         } else {
             byte.reverse_bits()
         })
     }
-}
-
-impl Encode for Packed4Bit {
-    const BYTE_SIZE: usize = 1;
+    
     #[inline]
-    fn encode(&self, bytes: &mut [u8], offset: usize, endian: crate::endian::FileEndian) {
-        bytes[offset] = if endian == crate::endian::FileEndian::LittleEndian {
+    fn to_bytes(&self, bytes: &mut [u8], offset: usize, endian: crate::FileEndian) {
+        bytes[offset] = if endian == crate::FileEndian::LittleEndian {
             self.0
         } else {
             self.0.reverse_bits()

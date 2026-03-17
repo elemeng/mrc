@@ -13,10 +13,10 @@ categories = ["science", "data-structures", "no-std", "memory-management"]
 readme = "README.md"
 
 [dependencies]
-bytemuck = { version = "1.15", default-features = false, features = ["derive"] }
 memmap2 = { version = "0.9", optional = true }
 thiserror = { version = "2.0.16", default-features = false }
 rayon = { version = "1.10", optional = true }
+once_cell = { version = "1.19", optional = true }
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
@@ -29,6 +29,6 @@ tempfile = "3.8"
 default = ["std", "mmap", "file", "f16", "parallel"]
 mmap = ["std", "dep:memmap2"]
 file = ["std"]
-std = []
+std = ["dep:once_cell"]
 f16 = []
 parallel = ["std", "dep:rayon"]

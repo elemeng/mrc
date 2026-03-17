@@ -204,6 +204,7 @@ header.rms = 0.1;        // RMS deviation
 | `Float32Complex` | 4     | `f32`     | 4×2   | Complex 32-bit        | Fourier transforms |
 | `Uint16`         | 6     | `u16`     | 2     | Unsigned 16-bit       | Segmentation       |
 | `Float16`        | 12    | `f16`[^1] | 2     | 16-bit float          | Memory efficiency  |
+| `Packed4Bit`     | 101   | `u8`      | 0.5   | Packed 4-bit          | Compression        |
 
 ### 🔄 Data Access Patterns
 

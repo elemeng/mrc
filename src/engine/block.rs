@@ -34,9 +34,16 @@ pub struct VoxelBlock<T> {
 
 impl<T> VoxelBlock<T> {
     pub fn new(offset: [usize; 3], shape: [usize; 3], data: Vec<T>) -> Self {
-        assert_eq!(data.len(), shape[0] * shape[1] * shape[2],
-                   "Data length must match block shape");
-        Self { offset, shape, data }
+        assert_eq!(
+            data.len(),
+            shape[0] * shape[1] * shape[2],
+            "Data length must match block shape"
+        );
+        Self {
+            offset,
+            shape,
+            data,
+        }
     }
 
     pub fn len(&self) -> usize {

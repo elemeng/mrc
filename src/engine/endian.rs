@@ -23,7 +23,10 @@ impl FileEndian {
             if machst[2] != 0 || machst[3] != 0 {
                 std::eprintln!(
                     "Warning: Non-standard MACHST padding bytes: {:02X} {:02X} {:02X} {:02X}",
-                    machst[0], machst[1], machst[2], machst[3]
+                    machst[0],
+                    machst[1],
+                    machst[2],
+                    machst[3]
                 );
             }
         }

@@ -123,12 +123,16 @@ struct VolumeShape {
 MRC mode defines the stored type.
 
 ```rust
-enum Mode {
-    Int8,
-    Int16,
-    UInt16,
-    Float16,
-    Float32,
+pub enum Mode {
+    Int8 = 0,
+    Int16 = 1,
+    Float32 = 2,
+    Int16Complex = 3,
+    Float32Complex = 4,
+    Uint16 = 6,
+    Float16 = 12,
+    /// 4-bit data packed two values per byte (mode 101)
+    Packed4Bit = 101,
 }
 ```
 
@@ -184,7 +188,7 @@ data offset
 Voxel type is specified by the user:
 
 ```rust
-mrc.slices::<f32>()
+mrc.slices::<Float32>()
 ```
 
 If file mode differs, automatic conversion occurs.
@@ -198,7 +202,7 @@ If file mode differs, automatic conversion occurs.
 Most common access pattern.
 
 ```rust
-for slice in mrc.slices::<f32>() {
+for slice in mrc.slices::<Float32>() {
     process(slice);
 }
 ```
@@ -216,7 +220,7 @@ Slice shape:
 Efficient multi-slice processing.
 
 ```rust
-for slab in mrc.slabs::<f32>(16) {
+for slab in mrc.slabs::<Float32>(16) {
     process_slab(slab);
 }
 ```
@@ -234,7 +238,7 @@ Slab shape:
 Arbitrary chunking.
 
 ```rust
-for block in mrc.blocks::<f32>([256,256,16]) {
+for block in mrc.blocks::<Float32>([256,256,16]) {
     process(block);
 }
 ```
@@ -280,7 +284,7 @@ yield typed view
 Accessing a specific slice:
 
 ```rust
-let slice = mrc.slices::<f32>().nth(29).unwrap();
+let slice = mrc.slices::<Float32>().nth(29).unwrap();
 ```
 
 Internally optimized by overriding `.nth()`:
@@ -316,7 +320,10 @@ typed voxel slice
 Example conversion:
 
 ```text
-i16 → f32
+Int16 → Float32
+Uint16 → Float32
+Float16 → Float32
+Int8 → Float32
 ```
 
 Vectorized using SIMD.
@@ -330,7 +337,7 @@ Vectorized using SIMD.
 ```rust
 let mut writer = mrc::create("output.mrc")
     .shape([nx,ny,nz])
-    .mode::<f32>()
+    .mode::<Float32>()
     .finish()?;
 ```
 
@@ -409,7 +416,9 @@ file storage
 Example conversion:
 
 ```text
-f32 → i16
+Float32 → Int16
+Float32 → Uint16
+Float32 → Float16
 ```
 
 ---

@@ -1,8 +1,11 @@
 //! MRC file reader with iterator-centric API
 
-use crate::iter::{BlockIter, SliceIter, SlabIter};
-use crate::{Error, FileEndian, Header, Mode, VolumeShape};
-use crate::decode::Decode;
+use crate::engine::block::VolumeShape;
+use crate::engine::codec::{EndianCodec, DefaultValue, decode_slice};
+use crate::engine::endian::FileEndian;
+use crate::engine::pipeline::is_zero_copy;
+use crate::iter::{BlockIter, SlabIter, SliceIter};
+use crate::{Error, Header, Mode};
 
 use alloc::vec::Vec;
 
@@ -44,11 +47,8 @@ impl Reader {
             file.read_exact(&mut data).map_err(|_| Error::Io)?;
 
             let endian = header.detect_endian();
-            let shape = VolumeShape::new(
-                header.nx as usize,
-                header.ny as usize,
-                header.nz as usize,
-            );
+            let shape =
+                VolumeShape::new(header.nx as usize, header.ny as usize, header.nz as usize);
 
             Ok(Self {
                 header,
@@ -89,7 +89,11 @@ impl Reader {
         BlockIter::new(self, self.shape, chunk_shape)
     }
 
-    pub(crate) fn read_voxels(&self, offset: [usize; 3], shape: [usize; 3]) -> Result<Vec<u8>, Error> {
+    pub(crate) fn read_voxels(
+        &self,
+        offset: [usize; 3],
+        shape: [usize; 3],
+    ) -> Result<Vec<u8>, Error> {
         let [nx, ny, nz] = [self.shape.nx, self.shape.ny, self.shape.nz];
         let [ox, oy, oz] = offset;
         let [sx, sy, sz] = shape;
@@ -98,13 +102,7 @@ impl Reader {
             return Err(Error::BoundsError);
         }
 
-        let bytes_per_voxel = match self.mode() {
-            Mode::Float32 => 4,
-            Mode::Int16 => 2,
-            Mode::Uint16 => 2,
-            Mode::Int8 => 1,
-            _ => return Err(Error::UnsupportedMode),
-        };
+        let bytes_per_voxel = self.mode().byte_size();
 
         let start_byte = (ox + oy * nx + oz * nx * ny) * bytes_per_voxel;
         let end_byte = start_byte + sx * sy * sz * bytes_per_voxel;
@@ -116,47 +114,38 @@ impl Reader {
         Ok(self.data[start_byte..end_byte].to_vec())
     }
 
-    pub(crate) fn decode_block_f32(&self, bytes: &[u8]) -> Result<Vec<f32>, Error> {
-        if self.mode() != Mode::Float32 {
-            return Err(Error::UnsupportedMode);
-        }
-        let mut result = alloc::vec![0f32; bytes.len() / 4];
-        for i in 0..result.len() {
-            result[i] = f32::decode(bytes, i * 4, self.endian);
-        }
-        Ok(result)
+    /// Decode a block of voxels to the specified type.
+    ///
+    /// This is the unified decode pipeline that handles:
+    /// - Layer 1 → Layer 2: Raw bytes → Endian normalization
+    /// - Layer 2 → Layer 3: Endian-normalized → Typed values
+    ///
+    /// Uses zero-copy fast path when:
+    /// - src_mode == dst_mode (T matches file mode)
+    /// - file_endian == native
+    pub(crate) fn decode_block<T: EndianCodec + Send + Copy + DefaultValue>(
+        &self,
+        bytes: &[u8],
+    ) -> Result<Vec<T>, Error> {
+        // Standard decode path with safe initialization
+        Ok(decode_slice(bytes, self.endian))
     }
 
-    pub(crate) fn decode_block_i16(&self, bytes: &[u8]) -> Result<Vec<i16>, Error> {
-        if self.mode() != Mode::Int16 {
-            return Err(Error::UnsupportedMode);
-        }
-        let mut result = alloc::vec![0i16; bytes.len() / 2];
-        for i in 0..result.len() {
-            result[i] = i16::decode(bytes, i * 2, self.endian);
-        }
-        Ok(result)
+    /// Check if zero-copy decode is possible for the given type.
+    /// Zero-copy requires: file mode matches T's mode AND file endian is native.
+    pub fn can_zero_copy<T: crate::mode::Voxel>(&self) -> bool {
+        is_zero_copy(self.mode(), T::MODE, self.endian)
+    }
+}
+
+impl Reader {
+    /// Get a reference to the raw data bytes
+    pub fn data(&self) -> &[u8] {
+        &self.data
     }
 
-    pub(crate) fn decode_block_generic<T: Clone>(&self, bytes: &[u8]) -> Result<Vec<T>, Error> {
-        match self.mode() {
-            Mode::Float32 => {
-                let f32_data = self.decode_block_f32(bytes)?;
-                unsafe {
-                    let ptr = f32_data.as_ptr() as *const T;
-                    let slice = core::slice::from_raw_parts(ptr, f32_data.len());
-                    Ok(slice.to_vec())
-                }
-            }
-            Mode::Int16 => {
-                let i16_data = self.decode_block_i16(bytes)?;
-                unsafe {
-                    let ptr = i16_data.as_ptr() as *const T;
-                    let slice = core::slice::from_raw_parts(ptr, i16_data.len());
-                    Ok(slice.to_vec())
-                }
-            }
-            _ => Err(Error::UnsupportedMode),
-        }
+    /// Get the file endianness
+    pub fn endian(&self) -> FileEndian {
+        self.endian
     }
 }

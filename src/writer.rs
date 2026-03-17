@@ -1,12 +1,12 @@
 //! MRC file writer with block-based API
 
-use crate::{block::VoxelBlock, Error, FileEndian, Header, Mode, VolumeShape};
-use crate::encode::Encode;
+use crate::engine::block::{VolumeShape, VoxelBlock};
+use crate::engine::codec::{encode_block_parallel, encode_slice};
+use crate::engine::endian::FileEndian;
+use crate::{Error, Header, Mode};
 
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
-
-#[cfg(feature = "mmap")]
 
 pub struct WriterBuilder {
     path: String,
@@ -54,7 +54,7 @@ pub struct Writer {
     shape: VolumeShape,
     data: Vec<u8>,
     #[cfg(feature = "parallel")]
-    parallel_writes: bool,  // Track if parallel writes were used
+    parallel_writes: bool,
 }
 
 impl Writer {
@@ -81,22 +81,13 @@ impl Writer {
 
             let data_offset = header.data_offset() as u64;
             let mode = Mode::from_i32(header.mode).ok_or(Error::UnsupportedMode)?;
-            let bytes_per_voxel = match mode {
-                Mode::Float32 => 4,
-                Mode::Int16 => 2,
-                Mode::Uint16 => 2,
-                Mode::Int8 => 1,
-                _ => return Err(Error::UnsupportedMode),
-            };
+            let bytes_per_voxel = mode.byte_size();
 
             let data_size = header.data_size();
             let data = alloc::vec![0u8; data_size];
 
-            let shape = VolumeShape::new(
-                header.nx as usize,
-                header.ny as usize,
-                header.nz as usize,
-            );
+            let shape =
+                VolumeShape::new(header.nx as usize, header.ny as usize, header.nz as usize);
 
             Ok(Self {
                 file,
@@ -122,6 +113,10 @@ impl Writer {
         self.shape
     }
 
+    /// Write a block of f32 voxels to the file.
+    ///
+    /// This is the unified encode pipeline that handles:
+    /// - Typed values → Endian encoding → Raw bytes
     pub fn write_block(&mut self, block: &VoxelBlock<f32>) -> Result<(), Error> {
         let [nx, ny, nz] = [self.shape.nx, self.shape.ny, self.shape.nz];
         let [ox, oy, oz] = block.offset;
@@ -138,10 +133,12 @@ impl Writer {
             return Err(Error::BoundsError);
         }
 
-        // Encode and write to buffer
-        for (i, &val) in block.data.iter().enumerate() {
-            val.encode(&mut self.data, start_offset + i * 4, FileEndian::LittleEndian);
-        }
+        // Encode slice to bytes
+        encode_slice(
+            &block.data,
+            &mut self.data[start_offset..end_offset],
+            FileEndian::LittleEndian,
+        );
 
         Ok(())
     }
@@ -165,10 +162,9 @@ impl Writer {
     /// Write a block with parallel encoding and file I/O
     #[cfg(all(feature = "parallel", feature = "std"))]
     pub fn write_block_parallel(&mut self, block: &VoxelBlock<f32>) -> Result<(), Error> {
-        use crate::encode::encode_block_parallel;
         use rayon::prelude::*;
         use std::os::unix::fs::FileExt;
-        
+
         let [nx, ny, nz] = [self.shape.nx, self.shape.ny, self.shape.nz];
         let [ox, oy, oz] = block.offset;
         let [sx, sy, sz] = block.shape;
@@ -179,19 +175,20 @@ impl Writer {
 
         let chunk_size = 1024 * 1024; // 1M voxels per chunk
         let base_offset = ((ox + oy * nx + oz * nx * ny) * self.bytes_per_voxel) as u64;
-        
+
         // Mark that parallel writes were used
         self.parallel_writes = true;
-        
+
         // Encode in parallel and write to file
-        let encoded_chunks = encode_block_parallel(&block.data, chunk_size, FileEndian::LittleEndian);
-        
+        let encoded_chunks =
+            encode_block_parallel(&block.data, chunk_size, FileEndian::LittleEndian);
+
         // Write chunks in parallel using pwrite
         encoded_chunks.par_iter().for_each(|(chunk_idx, encoded)| {
             let offset = base_offset + (*chunk_idx * chunk_size * self.bytes_per_voxel) as u64;
             self.file.write_all_at(encoded, offset).unwrap();
         });
-        
+
         Ok(())
     }
 
@@ -209,7 +206,7 @@ impl Writer {
                 self.file.write_all(&self.data).map_err(|_| Error::Io)?;
             }
         }
-        
+
         #[cfg(not(feature = "parallel"))]
         {
             self.file
@@ -262,23 +259,17 @@ impl MmapWriter {
         header.encode_to_bytes(&mut header_bytes);
         file.write_all(&header_bytes).map_err(|_| Error::Io)?;
 
-        let mmap = unsafe { memmap2::MmapOptions::new().map_mut(&file).map_err(|_| Error::Mmap)? };
+        let mmap = unsafe {
+            memmap2::MmapOptions::new()
+                .map_mut(&file)
+                .map_err(|_| Error::Mmap)?
+        };
 
         let data_offset = header.data_offset();
         let mode = Mode::from_i32(header.mode).ok_or(Error::UnsupportedMode)?;
-        let bytes_per_voxel = match mode {
-            Mode::Float32 => 4,
-            Mode::Int16 => 2,
-            Mode::Uint16 => 2,
-            Mode::Int8 => 1,
-            _ => return Err(Error::UnsupportedMode),
-        };
+        let bytes_per_voxel = mode.byte_size();
 
-        let shape = VolumeShape::new(
-            header.nx as usize,
-            header.ny as usize,
-            header.nz as usize,
-        );
+        let shape = VolumeShape::new(header.nx as usize, header.ny as usize, header.nz as usize);
 
         Ok(Self {
             mmap,
@@ -302,30 +293,27 @@ impl MmapWriter {
             return Err(Error::BoundsError);
         }
 
-        let start_offset = (ox + oy * nx + oz * nx * ny) * self.bytes_per_voxel;
+        let start_offset = self.data_offset + (ox + oy * nx + oz * nx * ny) * self.bytes_per_voxel;
         let end_offset = start_offset + sx * sy * sz * self.bytes_per_voxel;
 
         if end_offset > self.mmap.len() {
             return Err(Error::BoundsError);
         }
 
-        let data_bytes = unsafe {
-            core::slice::from_raw_parts(
-                block.data.as_ptr() as *const u8,
-                block.data.len() * 4,
-            )
-        };
-
-        self.mmap[start_offset..end_offset].copy_from_slice(data_bytes);
+        // Encode slice directly to mmap
+        encode_slice(
+            &block.data,
+            &mut self.mmap[start_offset..end_offset],
+            FileEndian::LittleEndian,
+        );
         Ok(())
     }
 
     /// Write a block with parallel encoding to memory-mapped region
-    /// This is extremely fast as it requires no syscalls
     #[cfg(all(feature = "parallel", feature = "std"))]
     pub fn write_block_parallel(&mut self, block: &VoxelBlock<f32>) -> Result<(), Error> {
         use rayon::prelude::*;
-        
+
         let [nx, ny, nz] = [self.shape.nx, self.shape.ny, self.shape.nz];
         let [ox, oy, oz] = block.offset;
         let [sx, sy, sz] = block.shape;
@@ -336,31 +324,26 @@ impl MmapWriter {
 
         let chunk_size = 1024 * 1024; // 1M voxels per chunk
         let base_offset = self.data_offset + (ox + oy * nx + oz * nx * ny) * self.bytes_per_voxel;
-        
+
         // Get raw pointer as usize for parallel writes
-        // This is safe because each thread writes to a different region
         let mmap_ptr = self.mmap.as_mut_ptr() as usize;
-        
+
         // Encode and write to mmap in parallel
-        block.data
+        block
+            .data
             .par_chunks(chunk_size)
             .enumerate()
             .for_each(|(chunk_idx, chunk)| {
                 let start_offset = base_offset + chunk_idx * chunk_size * self.bytes_per_voxel;
                 let ptr = (mmap_ptr + start_offset) as *mut u8;
                 let dst = unsafe {
-                    core::slice::from_raw_parts_mut(
-                        ptr,
-                        chunk.len() * self.bytes_per_voxel
-                    )
+                    core::slice::from_raw_parts_mut(ptr, chunk.len() * self.bytes_per_voxel)
                 };
-                
+
                 // Encode chunk directly to mmap
-                for (i, &val) in chunk.iter().enumerate() {
-                    val.encode(dst, i * 4, FileEndian::LittleEndian);
-                }
+                encode_slice(chunk, dst, FileEndian::LittleEndian);
             });
-        
+
         Ok(())
     }
 

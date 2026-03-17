@@ -1,3 +1,5 @@
+use crate::Mode;
+
 #[repr(C, align(4))]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Header {
@@ -141,16 +143,15 @@ impl Header {
     /// Returns zero for invalid mode or zero dimensions.
     pub fn data_size(&self) -> usize {
         let n = (self.nx as usize) * (self.ny as usize) * (self.nz as usize);
-        match self.mode {
-            0 => n,               // 8-bit signed integer
-            1 => n * 2,           // 16-bit signed integer
-            2 => n * 4,           // 32-bit float
-            3 => n * 4,           // Complex 16-bit (2 bytes real + 2 bytes imaginary)
-            4 => n * 8,           // Complex 32-bit (4 bytes real + 4 bytes imaginary)
-            6 => n * 2,           // 16-bit unsigned integer
-            12 => n * 2,          // 16-bit float (IEEE-754 half)
-            101 => n.div_ceil(2), // 4-bit packed data (two voxels stored per byte)
-            _ => 0,               // unknown/unsupported
+        match Mode::from_i32(self.mode) {
+            Some(mode) => {
+                let byte_size = mode.byte_size();
+                match mode {
+                    Mode::Packed4Bit => n.div_ceil(2), // two voxels per byte
+                    _ => n * byte_size,
+                }
+            }
+            None => 0, // unknown/unsupported
         }
     }
 
@@ -190,7 +191,9 @@ impl Header {
             return true;
         }
         // Accept legacy variants: "MAP\0" or "MAPI"
-        if &self.map[..3] == b"MAP" && (self.map[3] == b' ' || self.map[3] == 0 || self.map[3] == b'I') {
+        if &self.map[..3] == b"MAP"
+            && (self.map[3] == b' ' || self.map[3] == 0 || self.map[3] == b'I')
+        {
             return true;
         }
         // Accept all zeros (uninitialized, common in some generated files)
@@ -239,7 +242,7 @@ impl Header {
     ///
     /// This value is a numeric i32 and respects the file's endianness.
     pub fn nversion(&self) -> i32 {
-        use crate::decode::Decode;
+        use crate::engine::codec::EndianCodec;
         let file_endian = self.detect_endian();
         i32::decode(&self.extra[12..16], 0, file_endian)
     }
@@ -249,27 +252,27 @@ impl Header {
     ///
     /// This value is a numeric i32 and respects the file's endianness.
     pub fn set_nversion(&mut self, value: i32) {
-        use crate::encode::Encode;
+        use crate::engine::codec::EndianCodec;
         let file_endian = self.detect_endian();
         value.encode(&mut self.extra[12..16], 0, file_endian);
     }
 
     #[inline]
     /// Detect the file endianness from the MACHST machine stamp
-    pub fn detect_endian(&self) -> crate::endian::FileEndian {
-        crate::endian::FileEndian::from_machst(&self.machst)
+    pub fn detect_endian(&self) -> crate::FileEndian {
+        crate::FileEndian::from_machst(&self.machst)
     }
 
     #[inline]
     /// Check if the file is little-endian
     pub fn is_little_endian(&self) -> bool {
-        self.detect_endian() == crate::endian::FileEndian::LittleEndian
+        self.detect_endian() == crate::FileEndian::LittleEndian
     }
 
     #[inline]
     /// Check if the file is big-endian
     pub fn is_big_endian(&self) -> bool {
-        self.detect_endian() == crate::endian::FileEndian::BigEndian
+        self.detect_endian() == crate::FileEndian::BigEndian
     }
 
     #[inline]
@@ -282,7 +285,7 @@ impl Header {
     /// # Note
     /// Per crate policy, new MRC files are always written in little-endian format.
     /// This method is not intended for creating big-endian files from scratch.
-    pub fn set_file_endian(&mut self, endian: crate::endian::FileEndian) {
+    pub fn set_file_endian(&mut self, endian: crate::FileEndian) {
         self.machst = endian.to_machst();
     }
 
@@ -294,8 +297,8 @@ impl Header {
     /// # Safety
     /// The input slice must be exactly 1024 bytes.
     pub fn decode_from_bytes(bytes: &[u8; 1024]) -> Self {
-        use crate::decode::Decode;
-        use crate::endian::FileEndian;
+        use crate::engine::codec::EndianCodec;
+        use crate::engine::endian::FileEndian;
 
         // Detect endianness from MACHST (bytes 212-215)
         let machst = [bytes[212], bytes[213], bytes[214], bytes[215]];
@@ -371,8 +374,7 @@ impl Header {
     /// # Safety
     /// The output slice must be exactly 1024 bytes.
     pub fn encode_to_bytes(&self, out: &mut [u8; 1024]) {
-        use crate::encode::Encode;
-        
+        use crate::engine::codec::EndianCodec;
 
         let file_endian = self.detect_endian();
 

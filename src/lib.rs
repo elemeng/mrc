@@ -1,6 +1,15 @@
 //! MRC file format library for cryo-EM and tomography
 //!
 //! Provides iterator-centric reading and voxel-block writing with SIMD acceleration.
+//!
+//! # Architecture
+//!
+//! This crate implements a unified encoding/decoding pipeline:
+//! ```text
+//! Raw Bytes → Endian Normalization → Typed Values → Type Conversion
+//! ```
+//!
+//! With zero-copy fast paths whenever possible.
 
 #![no_std]
 #![cfg_attr(feature = "f16", feature(f16))]
@@ -11,25 +20,31 @@ extern crate alloc;
 #[cfg(feature = "std")]
 extern crate std;
 
+mod error;
 mod header;
-mod mode;
-mod block;
-mod decode;
-mod encode;
 mod iter;
+mod mode;
 mod reader;
 mod writer;
-mod error;
-mod endian;
-mod simd;
 
-pub use header::{Header, ExtHeader, ExtHeaderMut};
-pub use mode::{Mode, Int16Complex, Float32Complex, Packed4Bit};
-pub use block::{VolumeShape, VoxelBlock};
+mod engine;
+
+// Re-export core types
+pub use engine::block::{VolumeShape, VoxelBlock};
+pub use engine::endian::FileEndian;
+
+// Re-export codec trait for advanced users who need custom voxel types
+pub use engine::codec::EndianCodec;
+
+// Re-export conversion utilities
+pub use engine::convert::Convert;
+pub use engine::pipeline::{ConversionPath, get_conversion_path, is_zero_copy};
+
+pub use error::Error;
+pub use header::{ExtHeader, ExtHeaderMut, Header};
+pub use mode::{Float32Complex, Int16Complex, Mode, Packed4Bit, Voxel};
 pub use reader::Reader;
 pub use writer::{Writer, WriterBuilder};
-pub use error::Error;
-pub use endian::FileEndian;
 
 #[cfg(feature = "mmap")]
 pub use writer::MmapWriter;
