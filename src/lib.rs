@@ -42,7 +42,7 @@ pub use engine::pipeline::{ConversionPath, get_conversion_path, is_zero_copy};
 
 // Re-export SIMD batch conversions when available
 #[cfg(feature = "simd")]
-pub use engine::convert::{convert_i8_slice_to_f32, convert_i16_slice_to_f32, convert_u16_slice_to_f32, convert_u8_slice_to_f32};
+pub use engine::convert::{convert_i8_slice_to_f32, convert_i16_slice_to_f32, convert_u16_slice_to_f32, convert_u8_slice_to_f32, try_simd_convert};
 
 // Re-export f16 batch conversions when f16 feature is enabled
 #[cfg(feature = "f16")]

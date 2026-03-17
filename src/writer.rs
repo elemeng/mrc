@@ -151,10 +151,24 @@ impl Writer {
     /// ```
     pub fn write_converted<S, D>(&mut self, block: &VoxelBlock<S>) -> Result<(), Error>
     where
-        S: crate::engine::codec::EndianCodec + Copy,
-        D: Convert<S> + crate::engine::codec::EndianCodec + Copy + Default + crate::mode::Voxel,
+        S: crate::engine::codec::EndianCodec + Copy + 'static,
+        D: Convert<S> + crate::engine::codec::EndianCodec + Copy + Default + crate::mode::Voxel + 'static,
     {
-        // Convert data from S to D
+        // Try SIMD batch conversion first
+        #[cfg(feature = "simd")]
+        {
+            use crate::engine::convert::try_simd_convert_reverse;
+            if let Some(converted_data) = try_simd_convert_reverse::<S, D>(&block.data) {
+                let converted_block = VoxelBlock {
+                    offset: block.offset,
+                    shape: block.shape,
+                    data: converted_data,
+                };
+                return self.write_block::<D>(&converted_block);
+            }
+        }
+
+        // Fall back to scalar conversion
         let converted_data: Vec<D> = block
             .data
             .iter()

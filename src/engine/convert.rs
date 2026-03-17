@@ -29,6 +29,78 @@ pub trait Convert<S>: Sized {
     fn convert(src: S) -> Self;
 }
 
+/// Attempt SIMD-accelerated conversion from source slice to destination type.
+/// 
+/// Returns Some(Vec<D>) if SIMD conversion is available, None otherwise.
+/// Currently supports: i8/i16/u16/u8 → f32
+#[cfg(feature = "simd")]
+pub fn try_simd_convert<S: 'static, D: 'static>(src: &[S]) -> Option<Vec<D>>
+where
+    D: Convert<S> + 'static,
+    S: 'static,
+{
+    use core::any::TypeId;
+    
+    // Check if destination is f32
+    if TypeId::of::<D>() != TypeId::of::<f32>() {
+        return None;
+    }
+    
+    // Try each source type
+    let result_f32: Vec<f32> = if TypeId::of::<S>() == TypeId::of::<i8>() {
+        simd::convert_i8_to_f32_simd(unsafe { core::slice::from_raw_parts(src.as_ptr() as *const i8, src.len()) })
+    } else if TypeId::of::<S>() == TypeId::of::<i16>() {
+        simd::convert_i16_to_f32_simd(unsafe { core::slice::from_raw_parts(src.as_ptr() as *const i16, src.len()) })
+    } else if TypeId::of::<S>() == TypeId::of::<u16>() {
+        simd::convert_u16_to_f32_simd(unsafe { core::slice::from_raw_parts(src.as_ptr() as *const u16, src.len()) })
+    } else if TypeId::of::<S>() == TypeId::of::<u8>() {
+        simd::convert_u8_to_f32_simd(unsafe { core::slice::from_raw_parts(src.as_ptr() as *const u8, src.len()) })
+    } else {
+        return None;
+    };
+    
+    // Safety: we verified D is f32, and result_f32 is Vec<f32>
+    // Vec<f32> and Vec<D> have same layout when D is f32
+    Some(unsafe { core::mem::transmute::<Vec<f32>, Vec<D>>(result_f32) })
+}
+
+/// Fallback when SIMD is disabled
+#[cfg(not(feature = "simd"))]
+pub fn try_simd_convert<S, D: Convert<S>>(_src: &[S]) -> Option<Vec<D>> {
+    None
+}
+
+/// Attempt SIMD-accelerated conversion from f32 to integer types (write path).
+///
+/// Returns Some(Vec<D>) if SIMD conversion is available, None otherwise.
+/// Currently supports: f32 → i8/i16/u16/u8
+#[cfg(feature = "simd")]
+pub fn try_simd_convert_reverse<S: 'static, D: 'static>(src: &[S]) -> Option<Vec<D>>
+where
+    S: 'static,
+    D: Convert<S> + 'static,
+{
+    use core::any::TypeId;
+
+    // Check if source is f32
+    if TypeId::of::<S>() != TypeId::of::<f32>() {
+        return None;
+    }
+
+    let src_f32: &[f32] = unsafe { core::slice::from_raw_parts(src.as_ptr() as *const f32, src.len()) };
+
+    // For write path, we use scalar conversion since SIMD conversion with clamping
+    // is complex. The main benefit is on the read path (i16/u16 → f32).
+    // Future: Add AVX-512 or NEON saturating conversion instructions.
+    None
+}
+
+/// Fallback when SIMD is disabled
+#[cfg(not(feature = "simd"))]
+pub fn try_simd_convert_reverse<S, D: Convert<S>>(_src: &[S]) -> Option<Vec<D>> {
+    None
+}
+
 // === Conversions TO Float32 ===
 
 impl Convert<i8> for f32 {

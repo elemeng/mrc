@@ -193,20 +193,30 @@ impl Reader {
     /// Decode and convert bytes to destination type D through intermediate type S.
     ///
     /// Pipeline: bytes → decode<S>() → convert → Vec<D>
+    /// Uses SIMD batch conversions when available and applicable.
     pub(crate) fn decode_and_convert<S, D>(&self, bytes: &[u8]) -> Result<Vec<D>, Error>
     where
-        S: EndianCodec + Send + Copy + Default,
-        D: Convert<S>,
+        S: EndianCodec + Send + Copy + Default + 'static,
+        D: Convert<S> + 'static,
     {
         // First decode to source type
         let src_data = decode_slice::<S>(bytes, self.endian);
-        
-        // Then convert to destination type
+
+        // Try SIMD batch conversion for common f32 destinations
+        #[cfg(feature = "simd")]
+        {
+            use crate::engine::convert::try_simd_convert;
+            if let Some(result) = try_simd_convert::<S, D>(&src_data) {
+                return Ok(result);
+            }
+        }
+
+        // Fall back to scalar conversion
         let mut dst_data = Vec::with_capacity(src_data.len());
         for src in src_data {
             dst_data.push(D::convert(src));
         }
-        
+
         Ok(dst_data)
     }
 
