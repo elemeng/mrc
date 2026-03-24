@@ -416,3 +416,221 @@ impl Convert<u8> for u8 {
         src
     }
 }
+
+// =============================================================================
+// Tests
+// =============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloc::vec;
+
+    // Test the Convert trait implementations
+    #[test]
+    fn test_convert_i8_to_f32_scalar() {
+        assert_eq!(f32::convert(0i8), 0.0f32);
+        assert_eq!(f32::convert(127i8), 127.0f32);
+        assert_eq!(f32::convert(-128i8), -128.0f32);
+        assert_eq!(f32::convert(42i8), 42.0f32);
+    }
+
+    #[test]
+    fn test_convert_i16_to_f32_scalar() {
+        assert_eq!(f32::convert(0i16), 0.0f32);
+        assert_eq!(f32::convert(32767i16), 32767.0f32);
+        assert_eq!(f32::convert(-32768i16), -32768.0f32);
+        assert_eq!(f32::convert(1000i16), 1000.0f32);
+    }
+
+    #[test]
+    fn test_convert_u16_to_f32_scalar() {
+        assert_eq!(f32::convert(0u16), 0.0f32);
+        assert_eq!(f32::convert(65535u16), 65535.0f32);
+        assert_eq!(f32::convert(1000u16), 1000.0f32);
+    }
+
+    #[test]
+    fn test_convert_u8_to_f32_scalar() {
+        assert_eq!(f32::convert(0u8), 0.0f32);
+        assert_eq!(f32::convert(255u8), 255.0f32);
+        assert_eq!(f32::convert(128u8), 128.0f32);
+    }
+
+    // Test batch conversions
+    #[test]
+    fn test_convert_i8_slice_to_f32() {
+        let input: Vec<i8> = vec![-128, -64, 0, 64, 127];
+        let output = convert_i8_slice_to_f32(&input);
+        
+        assert_eq!(output.len(), input.len());
+        for (src, dst) in input.iter().zip(output.iter()) {
+            assert_eq!(*dst, *src as f32);
+        }
+    }
+
+    #[test]
+    fn test_convert_i16_slice_to_f32() {
+        let input: Vec<i16> = vec![-32768, -1000, 0, 1000, 32767];
+        let output = convert_i16_slice_to_f32(&input);
+        
+        assert_eq!(output.len(), input.len());
+        for (src, dst) in input.iter().zip(output.iter()) {
+            assert_eq!(*dst, *src as f32);
+        }
+    }
+
+    #[test]
+    fn test_convert_u16_slice_to_f32() {
+        let input: Vec<u16> = vec![0, 1000, 32767, 65535];
+        let output = convert_u16_slice_to_f32(&input);
+        
+        assert_eq!(output.len(), input.len());
+        for (src, dst) in input.iter().zip(output.iter()) {
+            assert_eq!(*dst, *src as f32);
+        }
+    }
+
+    #[test]
+    fn test_convert_u8_slice_to_f32() {
+        let input: Vec<u8> = vec![0, 64, 128, 192, 255];
+        let output = convert_u8_slice_to_f32(&input);
+        
+        assert_eq!(output.len(), input.len());
+        for (src, dst) in input.iter().zip(output.iter()) {
+            assert_eq!(*dst, *src as f32);
+        }
+    }
+
+    // Test edge cases
+    #[test]
+    fn test_convert_empty_slice() {
+        let input: Vec<i8> = vec![];
+        let output = convert_i8_slice_to_f32(&input);
+        assert!(output.is_empty());
+    }
+
+    #[test]
+    fn test_convert_single_element() {
+        let input: Vec<i16> = vec![42];
+        let output = convert_i16_slice_to_f32(&input);
+        assert_eq!(output.len(), 1);
+        assert_eq!(output[0], 42.0f32);
+    }
+
+    #[test]
+    fn test_convert_large_slice() {
+        let input: Vec<i16> = (0..10000).map(|i| (i % 65536) as i16).collect();
+        let output = convert_i16_slice_to_f32(&input);
+        
+        assert_eq!(output.len(), input.len());
+        for (src, dst) in input.iter().zip(output.iter()) {
+            assert_eq!(*dst, *src as f32);
+        }
+    }
+
+    // Test try_simd_convert function directly
+    #[test]
+    #[cfg(feature = "simd")]
+    fn test_try_simd_convert_i8_to_f32() {
+        let input: Vec<i8> = (-128..=127).collect();
+        let result = try_simd_convert::<i8, f32>(&input);
+        
+        assert!(result.is_some());
+        let output = result.unwrap();
+        assert_eq!(output.len(), input.len());
+        for (src, dst) in input.iter().zip(output.iter()) {
+            assert_eq!(*dst, *src as f32);
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "simd")]
+    fn test_try_simd_convert_i16_to_f32() {
+        let input: Vec<i16> = (-10000..10000).collect();
+        let result = try_simd_convert::<i16, f32>(&input);
+        
+        assert!(result.is_some());
+        let output = result.unwrap();
+        assert_eq!(output.len(), input.len());
+        for (src, dst) in input.iter().zip(output.iter()) {
+            assert_eq!(*dst, *src as f32);
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "simd")]
+    fn test_try_simd_convert_u16_to_f32() {
+        let input: Vec<u16> = (0..20000).collect();
+        let result = try_simd_convert::<u16, f32>(&input);
+        
+        assert!(result.is_some());
+        let output = result.unwrap();
+        assert_eq!(output.len(), input.len());
+        for (src, dst) in input.iter().zip(output.iter()) {
+            assert_eq!(*dst, *src as f32);
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "simd")]
+    fn test_try_simd_convert_u8_to_f32() {
+        let input: Vec<u8> = (0..=255).collect();
+        let result = try_simd_convert::<u8, f32>(&input);
+        
+        assert!(result.is_some());
+        let output = result.unwrap();
+        assert_eq!(output.len(), input.len());
+        for (src, dst) in input.iter().zip(output.iter()) {
+            assert_eq!(*dst, *src as f32);
+        }
+    }
+
+    // Test that SIMD and scalar paths produce identical results
+    #[test]
+    #[cfg(feature = "simd")]
+    fn test_simd_scalar_equivalence_i8() {
+        let input: Vec<i8> = (-128..=127).collect();
+        
+        // SIMD path
+        let simd_result = try_simd_convert::<i8, f32>(&input).unwrap();
+        
+        // Scalar path (via Convert trait)
+        let scalar_result: Vec<f32> = input.iter().map(|&x| f32::convert(x)).collect();
+        
+        assert_eq!(simd_result, scalar_result);
+    }
+
+    #[test]
+    #[cfg(feature = "simd")]
+    fn test_simd_scalar_equivalence_i16() {
+        let input: Vec<i16> = (-32768..=-31768).collect(); // Full i16 range would be slow
+        
+        let simd_result = try_simd_convert::<i16, f32>(&input).unwrap();
+        let scalar_result: Vec<f32> = input.iter().map(|&x| f32::convert(x)).collect();
+        
+        assert_eq!(simd_result, scalar_result);
+    }
+
+    #[test]
+    #[cfg(feature = "simd")]
+    fn test_simd_scalar_equivalence_u16() {
+        let input: Vec<u16> = (0..10000).collect();
+        
+        let simd_result = try_simd_convert::<u16, f32>(&input).unwrap();
+        let scalar_result: Vec<f32> = input.iter().map(|&x| f32::convert(x)).collect();
+        
+        assert_eq!(simd_result, scalar_result);
+    }
+
+    #[test]
+    #[cfg(feature = "simd")]
+    fn test_simd_scalar_equivalence_u8() {
+        let input: Vec<u8> = (0..=255).collect();
+        
+        let simd_result = try_simd_convert::<u8, f32>(&input).unwrap();
+        let scalar_result: Vec<f32> = input.iter().map(|&x| f32::convert(x)).collect();
+        
+        assert_eq!(simd_result, scalar_result);
+    }
+}
