@@ -1,10 +1,6 @@
 # 🧬 mrc
 
-[![Rust](https://img.shields.io/badge/Rust-1.85+-orange.svg)](https://rust-lang.org)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Crates.io](https://img.shields.io/crates/v/mrc.svg)](https://crates.io/crates/mrc)
-[![Docs.rs](https://img.shields.io/docsrs/mrc.svg)](https://docs.rs/mrc)
-[![Build Status](https://img.shields.io/github/actions/workflow/status/your-org/mrc/ci.yml?branch=main)](https://github.com/elemeng/mrc/actions)
+[![Rust](https://img.shields.io/badge/Rust-1.85+-orange.svg)](https://rust-lang.org) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) [![Crates.io](https://img.shields.io/crates/v/mrc.svg)](https://crates.io/crates/mrc) [![Docs.rs](https://img.shields.io/docsrs/mrc.svg)](https://docs.rs/mrc)
 
 > **Zero-copy, zero-allocation, no_std-friendly MRC-2014 file format reader/writer for Rust**
 
@@ -14,7 +10,8 @@ A high-performance, memory-efficient library for reading and writing MRC (Medica
 
 - **🚀 Zero-copy**: Direct memory mapping with no intermediate buffers
 - **🦀 no_std**: Works in embedded environments and WebAssembly
-- **⚡ Blazing fast**: Optimized for cache locality and branch prediction
+- **⚡ SIMD-accelerated**: AVX2/NEON accelerated type conversions
+- **🔄 Type conversion**: Automatic conversion between voxel types
 - **🔒 100% safe**: No unsafe blocks in public API
 
 **Note: This crate is currently under active development. While most features are functional, occasional bugs and API changes are possible. Contributions are welcome—please report issues and share your ideas!**
@@ -23,119 +20,324 @@ A high-performance, memory-efficient library for reading and writing MRC (Medica
 
 ```toml
 [dependencies]
-mrc = "0.1"
+mrc = "0.2"
 
-# For full features
-mrc = { version = "0.1", features = ["std", "mmap", "file", "f16"] }
+# For all features
+mrc = { version = "0.2", features = ["std", "mmap", "f16", "simd", "parallel"] }
 ```
 
 ## 🚀 Quick Start
 
-### Component Architecture
+### Architecture
 
 ```
 ┌─────────────────┐     ┌──────────────────┐     ┌────────────────┐
-│   File System   │───▶|  Header Parsing  │───▶ │   View Layer   │
-│   (.mrc file)   │     │   (1024 bytes)   │     │   (Zero-copy)  │
+│   File System   │────▶│  Header Parsing  │────▶│  Iterator API  │
+│   (.mrc file)   │     │   (1024 bytes)   │     │  (Zero-copy)   │
 └─────────────────┘     └──────────────────┘     └────────────────┘
          │                       │                       │
-    ┌─────────┐              ┌────────┐              ┌─────────┐
-    │ MrcFile │              │ Header │              │ MrcView │
-    │ MrcMmap │              │        │              │         │
-    └─────────┘              └────────┘              └─────────┘
+   ┌─────────────┐          ┌────────┐              ┌─────────┐
+   │ Reader      │          │ Header │              │ VoxelBlock
+   │ MmapReader  │          │        │              │         │
+   │ Writer      │          └────────┘              └─────────┘
+   │ MmapWriter  │
+   └─────────────┘
 ```
 
-### Mrc file layer
+### MRC File Structure
 
 ```text
 | 1024 bytes | NSYMBT bytes | data_size bytes |
 |  header    | ext header   | voxel data      |
 ```
 
-Note: Byte index starts from 1.
-
 ### 📖 Reading MRC Files
 
 ```rust
-use mrc::MrcView;
+use mrc::Reader;
 
-// Read from memory
-let data = std::fs::read("protein.mrc")?;
-let view = MrcView::new(data)?;
+fn main() -> Result<(), mrc::Error> {
+    // Open an MRC file - header is parsed automatically
+    let reader = Reader::open("protein.mrc")?;
 
-// Get dimensions
-let (nx, ny, nz) = view.dimensions();
-println!("Volume: {}×{}×{} voxels", nx, ny, nz);
+    // Get volume dimensions
+    let shape = reader.shape();
+    println!("Volume: {}×{}×{} voxels", shape.nx, shape.ny, shape.nz);
 
-// Access data based on type
-match view.mode() {
-    Some(Mode::Float32) => {
-        let floats = view.view::<f32>()?;
-        println!("First pixel: {}", floats[0]);
+    // Iterate over slices - zero-copy when file type matches
+    for slice in reader.slices::<f32>() {
+        let block = slice?;  // VoxelBlock<f32>
+        println!("Slice {}: {} voxels", block.offset[2], block.len());
     }
-    Some(Mode::Int16) => {
-        let ints = view.view::<i16>()?;
-        println!("First pixel: {}", ints[0]);
+
+    // Or read with automatic type conversion
+    // Read Int16 file as Float32 (uses SIMD when available)
+    for slice in reader.slices_converted::<i16, f32>() {
+        let block = slice?;
+        let sum: f32 = block.data.iter().sum();
+        println!("Slice sum: {}", sum);
     }
-    _ => println!("Unsupported data type"),
+
+    Ok(())
 }
 ```
 
 ### ✏️ Creating New Files
 
 ```rust
-use mrc::{Header, Mode, MrcFile};
+use mrc::{create, VoxelBlock};
 
-// Create header for 3D volume
-let mut header = Header::new();
-header.nx = 512;
-header.ny = 512;
-header.nz = 256;
-header.mode = Mode::Float32 as i32;
+fn main() -> Result<(), mrc::Error> {
+    // Create a new file with the builder pattern
+    let mut writer = create("output.mrc")
+        .shape([512, 512, 256])
+        .mode::<f32>()
+        .finish()?;
 
-// Set physical dimensions (Ångströms)
-header.xlen = 256.0;
-header.ylen = 256.0;
-header.zlen = 128.0;
+    // Write voxel data slice by slice
+    for z in 0..256 {
+        let block = VoxelBlock::new(
+            [0, 0, z],
+            [512, 512, 1],
+            vec![0.0f32; 512 * 512],
+        );
+        writer.write_block(&block)?;
+    }
 
-// Write to file
-let mut file = MrcFile::create("output.mrc", header)?;
-file.write_data(&your_data)?;
+    // Finalize writes the header with correct statistics
+    writer.finalize()?;
+    Ok(())
+}
 ```
 
-## 🤝 How to Contribute
+## ⚠️ Migrating from v0.1
 
-**🐞 Issues & Bugs**  
-Found a bug? [**Open an issue**](https://github.com/your-org/mrc/issues/new) — we’ll triage fast.
+v0.2 is a complete architectural redesign. Key API changes:
 
-**💡 Feature Requests & Ideas**  
-Tag your issue with `[Feature request]` — the community helps shape the roadmap.
+| v0.1 | v0.2 |
+|------|------|
+| `MrcView::new(data)` | `Reader::open(path)` |
+| `MrcFile::create(path, header)` | `create(path).shape(dims).mode::<T>().finish()` |
+| `MrcView::view::<f32>()` | `reader.slices::<f32>()` |
+| `MrcViewMut` | `Writer` + `VoxelBlock<T>` |
+| `MrcMmap` | `MmapReader` / `MmapWriter` |
 
-**🦀 Pull Requests**  
-Ready to code? See **Contributing** below. Fork → branch → PR. All skill levels welcome; CI and review keep quality high.
+**Migration example:**
+```rust
+// v0.1: Load entire file into memory
+let data = std::fs::read("file.mrc")?;
+let view = MrcView::new(data)?;
+let floats = view.view::<f32>()?;
 
-Built with ❤️ for every cryo-EM enthusiast.
+// v0.2: Stream with iterators
+let reader = Reader::open("file.mrc")?;
+for slice in reader.slices::<f32>() {
+    let block = slice?;
+    // process block.data
+}
+```
 
-## 🗺️ API Architecture
+**New in v0.2:** SIMD acceleration, parallel encoding, type conversion iterators, `MmapReader`.
 
-### Core Types Overview
+## 🗺️ API Overview
 
-| Type           | Purpose               | Example                       |
-| -------------- | --------------------- | ----------------------------- |
-| [`Header`]     | 1024-byte MRC header  | `let header = Header::new();` |
-| [`Mode`]       | Data type enumeration | `Mode::Float32`               |
-| [`MrcView`]    | Read-only data view   | `MrcView::new(data)?`         |
-| [`MrcViewMut`] | Mutable data view     | `MrcViewMut::new(data)?`      |
-| [`MrcFile`]    | File-backed access    | `MrcFile::open("file.mrc")?`  |
-| [`MrcMmap`]    | Memory-mapped access  | `MrcMmap::open("large.mrc")?` |
+### Core Types
 
-## 📚 Detailed API Reference
+| Type | Purpose | Example |
+|------|---------|---------|
+| [`Reader`] | Read MRC files | `Reader::open("file.mrc")?` |
+| [`MmapReader`] | Memory-mapped reading | `MmapReader::open("large.mrc")?` |
+| [`Writer`] | Write MRC files | `create("out.mrc").shape([64,64,64]).mode::<f32>().finish()?` |
+| [`MmapWriter`] | Memory-mapped writing | `MmapWriter::create("out.mrc", header)?` |
+| [`WriterBuilder`] | Configure new files | `create(path).shape(dims).mode::<T>()` |
+| [`Header`] | 1024-byte MRC header | `Header::new()` |
+| [`Mode`] | Data type enumeration | `Mode::Float32` |
+| [`VoxelBlock<T>`] | Chunk of voxel data | `VoxelBlock::new(offset, shape, data)` |
+| [`VolumeShape`] | Volume dimensions | `VolumeShape::new(nx, ny, nz)` |
 
-### 🔧 Header Structure
+### Iterator API
 
-The MRC header contains 56 fields (1024 bytes total) with complete metadata:
+The library provides an iterator-centric API for efficient processing:
 
-#### Creating Headers
+```rust
+// Iterate over individual slices (Z axis)
+for slice in reader.slices::<f32>() {
+    let block = slice?;
+    // Process slice
+}
+
+// Iterate over slabs (multiple slices at once)
+for slab in reader.slabs::<f32>(10) {  // 10 slices per slab
+    let block = slab?;
+    // Process slab
+}
+
+// Iterate over arbitrary chunks
+for chunk in reader.blocks::<f32>([64, 64, 64]) {
+    let block = chunk?;
+    // Process 64³ chunk
+}
+```
+
+### Type Conversion
+
+Automatic type conversion is supported via the `Convert` trait:
+
+```rust
+// Read file as one type, convert to another
+for slice in reader.slices_converted::<i16, f32>() {
+    let block = slice?;
+    // i16 data automatically converted to f32
+}
+
+// Write with type conversion
+let mut writer = create("output.mrc")
+    .shape([256, 256, 128])
+    .mode::<i16>()  // File stores i16
+    .finish()?;
+
+let f32_data: VoxelBlock<f32> = ...;
+writer.write_converted::<f32, i16>(&f32_data)?;  // Converts f32 -> i16
+```
+
+### Memory-Mapped I/O
+
+For large files (>1GB), memory-mapped I/O lets the OS handle paging:
+
+```rust
+use mrc::MmapReader;
+
+let reader = MmapReader::open("large_volume.mrc")?;
+
+// Same iterator API as Reader
+for slice in reader.slices::<f32>() {
+    let block = slice?;
+    // OS automatically pages data in/out
+}
+
+// Direct byte access for zero-copy scenarios
+if reader.can_zero_copy::<f32>() {
+    let bytes = reader.data_bytes();  // &[u8] backed by mmap
+}
+```
+
+| Use | When |
+|-----|------|
+| `Reader` | Small files, `no_std` compatibility, simple sequential access |
+| `MmapReader` | Large files, memory-constrained environments, random access |
+
+## 📊 Data Type Support
+
+| [`Mode`] | Value | Rust Type | Bytes | Description | Use Case |
+|----------|-------|-----------|-------|-------------|----------|
+| `Int8` | 0 | `i8` | 1 | Signed 8-bit integer | Binary masks |
+| `Int16` | 1 | `i16` | 2 | Signed 16-bit integer | Cryo-EM density |
+| `Float32` | 2 | `f32` | 4 | 32-bit float | Standard density |
+| `Int16Complex` | 3 | [`Int16Complex`] | 4 | Complex 16-bit | Phase data |
+| `Float32Complex` | 4 | [`Float32Complex`] | 8 | Complex 32-bit | Fourier transforms |
+| `Uint16` | 6 | `u16` | 2 | Unsigned 16-bit | Segmentation |
+| `Float16` | 12 | `f16`[^1] | 2 | 16-bit float | Memory efficiency |
+| `Packed4Bit` | 101 | [`Packed4Bit`] | 0.5 | Packed 4-bit | Compression |
+
+[^1]: Requires `f16` feature and nightly Rust compiler.
+
+## ⚡ Performance Features
+
+### SIMD Acceleration
+
+The library automatically uses SIMD instructions (AVX2 on x86_64, NEON on AArch64) for type conversions:
+
+```rust
+// These conversions use SIMD when available:
+// i8 → f32, i16 → f32, u16 → f32, u8 → f32
+
+// Access SIMD functions directly
+#[cfg(feature = "simd")]
+{
+    let f32_data = mrc::convert_i16_slice_to_f32(&i16_data);
+}
+```
+
+### Zero-Copy Reading
+
+When the file's native type matches your target type and endianness:
+
+```rust
+let reader = Reader::open("data.mrc")?;
+
+// Check if zero-copy is possible
+if reader.can_zero_copy::<f32>() {
+    println!("Using zero-copy fast path!");
+}
+
+// The iterator will use zero-copy automatically when possible
+for slice in reader.slices::<f32>() {
+    // No allocation or conversion happening here
+}
+```
+
+### Parallel Writing
+
+With the `parallel` feature, large writes use Rayon for parallel encoding:
+
+```rust
+let mut writer = create("large.mrc")
+    .shape([2048, 2048, 512])
+    .mode::<f32>()
+    .finish()?;
+
+// This uses parallel encoding internally
+writer.write_block_parallel(&large_block)?;
+writer.finalize()?;
+```
+
+## 🎯 Feature Flags
+
+| Feature | Description | Default | no_std Compatible |
+|---------|-------------|---------|-------------------|
+| `std` | Standard library support | ✅ | ❌ |
+| `mmap` | Memory-mapped I/O | ✅ | ❌ |
+| `f16` | Half-precision support | ✅ | ❌ |
+| `simd` | SIMD acceleration | ✅ | ❌ |
+| `parallel` | Parallel encoding | ✅ | ❌ |
+
+### no_std Usage
+
+For embedded systems, WebAssembly, and other constrained environments:
+
+```toml
+[dependencies]
+mrc = { version = "0.2", default-features = false }
+```
+
+```rust
+#![no_std]
+use mrc::{Header, Mode};
+
+// Create a header (works in no_std)
+let mut header = Header::new();
+header.nx = 256;
+header.ny = 256;
+header.nz = 100;
+header.mode = Mode::Float32 as i32;
+```
+
+### no_std Compatible APIs
+
+| API | Available in no_std | Description |
+|-----|---------------------|-------------|
+| `Header` | ✅ | 1024-byte MRC header structure |
+| `Mode` | ✅ | Data type enumeration |
+| `VoxelBlock` | ✅ | Voxel data container |
+| `VolumeShape` | ✅ | Volume geometry |
+| `Convert` trait | ✅ | Type conversion |
+| `Reader` | ❌ | Requires file system |
+| `Writer` | ❌ | Requires file system |
+| SIMD functions | ❌ | Requires std |
+
+## 🔧 Header Structure
+
+The MRC header contains 56 fields (1024 bytes total):
 
 ```rust
 use mrc::Header;
@@ -143,390 +345,86 @@ use mrc::Header;
 let mut header = Header::new();
 
 // Basic dimensions
-header.nx = 2048;        // X dimension
-header.ny = 2048;        // Y dimension  
-header.nz = 512;         // Z dimension
+header.nx = 2048;
+header.ny = 2048;
+header.nz = 512;
 
-// Data type (see Mode enum)
+// Data type
 header.mode = Mode::Float32 as i32;
 
 // Physical dimensions in Ångströms
-header.xlen = 204.8;     // Physical X length
-header.ylen = 204.8;     // Physical Y length
-header.zlen = 102.4;     // Physical Z length
+header.xlen = 204.8;
+header.ylen = 204.8;
+header.zlen = 102.4;
 
 // Cell angles for crystallography
 header.alpha = 90.0;
 header.beta = 90.0;
 header.gamma = 90.0;
 
-// Axis mapping (1=X, 2=Y, 3=Z)
-header.mapc = 1;         // Fastest changing axis
-header.mapr = 2;         // Second fastest axis
-header.maps = 3;         // Slowest changing axis
-
-// Data statistics
-header.dmin = 0.0;       // Minimum data value
-header.dmax = 1.0;       // Maximum data value
-header.dmean = 0.5;      // Mean data value
-header.rms = 0.1;        // RMS deviation
+// Extended header type (optional)
+header.set_exttyp_str("FEI1")?;
 ```
 
-#### Header Fields Reference
+### Key Header Fields
 
-| Field                | Type             | Description          | Range                    |
-| -------------------- | ---------------- | -------------------- | ------------------------ |
-| `nx, ny, nz`         | `i32`            | Image dimensions     | > 0                      |
-| `mode`               | `i32`            | Data type            | 0-4, 6, 12, 101          |
-| `mx, my, mz`         | `i32`            | Map dimensions       | Usually same as nx/ny/nz |
-| `xlen, ylen, zlen`   | `f32`            | Cell dimensions (Å)  | > 0                      |
-| `alpha, beta, gamma` | `f32`            | Cell angles (°)      | 0-180                    |
-| `mapc, mapr, maps`   | `i32`            | Axis mapping         | 1, 2, 3                  |
-| `amin, amax, amean`  | `f32`            | Origin coordinates   | -∞ to ∞                  |
-| `ispg`               | `i32`            | Space group number   | 0-230                    |
-| `nsymbt`             | `i32`            | Extended header size | ≥ 0                      |
-| `extra`              | `[u8; 100]`      | Extra space          | -                        |
-| `origin`             | `[i32; 3]`       | Origin coordinates   | -                        |
-| `map`                | `[u8; 4]`        | Map string           | "MAP "                   |
-| `machst`             | `[u8; 4]`        | Machine stamp        | -                        |
-| `rms`                | `f32`            | RMS deviation        | ≥ 0                      |
-| `nlabl`              | `i32`            | Number of labels     | 0-10                     |
-| `label`              | `[[u8; 80]; 10]` | Text labels          | -                        |
-
-### 📊 Data Type Support
-
-| [`Mode`]         | Value | Rust Type | Bytes | Description           | Use Case           |
-| ---------------- | ----- | --------- | ----- | --------------------- | ------------------ |
-| `Int8`           | 0     | `i8`      | 1     | Signed 8-bit integer  | Binary masks       |
-| `Int16`          | 1     | `i16`     | 2     | Signed 16-bit integer | Cryo-EM density    |
-| `Float32`        | 2     | `f32`     | 4     | 32-bit float          | Standard density   |
-| `Int16Complex`   | 3     | `i16`     | 2×2   | Complex 16-bit        | Phase data         |
-| `Float32Complex` | 4     | `f32`     | 4×2   | Complex 32-bit        | Fourier transforms |
-| `Uint16`         | 6     | `u16`     | 2     | Unsigned 16-bit       | Segmentation       |
-| `Float16`        | 12    | `f16`[^1] | 2     | 16-bit float          | Memory efficiency  |
-| `Packed4Bit`     | 101   | `u8`      | 0.5   | Packed 4-bit          | Compression        |
-
-### 🔄 Data Access Patterns
-
-#### Zero-Copy Read Access
-
-```rust
-use mrc::{MrcView, Error, Mode};
-
-// From byte slice
-let view = MrcView::new(header, data)?;
-
-// Type-safe access
-match view.mode() {
-    Some(Mode::Float32) => {
-        let floats = view.view::<f32>()?;
-        // floats: &[f32] - zero-copy slice
-        let sum: f32 = floats.iter().sum();
-        println!("Total intensity: {}", sum);
-    }
-    Some(Mode::Int16) => {
-        let ints = view.view::<i16>()?;
-        // Process 16-bit integer data
-        let max = ints.iter().max().unwrap_or(&0);
-    }
-    _ => return Err(Error::TypeMismatch),
-}
-
-// Raw byte access
-let raw_bytes = view.data();           // &[u8]
-let slice = view.slice_bytes(0..1024)?; // &[u8]
-```
-
-#### Mutable In-Place Editing
-
-```rust
-use mrc::{MrcViewMut, Header};
-
-// Create mutable view
-let mut view = MrcViewMut::new(header, &mut data)?;
-
-// Modify data
-{
-    let mut floats = view.view_mut::<f32>()?;
-    for val in floats.iter_mut() {
-        *val = val.max(0.0);  // Remove negative values
-    }
-}
-
-// Update header statistics
-view.update_statistics()?;
-
-// Modify header
-let mut new_header = view.header().clone();
-new_header.dmin = 0.0;
-new_header.dmax = 1.0;
-view.set_header(new_header)?;
-```
-
-#### File I/O Operations
-
-```rust
-use mrc::{MrcFile, MrcMmap, Mode};
-
-// Standard file I/O
-let file = MrcFile::open("data.mrc")?;
-let view = file.view()?;
-
-// Memory-mapped for large files (requires mmap feature)
-#[cfg(feature = "mmap")]
-let mmap = MrcMmap::open("large_volume.mrc")?;
-#[cfg(feature = "mmap")]
-let view = mmap.view()?;
-
-// Write new file
-let header = Header {
-    nx: 512, ny: 512, nz: 256,
-    mode: Mode::Float32 as i32,
-    ..Header::new()
-};
-
-let mut file = MrcFile::create("output.mrc", header)?;
-file.write_data(&your_float_data)?;
-```
-
-### 🧮 Advanced Operations
-
-#### 3D Volume Processing
-
-```rust
-use mrc::MrcView;
-
-struct Volume3D<'a> {
-    view: MrcView<'a>,
-    nx: usize,
-    ny: usize,
-    nz: usize,
-}
-
-impl<'a> Volume3D<'a> {
-    fn new(view: MrcView<'a>) -> Result<Self, mrc::Error> {
-        let (nx, ny, nz) = view.dimensions();
-        Ok(Self { view, nx, ny, nz })
-    }
-    
-    fn get_slice(&self, z: usize) -> Result<&[f32], mrc::Error> {
-        if z >= self.nz {
-            return Err(mrc::Error::InvalidDimensions);
-        }
-        
-        let slice_size = self.nx * self.ny;
-        let start = z * slice_size;
-        let floats = self.view.view::<f32>()?;
-        
-        floats.get(start..start + slice_size)
-            .ok_or(mrc::Error::InvalidDimensions)
-    }
-    
-    fn get_voxel(&self, x: usize, y: usize, z: usize) -> Result<f32, mrc::Error> {
-        let index = z * self.nx * self.ny + y * self.nx + x;
-        let floats = self.view.view::<f32>()?;
-        
-        floats.get(index).copied()
-            .ok_or(mrc::Error::InvalidDimensions)
-    }
-}
-```
-
-#### Batch Processing with Ray
-
-```rust
-use mrc::{MrcFile, Mode};
-use rayon::prelude::*;
-
-fn process_directory(dir: &str) -> Result<(), Box<dyn std::error::Error>> {
-    use std::fs;
-    
-    let entries = fs::read_dir(dir)?
-        .filter_map(|e| e.ok())
-        .filter(|e| e.path().extension().map_or(false, |ext| ext == "mrc"));
-    
-    entries.par_bridge().try_for_each(|entry| {
-        let path = entry.path();
-        let file = MrcFile::open(&path)?;
-        let view = file.view()?;
-        
-        if let Some(Mode::Float32) = view.mode() {
-            let data = view.view::<f32>()?;
-            let stats = calculate_statistics(data);
-            println!("{:?}: RMS={:.3}", path.file_name(), stats.rms);
-        }
-        
-        Ok::<_, Box<dyn std::error::Error>>(())
-    })?;
-    
-    Ok(())
-}
-
-#[derive(Debug)]
-struct Statistics {
-    min: f32,
-    max: f32,
-    mean: f32,
-    rms: f32,
-}
-
-fn calculate_statistics(data: &[f32]) -> Statistics {
-    let min = data.iter().fold(f32::INFINITY, |a, &b| a.min(b));
-    let max = data.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));
-    let mean = data.iter().sum::<f32>() / data.len() as f32;
-    let rms = (data.iter().map(|&x| x * x).sum::<f32>() / data.len() as f32).sqrt();
-    
-    Statistics { min, max, mean, rms }
-}
-```
-
-## 🎯 Feature Flags
-
-| Feature | Description              | Default | no_std Compatible | Example                                 |
-| ------- | ------------------------ | ------- | ----------------- | --------------------------------------- |
-| `std`   | Standard library support | ✅       | ❌                 | File I/O, Error trait                   |
-| `mmap`  | Memory-mapped I/O        | ✅       | ❌                 | Large file processing                   |
-| `file`  | File operations          | ✅       | ❌                 | `MrcFile::open()`                       |
-| `f16`   | Half-precision support   | ✅       | ❌                 | `view.data.as_f16()` with nightly Rust  |
-
-### no_std Usage
-
-**For embedded systems, WebAssembly, and RTOS environments:**
-
-```toml
-[dependencies]
-mrc = { version = "0.1", default-features = false }
-```
-
-```rust
-use mrc::{Header, MrcView, Mode};
-
-// Pure no_std usage - works in embedded/WebAssembly
-let mut header = Header::new();
-header.nx = 256;
-header.ny = 256;
-header.nz = 100;
-header.mode = Mode::Float32 as i32;
-
-// Your byte buffer (from flash, network, etc.)
-let data = &[your_byte_data];
-let view = MrcView::new(header, data)?;
-let floats = view.view::<f32>()?;
-
-// Process without any file system dependencies
-let sum: f32 = floats.iter().sum();
-```
-
-### no_std Compatible APIs
-
-| API           | Available in no_std | Description                     |
-| ------------- | ------------------- | ------------------------------- |
-| `Header`      | ✅                  | 1024-byte MRC header structure  |
-| `Mode`        | ✅                  | Data type enumeration           |
-| `MrcView`     | ✅                  | Zero-copy read-only data access |
-| `MrcViewMut`  | ✅                  | Zero-copy mutable data access   |
-| `Error`       | ✅                  | Comprehensive error handling    |
-| `MrcFile`     | ❌                  | Requires file system (std)      |
-| `MrcMmap`     | ❌                  | Requires memory mapping (std)   |
-| `f16` support | ❌                  | Requires nightly Rust (std)     |
+| Field | Type | Description |
+|-------|------|-------------|
+| `nx, ny, nz` | `i32` | Image dimensions |
+| `mode` | `i32` | Data type (see Mode enum) |
+| `xlen, ylen, zlen` | `f32` | Cell dimensions (Å) |
+| `alpha, beta, gamma` | `f32` | Cell angles (°) |
+| `mapc, mapr, maps` | `i32` | Axis mapping (1,2,3 permutation) |
+| `dmin, dmax, dmean` | `f32` | Data statistics |
+| `ispg` | `i32` | Space group number |
+| `nsymbt` | `i32` | Extended header size |
+| `origin` | `[f32; 3]` | Origin coordinates |
+| `exttyp` | `[u8; 4]` | Extended header type |
 
 ## 🛣️ Development Roadmap
 
-### ✅ **Current Release (v0.1.x): Core ability**
+### ✅ **Current Release (v0.2.x): Core + SIMD**
 
 - [x] Complete MRC-2014 format support
-- [x] Zero-copy memory access
-- [x] All data types (modes 0-4, 6, 12, 101) including mode **101** (4-bit data packed two per byte)
-- [x] Header manipulation
-- [x] File I/O operations
-- [x] Memory-mapped I/O
-- [x] Comprehensive documentation
+- [x] Iterator-centric API (slices, slabs, blocks)
+- [x] Type conversion pipeline
+- [x] SIMD acceleration (AVX2, NEON)
+- [x] Zero-copy fast paths
+- [x] Parallel encoding
+- [x] Memory-mapped I/O (`MmapReader`, `MmapWriter`)
+- [x] All data types (modes 0-4, 6, 12, 101)
+- [x] no_std support
 
-### 🚧 **Next Release (v0.2.x): Rich features**
+### 🚧 **Next Release (v0.3.x): Extended Features**
 
-- [x] **Validation utilities** for data integrity
-- [ ] **Streaming API** for large datasets
-- [ ] **Compression support** (gzip, zstd)
-- [ ] **Statistics functions** (histogram, moments)
-- [ ] **Python bindings** via PyO3
-- [ ] **Extended header** for "CCP4, SERI, AGAR, FEI1, FEI2, HDF5"
+- [ ] Extended header parsing (CCP4, FEI1, FEI2, etc.)
+- [ ] Statistics functions (histogram, moments)
+- [ ] Validation utilities
+- [ ] Streaming API for very large datasets
 
-### 🚀 **Future Releases (v1): Super features**
+### 🚀 **Future Releases (v1.x)**
 
-- [ ] **implement 100% features of the official python lib mrcfile**
-- [ ] **Image processing** (filters, transforms)
-- [ ] **GPU acceleration** support
-- [ ] **WebAssembly** target
-- [ ] **Cloud storage** integration
-- [ ] **Parallel processing** utilities
-- [ ] **Visualization helpers**
+- [ ] Python bindings via PyO3
+- [ ] GPU acceleration
+- [ ] Compression support (gzip, zstd)
+- [ ] Cloud storage integration
 
-**Awayls using only features that you need to minimize sizes of the package**
-
-## 📊 Performance Benchmarks
-
-### 💾 Memory Efficiency
-
-- **Header**: Fixed 1024 bytes (no heap allocation)
-- **Data views**: Zero-copy slices
-- **Extended headers**: Lazy loaded
-- **File handles**: Minimal overhead
-
-### ⚡ Optimization Tips
-
-```rust
-// Use memory mapping for large files
-#[cfg(feature = "mmap")]
-let view = MrcMmap::open("large.mrc")?.view()?;
-
-// Cache data size calculations
-let data_size = view.header().data_size();
-
-// Use aligned access for SIMD
-let aligned = view.data_aligned::<f32>()?;
-```
-
-## 🧪 Testing Examples
-
-### Unit Tests
+## 🧪 Testing
 
 ```bash
 # Run all tests
 cargo test --all-features
 
-# Run specific test
-cargo test test_header_validation
+# Run benchmarks
+cargo bench --all-features
 
-# Run with coverage
-# install tarpaulin if not existed: cargo install cargo-tarpaulin
-cargo tarpaulin --all-features
+# Check no_std build
+cargo check --no-default-features
 ```
 
-### Integration Tests
-
-```bash
-# Test with real MRC files
-cargo test --test real_mrc_files
-
-# Benchmark performance
-cargo bench
-```
-
-### Example Programs
-
-```bash
-# Generate test MRC files
-cargo run --example generate_mrc_files
-
-# Validate MRC files
-cargo run --example validate -- data/*.mrc
-```
-
-## 🤝 Contributing guide
+## 🤝 Contributing
 
 We welcome contributions! Here's how to get started:
-
-### 📋 Contribution Guide
 
 1. **Fork** the repository
 2. **Create** a feature branch: `git checkout -b feature/amazing-feature`
@@ -534,14 +432,14 @@ We welcome contributions! Here's how to get started:
 4. **Push** to branch: `git push origin feature/amazing-feature`
 5. **Open** a Pull Request
 
-### 🏗️ Development Setup
+### Development Setup
 
 ```bash
 # Clone repository
-git clone https://github.com/your-org/mrc.git
+git clone https://github.com/elemeng/mrc.git
 cd mrc
 
-# Install dependencies
+# Build with all features
 cargo build --all-features
 
 # Run tests
@@ -554,19 +452,12 @@ cargo fmt --check
 cargo clippy --all-features
 ```
 
-### 📄 Code Standards
-
-- **100% safe Rust** (no unsafe blocks)
-- **Comprehensive tests** for all functionality
-- **Documentation** for all public APIs
-- **Performance benchmarks** for critical paths
-
 ## 📄 MIT License
 
 ```
 MIT License
 
-Copyright (c) 2024 mrc contributors
+Copyright (c) 2024-2025 mrc contributors
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -596,7 +487,6 @@ SOFTWARE.
 
 ## 📞 Support & Community
 
-- 💁 **Helps**: Directly open an issue to ask for help is wellcome. Add a **Help** tag.
 - 🐛 **Issues**: [Report bugs](https://github.com/elemeng/mrc/issues)
 - 📖 **Documentation**: [Full docs](https://docs.rs/mrc)
 - 🏷️ **Releases**: [Changelog](https://github.com/elemeng/mrc/releases)
@@ -607,6 +497,6 @@ SOFTWARE.
 
 **Made with ❤️ by the cryo-EM community for the scientific computing world**
 
-*[Zero-copy • Zero-allocation • 100% safe Rust]*
+*[Zero-copy • SIMD-accelerated • 100% safe Rust]*
 
 </div>

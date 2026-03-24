@@ -27,6 +27,9 @@ mod mode;
 mod reader;
 mod writer;
 
+#[cfg(feature = "mmap")]
+mod mmap_reader;
+
 mod engine;
 
 // Re-export core types
@@ -62,6 +65,9 @@ pub use iter::{SliceIterConverted, SlabIterConverted};
 
 #[cfg(feature = "mmap")]
 pub use writer::MmapWriter;
+
+#[cfg(feature = "mmap")]
+pub use mmap_reader::MmapReader;
 
 /// Open an MRC file for reading
 #[cfg(feature = "std")]
