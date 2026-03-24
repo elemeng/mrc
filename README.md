@@ -123,6 +123,7 @@ v0.2 is a complete architectural redesign. Key API changes:
 | `MrcMmap` | `MmapReader` / `MmapWriter` |
 
 **Migration example:**
+
 ```rust
 // v0.1: Load entire file into memory
 let data = std::fs::read("file.mrc")?;

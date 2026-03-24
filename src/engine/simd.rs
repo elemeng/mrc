@@ -103,7 +103,7 @@ pub fn convert_u8_to_f32_simd(src: &[u8]) -> Vec<f32> {
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
-unsafe fn convert_i8_to_f32_avx2(src: &[i8]) -> Vec<f32> {
+unsafe fn convert_i8_to_f32_avx2(src: &[i8]) -> Vec<f32> { unsafe {
     use core::arch::x86_64::*;
     
     let mut dst: Vec<f32> = Vec::with_capacity(src.len());
@@ -141,11 +141,11 @@ unsafe fn convert_i8_to_f32_avx2(src: &[i8]) -> Vec<f32> {
     }
     
     dst
-}
+}}
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
-unsafe fn convert_i16_to_f32_avx2(src: &[i16]) -> Vec<f32> {
+unsafe fn convert_i16_to_f32_avx2(src: &[i16]) -> Vec<f32> { unsafe {
     use core::arch::x86_64::*;
     
     let mut dst: Vec<f32> = Vec::with_capacity(src.len());
@@ -179,11 +179,11 @@ unsafe fn convert_i16_to_f32_avx2(src: &[i16]) -> Vec<f32> {
     }
     
     dst
-}
+}}
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
-unsafe fn convert_u16_to_f32_avx2(src: &[u16]) -> Vec<f32> {
+unsafe fn convert_u16_to_f32_avx2(src: &[u16]) -> Vec<f32> { unsafe {
     use core::arch::x86_64::*;
     
     let mut dst: Vec<f32> = Vec::with_capacity(src.len());
@@ -217,11 +217,11 @@ unsafe fn convert_u16_to_f32_avx2(src: &[u16]) -> Vec<f32> {
     }
     
     dst
-}
+}}
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
-unsafe fn convert_u8_to_f32_avx2(src: &[u8]) -> Vec<f32> {
+unsafe fn convert_u8_to_f32_avx2(src: &[u8]) -> Vec<f32> { unsafe {
     use core::arch::x86_64::*;
     
     let mut dst: Vec<f32> = Vec::with_capacity(src.len());
@@ -265,7 +265,7 @@ unsafe fn convert_u8_to_f32_avx2(src: &[u8]) -> Vec<f32> {
     }
     
     dst
-}
+}}
 
 // =============================================================================
 // AArch64 NEON implementations

@@ -87,7 +87,7 @@ where
         return None;
     }
 
-    let src_f32: &[f32] = unsafe { core::slice::from_raw_parts(src.as_ptr() as *const f32, src.len()) };
+    let _src_f32: &[f32] = unsafe { core::slice::from_raw_parts(src.as_ptr() as *const f32, src.len()) };
 
     // For write path, we use scalar conversion since SIMD conversion with clamping
     // is complex. The main benefit is on the read path (i16/u16 → f32).
