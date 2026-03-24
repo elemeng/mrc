@@ -34,7 +34,7 @@ pub trait Convert<S>: Sized {
 /// Returns Some(Vec<D>) if SIMD conversion is available, None otherwise.
 /// Currently supports: i8/i16/u16/u8 → f32
 #[cfg(feature = "simd")]
-pub fn try_simd_convert<S: 'static, D: 'static>(src: &[S]) -> Option<Vec<D>>
+pub fn try_simd_convert<S, D>(src: &[S]) -> Option<Vec<D>>
 where
     D: Convert<S> + 'static,
     S: 'static,
@@ -75,7 +75,7 @@ pub fn try_simd_convert<S, D: Convert<S>>(_src: &[S]) -> Option<Vec<D>> {
 /// Returns Some(Vec<D>) if SIMD conversion is available, None otherwise.
 /// Currently supports: f32 → i8/i16/u16/u8
 #[cfg(feature = "simd")]
-pub fn try_simd_convert_reverse<S: 'static, D: 'static>(src: &[S]) -> Option<Vec<D>>
+pub fn try_simd_convert_reverse<S, D>(src: &[S]) -> Option<Vec<D>>
 where
     S: 'static,
     D: Convert<S> + 'static,
