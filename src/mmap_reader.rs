@@ -1,5 +1,8 @@
 //! Memory-mapped MRC file reader with zero-copy API
 
+#[cfg(feature = "mmap")]
+use std::path::Path;
+
 use crate::engine::block::{VolumeShape, VoxelBlock};
 use crate::engine::codec::{EndianCodec, decode_slice};
 use crate::engine::convert::Convert;
@@ -43,7 +46,7 @@ impl MmapReader {
     ///
     /// The file is mapped read-only into the process address space.
     /// The OS will page data in/out as needed, making this efficient for large files.
-    pub fn open(path: &str) -> Result<Self, Error> {
+    pub fn open(path: impl AsRef<Path>) -> Result<Self, Error> {
         use std::fs::File;
         use std::io::Read;
 

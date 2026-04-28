@@ -32,6 +32,9 @@ mod mmap_reader;
 
 mod engine;
 
+#[cfg(feature = "std")]
+use std::path::Path;
+
 // Re-export core types
 pub use engine::block::{VolumeShape, VoxelBlock};
 pub use engine::endian::FileEndian;
@@ -71,12 +74,12 @@ pub use mmap_reader::MmapReader;
 
 /// Open an MRC file for reading
 #[cfg(feature = "std")]
-pub fn open(path: &str) -> Result<Reader, Error> {
+pub fn open(path: impl AsRef<Path>) -> Result<Reader, Error> {
     Reader::open(path)
 }
 
 /// Create a new MRC file for writing
 #[cfg(feature = "std")]
-pub fn create(path: &str) -> WriterBuilder {
+pub fn create(path: impl AsRef<Path>) -> WriterBuilder {
     WriterBuilder::new(path)
 }

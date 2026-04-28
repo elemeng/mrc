@@ -1,5 +1,8 @@
 //! MRC file reader with iterator-centric API
 
+#[cfg(feature = "std")]
+use std::path::Path;
+
 use crate::engine::block::VolumeShape;
 use crate::engine::codec::{EndianCodec, decode_slice};
 use crate::engine::convert::Convert;
@@ -19,7 +22,7 @@ pub struct Reader {
 
 impl Reader {
     #[cfg(feature = "std")]
-    pub fn open(path: &str) -> Result<Self, Error> {
+    pub fn open(path: impl AsRef<Path>) -> Result<Self, Error> {
         use std::fs::File;
         use std::io::Read;
 
@@ -58,7 +61,7 @@ impl Reader {
     }
 
     #[cfg(not(feature = "std"))]
-    pub fn open(path: &str) -> Result<Self, Error> {
+    pub fn open(path: impl AsRef<Path>) -> Result<Self, Error> {
         let _ = path;
         Err(Error::Io("std feature not enabled".into()))
     }

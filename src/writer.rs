@@ -1,23 +1,24 @@
 //! MRC file writer with block-based API
 
+use std::path::{Path, PathBuf};
+
 use crate::engine::block::{SliceAccess, VolumeShape, VoxelBlock};
 use crate::engine::codec::{encode_block_parallel, encode_slice};
 use crate::engine::convert::Convert;
 use crate::engine::endian::FileEndian;
 use crate::{Error, Header, Mode};
 
-use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
 pub struct WriterBuilder {
-    path: String,
+    path: PathBuf,
     header: Header,
 }
 
 impl WriterBuilder {
-    pub fn new(path: &str) -> Self {
+    pub fn new(path: impl AsRef<Path>) -> Self {
         Self {
-            path: path.to_string(),
+            path: PathBuf::from(path.as_ref()),
             header: Header::new(),
         }
     }
@@ -52,7 +53,7 @@ pub struct Writer {
 
 impl Writer {
     #[cfg(feature = "std")]
-    fn create(path: &str, header: Header) -> Result<Self, Error> {
+    fn create(path: &Path, header: Header) -> Result<Self, Error> {
         use std::io::Write;
 
         if !header.validate() {
@@ -94,7 +95,7 @@ impl Writer {
     }
 
     #[cfg(not(feature = "std"))]
-    fn create(path: &str, header: Header) -> Result<Self, Error> {
+    fn create(path: &Path, header: Header) -> Result<Self, Error> {
         let _ = path;
         let _ = header;
         Err(Error::Io("std feature not enabled".into()))
@@ -292,7 +293,7 @@ pub struct MmapWriter {
 
 #[cfg(feature = "mmap")]
 impl MmapWriter {
-    pub fn create(path: &str, header: Header) -> Result<Self, Error> {
+    pub fn create(path: impl AsRef<Path>, header: Header) -> Result<Self, Error> {
         use std::fs::OpenOptions;
         use std::io::Write;
 
