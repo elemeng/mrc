@@ -17,6 +17,8 @@ pub enum Error {
     BlockShapeMismatch { expected: usize, actual: usize },
     #[error("Conversion error: {0}")]
     Conversion(ConversionError),
+    #[error("Mode mismatch: file stores {file_mode:?}, requested {requested_mode:?}")]
+    ModeMismatch { file_mode: crate::Mode, requested_mode: crate::Mode },
     #[cfg(feature = "mmap")]
     #[error("Memory mapping error")]
     Mmap,

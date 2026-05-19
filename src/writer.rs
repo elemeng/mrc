@@ -2,7 +2,6 @@
 
 use crate::engine::block::{SliceAccess, VolumeShape, VoxelBlock};
 use crate::engine::codec::{encode_block_parallel, encode_slice};
-use crate::engine::convert::Convert;
 use crate::engine::endian::FileEndian;
 use crate::{Error, Header, Mode};
 
@@ -30,7 +29,7 @@ impl WriterBuilder {
     }
 
     pub fn mode<T: crate::mode::Voxel>(mut self) -> Self {
-        self.header.mode = T::MODE as i32;
+        self.header.mode = T::MODE.as_i32();
         self
     }
 
@@ -99,14 +98,24 @@ impl Writer {
         self.shape
     }
 
+    pub fn mode(&self) -> Mode {
+        Mode::from_i32(self.header.mode).unwrap_or(Mode::Float32)
+    }
+
     /// Write a block of voxels to the file.
     ///
-    /// This is the unified encode pipeline that handles:
-    /// - Typed values → Endian encoding → Raw bytes
-    pub fn write_block<T: crate::engine::codec::EndianCodec + Sync>(
+    /// The type `T` must match the file's voxel mode exactly.
+    pub fn write_block<T: crate::engine::codec::EndianCodec + Sync + crate::mode::Voxel>(
         &mut self,
         block: &VoxelBlock<T>,
     ) -> Result<(), Error> {
+        if T::MODE != self.mode() {
+            return Err(Error::ModeMismatch {
+                file_mode: self.mode(),
+                requested_mode: T::MODE,
+            });
+        }
+
         if !self.shape.contains_block(block.offset, block.shape) {
             return Err(Error::BoundsError);
         }
@@ -129,93 +138,22 @@ impl Writer {
         Ok(())
     }
 
-    /// Write a block with type conversion.
-    ///
-    /// This method accepts data in one type (S) and converts it to the file's
-    /// native voxel mode before writing.
-    ///
-    /// # Example
-    /// ```ignore
-    /// // Write Float32 data to an Int16 file
-    /// let writer = Writer::create("output.mrc", header)?;
-    /// let block: VoxelBlock<f32> = ...;
-    /// writer.write_converted::<f32, i16>(&block)?; // Converts f32 -> i16
-    /// ```
-    pub fn write_converted<S, D>(&mut self, block: &VoxelBlock<S>) -> Result<(), Error>
-    where
-        S: crate::engine::codec::EndianCodec + Copy + 'static,
-        D: Convert<S> + crate::engine::codec::EndianCodec + Copy + Default + crate::mode::Voxel + 'static,
-    {
-        // Try SIMD batch conversion first
-        #[cfg(feature = "simd")]
-        {
-            use crate::engine::convert::try_simd_convert_reverse;
-            if let Some(converted_data) = try_simd_convert_reverse::<S, D>(&block.data) {
-                let converted_block = VoxelBlock {
-                    offset: block.offset,
-                    shape: block.shape,
-                    data: converted_data,
-                };
-                return self.write_block::<D>(&converted_block);
-            }
-        }
-
-        // Fall back to scalar conversion
-        let converted_data: Vec<D> = block
-            .data
-            .iter()
-            .map(|&src| D::convert(src))
-            .collect();
-
-        // Create a new block with converted data
-        let converted_block = VoxelBlock {
-            offset: block.offset,
-            shape: block.shape,
-            data: converted_data,
-        };
-
-        // Write using the standard path
-        self.write_block::<D>(&converted_block)
-    }
-
-    /// Write a block with checked type conversion, failing on out-of-range values.
-    ///
-    /// Unlike `write_converted`, this method returns an error if any value
-    /// cannot be represented in the destination type (e.g., NaN or out-of-range
-    /// float-to-integer conversions).
-    pub fn write_checked_converted<S, D>(&mut self, block: &VoxelBlock<S>) -> Result<(), Error>
-    where
-        S: crate::engine::codec::EndianCodec + Copy + 'static,
-        D: crate::engine::convert::CheckedConvert<S>
-            + crate::engine::codec::EndianCodec
-            + Copy
-            + Default
-            + crate::mode::Voxel
-            + 'static,
-    {
-        let mut converted_data = Vec::with_capacity(block.data.len());
-        for &src in &block.data {
-            converted_data.push(D::try_convert(src) .map_err(Error::Conversion)?);
-        }
-
-        let converted_block = VoxelBlock {
-            offset: block.offset,
-            shape: block.shape,
-            data: converted_data,
-        };
-
-        self.write_block::<D>(&converted_block)
-    }
-
     /// Write a block with parallel encoding and sequential file I/O.
     ///
     /// Encoding is performed in parallel using all available cores.
     /// File writes are performed sequentially to ensure cross-platform compatibility.
     #[cfg(feature = "parallel")]
-    pub fn write_block_parallel<T: crate::engine::codec::EndianCodec + Sync + Clone>(
+    pub fn write_block_parallel<T: crate::engine::codec::EndianCodec + Sync + Clone + crate::mode::Voxel>(
         &mut self,
         block: &VoxelBlock<T>,
     ) -> Result<(), Error> {
+        if T::MODE != self.mode() {
+            return Err(Error::ModeMismatch {
+                file_mode: self.mode(),
+                requested_mode: T::MODE,
+            });
+        }
+
         if !self.shape.contains_block(block.offset, block.shape) {
             return Err(Error::BoundsError);
         }
@@ -239,6 +177,26 @@ impl Writer {
         }
 
         Ok(())
+    }
+
+    /// Write an `f32` block to a Float16 file.
+    ///
+    /// This is a convenience method for the common case of writing f32 data
+    /// to a half-precision MRC file.
+    #[cfg(feature = "f16")]
+    pub fn write_f16_from_f32(&mut self, block: &VoxelBlock<f32>) -> Result<(), Error> {
+        if self.mode() != Mode::Float16 {
+            return Err(Error::ModeMismatch {
+                file_mode: self.mode(),
+                requested_mode: Mode::Float16,
+            });
+        }
+        let data: Vec<f16> = block.data.iter().map(|&v| v as f16).collect();
+        self.write_block::<f16>(&VoxelBlock {
+            offset: block.offset,
+            shape: block.shape,
+            data,
+        })
     }
 
     pub fn finalize(&mut self) -> Result<(), Error> {
@@ -282,7 +240,7 @@ impl MmapWriterBuilder {
     }
 
     pub fn mode<T: crate::mode::Voxel>(mut self) -> Self {
-        self.header.mode = T::MODE as i32;
+        self.header.mode = T::MODE.as_i32();
         self
     }
 
@@ -353,10 +311,24 @@ impl MmapWriter {
         self.shape
     }
 
-    pub fn write_block<T: crate::engine::codec::EndianCodec + Sync>(
+    pub fn mode(&self) -> Mode {
+        Mode::from_i32(self.header.mode).unwrap_or(Mode::Float32)
+    }
+
+    /// Write a block of voxels to the memory-mapped file.
+    ///
+    /// The type `T` must match the file's voxel mode exactly.
+    pub fn write_block<T: crate::engine::codec::EndianCodec + Sync + crate::mode::Voxel>(
         &mut self,
         block: &VoxelBlock<T>,
     ) -> Result<(), Error> {
+        if T::MODE != self.mode() {
+            return Err(Error::ModeMismatch {
+                file_mode: self.mode(),
+                requested_mode: T::MODE,
+            });
+        }
+
         if !self.shape.contains_block(block.offset, block.shape) {
             return Err(Error::BoundsError);
         }
@@ -383,11 +355,18 @@ impl MmapWriter {
 
     /// Write a block with parallel encoding to memory-mapped region
     #[cfg(feature = "parallel")]
-    pub fn write_block_parallel<T: crate::engine::codec::EndianCodec + Sync>(
+    pub fn write_block_parallel<T: crate::engine::codec::EndianCodec + Sync + crate::mode::Voxel>(
         &mut self,
         block: &VoxelBlock<T>,
     ) -> Result<(), Error> {
         use rayon::prelude::*;
+
+        if T::MODE != self.mode() {
+            return Err(Error::ModeMismatch {
+                file_mode: self.mode(),
+                requested_mode: T::MODE,
+            });
+        }
 
         if !self.shape.contains_block(block.offset, block.shape) {
             return Err(Error::BoundsError);
@@ -419,6 +398,23 @@ impl MmapWriter {
             });
 
         Ok(())
+    }
+
+    /// Write an `f32` block to a Float16 file.
+    #[cfg(feature = "f16")]
+    pub fn write_f16_from_f32(&mut self, block: &VoxelBlock<f32>) -> Result<(), Error> {
+        if self.mode() != Mode::Float16 {
+            return Err(Error::ModeMismatch {
+                file_mode: self.mode(),
+                requested_mode: Mode::Float16,
+            });
+        }
+        let data: Vec<f16> = block.data.iter().map(|&v| v as f16).collect();
+        self.write_block::<f16>(&VoxelBlock {
+            offset: block.offset,
+            shape: block.shape,
+            data,
+        })
     }
 }
 

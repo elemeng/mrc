@@ -2,9 +2,7 @@
 
 use crate::engine::block::{VolumeShape, VoxelBlock};
 use crate::engine::codec::{EndianCodec, decode_slice};
-use crate::engine::convert::Convert;
 use crate::engine::endian::FileEndian;
-use crate::engine::pipeline::{ConversionPath, get_conversion_path, is_zero_copy};
 use crate::{Error, Header, Mode};
 
 use std::vec::Vec;
@@ -21,12 +19,16 @@ use std::vec::Vec;
 /// let reader = MmapReader::open("large_file.mrc")?;
 /// println!("Dimensions: {:?}", reader.shape());
 ///
-/// // Iterate over slices with zero-copy when possible
+/// // Iterate over slices with zero-copy when file type matches
 /// for slice in reader.slices::<f32>() {
 ///     let block = slice?;
 ///     // process block.data
 /// }
 /// ```
+/// Iterator over slices yielding `f32` voxel blocks.
+#[cfg(feature = "mmap")]
+pub type MmapSliceIterF32<'a> = Box<dyn Iterator<Item = Result<VoxelBlock<f32>, Error>> + 'a>;
+
 #[cfg(feature = "mmap")]
 pub struct MmapReader {
     mmap: memmap2::Mmap,
@@ -51,8 +53,7 @@ impl MmapReader {
 
         // Read header first (not mapped, since we need to parse it)
         let mut header_bytes = [0u8; 1024];
-        file.read_exact(&mut header_bytes)
-            ?;
+        file.read_exact(&mut header_bytes)?;
 
         let header = Header::decode_from_bytes(&header_bytes);
 
@@ -143,14 +144,9 @@ impl MmapReader {
         Ok(&self.mmap[start_byte..end_byte])
     }
 
-    /// Check if zero-copy decode is possible.
-    ///
-    /// Zero-copy requires: file mode matches T's mode AND file endian is native.
-    pub fn can_zero_copy<T: crate::mode::Voxel>(&self) -> bool {
-        is_zero_copy(self.mode(), T::MODE, self.endian)
-    }
-
     /// Read and decode a block of voxels to the specified type.
+    ///
+    /// Returns an error if `T` does not match the file's voxel mode.
     pub fn read_block<T: EndianCodec + Send + Copy + Default + crate::mode::Voxel>(
         &self,
         offset: [usize; 3],
@@ -163,22 +159,29 @@ impl MmapReader {
 
     /// Decode a block of voxels to the specified type.
     ///
-    /// Uses zero-copy fast path when mode and endian match.
+    /// # Errors
+    /// Returns `Error::ModeMismatch` if `T` does not match the file mode.
     pub(crate) fn decode_block<T: EndianCodec + Send + Copy + Default + crate::mode::Voxel>(
         &self,
         bytes: &[u8],
     ) -> Result<Vec<T>, Error> {
-        if self.can_zero_copy::<T>() {
-            return self.decode_block_zero_copy(bytes);
+        if T::MODE != self.mode() {
+            return Err(Error::ModeMismatch {
+                file_mode: self.mode(),
+                requested_mode: T::MODE,
+            });
         }
 
-        Ok(decode_slice(bytes, self.endian))
+        if self.endian == FileEndian::native() {
+            self.decode_block_zero_copy(bytes)
+        } else {
+            Ok(decode_slice(bytes, self.endian))
+        }
     }
 
     /// Zero-copy decode: transmute bytes directly to Vec<T>.
     fn decode_block_zero_copy<T: EndianCodec + Copy>(&self, bytes: &[u8]) -> Result<Vec<T>, Error> {
         let n = bytes.len() / T::BYTE_SIZE;
-
         let mut result = Vec::with_capacity(n);
         unsafe {
             core::ptr::copy_nonoverlapping(
@@ -189,83 +192,6 @@ impl MmapReader {
             result.set_len(n);
         }
         Ok(result)
-    }
-
-    /// Decode and convert bytes to destination type.
-    pub(crate) fn decode_and_convert<S, D>(&self, bytes: &[u8]) -> Result<Vec<D>, Error>
-    where
-        S: EndianCodec + Send + Copy + Default + 'static,
-        D: Convert<S> + 'static,
-    {
-        let src_data = decode_slice::<S>(bytes, self.endian);
-
-        #[cfg(feature = "simd")]
-        {
-            use crate::engine::convert::try_simd_convert;
-            if let Some(result) = try_simd_convert::<S, D>(&src_data) {
-                return Ok(result);
-            }
-        }
-
-        let mut dst_data = Vec::with_capacity(src_data.len());
-        for src in src_data {
-            dst_data.push(D::convert(src));
-        }
-
-        Ok(dst_data)
-    }
-
-    /// Read and convert voxels from file mode to target type D.
-    pub fn read_block_converted<S, D>(
-        &self,
-        offset: [usize; 3],
-        shape: [usize; 3],
-    ) -> Result<VoxelBlock<D>, Error>
-    where
-        S: EndianCodec + Send + Copy + Default + crate::mode::Voxel,
-        D: Convert<S> + EndianCodec + Copy + Default + crate::mode::Voxel,
-    {
-        let bytes = self.read_block_bytes(offset, shape)?;
-        let data = self.decode_and_convert::<S, D>(bytes)?;
-        Ok(VoxelBlock { offset, shape, data })
-    }
-
-    /// Deprecated alias for `read_block_converted`.
-    #[deprecated(since = "0.2.4", note = "Use `read_block_converted` instead")]
-    pub fn read_converted<S, D>(
-        &self,
-        offset: [usize; 3],
-        shape: [usize; 3],
-    ) -> Result<VoxelBlock<D>, Error>
-    where
-        S: EndianCodec + Send + Copy + Default + crate::mode::Voxel,
-        D: Convert<S> + EndianCodec + Copy + Default + crate::mode::Voxel,
-    {
-        self.read_block_converted::<S, D>(offset, shape)
-    }
-
-    /// Read and convert voxels with checked conversion, failing on out-of-range values.
-    pub fn read_block_checked_converted<S, D>(
-        &self,
-        offset: [usize; 3],
-        shape: [usize; 3],
-    ) -> Result<VoxelBlock<D>, Error>
-    where
-        S: EndianCodec + Send + Copy + Default + crate::mode::Voxel,
-        D: crate::engine::convert::CheckedConvert<S> + EndianCodec + Copy + Default + crate::mode::Voxel,
-    {
-        let bytes = self.read_block_bytes(offset, shape)?;
-        let src_data = decode_slice::<S>(bytes, self.endian);
-        let mut dst_data = Vec::with_capacity(src_data.len());
-        for src in src_data {
-            dst_data.push(D::try_convert(src) .map_err(Error::Conversion)?);
-        }
-        Ok(VoxelBlock { offset, shape, data: dst_data })
-    }
-
-    /// Get the optimal conversion path.
-    pub fn conversion_path(&self, dst_mode: Mode) -> ConversionPath {
-        get_conversion_path(self.mode(), dst_mode, self.endian)
     }
 
     /// Iterate over slices (Z axis).
@@ -283,22 +209,78 @@ impl MmapReader {
         MmapBlockIter::new(self, self.shape, block_shape)
     }
 
-    /// Iterate over slices with type conversion.
-    pub fn slices_converted<S, D>(&self) -> MmapSliceIterConverted<'_, S, D>
-    where
-        S: crate::mode::Voxel,
-        D: Convert<S> + crate::mode::Voxel,
-    {
-        MmapSliceIterConverted::new(self, self.shape)
+    /// Iterate over slices, automatically converting common types to `f32`.
+    ///
+    /// Supported source modes: `Float32`, `Int16`, `Uint16`, `Int8`.
+    pub fn slices_f32(&self) -> Result<MmapSliceIterF32<'_>, Error> {
+        match self.mode() {
+            Mode::Float32 => Ok(Box::new(self.slices::<f32>() )),
+            Mode::Int16 => Ok(Box::new(self.slices::<i16>().map(|r| {
+                let b = r?;
+                let data = crate::engine::convert::convert_i16_slice_to_f32(&b.data);
+                Ok(VoxelBlock {
+                    offset: b.offset,
+                    shape: b.shape,
+                    data,
+                })
+            }))),
+            Mode::Uint16 => Ok(Box::new(self.slices::<u16>().map(|r| {
+                let b = r?;
+                let data = crate::engine::convert::convert_u16_slice_to_f32(&b.data);
+                Ok(VoxelBlock {
+                    offset: b.offset,
+                    shape: b.shape,
+                    data,
+                })
+            }))),
+            Mode::Int8 => Ok(Box::new(self.slices::<i8>().map(|r| {
+                let b = r?;
+                let data = crate::engine::convert::convert_i8_slice_to_f32(&b.data);
+                Ok(VoxelBlock {
+                    offset: b.offset,
+                    shape: b.shape,
+                    data,
+                })
+            }))),
+            _ => Err(Error::UnsupportedMode),
+        }
     }
 
-    /// Iterate over slabs with type conversion.
-    pub fn slabs_converted<S, D>(&self, k: usize) -> MmapSlabIterConverted<'_, S, D>
-    where
-        S: crate::mode::Voxel,
-        D: Convert<S> + crate::mode::Voxel,
-    {
-        MmapSlabIterConverted::new(self, self.shape, k)
+    /// Iterate over slabs, automatically converting common types to `f32`.
+    ///
+    /// Supported source modes: `Float32`, `Int16`, `Uint16`, `Int8`.
+    pub fn slabs_f32(&self, k: usize) -> Result<MmapSliceIterF32<'_>, Error> {
+        match self.mode() {
+            Mode::Float32 => Ok(Box::new(self.slabs::<f32>(k) )),
+            Mode::Int16 => Ok(Box::new(self.slabs::<i16>(k).map(|r| {
+                let b = r?;
+                let data = crate::engine::convert::convert_i16_slice_to_f32(&b.data);
+                Ok(VoxelBlock {
+                    offset: b.offset,
+                    shape: b.shape,
+                    data,
+                })
+            }))),
+            Mode::Uint16 => Ok(Box::new(self.slabs::<u16>(k).map(|r| {
+                let b = r?;
+                let data = crate::engine::convert::convert_u16_slice_to_f32(&b.data);
+                Ok(VoxelBlock {
+                    offset: b.offset,
+                    shape: b.shape,
+                    data,
+                })
+            }))),
+            Mode::Int8 => Ok(Box::new(self.slabs::<i8>(k).map(|r| {
+                let b = r?;
+                let data = crate::engine::convert::convert_i8_slice_to_f32(&b.data);
+                Ok(VoxelBlock {
+                    offset: b.offset,
+                    shape: b.shape,
+                    data,
+                })
+            }))),
+            _ => Err(Error::UnsupportedMode),
+        }
     }
 
     /// Iterate over slices for Mode 0 (8-bit) files with signed/unsigned interpretation.
@@ -538,106 +520,5 @@ where
             }
             Err(e) => Some(Err(e)),
         }
-    }
-}
-
-// ============================================================================
-// Conversion-enabled Iterators for MmapReader
-// ============================================================================
-
-/// Slice iterator with type conversion for MmapReader.
-pub struct MmapSliceIterConverted<'a, S, D> {
-    reader: &'a MmapReader,
-    z: usize,
-    nz: usize,
-    nx: usize,
-    ny: usize,
-    _phantom: core::marker::PhantomData<(S, D)>,
-}
-
-impl<'a, S, D> MmapSliceIterConverted<'a, S, D> {
-    pub fn new(reader: &'a MmapReader, shape: VolumeShape) -> Self {
-        Self {
-            reader,
-            z: 0,
-            nz: shape.nz,
-            nx: shape.nx,
-            ny: shape.ny,
-            _phantom: core::marker::PhantomData,
-        }
-    }
-}
-
-impl<'a, S, D> Iterator for MmapSliceIterConverted<'a, S, D>
-where
-    S: EndianCodec + Send + Copy + Default + crate::mode::Voxel,
-    D: Convert<S> + EndianCodec + Copy + Default + crate::mode::Voxel,
-{
-    type Item = Result<VoxelBlock<D>, Error>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.z >= self.nz {
-            return None;
-        }
-
-        let z = self.z;
-        self.z += 1;
-
-        Some(self.reader.read_block_converted::<S, D>([0, 0, z], [self.nx, self.ny, 1]))
-    }
-
-    fn nth(&mut self, n: usize) -> Option<Self::Item> {
-        self.z = n;
-        self.next()
-    }
-}
-
-/// Slab iterator with type conversion for MmapReader.
-pub struct MmapSlabIterConverted<'a, S, D> {
-    reader: &'a MmapReader,
-    z: usize,
-    nz: usize,
-    nx: usize,
-    ny: usize,
-    slab_size: usize,
-    _phantom: core::marker::PhantomData<(S, D)>,
-}
-
-impl<'a, S, D> MmapSlabIterConverted<'a, S, D> {
-    pub fn new(reader: &'a MmapReader, shape: VolumeShape, k: usize) -> Self {
-        Self {
-            reader,
-            z: 0,
-            nz: shape.nz,
-            nx: shape.nx,
-            ny: shape.ny,
-            slab_size: k,
-            _phantom: core::marker::PhantomData,
-        }
-    }
-}
-
-impl<'a, S, D> Iterator for MmapSlabIterConverted<'a, S, D>
-where
-    S: EndianCodec + Send + Copy + Default + crate::mode::Voxel,
-    D: Convert<S> + EndianCodec + Copy + Default + crate::mode::Voxel,
-{
-    type Item = Result<VoxelBlock<D>, Error>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.z >= self.nz {
-            return None;
-        }
-
-        let z = self.z;
-        let size = self.slab_size.min(self.nz - z);
-        self.z += size;
-
-        Some(self.reader.read_block_converted::<S, D>([0, 0, z], [self.nx, self.ny, size]))
-    }
-
-    fn nth(&mut self, n: usize) -> Option<Self::Item> {
-        self.z = n * self.slab_size;
-        self.next()
     }
 }

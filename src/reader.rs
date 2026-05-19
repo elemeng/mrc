@@ -2,13 +2,14 @@
 
 use crate::engine::block::VolumeShape;
 use crate::engine::codec::{EndianCodec, decode_slice};
-use crate::engine::convert::Convert;
 use crate::engine::endian::FileEndian;
-use crate::engine::pipeline::{ConversionPath, get_conversion_path, is_zero_copy};
-use crate::iter::{BlockIter, SliceIter, SliceIterConverted, SlabIter, SlabIterConverted};
+use crate::iter::{BlockIter, SliceIter, SlabIter};
 use crate::{Error, Header, Mode};
 
 use std::vec::Vec;
+
+/// Iterator over slices yielding `f32` voxel blocks.
+pub type SliceIterF32<'a> = Box<dyn Iterator<Item = Result<crate::engine::block::VoxelBlock<f32>, Error>> + 'a>;
 
 pub struct Reader {
     header: Header,
@@ -109,6 +110,8 @@ impl Reader {
     }
 
     /// Read and decode a block of voxels to the specified type.
+    ///
+    /// Returns an error if `T` does not match the file's voxel mode.
     pub fn read_block<T: EndianCodec + Send + Copy + Default + crate::mode::Voxel>(
         &self,
         offset: [usize; 3],
@@ -121,38 +124,29 @@ impl Reader {
 
     /// Decode a block of voxels to the specified type.
     ///
-    /// This is the unified decode pipeline that handles:
-    /// - Layer 1 → Layer 2: Raw bytes → Endian normalization
-    /// - Layer 2 → Layer 3: Endian-normalized → Typed values
-    ///
-    /// Uses zero-copy fast path when:
-    /// - src_mode == dst_mode (T matches file mode)
-    /// - file_endian == native
+    /// # Errors
+    /// Returns `Error::ModeMismatch` if `T` does not match the file mode.
     pub(crate) fn decode_block<T: EndianCodec + Send + Copy + Default + crate::mode::Voxel>(
         &self,
         bytes: &[u8],
     ) -> Result<Vec<T>, Error> {
-        // Zero-copy fast path: when mode matches and endian is native,
-        // we can directly transmute the bytes to the target type
-        if self.can_zero_copy::<T>() {
-            return self.decode_block_zero_copy(bytes);
+        if T::MODE != self.mode() {
+            return Err(Error::ModeMismatch {
+                file_mode: self.mode(),
+                requested_mode: T::MODE,
+            });
         }
 
-        // Standard decode path with safe initialization
-        Ok(decode_slice(bytes, self.endian))
+        if self.endian == FileEndian::native() {
+            self.decode_block_zero_copy(bytes)
+        } else {
+            Ok(decode_slice(bytes, self.endian))
+        }
     }
 
     /// Zero-copy decode: transmute bytes directly to Vec<T>
-    /// 
-    /// # Safety
-    /// This is only safe when:
-    /// - The file mode matches T's mode exactly
-    /// - The file endian matches native endian
     fn decode_block_zero_copy<T: EndianCodec + Copy>(&self, bytes: &[u8]) -> Result<Vec<T>, Error> {
         let n = bytes.len() / T::BYTE_SIZE;
-        
-        // SAFETY: We've verified mode and endian match, so we can reinterpret bytes as T
-        // Allocate uninitialized memory and copy bytes directly
         let mut result = Vec::with_capacity(n);
         unsafe {
             core::ptr::copy_nonoverlapping(
@@ -165,140 +159,84 @@ impl Reader {
         Ok(result)
     }
 
-    /// Check if zero-copy decode is possible for the given type.
-    /// Zero-copy requires: file mode matches T's mode AND file endian is native.
-    pub fn can_zero_copy<T: crate::mode::Voxel>(&self) -> bool {
-        is_zero_copy(self.mode(), T::MODE, self.endian)
-    }
-
-    /// Read and convert voxels from file mode to target type D.
+    /// Iterate over slices, automatically converting common types to `f32`.
     ///
-    /// This method decodes the raw bytes using the file's voxel mode,
-    /// then converts each voxel to the destination type D using the
-    /// Convert trait.
-    ///
-    /// # Example
-    /// ```ignore
-    /// // Read Int16 file as Float32
-    /// let reader = Reader::open("data.mrc")?;
-    /// let block: VoxelBlock<f32> = reader.read_block_converted::<i16, f32>([0,0,0], [64,64,64])?;
-    /// ```
-    pub fn read_block_converted<S, D>(
-        &self,
-        offset: [usize; 3],
-        shape: [usize; 3],
-    ) -> Result<crate::engine::block::VoxelBlock<D>, Error>
-    where
-        S: EndianCodec + Send + Copy + Default + crate::mode::Voxel,
-        D: Convert<S> + EndianCodec + Copy + Default + crate::mode::Voxel,
+    /// Supported source modes: `Float32`, `Int16`, `Uint16`, `Int8`.
+    pub fn slices_f32(&self) -> Result<SliceIterF32<'_>, Error>
     {
-        let bytes = self.read_block_bytes(offset, shape)?;
-        let data = self.decode_and_convert::<S, D>(&bytes)?;
-        Ok(crate::engine::block::VoxelBlock { offset, shape, data })
-    }
+        use crate::engine::block::VoxelBlock;
 
-    /// Deprecated alias for `read_block_converted`.
-    #[deprecated(since = "0.2.4", note = "Use `read_block_converted` instead")]
-    pub fn read_converted<S, D>(
-        &self,
-        offset: [usize; 3],
-        shape: [usize; 3],
-    ) -> Result<crate::engine::block::VoxelBlock<D>, Error>
-    where
-        S: EndianCodec + Send + Copy + Default + crate::mode::Voxel,
-        D: Convert<S> + EndianCodec + Copy + Default + crate::mode::Voxel,
-    {
-        self.read_block_converted::<S, D>(offset, shape)
-    }
-
-    /// Read and convert voxels with checked conversion, failing on out-of-range values.
-    pub fn read_block_checked_converted<S, D>(
-        &self,
-        offset: [usize; 3],
-        shape: [usize; 3],
-    ) -> Result<crate::engine::block::VoxelBlock<D>, Error>
-    where
-        S: EndianCodec + Send + Copy + Default + crate::mode::Voxel,
-        D: crate::engine::convert::CheckedConvert<S> + EndianCodec + Copy + Default + crate::mode::Voxel,
-    {
-        let bytes = self.read_block_bytes(offset, shape)?;
-        let src_data = decode_slice::<S>(&bytes, self.endian);
-        let mut dst_data = Vec::with_capacity(src_data.len());
-        for src in src_data {
-            dst_data.push(D::try_convert(src) .map_err(Error::Conversion)?);
+        match self.mode() {
+            Mode::Float32 => Ok(Box::new(self.slices::<f32>() )),
+            Mode::Int16 => Ok(Box::new(self.slices::<i16>().map(|r| {
+                let b = r?;
+                let data = crate::engine::convert::convert_i16_slice_to_f32(&b.data);
+                Ok(VoxelBlock {
+                    offset: b.offset,
+                    shape: b.shape,
+                    data,
+                })
+            }))),
+            Mode::Uint16 => Ok(Box::new(self.slices::<u16>().map(|r| {
+                let b = r?;
+                let data = crate::engine::convert::convert_u16_slice_to_f32(&b.data);
+                Ok(VoxelBlock {
+                    offset: b.offset,
+                    shape: b.shape,
+                    data,
+                })
+            }))),
+            Mode::Int8 => Ok(Box::new(self.slices::<i8>().map(|r| {
+                let b = r?;
+                let data = crate::engine::convert::convert_i8_slice_to_f32(&b.data);
+                Ok(VoxelBlock {
+                    offset: b.offset,
+                    shape: b.shape,
+                    data,
+                })
+            }))),
+            _ => Err(Error::UnsupportedMode),
         }
-        Ok(crate::engine::block::VoxelBlock { offset, shape, data: dst_data })
     }
 
-    /// Decode and convert bytes to destination type D through intermediate type S.
+    /// Iterate over slabs, automatically converting common types to `f32`.
     ///
-    /// Pipeline: bytes → decode<S>() → convert → Vec<D>
-    /// Uses SIMD batch conversions when available and applicable.
-    pub(crate) fn decode_and_convert<S, D>(&self, bytes: &[u8]) -> Result<Vec<D>, Error>
-    where
-        S: EndianCodec + Send + Copy + Default + 'static,
-        D: Convert<S> + 'static,
+    /// Supported source modes: `Float32`, `Int16`, `Uint16`, `Int8`.
+    pub fn slabs_f32(&self, k: usize) -> Result<SliceIterF32<'_>, Error>
     {
-        // First decode to source type
-        let src_data = decode_slice::<S>(bytes, self.endian);
+        use crate::engine::block::VoxelBlock;
 
-        // Try SIMD batch conversion for common f32 destinations
-        #[cfg(feature = "simd")]
-        {
-            use crate::engine::convert::try_simd_convert;
-            if let Some(result) = try_simd_convert::<S, D>(&src_data) {
-                return Ok(result);
-            }
+        match self.mode() {
+            Mode::Float32 => Ok(Box::new(self.slabs::<f32>(k) )),
+            Mode::Int16 => Ok(Box::new(self.slabs::<i16>(k).map(|r| {
+                let b = r?;
+                let data = crate::engine::convert::convert_i16_slice_to_f32(&b.data);
+                Ok(VoxelBlock {
+                    offset: b.offset,
+                    shape: b.shape,
+                    data,
+                })
+            }))),
+            Mode::Uint16 => Ok(Box::new(self.slabs::<u16>(k).map(|r| {
+                let b = r?;
+                let data = crate::engine::convert::convert_u16_slice_to_f32(&b.data);
+                Ok(VoxelBlock {
+                    offset: b.offset,
+                    shape: b.shape,
+                    data,
+                })
+            }))),
+            Mode::Int8 => Ok(Box::new(self.slabs::<i8>(k).map(|r| {
+                let b = r?;
+                let data = crate::engine::convert::convert_i8_slice_to_f32(&b.data);
+                Ok(VoxelBlock {
+                    offset: b.offset,
+                    shape: b.shape,
+                    data,
+                })
+            }))),
+            _ => Err(Error::UnsupportedMode),
         }
-
-        // Fall back to scalar conversion
-        let mut dst_data = Vec::with_capacity(src_data.len());
-        for src in src_data {
-            dst_data.push(D::convert(src));
-        }
-
-        Ok(dst_data)
-    }
-
-    /// Get the optimal conversion path for the given source and destination modes.
-    pub fn conversion_path(&self, dst_mode: Mode) -> ConversionPath {
-        get_conversion_path(self.mode(), dst_mode, self.endian)
-    }
-
-    /// Iterate over slices with type conversion.
-    ///
-    /// # Example
-    /// ```ignore
-    /// // Read Int16 file as Float32 slices
-    /// let reader = Reader::open("data.mrc")?;
-    /// for slice in reader.slices_converted::<i16, f32>() {
-    ///     let data: Vec<f32> = slice?.data; // converted from i16
-    /// }
-    /// ```
-    pub fn slices_converted<S, D>(&self) -> SliceIterConverted<'_, S, D>
-    where
-        S: crate::mode::Voxel,
-        D: Convert<S> + crate::mode::Voxel,
-    {
-        SliceIterConverted::new(self, self.shape)
-    }
-
-    /// Iterate over slabs with type conversion.
-    ///
-    /// # Example
-    /// ```ignore
-    /// // Read Int16 file as Float32 slabs of 10 slices each
-    /// let reader = Reader::open("data.mrc")?;
-    /// for slab in reader.slabs_converted::<i16, f32>(10) {
-    ///     let data: Vec<f32> = slab?.data; // converted from i16
-    /// }
-    /// ```
-    pub fn slabs_converted<S, D>(&self, k: usize) -> SlabIterConverted<'_, S, D>
-    where
-        S: crate::mode::Voxel,
-        D: Convert<S> + crate::mode::Voxel,
-    {
-        SlabIterConverted::new(self, self.shape, k)
     }
 
     /// Iterate over slices for Mode 0 (8-bit) files with signed/unsigned interpretation.

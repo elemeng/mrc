@@ -15,7 +15,6 @@
 //! - Packed4Bit → all integer types
 //! - u8 → all types
 
-use crate::error::{ConversionError, RangeCheck};
 use crate::mode::{Float32Complex, Int16Complex, M0Interpretation, Packed4Bit};
 use std::vec::Vec;
 
@@ -25,90 +24,9 @@ use super::simd;
 /// Trait for converting between voxel types.
 ///
 /// This enables the type-level conversion graph described in engine.md.
-pub trait Convert<S>: Sized {
+pub(crate) trait Convert<S>: Sized {
     /// Convert a source value to the destination type
     fn convert(src: S) -> Self;
-}
-
-/// Trait for checked conversions with range validation.
-pub trait CheckedConvert<S>: Sized {
-    /// Convert a single value, failing if it is out of range or non-finite.
-    fn try_convert(src: S) -> Result<Self, ConversionError>;
-
-    /// Check whether a slice of source values fits within the target type's range.
-    fn check_range(src: &[S]) -> RangeCheck;
-}
-
-/// Attempt SIMD-accelerated conversion from source slice to destination type.
-/// 
-/// Returns Some(Vec<D>) if SIMD conversion is available, None otherwise.
-/// Currently supports: i8/i16/u16/u8 → f32
-#[cfg(feature = "simd")]
-pub fn try_simd_convert<S, D>(src: &[S]) -> Option<Vec<D>>
-where
-    D: Convert<S> + 'static,
-    S: 'static,
-{
-    use core::any::TypeId;
-    
-    // Check if destination is f32
-    if TypeId::of::<D>() != TypeId::of::<f32>() {
-        return None;
-    }
-    
-    // Try each source type
-    let result_f32: Vec<f32> = if TypeId::of::<S>() == TypeId::of::<i8>() {
-        simd::convert_i8_to_f32_simd(unsafe { core::slice::from_raw_parts(src.as_ptr() as *const i8, src.len()) })
-    } else if TypeId::of::<S>() == TypeId::of::<i16>() {
-        simd::convert_i16_to_f32_simd(unsafe { core::slice::from_raw_parts(src.as_ptr() as *const i16, src.len()) })
-    } else if TypeId::of::<S>() == TypeId::of::<u16>() {
-        simd::convert_u16_to_f32_simd(unsafe { core::slice::from_raw_parts(src.as_ptr() as *const u16, src.len()) })
-    } else if TypeId::of::<S>() == TypeId::of::<u8>() {
-        simd::convert_u8_to_f32_simd(unsafe { core::slice::from_raw_parts(src.as_ptr() as *const u8, src.len()) })
-    } else {
-        return None;
-    };
-    
-    // Safety: we verified D is f32, and result_f32 is Vec<f32>
-    // Vec<f32> and Vec<D> have same layout when D is f32
-    Some(unsafe { core::mem::transmute::<Vec<f32>, Vec<D>>(result_f32) })
-}
-
-/// Fallback when SIMD is disabled
-#[cfg(not(feature = "simd"))]
-pub fn try_simd_convert<S, D: Convert<S>>(_src: &[S]) -> Option<Vec<D>> {
-    None
-}
-
-/// Attempt SIMD-accelerated conversion from f32 to integer types (write path).
-///
-/// Returns Some(Vec<D>) if SIMD conversion is available, None otherwise.
-/// Currently supports: f32 → i8/i16/u16/u8
-#[cfg(feature = "simd")]
-pub fn try_simd_convert_reverse<S, D>(src: &[S]) -> Option<Vec<D>>
-where
-    S: 'static,
-    D: Convert<S> + 'static,
-{
-    use core::any::TypeId;
-
-    // Check if source is f32
-    if TypeId::of::<S>() != TypeId::of::<f32>() {
-        return None;
-    }
-
-    let _src_f32: &[f32] = unsafe { core::slice::from_raw_parts(src.as_ptr() as *const f32, src.len()) };
-
-    // For write path, we use scalar conversion since SIMD conversion with clamping
-    // is complex. The main benefit is on the read path (i16/u16 → f32).
-    // Future: Add AVX-512 or NEON saturating conversion instructions.
-    None
-}
-
-/// Fallback when SIMD is disabled
-#[cfg(not(feature = "simd"))]
-pub fn try_simd_convert_reverse<S, D: Convert<S>>(_src: &[S]) -> Option<Vec<D>> {
-    None
 }
 
 // === Packed4Bit (M101) Unpacking ===
@@ -222,67 +140,41 @@ impl Convert<i8> for f32 {
 
 /// Batch conversion from i8 to f32 using SIMD when available.
 #[cfg(feature = "simd")]
-pub fn convert_i8_slice_to_f32(src: &[i8]) -> Vec<f32> {
+pub(crate) fn convert_i8_slice_to_f32(src: &[i8]) -> Vec<f32> {
     simd::convert_i8_to_f32_simd(src)
 }
 
 /// Batch conversion from i8 to f32 (scalar fallback).
 #[cfg(not(feature = "simd"))]
-pub fn convert_i8_slice_to_f32(src: &[i8]) -> Vec<f32> {
+pub(crate) fn convert_i8_slice_to_f32(src: &[i8]) -> Vec<f32> {
     src.iter().map(|&x| x as f32).collect()
 }
 
 /// Batch conversion from i16 to f32 using SIMD when available.
 #[cfg(feature = "simd")]
-pub fn convert_i16_slice_to_f32(src: &[i16]) -> Vec<f32> {
+pub(crate) fn convert_i16_slice_to_f32(src: &[i16]) -> Vec<f32> {
     simd::convert_i16_to_f32_simd(src)
 }
 
 /// Batch conversion from i16 to f32 (scalar fallback).
 #[cfg(not(feature = "simd"))]
-pub fn convert_i16_slice_to_f32(src: &[i16]) -> Vec<f32> {
+pub(crate) fn convert_i16_slice_to_f32(src: &[i16]) -> Vec<f32> {
     src.iter().map(|&x| x as f32).collect()
 }
 
 /// Batch conversion from u16 to f32 using SIMD when available.
 #[cfg(feature = "simd")]
-pub fn convert_u16_slice_to_f32(src: &[u16]) -> Vec<f32> {
+pub(crate) fn convert_u16_slice_to_f32(src: &[u16]) -> Vec<f32> {
     simd::convert_u16_to_f32_simd(src)
 }
 
 /// Batch conversion from u16 to f32 (scalar fallback).
 #[cfg(not(feature = "simd"))]
-pub fn convert_u16_slice_to_f32(src: &[u16]) -> Vec<f32> {
-    src.iter().map(|&x| x as f32).collect()
-}
-
-/// Batch conversion from u8 to f32 using SIMD when available.
-#[cfg(feature = "simd")]
-pub fn convert_u8_slice_to_f32(src: &[u8]) -> Vec<f32> {
-    simd::convert_u8_to_f32_simd(src)
-}
-
-/// Batch conversion from u8 to f32 (scalar fallback).
-#[cfg(not(feature = "simd"))]
-pub fn convert_u8_slice_to_f32(src: &[u8]) -> Vec<f32> {
+pub(crate) fn convert_u16_slice_to_f32(src: &[u16]) -> Vec<f32> {
     src.iter().map(|&x| x as f32).collect()
 }
 
 /// Batch conversion from f16 to f32.
-#[cfg(feature = "f16")]
-pub fn convert_f16_slice_to_f32(src: &[f16]) -> Vec<f32> {
-    // Note: AVX-512 FP16 would provide hardware acceleration but requires
-    // very recent CPUs. For now, use scalar conversion which is fast enough
-    // for typical cryo-EM intermediate files.
-    src.iter().map(|&x| x as f32).collect()
-}
-
-/// Batch conversion from f32 to f16.
-#[cfg(feature = "f16")]
-pub fn convert_f32_slice_to_f16(src: &[f32]) -> Vec<f16> {
-    src.iter().map(|&x| x as f16).collect()
-}
-
 impl Convert<u8> for f32 {
     #[inline]
     fn convert(src: u8) -> Self {
@@ -527,128 +419,6 @@ impl Convert<u8> for u8 {
     }
 }
 
-// === Checked Conversions ===
-
-macro_rules! impl_checked_convert_float_to_int {
-    ($dst:ty, $min:expr, $max:expr) => {
-        impl CheckedConvert<f32> for $dst {
-            #[inline]
-            fn try_convert(src: f32) -> Result<Self, ConversionError> {
-                if src.is_nan() {
-                    return Err(ConversionError::NaNValue);
-                }
-                if src.is_infinite() {
-                    return Err(ConversionError::InfinityValue);
-                }
-                let min = $min as f32;
-                let max = $max as f32;
-                if src < min || src > max {
-                    return Err(ConversionError::OutOfRange {
-                        min: src as f64,
-                        max: src as f64,
-                        target_min: $min as f64,
-                        target_max: $max as f64,
-                    });
-                }
-                Ok(src as $dst)
-            }
-
-            #[inline]
-            fn check_range(src: &[f32]) -> RangeCheck {
-                let mut min_val = f64::INFINITY;
-                let mut max_val = f64::NEG_INFINITY;
-                let mut sum = 0.0f64;
-                let mut out_of_range = 0usize;
-                let min = $min as f32;
-                let max = $max as f32;
-
-                for &v in src {
-                    let vd = v as f64;
-                    if vd < min_val {
-                        min_val = vd;
-                    }
-                    if vd > max_val {
-                        max_val = vd;
-                    }
-                    sum += vd;
-                    if v < min || v > max || v.is_nan() || v.is_infinite() {
-                        out_of_range += 1;
-                    }
-                }
-
-                RangeCheck {
-                    min: if min_val == f64::INFINITY { 0.0 } else { min_val },
-                    max: if max_val == f64::NEG_INFINITY { 0.0 } else { max_val },
-                    mean: if src.is_empty() { 0.0 } else { sum / src.len() as f64 },
-                    values_out_of_range: out_of_range,
-                    total_values: src.len(),
-                }
-            }
-        }
-    };
-}
-
-impl_checked_convert_float_to_int!(i8, i8::MIN, i8::MAX);
-impl_checked_convert_float_to_int!(u8, u8::MIN, u8::MAX);
-impl_checked_convert_float_to_int!(i16, i16::MIN, i16::MAX);
-impl_checked_convert_float_to_int!(u16, u16::MIN, u16::MAX);
-
-#[cfg(feature = "f16")]
-impl CheckedConvert<f32> for f16 {
-    #[inline]
-    fn try_convert(src: f32) -> Result<Self, ConversionError> {
-        if src.is_nan() {
-            return Err(ConversionError::NaNValue);
-        }
-        if src.is_infinite() {
-            return Err(ConversionError::InfinityValue);
-        }
-        let min = -(65504.0f32);
-        let max = 65504.0f32;
-        if src < min || src > max {
-            return Err(ConversionError::OutOfRange {
-                min: src as f64,
-                max: src as f64,
-                target_min: min as f64,
-                target_max: max as f64,
-            });
-        }
-        Ok(src as f16)
-    }
-
-    #[inline]
-    fn check_range(src: &[f32]) -> RangeCheck {
-        let mut min_val = f64::INFINITY;
-        let mut max_val = f64::NEG_INFINITY;
-        let mut sum = 0.0f64;
-        let mut out_of_range = 0usize;
-        let min = -(65504.0f32);
-        let max = 65504.0f32;
-
-        for &v in src {
-            let vd = v as f64;
-            if vd < min_val {
-                min_val = vd;
-            }
-            if vd > max_val {
-                max_val = vd;
-            }
-            sum += vd;
-            if v < min || v > max || v.is_nan() || v.is_infinite() {
-                out_of_range += 1;
-            }
-        }
-
-        RangeCheck {
-            min: if min_val == f64::INFINITY { 0.0 } else { min_val },
-            max: if max_val == f64::NEG_INFINITY { 0.0 } else { max_val },
-            mean: if src.is_empty() { 0.0 } else { sum / src.len() as f64 },
-            values_out_of_range: out_of_range,
-            total_values: src.len(),
-        }
-    }
-}
-
 // =============================================================================
 // Tests
 // =============================================================================
@@ -724,17 +494,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_convert_u8_slice_to_f32() {
-        let input: Vec<u8> = vec![0, 64, 128, 192, 255];
-        let output = convert_u8_slice_to_f32(&input);
-        
-        assert_eq!(output.len(), input.len());
-        for (src, dst) in input.iter().zip(output.iter()) {
-            assert_eq!(*dst, *src as f32);
-        }
-    }
-
     // Test edge cases
     #[test]
     fn test_convert_empty_slice() {
@@ -762,75 +521,13 @@ mod tests {
         }
     }
 
-    // Test try_simd_convert function directly
-    #[test]
-    #[cfg(feature = "simd")]
-    fn test_try_simd_convert_i8_to_f32() {
-        let input: Vec<i8> = (-128..=127).collect();
-        let result = try_simd_convert::<i8, f32>(&input);
-        
-        assert!(result.is_some());
-        let output = result.unwrap();
-        assert_eq!(output.len(), input.len());
-        for (src, dst) in input.iter().zip(output.iter()) {
-            assert_eq!(*dst, *src as f32);
-        }
-    }
-
-    #[test]
-    #[cfg(feature = "simd")]
-    fn test_try_simd_convert_i16_to_f32() {
-        let input: Vec<i16> = (-10000..10000).collect();
-        let result = try_simd_convert::<i16, f32>(&input);
-        
-        assert!(result.is_some());
-        let output = result.unwrap();
-        assert_eq!(output.len(), input.len());
-        for (src, dst) in input.iter().zip(output.iter()) {
-            assert_eq!(*dst, *src as f32);
-        }
-    }
-
-    #[test]
-    #[cfg(feature = "simd")]
-    fn test_try_simd_convert_u16_to_f32() {
-        let input: Vec<u16> = (0..20000).collect();
-        let result = try_simd_convert::<u16, f32>(&input);
-        
-        assert!(result.is_some());
-        let output = result.unwrap();
-        assert_eq!(output.len(), input.len());
-        for (src, dst) in input.iter().zip(output.iter()) {
-            assert_eq!(*dst, *src as f32);
-        }
-    }
-
-    #[test]
-    #[cfg(feature = "simd")]
-    fn test_try_simd_convert_u8_to_f32() {
-        let input: Vec<u8> = (0..=255).collect();
-        let result = try_simd_convert::<u8, f32>(&input);
-        
-        assert!(result.is_some());
-        let output = result.unwrap();
-        assert_eq!(output.len(), input.len());
-        for (src, dst) in input.iter().zip(output.iter()) {
-            assert_eq!(*dst, *src as f32);
-        }
-    }
-
     // Test that SIMD and scalar paths produce identical results
     #[test]
     #[cfg(feature = "simd")]
     fn test_simd_scalar_equivalence_i8() {
         let input: Vec<i8> = (-128..=127).collect();
-        
-        // SIMD path
-        let simd_result = try_simd_convert::<i8, f32>(&input).unwrap();
-        
-        // Scalar path (via Convert trait)
+        let simd_result = crate::engine::convert::convert_i8_slice_to_f32(&input);
         let scalar_result: Vec<f32> = input.iter().map(|&x| f32::convert(x)).collect();
-        
         assert_eq!(simd_result, scalar_result);
     }
 
@@ -838,10 +535,8 @@ mod tests {
     #[cfg(feature = "simd")]
     fn test_simd_scalar_equivalence_i16() {
         let input: Vec<i16> = (-32768..=-31768).collect(); // Full i16 range would be slow
-        
-        let simd_result = try_simd_convert::<i16, f32>(&input).unwrap();
+        let simd_result = crate::engine::convert::convert_i16_slice_to_f32(&input);
         let scalar_result: Vec<f32> = input.iter().map(|&x| f32::convert(x)).collect();
-        
         assert_eq!(simd_result, scalar_result);
     }
 
@@ -849,21 +544,8 @@ mod tests {
     #[cfg(feature = "simd")]
     fn test_simd_scalar_equivalence_u16() {
         let input: Vec<u16> = (0..10000).collect();
-        
-        let simd_result = try_simd_convert::<u16, f32>(&input).unwrap();
+        let simd_result = crate::engine::convert::convert_u16_slice_to_f32(&input);
         let scalar_result: Vec<f32> = input.iter().map(|&x| f32::convert(x)).collect();
-        
-        assert_eq!(simd_result, scalar_result);
-    }
-
-    #[test]
-    #[cfg(feature = "simd")]
-    fn test_simd_scalar_equivalence_u8() {
-        let input: Vec<u8> = (0..=255).collect();
-        
-        let simd_result = try_simd_convert::<u8, f32>(&input).unwrap();
-        let scalar_result: Vec<f32> = input.iter().map(|&x| f32::convert(x)).collect();
-        
         assert_eq!(simd_result, scalar_result);
     }
 
@@ -934,73 +616,7 @@ mod tests {
         assert_eq!(result, vec![0.0, 128.0, 255.0]);
     }
 
-    // Test CheckedConvert
-    #[test]
-    fn test_checked_convert_i8_in_range() {
-        assert_eq!(i8::try_convert(127.0).unwrap(), 127i8);
-        assert_eq!(i8::try_convert(-128.0).unwrap(), -128i8);
-    }
-
-    #[test]
-    fn test_checked_convert_i8_out_of_range() {
-        assert!(matches!(
-            i8::try_convert(128.0),
-            Err(ConversionError::OutOfRange { .. })
-        ));
-    }
-
-    #[test]
-    fn test_checked_convert_nan() {
-        assert!(matches!(
-            i8::try_convert(f32::NAN),
-            Err(ConversionError::NaNValue)
-        ));
-    }
-
-    #[test]
-    fn test_checked_convert_infinity() {
-        assert!(matches!(
-            i8::try_convert(f32::INFINITY),
-            Err(ConversionError::InfinityValue)
-        ));
-    }
-
-    #[test]
-    fn test_check_range_u16() {
-        let input = vec![0.0f32, 1000.0, 70000.0, -1.0];
-        let check = u16::check_range(&input);
-        assert_eq!(check.total_values, 4);
-        assert_eq!(check.values_out_of_range, 2);
-        assert_eq!(check.min, -1.0);
-        assert_eq!(check.max, 70000.0);
-    }
-
-    #[test]
-    fn test_check_range_empty() {
-        let input: Vec<f32> = vec![];
-        let check = i16::check_range(&input);
-        assert_eq!(check.total_values, 0);
-        assert_eq!(check.values_out_of_range, 0);
-        assert_eq!(check.mean, 0.0);
-    }
-
-    #[test]
-    #[cfg(feature = "f16")]
-    fn test_checked_convert_f16_in_range() {
-        assert_eq!(f16::try_convert(65504.0).unwrap(), 65504.0f16);
-        assert_eq!(f16::try_convert(-65504.0).unwrap(), -65504.0f16);
-    }
-
-    #[test]
-    #[cfg(feature = "f16")]
-    fn test_checked_convert_f16_out_of_range() {
-        assert!(matches!(
-            f16::try_convert(65505.0),
-            Err(ConversionError::OutOfRange { .. })
-        ));
-    }
-
-    // Test ComplexToRealStrategy
+// Test ComplexToRealStrategy
     #[test]
     fn test_complex_to_real_strategies() {
         let c = Float32Complex { real: 3.0, imag: 4.0 };

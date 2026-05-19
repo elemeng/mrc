@@ -1,15 +1,12 @@
 //! MRC file format library for cryo-EM and tomography
 //!
-//! Provides iterator-centric reading and voxel-block writing with SIMD acceleration.
+//! Provides high-performance reading and writing of MRC-2014 files.
 //!
-//! # Architecture
+//! # Design Philosophy
 //!
-//! This crate implements a unified encoding/decoding pipeline:
-//! ```text
-//! Raw Bytes → Endian Normalization → Typed Values → Type Conversion
-//! ```
-//!
-//! With zero-copy fast paths whenever possible.
+//! This crate focuses on a single responsibility: **correctly reading and writing
+//! MRC files**. Type conversion is the caller's responsibility, with only a small
+//! set of MRC-specific conveniences (e.g. `slices_f32` for the common i16→f32 case).
 
 #![cfg_attr(feature = "f16", feature(f16))]
 
@@ -26,39 +23,25 @@ mod mmap_reader;
 mod engine;
 
 // Re-export core types
-pub use engine::block::{VolumeShape, VoxelBlock};
+pub use engine::block::{SliceAccess, VolumeShape, VoxelBlock};
 pub use engine::endian::FileEndian;
 
 // Re-export codec trait for advanced users who need custom voxel types
 pub use engine::codec::EndianCodec;
 
-// Re-export conversion trait and pipeline types for type conversion
-pub use engine::convert::Convert;
-pub use engine::convert::CheckedConvert;
-pub use engine::pipeline::{ConversionPath, get_conversion_path, is_zero_copy};
-
-// Re-export SIMD batch conversions when available
-#[cfg(feature = "simd")]
-pub use engine::convert::{convert_i8_slice_to_f32, convert_i16_slice_to_f32, convert_u16_slice_to_f32, convert_u8_slice_to_f32, try_simd_convert};
-
-// Re-export M101 unpacking functions
-pub use engine::convert::{unpack_u4_to_f32, unpack_u4_to_i8, unpack_u4_to_u16, unpack_u4_bytes_to_f32, unpack_u4_bytes_to_u16, reinterpret_m0};
-
-// Re-export f16 batch conversions when f16 feature is enabled
-#[cfg(feature = "f16")]
-pub use engine::convert::{convert_f16_slice_to_f32, convert_f32_slice_to_f16};
-
-// Re-export SliceAccess trait for writers
-pub use engine::block::SliceAccess;
+// Re-export MRC-specific format utilities
+pub use engine::convert::{
+    reinterpret_m0, unpack_u4_bytes_to_f32, unpack_u4_bytes_to_u16, unpack_u4_to_f32,
+    unpack_u4_to_i8, unpack_u4_to_u16,
+};
 
 pub use error::{ConversionError, Error, HeaderValidationError, RangeCheck};
 pub use header::{ExtHeader, ExtHeaderMut, Header, HeaderBuilder};
-pub use mode::{ComplexToRealStrategy, Float32Complex, Int16Complex, M0Interpretation, Mode, Packed4Bit, Voxel};
+pub use mode::{
+    ComplexToRealStrategy, Float32Complex, Int16Complex, M0Interpretation, Mode, Packed4Bit, Voxel,
+};
 pub use reader::Reader;
 pub use writer::{Writer, WriterBuilder};
-
-// Re-export conversion-enabled iterators
-pub use iter::{SliceIterConverted, SlabIterConverted};
 
 #[cfg(feature = "mmap")]
 pub use writer::{MmapWriter, MmapWriterBuilder};
@@ -66,12 +49,12 @@ pub use writer::{MmapWriter, MmapWriterBuilder};
 #[cfg(feature = "mmap")]
 pub use mmap_reader::MmapReader;
 
-/// Open an MRC file for reading
+/// Open an MRC file for reading.
 pub fn open<P: AsRef<std::path::Path>>(path: P) -> Result<Reader, Error> {
     Reader::open(path)
 }
 
-/// Create a new MRC file for writing
+/// Create a new MRC file for writing.
 pub fn create<P: AsRef<std::path::Path>>(path: P) -> WriterBuilder {
     WriterBuilder::new(path)
 }
