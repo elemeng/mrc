@@ -15,8 +15,9 @@
 //! - Packed4Bit → all integer types
 //! - u8 → all types
 
-use crate::mode::{Float32Complex, Int16Complex, Packed4Bit};
-use alloc::vec::Vec;
+use crate::error::{ConversionError, RangeCheck};
+use crate::mode::{Float32Complex, Int16Complex, M0Interpretation, Packed4Bit};
+use std::vec::Vec;
 
 #[cfg(feature = "simd")]
 use super::simd;
@@ -27,6 +28,15 @@ use super::simd;
 pub trait Convert<S>: Sized {
     /// Convert a source value to the destination type
     fn convert(src: S) -> Self;
+}
+
+/// Trait for checked conversions with range validation.
+pub trait CheckedConvert<S>: Sized {
+    /// Convert a single value, failing if it is out of range or non-finite.
+    fn try_convert(src: S) -> Result<Self, ConversionError>;
+
+    /// Check whether a slice of source values fits within the target type's range.
+    fn check_range(src: &[S]) -> RangeCheck;
 }
 
 /// Attempt SIMD-accelerated conversion from source slice to destination type.
@@ -99,6 +109,106 @@ where
 #[cfg(not(feature = "simd"))]
 pub fn try_simd_convert_reverse<S, D: Convert<S>>(_src: &[S]) -> Option<Vec<D>> {
     None
+}
+
+// === Packed4Bit (M101) Unpacking ===
+
+/// Unpack 4-bit packed data to `u16`.
+///
+/// Each `Packed4Bit` contains two nibbles. `num_values` specifies exactly how
+/// many nibbles to extract, which is required when row widths are odd and
+/// padding nibbles are present.
+pub fn unpack_u4_to_u16(src: &[Packed4Bit], num_values: usize) -> Vec<u16> {
+    let mut dst = Vec::with_capacity(num_values);
+    for packed in src {
+        dst.push(packed.first() as u16);
+        if dst.len() >= num_values {
+            break;
+        }
+        dst.push(packed.second() as u16);
+        if dst.len() >= num_values {
+            break;
+        }
+    }
+    dst
+}
+
+/// Unpack 4-bit packed data to `f32`.
+pub fn unpack_u4_to_f32(src: &[Packed4Bit], num_values: usize) -> Vec<f32> {
+    let mut dst = Vec::with_capacity(num_values);
+    for packed in src {
+        dst.push(packed.first() as f32);
+        if dst.len() >= num_values {
+            break;
+        }
+        dst.push(packed.second() as f32);
+        if dst.len() >= num_values {
+            break;
+        }
+    }
+    dst
+}
+
+/// Unpack raw 4-bit packed bytes to `u16`.
+pub fn unpack_u4_bytes_to_u16(src: &[u8], num_values: usize) -> Vec<u16> {
+    let mut dst = Vec::with_capacity(num_values);
+    for &byte in src {
+        dst.push((byte & 0x0F) as u16);
+        if dst.len() >= num_values {
+            break;
+        }
+        dst.push(((byte >> 4) & 0x0F) as u16);
+        if dst.len() >= num_values {
+            break;
+        }
+    }
+    dst
+}
+
+/// Unpack raw 4-bit packed bytes to `f32`.
+pub fn unpack_u4_bytes_to_f32(src: &[u8], num_values: usize) -> Vec<f32> {
+    let mut dst = Vec::with_capacity(num_values);
+    for &byte in src {
+        dst.push((byte & 0x0F) as f32);
+        if dst.len() >= num_values {
+            break;
+        }
+        dst.push(((byte >> 4) & 0x0F) as f32);
+        if dst.len() >= num_values {
+            break;
+        }
+    }
+    dst
+}
+
+/// Batch unpack 4-bit packed data to `i8`.
+pub fn unpack_u4_to_i8(src: &[Packed4Bit], num_values: usize) -> Vec<i8> {
+    let mut dst = Vec::with_capacity(num_values);
+    for packed in src {
+        dst.push(i8::convert(*packed));
+        if dst.len() >= num_values {
+            break;
+        }
+        let second = Packed4Bit::new(packed.0).second();
+        let signed = if second & 0x08 != 0 {
+            (second | 0xF0) as i8
+        } else {
+            second as i8
+        };
+        dst.push(signed);
+        if dst.len() >= num_values {
+            break;
+        }
+    }
+    dst
+}
+
+/// Reinterpret Mode 0 (8-bit) data as signed or unsigned and convert to `f32`.
+pub fn reinterpret_m0(data: &[u8], interp: M0Interpretation) -> Vec<f32> {
+    match interp {
+        M0Interpretation::Signed => data.iter().map(|&x| x as i8 as f32).collect(),
+        M0Interpretation::Unsigned => data.iter().map(|&x| x as f32).collect(),
+    }
 }
 
 // === Conversions TO Float32 ===
@@ -417,6 +527,128 @@ impl Convert<u8> for u8 {
     }
 }
 
+// === Checked Conversions ===
+
+macro_rules! impl_checked_convert_float_to_int {
+    ($dst:ty, $min:expr, $max:expr) => {
+        impl CheckedConvert<f32> for $dst {
+            #[inline]
+            fn try_convert(src: f32) -> Result<Self, ConversionError> {
+                if src.is_nan() {
+                    return Err(ConversionError::NaNValue);
+                }
+                if src.is_infinite() {
+                    return Err(ConversionError::InfinityValue);
+                }
+                let min = $min as f32;
+                let max = $max as f32;
+                if src < min || src > max {
+                    return Err(ConversionError::OutOfRange {
+                        min: src as f64,
+                        max: src as f64,
+                        target_min: $min as f64,
+                        target_max: $max as f64,
+                    });
+                }
+                Ok(src as $dst)
+            }
+
+            #[inline]
+            fn check_range(src: &[f32]) -> RangeCheck {
+                let mut min_val = f64::INFINITY;
+                let mut max_val = f64::NEG_INFINITY;
+                let mut sum = 0.0f64;
+                let mut out_of_range = 0usize;
+                let min = $min as f32;
+                let max = $max as f32;
+
+                for &v in src {
+                    let vd = v as f64;
+                    if vd < min_val {
+                        min_val = vd;
+                    }
+                    if vd > max_val {
+                        max_val = vd;
+                    }
+                    sum += vd;
+                    if v < min || v > max || v.is_nan() || v.is_infinite() {
+                        out_of_range += 1;
+                    }
+                }
+
+                RangeCheck {
+                    min: if min_val == f64::INFINITY { 0.0 } else { min_val },
+                    max: if max_val == f64::NEG_INFINITY { 0.0 } else { max_val },
+                    mean: if src.is_empty() { 0.0 } else { sum / src.len() as f64 },
+                    values_out_of_range: out_of_range,
+                    total_values: src.len(),
+                }
+            }
+        }
+    };
+}
+
+impl_checked_convert_float_to_int!(i8, i8::MIN, i8::MAX);
+impl_checked_convert_float_to_int!(u8, u8::MIN, u8::MAX);
+impl_checked_convert_float_to_int!(i16, i16::MIN, i16::MAX);
+impl_checked_convert_float_to_int!(u16, u16::MIN, u16::MAX);
+
+#[cfg(feature = "f16")]
+impl CheckedConvert<f32> for f16 {
+    #[inline]
+    fn try_convert(src: f32) -> Result<Self, ConversionError> {
+        if src.is_nan() {
+            return Err(ConversionError::NaNValue);
+        }
+        if src.is_infinite() {
+            return Err(ConversionError::InfinityValue);
+        }
+        let min = -(65504.0f32);
+        let max = 65504.0f32;
+        if src < min || src > max {
+            return Err(ConversionError::OutOfRange {
+                min: src as f64,
+                max: src as f64,
+                target_min: min as f64,
+                target_max: max as f64,
+            });
+        }
+        Ok(src as f16)
+    }
+
+    #[inline]
+    fn check_range(src: &[f32]) -> RangeCheck {
+        let mut min_val = f64::INFINITY;
+        let mut max_val = f64::NEG_INFINITY;
+        let mut sum = 0.0f64;
+        let mut out_of_range = 0usize;
+        let min = -(65504.0f32);
+        let max = 65504.0f32;
+
+        for &v in src {
+            let vd = v as f64;
+            if vd < min_val {
+                min_val = vd;
+            }
+            if vd > max_val {
+                max_val = vd;
+            }
+            sum += vd;
+            if v < min || v > max || v.is_nan() || v.is_infinite() {
+                out_of_range += 1;
+            }
+        }
+
+        RangeCheck {
+            min: if min_val == f64::INFINITY { 0.0 } else { min_val },
+            max: if max_val == f64::NEG_INFINITY { 0.0 } else { max_val },
+            mean: if src.is_empty() { 0.0 } else { sum / src.len() as f64 },
+            values_out_of_range: out_of_range,
+            total_values: src.len(),
+        }
+    }
+}
+
 // =============================================================================
 // Tests
 // =============================================================================
@@ -424,7 +656,8 @@ impl Convert<u8> for u8 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloc::vec;
+    use std::vec;
+    use crate::ComplexToRealStrategy;
 
     // Test the Convert trait implementations
     #[test]
@@ -632,5 +865,149 @@ mod tests {
         let scalar_result: Vec<f32> = input.iter().map(|&x| f32::convert(x)).collect();
         
         assert_eq!(simd_result, scalar_result);
+    }
+
+    // Test M101 unpacking
+    #[test]
+    fn test_unpack_u4_to_u16_basic() {
+        let packed = vec![Packed4Bit::new(0x21), Packed4Bit::new(0x43)];
+        let result = unpack_u4_to_u16(&packed, 4);
+        assert_eq!(result, vec![1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn test_unpack_u4_to_u16_odd_width() {
+        // Odd width: 3 values from 2 bytes, ignoring padding nibble
+        let packed = vec![Packed4Bit::new(0x21), Packed4Bit::new(0x43)];
+        let result = unpack_u4_to_u16(&packed, 3);
+        assert_eq!(result, vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn test_unpack_u4_bytes_to_u16() {
+        let bytes = vec![0x21, 0x43];
+        let result = unpack_u4_bytes_to_u16(&bytes, 4);
+        assert_eq!(result, vec![1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn test_unpack_u4_to_f32() {
+        let packed = vec![Packed4Bit::new(0x10), Packed4Bit::new(0x32)];
+        let result = unpack_u4_to_f32(&packed, 4);
+        assert_eq!(result, vec![0.0, 1.0, 2.0, 3.0]);
+    }
+
+    #[test]
+    fn test_unpack_u4_bytes_to_f32() {
+        let bytes = vec![0x10, 0x32];
+        let result = unpack_u4_bytes_to_f32(&bytes, 4);
+        assert_eq!(result, vec![0.0, 1.0, 2.0, 3.0]);
+    }
+
+    #[test]
+    fn test_unpack_u4_to_i8() {
+        // 0xF8 -> first nibble = 8 (signed: -8), second nibble = 15 (signed: -1)
+        let packed = vec![Packed4Bit::new(0xF8)];
+        let result = unpack_u4_to_i8(&packed, 2);
+        assert_eq!(result, vec![-8i8, -1i8]);
+    }
+
+    #[test]
+    fn test_unpack_u4_empty() {
+        let packed: Vec<Packed4Bit> = vec![];
+        let result = unpack_u4_to_u16(&packed, 0);
+        assert!(result.is_empty());
+    }
+
+    // Test M0 reinterpretation
+    #[test]
+    fn test_reinterpret_m0_signed() {
+        let data = vec![0x00, 0x80, 0xFF]; // 0, -128, -1 in signed i8
+        let result = reinterpret_m0(&data, M0Interpretation::Signed);
+        assert_eq!(result, vec![0.0, -128.0, -1.0]);
+    }
+
+    #[test]
+    fn test_reinterpret_m0_unsigned() {
+        let data = vec![0x00, 0x80, 0xFF]; // 0, 128, 255 in unsigned u8
+        let result = reinterpret_m0(&data, M0Interpretation::Unsigned);
+        assert_eq!(result, vec![0.0, 128.0, 255.0]);
+    }
+
+    // Test CheckedConvert
+    #[test]
+    fn test_checked_convert_i8_in_range() {
+        assert_eq!(i8::try_convert(127.0).unwrap(), 127i8);
+        assert_eq!(i8::try_convert(-128.0).unwrap(), -128i8);
+    }
+
+    #[test]
+    fn test_checked_convert_i8_out_of_range() {
+        assert!(matches!(
+            i8::try_convert(128.0),
+            Err(ConversionError::OutOfRange { .. })
+        ));
+    }
+
+    #[test]
+    fn test_checked_convert_nan() {
+        assert!(matches!(
+            i8::try_convert(f32::NAN),
+            Err(ConversionError::NaNValue)
+        ));
+    }
+
+    #[test]
+    fn test_checked_convert_infinity() {
+        assert!(matches!(
+            i8::try_convert(f32::INFINITY),
+            Err(ConversionError::InfinityValue)
+        ));
+    }
+
+    #[test]
+    fn test_check_range_u16() {
+        let input = vec![0.0f32, 1000.0, 70000.0, -1.0];
+        let check = u16::check_range(&input);
+        assert_eq!(check.total_values, 4);
+        assert_eq!(check.values_out_of_range, 2);
+        assert_eq!(check.min, -1.0);
+        assert_eq!(check.max, 70000.0);
+    }
+
+    #[test]
+    fn test_check_range_empty() {
+        let input: Vec<f32> = vec![];
+        let check = i16::check_range(&input);
+        assert_eq!(check.total_values, 0);
+        assert_eq!(check.values_out_of_range, 0);
+        assert_eq!(check.mean, 0.0);
+    }
+
+    #[test]
+    #[cfg(feature = "f16")]
+    fn test_checked_convert_f16_in_range() {
+        assert_eq!(f16::try_convert(65504.0).unwrap(), 65504.0f16);
+        assert_eq!(f16::try_convert(-65504.0).unwrap(), -65504.0f16);
+    }
+
+    #[test]
+    #[cfg(feature = "f16")]
+    fn test_checked_convert_f16_out_of_range() {
+        assert!(matches!(
+            f16::try_convert(65505.0),
+            Err(ConversionError::OutOfRange { .. })
+        ));
+    }
+
+    // Test ComplexToRealStrategy
+    #[test]
+    fn test_complex_to_real_strategies() {
+        let c = Float32Complex { real: 3.0, imag: 4.0 };
+        assert_eq!(c.to_real(ComplexToRealStrategy::RealPart), 3.0);
+        assert_eq!(c.to_real(ComplexToRealStrategy::ImaginaryPart), 4.0);
+        assert_eq!(c.to_real(ComplexToRealStrategy::Magnitude), 5.0);
+        let phase = c.to_real(ComplexToRealStrategy::Phase);
+        assert!((phase - 0.9272952).abs() < 1e-6);
     }
 }

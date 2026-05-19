@@ -11,7 +11,7 @@ fn read_and_decode<T: EndianCodec + Send + Copy + Default + crate::mode::Voxel>(
     offset: [usize; 3],
     shape: [usize; 3],
 ) -> Result<VoxelBlock<T>, Error> {
-    let bytes = reader.read_voxels(offset, shape)?;
+    let bytes = reader.read_block_bytes(offset, shape)?;
     let data = reader.decode_block::<T>(&bytes)?;
     Ok(VoxelBlock {
         offset,
@@ -192,7 +192,7 @@ where
     S: EndianCodec + Send + Copy + Default + crate::mode::Voxel,
     D: Convert<S> + EndianCodec + Copy + Default + crate::mode::Voxel,
 {
-    reader.read_converted::<S, D>(offset, shape)
+    reader.read_block_converted::<S, D>(offset, shape)
 }
 
 /// Slice iterator with type conversion support.

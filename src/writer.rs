@@ -6,8 +6,8 @@ use crate::engine::convert::Convert;
 use crate::engine::endian::FileEndian;
 use crate::{Error, Header, Mode};
 
-use alloc::string::{String, ToString};
-use alloc::vec::Vec;
+use std::string::{String, ToString};
+use std::vec::Vec;
 
 pub struct WriterBuilder {
     path: String,
@@ -15,9 +15,9 @@ pub struct WriterBuilder {
 }
 
 impl WriterBuilder {
-    pub fn new(path: &str) -> Self {
+    pub fn new<P: AsRef<std::path::Path>>(path: P) -> Self {
         Self {
-            path: path.to_string(),
+            path: path.as_ref().to_string_lossy().to_string(),
             header: Header::new(),
         }
     }
@@ -37,6 +37,15 @@ impl WriterBuilder {
     pub fn finish(self) -> Result<Writer, Error> {
         Writer::create(&self.path, self.header)
     }
+
+    /// Switch to building a memory-mapped writer.
+    #[cfg(feature = "mmap")]
+    pub fn mmap(self) -> MmapWriterBuilder {
+        MmapWriterBuilder {
+            path: self.path,
+            header: self.header,
+        }
+    }
 }
 
 pub struct Writer {
@@ -45,38 +54,34 @@ pub struct Writer {
     data_offset: u64,
     bytes_per_voxel: usize,
     shape: VolumeShape,
-    data: Vec<u8>,
-    #[cfg(feature = "parallel")]
-    parallel_writes: bool,
 }
 
 impl Writer {
-    #[cfg(feature = "std")]
-    fn create(path: &str, header: Header) -> Result<Self, Error> {
+    fn create<P: AsRef<std::path::Path>>(path: P, header: Header) -> Result<Self, Error> {
         use std::io::Write;
 
         if !header.validate() {
             return Err(Error::InvalidHeader);
         }
 
-        let mut file = std::fs::File::create(path).map_err(|_| Error::Io("create file".into()))?;
+        let mut file = std::fs::File::create(path)?;
 
         let mut header_bytes = [0u8; 1024];
         header.encode_to_bytes(&mut header_bytes);
-        file.write_all(&header_bytes).map_err(|_| Error::Io("write header".into()))?;
+        file.write_all(&header_bytes)?;
 
         let ext_size = header.nsymbt as usize;
         if ext_size > 0 {
-            let zeros = alloc::vec![0u8; ext_size];
-            file.write_all(&zeros).map_err(|_| Error::Io("write extended header".into()))?;
+            let zeros = vec![0u8; ext_size];
+            file.write_all(&zeros)?;
         }
 
         let data_offset = header.data_offset() as u64;
         let mode = Mode::from_i32(header.mode).ok_or(Error::UnsupportedMode)?;
+        if mode == Mode::Int16Complex {
+            eprintln!("Warning: Mode 3 (Int16Complex) is obsolete and should not be used for writing new files.");
+        }
         let bytes_per_voxel = mode.byte_size();
-
-        let data_size = header.data_size();
-        let data = alloc::vec![0u8; data_size];
 
         let shape =
             VolumeShape::new(header.nx as usize, header.ny as usize, header.nz as usize);
@@ -87,17 +92,7 @@ impl Writer {
             data_offset,
             bytes_per_voxel,
             shape,
-            data,
-            #[cfg(feature = "parallel")]
-            parallel_writes: false,
         })
-    }
-
-    #[cfg(not(feature = "std"))]
-    fn create(path: &str, header: Header) -> Result<Self, Error> {
-        let _ = path;
-        let _ = header;
-        Err(Error::Io("std feature not enabled".into()))
     }
 
     pub fn shape(&self) -> VolumeShape {
@@ -120,19 +115,16 @@ impl Writer {
         let [ox, oy, oz] = block.offset;
         let [sx, sy, sz] = block.shape;
 
-        let start_offset = (ox + oy * nx + oz * nx * ny) * self.bytes_per_voxel;
-        let end_offset = start_offset + sx * sy * sz * self.bytes_per_voxel;
+        let start_offset = self.data_offset + ((ox + oy * nx + oz * nx * ny) * self.bytes_per_voxel) as u64;
+        let byte_len = sx * sy * sz * self.bytes_per_voxel;
 
-        if end_offset > self.data.len() {
-            return Err(Error::BoundsError);
-        }
+        // Encode to a temporary buffer and write directly
+        let mut buffer = vec![0u8; byte_len];
+        encode_slice(&block.data, &mut buffer, FileEndian::LittleEndian);
 
-        // Encode slice to bytes
-        encode_slice(
-            &block.data,
-            &mut self.data[start_offset..end_offset],
-            FileEndian::LittleEndian,
-        );
+        use std::io::{Seek, SeekFrom, Write};
+        self.file.seek(SeekFrom::Start(start_offset))?;
+        self.file.write_all(&buffer)?;
 
         Ok(())
     }
@@ -185,39 +177,45 @@ impl Writer {
         // Write using the standard path
         self.write_block::<D>(&converted_block)
     }
-}
 
-impl SliceAccess for Writer {
-    fn slice_mut<T: crate::engine::codec::EndianCodec>(
-        &mut self,
-        z: usize,
-    ) -> Result<&mut [T], Error> {
-        let [nx, ny, nz] = [self.shape.nx, self.shape.ny, self.shape.nz];
-        if z >= nz {
-            return Err(Error::BoundsError);
+    /// Write a block with checked type conversion, failing on out-of-range values.
+    ///
+    /// Unlike `write_converted`, this method returns an error if any value
+    /// cannot be represented in the destination type (e.g., NaN or out-of-range
+    /// float-to-integer conversions).
+    pub fn write_checked_converted<S, D>(&mut self, block: &VoxelBlock<S>) -> Result<(), Error>
+    where
+        S: crate::engine::codec::EndianCodec + Copy + 'static,
+        D: crate::engine::convert::CheckedConvert<S>
+            + crate::engine::codec::EndianCodec
+            + Copy
+            + Default
+            + crate::mode::Voxel
+            + 'static,
+    {
+        let mut converted_data = Vec::with_capacity(block.data.len());
+        for &src in &block.data {
+            converted_data.push(D::try_convert(src) .map_err(Error::Conversion)?);
         }
 
-        let start_offset = z * nx * ny * self.bytes_per_voxel;
-        let end_offset = start_offset + nx * ny * self.bytes_per_voxel;
+        let converted_block = VoxelBlock {
+            offset: block.offset,
+            shape: block.shape,
+            data: converted_data,
+        };
 
-        let bytes = &mut self.data[start_offset..end_offset];
-        unsafe {
-            let ptr = bytes.as_mut_ptr() as *mut T;
-            Ok(core::slice::from_raw_parts_mut(ptr, nx * ny))
-        }
+        self.write_block::<D>(&converted_block)
     }
-}
 
-impl Writer {
-    /// Write a block with parallel encoding and file I/O
-    #[cfg(all(feature = "parallel", feature = "std"))]
+    /// Write a block with parallel encoding and sequential file I/O.
+    ///
+    /// Encoding is performed in parallel using all available cores.
+    /// File writes are performed sequentially to ensure cross-platform compatibility.
+    #[cfg(feature = "parallel")]
     pub fn write_block_parallel<T: crate::engine::codec::EndianCodec + Sync + Clone>(
         &mut self,
         block: &VoxelBlock<T>,
     ) -> Result<(), Error> {
-        use rayon::prelude::*;
-        use std::os::unix::fs::FileExt;
-
         if !self.shape.contains_block(block.offset, block.shape) {
             return Err(Error::BoundsError);
         }
@@ -226,56 +224,70 @@ impl Writer {
         let [ox, oy, oz] = block.offset;
 
         let chunk_size = 1024 * 1024; // 1M voxels per chunk
-        let base_offset = ((ox + oy * nx + oz * nx * ny) * self.bytes_per_voxel) as u64;
+        let base_offset = self.data_offset + ((ox + oy * nx + oz * nx * ny) * self.bytes_per_voxel) as u64;
 
-        // Mark that parallel writes were used
-        self.parallel_writes = true;
-
-        // Encode in parallel and write to file
+        // Encode in parallel
         let encoded_chunks =
             encode_block_parallel(&block.data, chunk_size, FileEndian::LittleEndian);
 
-        // Write chunks in parallel using pwrite
-        encoded_chunks.par_iter().try_for_each(|(chunk_idx, encoded)| {
-            let offset = base_offset + (*chunk_idx * chunk_size * self.bytes_per_voxel) as u64;
-            self.file
-                .write_all_at(encoded, offset)
-                .map_err(|_| Error::Io("parallel write chunk".into()))
-        })?;
+        // Write chunks sequentially (cross-platform)
+        use std::io::{Seek, SeekFrom, Write};
+        for (chunk_idx, encoded) in encoded_chunks {
+            let offset = base_offset + (chunk_idx * chunk_size * self.bytes_per_voxel) as u64;
+            self.file.seek(SeekFrom::Start(offset))?;
+            self.file.write_all(&encoded)?;
+        }
 
         Ok(())
     }
+
     pub fn finalize(&mut self) -> Result<(), Error> {
         use std::io::{Seek, SeekFrom, Write};
 
-        // Write all data to file
-        #[cfg(feature = "parallel")]
-        {
-            if !self.parallel_writes {
-                // Only write buffered data if parallel writes weren't used
-                self.file
-                    .seek(SeekFrom::Start(self.data_offset))
-                    .map_err(|_| Error::Io("seek to data offset".into()))?;
-                self.file.write_all(&self.data).map_err(|_| Error::Io("write voxel data".into()))?;
-            }
-        }
-
-        #[cfg(not(feature = "parallel"))]
-        {
-            self.file
-                .seek(SeekFrom::Start(self.data_offset))
-                .map_err(|_| Error::Io("seek to data offset".into()))?;
-            self.file.write_all(&self.data).map_err(|_| Error::Io("write voxel data".into()))?;
-        }
-
         // Rewrite header
-        self.file.seek(SeekFrom::Start(0)).map_err(|_| Error::Io("seek to header".into()))?;
+        self.file.seek(SeekFrom::Start(0))?;
 
         let mut header_bytes = [0u8; 1024];
         self.header.encode_to_bytes(&mut header_bytes);
-        self.file.write_all(&header_bytes).map_err(|_| Error::Io("write header".into()))?;
+        self.file.write_all(&header_bytes)?;
 
         Ok(())
+    }
+}
+
+// ============================================================================
+// MmapWriter
+// ============================================================================
+
+#[cfg(feature = "mmap")]
+pub struct MmapWriterBuilder {
+    path: String,
+    header: Header,
+}
+
+#[cfg(feature = "mmap")]
+impl MmapWriterBuilder {
+    pub fn new<P: AsRef<std::path::Path>>(path: P) -> Self {
+        Self {
+            path: path.as_ref().to_string_lossy().to_string(),
+            header: Header::new(),
+        }
+    }
+
+    pub fn shape(mut self, shape: [usize; 3]) -> Self {
+        self.header.nx = shape[0] as i32;
+        self.header.ny = shape[1] as i32;
+        self.header.nz = shape[2] as i32;
+        self
+    }
+
+    pub fn mode<T: crate::mode::Voxel>(mut self) -> Self {
+        self.header.mode = T::MODE as i32;
+        self
+    }
+
+    pub fn finish(self) -> Result<MmapWriter, Error> {
+        MmapWriter::create(&self.path, self.header)
     }
 }
 
@@ -286,13 +298,11 @@ pub struct MmapWriter {
     data_offset: usize,
     bytes_per_voxel: usize,
     shape: VolumeShape,
-    #[cfg(feature = "parallel")]
-    parallel_writes: bool,
 }
 
 #[cfg(feature = "mmap")]
 impl MmapWriter {
-    pub fn create(path: &str, header: Header) -> Result<Self, Error> {
+    pub fn create<P: AsRef<std::path::Path>>(path: P, header: Header) -> Result<Self, Error> {
         use std::fs::OpenOptions;
         use std::io::Write;
 
@@ -307,13 +317,13 @@ impl MmapWriter {
             .create(true)
             .truncate(true)
             .open(path)
-            .map_err(|_| Error::Io("create file for mmap".into()))?;
+            ?;
 
-        file.set_len(total_size as u64).map_err(|_| Error::Io("set file length".into()))?;
+        file.set_len(total_size as u64)?;
 
         let mut header_bytes = [0u8; 1024];
         header.encode_to_bytes(&mut header_bytes);
-        file.write_all(&header_bytes).map_err(|_| Error::Io("write header".into()))?;
+        file.write_all(&header_bytes)?;
 
         let mmap = unsafe {
             memmap2::MmapOptions::new()
@@ -323,6 +333,9 @@ impl MmapWriter {
 
         let data_offset = header.data_offset();
         let mode = Mode::from_i32(header.mode).ok_or(Error::UnsupportedMode)?;
+        if mode == Mode::Int16Complex {
+            eprintln!("Warning: Mode 3 (Int16Complex) is obsolete and should not be used for writing new files.");
+        }
         let bytes_per_voxel = mode.byte_size();
 
         let shape = VolumeShape::new(header.nx as usize, header.ny as usize, header.nz as usize);
@@ -333,8 +346,6 @@ impl MmapWriter {
             data_offset,
             bytes_per_voxel,
             shape,
-            #[cfg(feature = "parallel")]
-            parallel_writes: false,
         })
     }
 
@@ -371,7 +382,7 @@ impl MmapWriter {
     }
 
     /// Write a block with parallel encoding to memory-mapped region
-    #[cfg(all(feature = "parallel", feature = "std"))]
+    #[cfg(feature = "parallel")]
     pub fn write_block_parallel<T: crate::engine::codec::EndianCodec + Sync>(
         &mut self,
         block: &VoxelBlock<T>,
@@ -387,9 +398,6 @@ impl MmapWriter {
 
         let chunk_size = 1024 * 1024; // 1M voxels per chunk
         let base_offset = self.data_offset + (ox + oy * nx + oz * nx * ny) * self.bytes_per_voxel;
-
-        // Mark that parallel writes were used
-        self.parallel_writes = true;
 
         // Get raw pointer as usize for parallel writes
         let mmap_ptr = self.mmap.as_mut_ptr() as usize;
@@ -416,6 +424,29 @@ impl MmapWriter {
 
 #[cfg(feature = "mmap")]
 impl SliceAccess for MmapWriter {
+    fn slice<T: crate::engine::codec::EndianCodec>(&self, z: usize) -> Result<&[T], Error> {
+        let [nx, ny, nz] = [self.shape.nx, self.shape.ny, self.shape.nz];
+        if z >= nz {
+            return Err(Error::BoundsError);
+        }
+
+        if core::mem::size_of::<T>() != self.bytes_per_voxel {
+            return Err(Error::TypeMismatch {
+                expected: self.bytes_per_voxel,
+                actual: core::mem::size_of::<T>(),
+            });
+        }
+
+        let start_offset = self.data_offset + z * nx * ny * self.bytes_per_voxel;
+        let end_offset = start_offset + nx * ny * self.bytes_per_voxel;
+
+        let bytes = &self.mmap[start_offset..end_offset];
+        unsafe {
+            let ptr = bytes.as_ptr() as *const T;
+            Ok(core::slice::from_raw_parts(ptr, nx * ny))
+        }
+    }
+
     fn slice_mut<T: crate::engine::codec::EndianCodec>(
         &mut self,
         z: usize,
@@ -423,6 +454,13 @@ impl SliceAccess for MmapWriter {
         let [nx, ny, nz] = [self.shape.nx, self.shape.ny, self.shape.nz];
         if z >= nz {
             return Err(Error::BoundsError);
+        }
+
+        if core::mem::size_of::<T>() != self.bytes_per_voxel {
+            return Err(Error::TypeMismatch {
+                expected: self.bytes_per_voxel,
+                actual: core::mem::size_of::<T>(),
+            });
         }
 
         let start_offset = self.data_offset + z * nx * ny * self.bytes_per_voxel;
@@ -442,7 +480,7 @@ impl MmapWriter {
         let mut header_bytes = [0u8; 1024];
         self.header.encode_to_bytes(&mut header_bytes);
         self.mmap[0..1024].copy_from_slice(&header_bytes);
-        self.mmap.flush().map_err(|_| Error::Io("flush mmap".into()))?;
+        self.mmap.flush()?;
         Ok(())
     }
 }

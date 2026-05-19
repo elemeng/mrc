@@ -8,25 +8,25 @@ use crate::engine::pipeline::{ConversionPath, get_conversion_path, is_zero_copy}
 use crate::iter::{BlockIter, SliceIter, SliceIterConverted, SlabIter, SlabIterConverted};
 use crate::{Error, Header, Mode};
 
-use alloc::vec::Vec;
+use std::vec::Vec;
 
 pub struct Reader {
     header: Header,
+    ext_header: Vec<u8>,
     data: Vec<u8>,
     endian: FileEndian,
     shape: VolumeShape,
 }
 
 impl Reader {
-    #[cfg(feature = "std")]
-    pub fn open(path: &str) -> Result<Self, Error> {
+    pub fn open<P: AsRef<std::path::Path>>(path: P) -> Result<Self, Error> {
         use std::fs::File;
         use std::io::Read;
 
-        let mut file = File::open(path).map_err(|_| Error::Io("open file".into()))?;
+        let mut file = File::open(path)?;
 
         let mut header_bytes = [0u8; 1024];
-        file.read_exact(&mut header_bytes).map_err(|_| Error::Io("read header".into()))?;
+        file.read_exact(&mut header_bytes)?;
 
         let header = Header::decode_from_bytes(&header_bytes);
 
@@ -37,13 +37,13 @@ impl Reader {
         let data_size = header.data_size();
 
         let ext_size = header.nsymbt as usize;
+        let mut ext_header = vec![0u8; ext_size];
         if ext_size > 0 {
-            let mut ext_data = alloc::vec![0u8; ext_size];
-            file.read_exact(&mut ext_data).map_err(|_| Error::Io("read extended header".into()))?;
+            file.read_exact(&mut ext_header)?;
         }
 
-        let mut data = alloc::vec![0u8; data_size];
-        file.read_exact(&mut data).map_err(|_| Error::Io("read voxel data".into()))?;
+        let mut data = vec![0u8; data_size];
+        file.read_exact(&mut data)?;
 
         let endian = header.detect_endian();
         let shape =
@@ -51,16 +51,11 @@ impl Reader {
 
         Ok(Self {
             header,
+            ext_header,
             data,
             endian,
             shape,
         })
-    }
-
-    #[cfg(not(feature = "std"))]
-    pub fn open(path: &str) -> Result<Self, Error> {
-        let _ = path;
-        Err(Error::Io("std feature not enabled".into()))
     }
 
     pub fn shape(&self) -> VolumeShape {
@@ -87,7 +82,8 @@ impl Reader {
         BlockIter::new(self, self.shape, chunk_shape)
     }
 
-    pub(crate) fn read_voxels(
+    /// Read a block of raw voxel bytes from the file.
+    pub fn read_block_bytes(
         &self,
         offset: [usize; 3],
         shape: [usize; 3],
@@ -110,6 +106,17 @@ impl Reader {
         }
 
         Ok(self.data[start_byte..end_byte].to_vec())
+    }
+
+    /// Read and decode a block of voxels to the specified type.
+    pub fn read_block<T: EndianCodec + Send + Copy + Default + crate::mode::Voxel>(
+        &self,
+        offset: [usize; 3],
+        shape: [usize; 3],
+    ) -> Result<crate::engine::block::VoxelBlock<T>, Error> {
+        let bytes = self.read_block_bytes(offset, shape)?;
+        let data = self.decode_block::<T>(&bytes)?;
+        Ok(crate::engine::block::VoxelBlock { offset, shape, data })
     }
 
     /// Decode a block of voxels to the specified type.
@@ -174,8 +181,24 @@ impl Reader {
     /// ```ignore
     /// // Read Int16 file as Float32
     /// let reader = Reader::open("data.mrc")?;
-    /// let block: VoxelBlock<f32> = reader.read_converted::<i16, f32>([0,0,0], [64,64,64])?;
+    /// let block: VoxelBlock<f32> = reader.read_block_converted::<i16, f32>([0,0,0], [64,64,64])?;
     /// ```
+    pub fn read_block_converted<S, D>(
+        &self,
+        offset: [usize; 3],
+        shape: [usize; 3],
+    ) -> Result<crate::engine::block::VoxelBlock<D>, Error>
+    where
+        S: EndianCodec + Send + Copy + Default + crate::mode::Voxel,
+        D: Convert<S> + EndianCodec + Copy + Default + crate::mode::Voxel,
+    {
+        let bytes = self.read_block_bytes(offset, shape)?;
+        let data = self.decode_and_convert::<S, D>(&bytes)?;
+        Ok(crate::engine::block::VoxelBlock { offset, shape, data })
+    }
+
+    /// Deprecated alias for `read_block_converted`.
+    #[deprecated(since = "0.2.4", note = "Use `read_block_converted` instead")]
     pub fn read_converted<S, D>(
         &self,
         offset: [usize; 3],
@@ -185,9 +208,26 @@ impl Reader {
         S: EndianCodec + Send + Copy + Default + crate::mode::Voxel,
         D: Convert<S> + EndianCodec + Copy + Default + crate::mode::Voxel,
     {
-        let bytes = self.read_voxels(offset, shape)?;
-        let data = self.decode_and_convert::<S, D>(&bytes)?;
-        Ok(crate::engine::block::VoxelBlock { offset, shape, data })
+        self.read_block_converted::<S, D>(offset, shape)
+    }
+
+    /// Read and convert voxels with checked conversion, failing on out-of-range values.
+    pub fn read_block_checked_converted<S, D>(
+        &self,
+        offset: [usize; 3],
+        shape: [usize; 3],
+    ) -> Result<crate::engine::block::VoxelBlock<D>, Error>
+    where
+        S: EndianCodec + Send + Copy + Default + crate::mode::Voxel,
+        D: crate::engine::convert::CheckedConvert<S> + EndianCodec + Copy + Default + crate::mode::Voxel,
+    {
+        let bytes = self.read_block_bytes(offset, shape)?;
+        let src_data = decode_slice::<S>(&bytes, self.endian);
+        let mut dst_data = Vec::with_capacity(src_data.len());
+        for src in src_data {
+            dst_data.push(D::try_convert(src) .map_err(Error::Conversion)?);
+        }
+        Ok(crate::engine::block::VoxelBlock { offset, shape, data: dst_data })
     }
 
     /// Decode and convert bytes to destination type D through intermediate type S.
@@ -260,6 +300,58 @@ impl Reader {
     {
         SlabIterConverted::new(self, self.shape, k)
     }
+
+    /// Iterate over slices for Mode 0 (8-bit) files with signed/unsigned interpretation.
+    ///
+    /// Mode 0 files are ambiguous: some software writes signed bytes, others unsigned.
+    /// This method lets you explicitly choose the interpretation and returns `f32` values.
+    pub fn slices_mode0(
+        &self,
+        interp: crate::mode::M0Interpretation,
+    ) -> impl Iterator<Item = Result<crate::engine::block::VoxelBlock<f32>, Error>> + '_ {
+        let nx = self.shape.nx;
+        let ny = self.shape.ny;
+        let nz = self.shape.nz;
+        (0..nz).map(move |z| {
+            let bytes = self.read_block_bytes([0, 0, z], [nx, ny, 1])?;
+            let data = crate::engine::convert::reinterpret_m0(&bytes, interp);
+            Ok(crate::engine::block::VoxelBlock {
+                offset: [0, 0, z],
+                shape: [nx, ny, 1],
+                data,
+            })
+        })
+    }
+
+    /// Iterate over slabs for Mode 0 (8-bit) files with signed/unsigned interpretation.
+    pub fn slabs_mode0(
+        &self,
+        k: usize,
+        interp: crate::mode::M0Interpretation,
+    ) -> impl Iterator<Item = Result<crate::engine::block::VoxelBlock<f32>, Error>> + '_ {
+        let nx = self.shape.nx;
+        let ny = self.shape.ny;
+        let nz = self.shape.nz;
+        let mut z = 0usize;
+        std::iter::from_fn(move || {
+            if z >= nz {
+                return None;
+            }
+            let start = z;
+            let size = k.min(nz - z);
+            z += size;
+            let bytes = match self.read_block_bytes([0, 0, start], [nx, ny, size]) {
+                Ok(b) => b,
+                Err(e) => return Some(Err(e)),
+            };
+            let data = crate::engine::convert::reinterpret_m0(&bytes, interp);
+            Some(Ok(crate::engine::block::VoxelBlock {
+                offset: [0, 0, start],
+                shape: [nx, ny, size],
+                data,
+            }))
+        })
+    }
 }
 
 impl Reader {
@@ -271,5 +363,10 @@ impl Reader {
     /// Get the file endianness
     pub fn endian(&self) -> FileEndian {
         self.endian
+    }
+
+    /// Get the extended header bytes, if any.
+    pub fn ext_header_bytes(&self) -> &[u8] {
+        &self.ext_header
     }
 }

@@ -11,14 +11,7 @@
 //!
 //! With zero-copy fast paths whenever possible.
 
-#![no_std]
 #![cfg_attr(feature = "f16", feature(f16))]
-
-#[cfg(feature = "std")]
-extern crate alloc;
-
-#[cfg(feature = "std")]
-extern crate std;
 
 mod error;
 mod header;
@@ -41,11 +34,15 @@ pub use engine::codec::EndianCodec;
 
 // Re-export conversion trait and pipeline types for type conversion
 pub use engine::convert::Convert;
+pub use engine::convert::CheckedConvert;
 pub use engine::pipeline::{ConversionPath, get_conversion_path, is_zero_copy};
 
 // Re-export SIMD batch conversions when available
 #[cfg(feature = "simd")]
 pub use engine::convert::{convert_i8_slice_to_f32, convert_i16_slice_to_f32, convert_u16_slice_to_f32, convert_u8_slice_to_f32, try_simd_convert};
+
+// Re-export M101 unpacking functions
+pub use engine::convert::{unpack_u4_to_f32, unpack_u4_to_i8, unpack_u4_to_u16, unpack_u4_bytes_to_f32, unpack_u4_bytes_to_u16, reinterpret_m0};
 
 // Re-export f16 batch conversions when f16 feature is enabled
 #[cfg(feature = "f16")]
@@ -54,9 +51,9 @@ pub use engine::convert::{convert_f16_slice_to_f32, convert_f32_slice_to_f16};
 // Re-export SliceAccess trait for writers
 pub use engine::block::SliceAccess;
 
-pub use error::Error;
-pub use header::{ExtHeader, ExtHeaderMut, Header};
-pub use mode::{Float32Complex, Int16Complex, Mode, Packed4Bit, Voxel};
+pub use error::{ConversionError, Error, HeaderValidationError, RangeCheck};
+pub use header::{ExtHeader, ExtHeaderMut, Header, HeaderBuilder};
+pub use mode::{ComplexToRealStrategy, Float32Complex, Int16Complex, M0Interpretation, Mode, Packed4Bit, Voxel};
 pub use reader::Reader;
 pub use writer::{Writer, WriterBuilder};
 
@@ -64,19 +61,17 @@ pub use writer::{Writer, WriterBuilder};
 pub use iter::{SliceIterConverted, SlabIterConverted};
 
 #[cfg(feature = "mmap")]
-pub use writer::MmapWriter;
+pub use writer::{MmapWriter, MmapWriterBuilder};
 
 #[cfg(feature = "mmap")]
 pub use mmap_reader::MmapReader;
 
 /// Open an MRC file for reading
-#[cfg(feature = "std")]
-pub fn open(path: &str) -> Result<Reader, Error> {
+pub fn open<P: AsRef<std::path::Path>>(path: P) -> Result<Reader, Error> {
     Reader::open(path)
 }
 
 /// Create a new MRC file for writing
-#[cfg(feature = "std")]
-pub fn create(path: &str) -> WriterBuilder {
+pub fn create<P: AsRef<std::path::Path>>(path: P) -> WriterBuilder {
     WriterBuilder::new(path)
 }

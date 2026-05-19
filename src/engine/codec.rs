@@ -11,7 +11,7 @@
 use super::endian::FileEndian;
 use crate::mode::{Float32Complex, Int16Complex};
 
-use alloc::vec::Vec;
+use std::vec::Vec;
 
 // ============================================================================
 // EndianCodec Trait - Bidirectional endian conversion
@@ -245,7 +245,6 @@ impl EndianCodec for f16 {
 ///
 /// This is the primary entry point for Layer 2 decoding.
 /// Uses 1MB chunks for optimal cache behavior.
-#[cfg(feature = "std")]
 pub fn decode_slice<T: EndianCodec + Send + Copy + Default>(
     bytes: &[u8],
     endian: FileEndian,
@@ -288,7 +287,6 @@ pub fn decode_slice<T: EndianCodec + Send + Copy + Default>(
 ///
 /// This is the primary entry point for Layer 2 encoding.
 /// Uses 1MB chunks for optimal cache behavior.
-#[cfg(feature = "std")]
 pub fn encode_slice<T: EndianCodec + Sync>(values: &[T], bytes: &mut [u8], endian: FileEndian) {
     assert_eq!(values.len() * T::BYTE_SIZE, bytes.len());
 
@@ -320,17 +318,17 @@ pub fn encode_slice<T: EndianCodec + Sync>(values: &[T], bytes: &mut [u8], endia
 // Parallel Block Encoding
 // ============================================================================
 
-#[cfg(all(feature = "std", feature = "parallel"))]
+#[cfg(feature = "parallel")]
 use std::thread_local;
 
-#[cfg(all(feature = "std", feature = "parallel"))]
+#[cfg(feature = "parallel")]
 thread_local! {
     static ENCODE_BUFFER: std::cell::RefCell<Vec<u8>> =
         std::cell::RefCell::new(Vec::with_capacity(4 * 1024 * 1024));
 }
 
 /// Encode a block with parallel processing and thread-local buffers.
-#[cfg(all(feature = "std", feature = "parallel"))]
+#[cfg(feature = "parallel")]
 pub fn encode_block_parallel<T: EndianCodec + Sync + Clone>(
     values: &[T],
     chunk_size: usize,

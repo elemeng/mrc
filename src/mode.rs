@@ -1,3 +1,21 @@
+/// Strategy for converting complex numbers to real values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ComplexToRealStrategy {
+    RealPart,
+    ImaginaryPart,
+    Magnitude,
+    Phase,
+}
+
+/// Interpretation of Mode 0 (8-bit) data for legacy files.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum M0Interpretation {
+    Signed,
+    Unsigned,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Mode {
@@ -25,6 +43,11 @@ pub enum Mode {
 }
 
 impl Mode {
+    #[inline]
+    pub const fn as_i32(self) -> i32 {
+        self as i32
+    }
+
     #[inline]
     pub fn from_i32(mode: i32) -> Option<Self> {
         match mode {
@@ -94,8 +117,23 @@ impl Default for Float32Complex {
     }
 }
 
+impl Float32Complex {
+    /// Convert this complex number to a real value using the given strategy.
+    #[inline]
+    pub fn to_real(&self, strategy: ComplexToRealStrategy) -> f32 {
+        match strategy {
+            ComplexToRealStrategy::RealPart => self.real,
+            ComplexToRealStrategy::ImaginaryPart => self.imag,
+            ComplexToRealStrategy::Magnitude => {
+                (self.real * self.real + self.imag * self.imag).sqrt()
+            }
+            ComplexToRealStrategy::Phase => self.imag.atan2(self.real),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
-pub struct Packed4Bit(u8);
+pub struct Packed4Bit(pub(crate) u8);
 
 impl Packed4Bit {
     /// Create a new Packed4Bit value

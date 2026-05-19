@@ -18,17 +18,14 @@ impl FileEndian {
             FileEndian::LittleEndian
         };
 
-        #[cfg(feature = "std")]
-        {
-            if machst[2] != 0 || machst[3] != 0 {
-                std::eprintln!(
-                    "Warning: Non-standard MACHST padding bytes: {:02X} {:02X} {:02X} {:02X}",
-                    machst[0],
-                    machst[1],
-                    machst[2],
-                    machst[3]
-                );
-            }
+        if machst[2] != 0 || machst[3] != 0 {
+            eprintln!(
+                "Warning: Non-standard MACHST padding bytes: {:02X} {:02X} {:02X} {:02X}",
+                machst[0],
+                machst[1],
+                machst[2],
+                machst[3]
+            );
         }
 
         endian

@@ -1,9 +1,9 @@
 //! Voxel block types
 
-use alloc::vec::Vec;
+use std::vec::Vec;
 
 /// Volume geometry
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct VolumeShape {
     pub nx: usize,
     pub ny: usize,
@@ -54,6 +54,26 @@ impl<T> VoxelBlock<T> {
         }
     }
 
+    /// Create a new VoxelBlock, returning an error if the data length does not match the shape.
+    pub fn try_new(
+        offset: [usize; 3],
+        shape: [usize; 3],
+        data: Vec<T>,
+    ) -> Result<Self, crate::Error> {
+        let expected = shape[0] * shape[1] * shape[2];
+        if data.len() != expected {
+            return Err(crate::Error::BlockShapeMismatch {
+                expected,
+                actual: data.len(),
+            });
+        }
+        Ok(Self {
+            offset,
+            shape,
+            data,
+        })
+    }
+
     pub fn len(&self) -> usize {
         self.data.len()
     }
@@ -75,6 +95,12 @@ impl<T> VoxelBlock<T> {
 /// Using the wrong type will produce incorrect data without any runtime error.
 /// For type-safe access, use `write_block` instead.
 pub trait SliceAccess {
+    /// Get an immutable slice of voxels at the given z-index.
+    fn slice<T: crate::engine::codec::EndianCodec>(
+        &self,
+        z: usize,
+    ) -> Result<&[T], crate::Error>;
+
     /// Get a mutable slice of voxels at the given z-index.
     ///
     /// # Example

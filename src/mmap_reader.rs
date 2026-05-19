@@ -7,7 +7,7 @@ use crate::engine::endian::FileEndian;
 use crate::engine::pipeline::{ConversionPath, get_conversion_path, is_zero_copy};
 use crate::{Error, Header, Mode};
 
-use alloc::vec::Vec;
+use std::vec::Vec;
 
 /// Memory-mapped MRC file reader.
 ///
@@ -43,16 +43,16 @@ impl MmapReader {
     ///
     /// The file is mapped read-only into the process address space.
     /// The OS will page data in/out as needed, making this efficient for large files.
-    pub fn open(path: &str) -> Result<Self, Error> {
+    pub fn open<P: AsRef<std::path::Path>>(path: P) -> Result<Self, Error> {
         use std::fs::File;
         use std::io::Read;
 
-        let mut file = File::open(path).map_err(|_| Error::Io("open file for mmap".into()))?;
+        let mut file = File::open(path)?;
 
         // Read header first (not mapped, since we need to parse it)
         let mut header_bytes = [0u8; 1024];
         file.read_exact(&mut header_bytes)
-            .map_err(|_| Error::Io("read header".into()))?;
+            ?;
 
         let header = Header::decode_from_bytes(&header_bytes);
 
@@ -104,6 +104,15 @@ impl MmapReader {
         self.endian
     }
 
+    /// Get the extended header bytes, if any.
+    pub fn ext_header_bytes(&self) -> &[u8] {
+        let ext_size = self.header.nsymbt as usize;
+        if ext_size == 0 {
+            return &[];
+        }
+        &self.mmap[1024..1024 + ext_size]
+    }
+
     /// Get the raw data bytes from the memory map.
     ///
     /// This returns a slice starting at the beginning of voxel data
@@ -114,7 +123,7 @@ impl MmapReader {
     }
 
     /// Read a block of voxels as raw bytes from the mmap.
-    fn read_voxel_bytes(&self, offset: [usize; 3], shape: [usize; 3]) -> Result<&[u8], Error> {
+    pub fn read_block_bytes(&self, offset: [usize; 3], shape: [usize; 3]) -> Result<&[u8], Error> {
         let [nx, ny, nz] = [self.shape.nx, self.shape.ny, self.shape.nz];
         let [ox, oy, oz] = offset;
         let [sx, sy, sz] = shape;
@@ -139,6 +148,17 @@ impl MmapReader {
     /// Zero-copy requires: file mode matches T's mode AND file endian is native.
     pub fn can_zero_copy<T: crate::mode::Voxel>(&self) -> bool {
         is_zero_copy(self.mode(), T::MODE, self.endian)
+    }
+
+    /// Read and decode a block of voxels to the specified type.
+    pub fn read_block<T: EndianCodec + Send + Copy + Default + crate::mode::Voxel>(
+        &self,
+        offset: [usize; 3],
+        shape: [usize; 3],
+    ) -> Result<VoxelBlock<T>, Error> {
+        let bytes = self.read_block_bytes(offset, shape)?;
+        let data = self.decode_block::<T>(bytes)?;
+        Ok(VoxelBlock { offset, shape, data })
     }
 
     /// Decode a block of voxels to the specified type.
@@ -196,6 +216,22 @@ impl MmapReader {
     }
 
     /// Read and convert voxels from file mode to target type D.
+    pub fn read_block_converted<S, D>(
+        &self,
+        offset: [usize; 3],
+        shape: [usize; 3],
+    ) -> Result<VoxelBlock<D>, Error>
+    where
+        S: EndianCodec + Send + Copy + Default + crate::mode::Voxel,
+        D: Convert<S> + EndianCodec + Copy + Default + crate::mode::Voxel,
+    {
+        let bytes = self.read_block_bytes(offset, shape)?;
+        let data = self.decode_and_convert::<S, D>(bytes)?;
+        Ok(VoxelBlock { offset, shape, data })
+    }
+
+    /// Deprecated alias for `read_block_converted`.
+    #[deprecated(since = "0.2.4", note = "Use `read_block_converted` instead")]
     pub fn read_converted<S, D>(
         &self,
         offset: [usize; 3],
@@ -205,9 +241,26 @@ impl MmapReader {
         S: EndianCodec + Send + Copy + Default + crate::mode::Voxel,
         D: Convert<S> + EndianCodec + Copy + Default + crate::mode::Voxel,
     {
-        let bytes = self.read_voxel_bytes(offset, shape)?;
-        let data = self.decode_and_convert::<S, D>(bytes)?;
-        Ok(VoxelBlock { offset, shape, data })
+        self.read_block_converted::<S, D>(offset, shape)
+    }
+
+    /// Read and convert voxels with checked conversion, failing on out-of-range values.
+    pub fn read_block_checked_converted<S, D>(
+        &self,
+        offset: [usize; 3],
+        shape: [usize; 3],
+    ) -> Result<VoxelBlock<D>, Error>
+    where
+        S: EndianCodec + Send + Copy + Default + crate::mode::Voxel,
+        D: crate::engine::convert::CheckedConvert<S> + EndianCodec + Copy + Default + crate::mode::Voxel,
+    {
+        let bytes = self.read_block_bytes(offset, shape)?;
+        let src_data = decode_slice::<S>(bytes, self.endian);
+        let mut dst_data = Vec::with_capacity(src_data.len());
+        for src in src_data {
+            dst_data.push(D::try_convert(src) .map_err(Error::Conversion)?);
+        }
+        Ok(VoxelBlock { offset, shape, data: dst_data })
     }
 
     /// Get the optimal conversion path.
@@ -246,6 +299,58 @@ impl MmapReader {
         D: Convert<S> + crate::mode::Voxel,
     {
         MmapSlabIterConverted::new(self, self.shape, k)
+    }
+
+    /// Iterate over slices for Mode 0 (8-bit) files with signed/unsigned interpretation.
+    ///
+    /// Mode 0 files are ambiguous: some software writes signed bytes, others unsigned.
+    /// This method lets you explicitly choose the interpretation and returns `f32` values.
+    pub fn slices_mode0(
+        &self,
+        interp: crate::mode::M0Interpretation,
+    ) -> impl Iterator<Item = Result<VoxelBlock<f32>, Error>> + '_ {
+        let nx = self.shape.nx;
+        let ny = self.shape.ny;
+        let nz = self.shape.nz;
+        (0..nz).map(move |z| {
+            let bytes = self.read_block_bytes([0, 0, z], [nx, ny, 1])?;
+            let data = crate::engine::convert::reinterpret_m0(bytes, interp);
+            Ok(VoxelBlock {
+                offset: [0, 0, z],
+                shape: [nx, ny, 1],
+                data,
+            })
+        })
+    }
+
+    /// Iterate over slabs for Mode 0 (8-bit) files with signed/unsigned interpretation.
+    pub fn slabs_mode0(
+        &self,
+        k: usize,
+        interp: crate::mode::M0Interpretation,
+    ) -> impl Iterator<Item = Result<VoxelBlock<f32>, Error>> + '_ {
+        let nx = self.shape.nx;
+        let ny = self.shape.ny;
+        let nz = self.shape.nz;
+        let mut z = 0usize;
+        std::iter::from_fn(move || {
+            if z >= nz {
+                return None;
+            }
+            let start = z;
+            let size = k.min(nz - z);
+            z += size;
+            let bytes = match self.read_block_bytes([0, 0, start], [nx, ny, size]) {
+                Ok(b) => b,
+                Err(e) => return Some(Err(e)),
+            };
+            let data = crate::engine::convert::reinterpret_m0(bytes, interp);
+            Some(Ok(VoxelBlock {
+                offset: [0, 0, start],
+                shape: [nx, ny, size],
+                data,
+            }))
+        })
     }
 }
 
@@ -293,7 +398,7 @@ where
         let offset = [0, 0, z];
         let shape = [self.nx, self.ny, 1];
 
-        match self.reader.read_voxel_bytes(offset, shape) {
+        match self.reader.read_block_bytes(offset, shape) {
             Ok(bytes) => {
                 match self.reader.decode_block::<T>(bytes) {
                     Ok(data) => Some(Ok(VoxelBlock { offset, shape, data })),
@@ -353,7 +458,7 @@ where
         let offset = [0, 0, z];
         let shape = [self.nx, self.ny, size];
 
-        match self.reader.read_voxel_bytes(offset, shape) {
+        match self.reader.read_block_bytes(offset, shape) {
             Ok(bytes) => {
                 match self.reader.decode_block::<T>(bytes) {
                     Ok(data) => Some(Ok(VoxelBlock { offset, shape, data })),
@@ -424,7 +529,7 @@ where
         let offset = [px, py, pz];
         let shape = [sx, sy, sz];
 
-        match self.reader.read_voxel_bytes(offset, shape) {
+        match self.reader.read_block_bytes(offset, shape) {
             Ok(bytes) => {
                 match self.reader.decode_block::<T>(bytes) {
                     Ok(data) => Some(Ok(VoxelBlock { offset, shape, data })),
@@ -478,7 +583,7 @@ where
         let z = self.z;
         self.z += 1;
 
-        Some(self.reader.read_converted::<S, D>([0, 0, z], [self.nx, self.ny, 1]))
+        Some(self.reader.read_block_converted::<S, D>([0, 0, z], [self.nx, self.ny, 1]))
     }
 
     fn nth(&mut self, n: usize) -> Option<Self::Item> {
@@ -528,7 +633,7 @@ where
         let size = self.slab_size.min(self.nz - z);
         self.z += size;
 
-        Some(self.reader.read_converted::<S, D>([0, 0, z], [self.nx, self.ny, size]))
+        Some(self.reader.read_block_converted::<S, D>([0, 0, z], [self.nx, self.ny, size]))
     }
 
     fn nth(&mut self, n: usize) -> Option<Self::Item> {

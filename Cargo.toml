@@ -9,14 +9,13 @@ repository = "https://github.com/elemeng/mrc"
 homepage = "https://github.com/elemeng/mrc"
 documentation = "https://docs.rs/mrc"
 keywords = ["mrc", "cryo-em", "cryo-ET", "microscopy", "scientific-computing"]
-categories = ["science", "data-structures", "no-std", "memory-management"]
+categories = ["science", "data-structures", "memory-management"]
 readme = "README.md"
 
 [dependencies]
 memmap2 = { version = "0.9", optional = true }
 thiserror = { version = "2.0.16", default-features = false }
 rayon = { version = "1.10", optional = true }
-once_cell = { version = "1.19", optional = true }
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
@@ -24,9 +23,8 @@ tempfile = "3.8"
 
 
 [features]
-default = ["std", "mmap", "f16", "simd", "parallel"]
-mmap = ["std", "dep:memmap2"]
-std = ["dep:once_cell"]
+default = ["mmap", "f16", "simd", "parallel"]
+mmap = ["dep:memmap2"]
 f16 = []
-parallel = ["std", "dep:rayon"]
-simd = ["std"]
+parallel = ["dep:rayon"]
+simd = []

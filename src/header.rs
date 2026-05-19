@@ -193,24 +193,57 @@ impl Header {
     #[inline]
     /// True when dimensions are positive and mode is supported.
     pub fn validate(&self) -> bool {
-        self.nx > 0
-            && self.ny > 0
-            && self.nz > 0
-            && Mode::from_i32(self.mode).is_some()
-            && self.validate_map()
-            // Validate ISPG: 0 (2D/stack), 1-230 (crystallographic), or 400-630 (volume stacks)
-            && (self.ispg == 0 || (self.ispg >= 1 && self.ispg <= 230) || (self.ispg >= 400 && self.ispg <= 630))
-            // Validate axis mapping: MAPC, MAPR, MAPS must be a permutation of (1, 2, 3)
-            && matches!(self.mapc, 1..=3)
+        self.validate_detailed().is_ok()
+    }
+
+    #[inline]
+    /// Detailed header validation returning specific error information.
+    pub fn validate_detailed(&self) -> Result<(), crate::HeaderValidationError> {
+        use crate::HeaderValidationError;
+
+        if self.nx <= 0 || self.ny <= 0 || self.nz <= 0 {
+            return Err(HeaderValidationError::InvalidDimensions {
+                nx: self.nx,
+                ny: self.ny,
+                nz: self.nz,
+            });
+        }
+
+        if Mode::from_i32(self.mode).is_none() {
+            return Err(HeaderValidationError::UnsupportedMode(self.mode));
+        }
+
+        if !self.validate_map() {
+            return Err(HeaderValidationError::InvalidMap(self.map));
+        }
+
+        if !(self.ispg == 0 || (self.ispg >= 1 && self.ispg <= 230) || (self.ispg >= 400 && self.ispg <= 630)) {
+            return Err(HeaderValidationError::InvalidIspg(self.ispg));
+        }
+
+        if !(matches!(self.mapc, 1..=3)
             && matches!(self.mapr, 1..=3)
             && matches!(self.maps, 1..=3)
             && self.mapc != self.mapr
             && self.mapc != self.maps
-            && self.mapr != self.maps
-            // Validate nsymbt is non-negative
-            && self.nsymbt >= 0
-            // Validate nlabl is between 0 and 10
-            && self.nlabl >= 0 && self.nlabl <= 10
+            && self.mapr != self.maps)
+        {
+            return Err(HeaderValidationError::InvalidAxisMapping {
+                mapc: self.mapc,
+                mapr: self.mapr,
+                maps: self.maps,
+            });
+        }
+
+        if self.nsymbt < 0 {
+            return Err(HeaderValidationError::InvalidNsymbt(self.nsymbt));
+        }
+
+        if self.nlabl < 0 || self.nlabl > 10 {
+            return Err(HeaderValidationError::InvalidNlabl(self.nlabl));
+        }
+
+        Ok(())
     }
 
     #[inline]
@@ -526,5 +559,87 @@ impl<'a> ExtHeaderMut<'a> {
     #[inline]
     pub fn as_bytes_mut(&mut self) -> &mut [u8] {
         self.bytes
+    }
+}
+
+/// Builder for constructing validated MRC headers.
+///
+/// # Example
+/// ```ignore
+/// let header = HeaderBuilder::new()
+///     .shape([512, 512, 256])
+///     .mode::<f32>()
+///     .build()
+///     .unwrap();
+/// ```
+#[derive(Debug, Clone)]
+pub struct HeaderBuilder {
+    header: Header,
+}
+
+impl HeaderBuilder {
+    /// Create a new header builder with sensible defaults.
+    pub fn new() -> Self {
+        Self {
+            header: Header::new(),
+        }
+    }
+
+    /// Set the volume dimensions.
+    pub fn shape(mut self, shape: [usize; 3]) -> Self {
+        self.header.nx = shape[0] as i32;
+        self.header.ny = shape[1] as i32;
+        self.header.nz = shape[2] as i32;
+        self
+    }
+
+    /// Set the voxel mode from a Rust type.
+    pub fn mode<T: crate::mode::Voxel>(mut self) -> Self {
+        self.header.mode = T::MODE.as_i32();
+        self
+    }
+
+    /// Set the cell dimensions in Angstroms.
+    pub fn cell_lengths(mut self, xlen: f32, ylen: f32, zlen: f32) -> Self {
+        self.header.xlen = xlen;
+        self.header.ylen = ylen;
+        self.header.zlen = zlen;
+        self
+    }
+
+    /// Set the space group number.
+    pub fn ispg(mut self, ispg: i32) -> Self {
+        self.header.ispg = ispg;
+        self
+    }
+
+    /// Set the extended header type string.
+    pub fn exttyp(mut self, exttyp: &str) -> Result<Self, &'static str> {
+        self.header.set_exttyp_str(exttyp)?;
+        Ok(self)
+    }
+
+    /// Set the extended header size in bytes.
+    pub fn nsymbt(mut self, nsymbt: i32) -> Self {
+        self.header.nsymbt = nsymbt;
+        self
+    }
+
+    /// Set the origin coordinates.
+    pub fn origin(mut self, origin: [f32; 3]) -> Self {
+        self.header.origin = origin;
+        self
+    }
+
+    /// Consume the builder and return the header.
+    pub fn build(self) -> Result<Header, crate::HeaderValidationError> {
+        self.header.validate_detailed()?;
+        Ok(self.header)
+    }
+}
+
+impl Default for HeaderBuilder {
+    fn default() -> Self {
+        Self::new()
     }
 }

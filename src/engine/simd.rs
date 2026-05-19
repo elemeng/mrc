@@ -15,7 +15,7 @@
 //! SIMD conversions typically achieve 4-8x speedup over scalar implementations
 //! on modern x86_64 and AArch64 processors.
 
-use alloc::vec::Vec;
+use std::vec::Vec;
 
 #[cfg(target_arch = "x86_64")]
 use std::arch::is_x86_feature_detected;

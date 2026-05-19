@@ -2,14 +2,13 @@
 
 [![Rust](https://img.shields.io/badge/Rust-1.85+-orange.svg)](https://rust-lang.org) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) [![Crates.io](https://img.shields.io/crates/v/mrc.svg)](https://crates.io/crates/mrc) [![Docs.rs](https://img.shields.io/docsrs/mrc.svg)](https://docs.rs/mrc)
 
-> **Zero-copy, zero-allocation, no_std-friendly MRC-2014 file format reader/writer for Rust**
+> **Zero-copy, zero-allocation MRC-2014 file format reader/writer for Rust**
 
 A high-performance, memory-efficient library for reading and writing MRC (Medical Research Council) format files used in cryo-electron microscopy and structural biology. Designed for scientific computing with safety and performance as top priorities.
 
 ## ✨ Why mrc?
 
 - **🚀 Zero-copy**: Direct memory mapping with no intermediate buffers
-- **🦀 no_std**: Works in embedded environments and WebAssembly
 - **⚡ SIMD-accelerated**: AVX2/NEON accelerated type conversions
 - **🔄 Type conversion**: Automatic conversion between voxel types
 - **🔒 100% safe**: No unsafe blocks in public API
@@ -224,7 +223,7 @@ if reader.can_zero_copy::<f32>() {
 
 | Use | When |
 |-----|------|
-| `Reader` | Small files, `no_std` compatibility, simple sequential access |
+| `Reader` | Small files, simple sequential access |
 | `MmapReader` | Large files, memory-constrained environments, random access |
 
 ## 📊 Data Type Support
@@ -294,47 +293,12 @@ writer.finalize()?;
 
 ## 🎯 Feature Flags
 
-| Feature | Description | Default | no_std Compatible |
-|---------|-------------|---------|-------------------|
-| `std` | Standard library support | ✅ | ❌ |
-| `mmap` | Memory-mapped I/O | ✅ | ❌ |
-| `f16` | Half-precision support | ✅ | ❌ |
-| `simd` | SIMD acceleration | ✅ | ❌ |
-| `parallel` | Parallel encoding | ✅ | ❌ |
-
-### no_std Usage
-
-For embedded systems, WebAssembly, and other constrained environments:
-
-```toml
-[dependencies]
-mrc = { version = "0.2", default-features = false }
-```
-
-```rust
-#![no_std]
-use mrc::{Header, Mode};
-
-// Create a header (works in no_std)
-let mut header = Header::new();
-header.nx = 256;
-header.ny = 256;
-header.nz = 100;
-header.mode = Mode::Float32 as i32;
-```
-
-### no_std Compatible APIs
-
-| API | Available in no_std | Description |
-|-----|---------------------|-------------|
-| `Header` | ✅ | 1024-byte MRC header structure |
-| `Mode` | ✅ | Data type enumeration |
-| `VoxelBlock` | ✅ | Voxel data container |
-| `VolumeShape` | ✅ | Volume geometry |
-| `Convert` trait | ✅ | Type conversion |
-| `Reader` | ❌ | Requires file system |
-| `Writer` | ❌ | Requires file system |
-| SIMD functions | ❌ | Requires std |
+| Feature | Description | Default |
+|---------|-------------|---------|
+| `mmap` | Memory-mapped I/O | ✅ |
+| `f16` | Half-precision support | ✅ |
+| `simd` | SIMD acceleration | ✅ |
+| `parallel` | Parallel encoding | ✅ |
 
 ## 🔧 Header Structure
 
@@ -394,7 +358,6 @@ header.set_exttyp_str("FEI1")?;
 - [x] Parallel encoding
 - [x] Memory-mapped I/O (`MmapReader`, `MmapWriter`)
 - [x] All data types (modes 0-4, 6, 12, 101)
-- [x] no_std support
 
 ### 🚧 **Next Release (v0.3.x): Extended Features**
 
@@ -419,8 +382,6 @@ cargo test --all-features
 # Run benchmarks
 cargo bench --all-features
 
-# Check no_std build
-cargo check --no-default-features
 ```
 
 ## 🤝 Contributing
