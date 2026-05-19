@@ -1,12 +1,8 @@
-//! Bidirectional endian codec for Layer 2 of the pipeline
+//! Bidirectional endian codec for MRC voxel types.
 //!
-//! This module implements the endian normalization layer:
-//! ```text
-//! Raw Bytes ↔ Typed Values
-//! ```
-//!
-//! The `EndianCodec` trait provides symmetric encode/decode operations,
-//! guaranteeing that encoding and decoding are always consistent.
+//! The `EndianCodec` trait provides symmetric encode/decode operations
+//! between raw bytes and typed values, handling both little-endian and
+//! big-endian MRC files.
 
 use super::endian::FileEndian;
 use crate::mode::{Float32Complex, Int16Complex};
@@ -19,7 +15,6 @@ use std::vec::Vec;
 
 /// Bidirectional codec for endian-normalized byte conversion.
 ///
-/// This is the core abstraction for Layer 2 of the pipeline.
 /// Provides symmetric encode/decode operations with guaranteed consistency.
 ///
 /// # Example
@@ -329,7 +324,7 @@ thread_local! {
 
 /// Encode a block with parallel processing and thread-local buffers.
 #[cfg(feature = "parallel")]
-pub fn encode_block_parallel<T: EndianCodec + Sync + Clone>(
+pub fn encode_block_parallel<T: EndianCodec + Sync>(
     values: &[T],
     chunk_size: usize,
     endian: FileEndian,

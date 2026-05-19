@@ -15,23 +15,14 @@ pub enum Error {
     TypeMismatch { expected: usize, actual: usize },
     #[error("Invalid block shape: expected {expected} elements, got {actual}")]
     BlockShapeMismatch { expected: usize, actual: usize },
-    #[error("Conversion error: {0}")]
-    Conversion(ConversionError),
+
     #[error("Mode mismatch: file stores {file_mode:?}, requested {requested_mode:?}")]
     ModeMismatch { file_mode: crate::Mode, requested_mode: crate::Mode },
+    #[error("Invalid header: {0}")]
+    InvalidHeaderDetailed(#[from] HeaderValidationError),
     #[cfg(feature = "mmap")]
     #[error("Memory mapping error")]
     Mmap,
-}
-
-/// Result of checking whether a slice of values fits within a target type's range.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct RangeCheck {
-    pub min: f64,
-    pub max: f64,
-    pub mean: f64,
-    pub values_out_of_range: usize,
-    pub total_values: usize,
 }
 
 /// Errors that can occur during header validation.
@@ -53,24 +44,4 @@ pub enum HeaderValidationError {
     InvalidNlabl(i32),
 }
 
-/// Errors that can occur during type conversion operations.
-#[derive(thiserror::Error, Debug, Clone, PartialEq)]
-pub enum ConversionError {
-    #[error("Value out of range: input range [{min}, {max}] exceeds target range [{target_min}, {target_max}]")]
-    OutOfRange {
-        min: f64,
-        max: f64,
-        target_min: f64,
-        target_max: f64,
-    },
-    #[error("NaN value encountered during conversion")]
-    NaNValue,
-    #[error("Infinity value encountered during conversion")]
-    InfinityValue,
-    #[error("Missing complex-to-real conversion strategy")]
-    MissingComplexStrategy,
-    #[error("Mode 3 is obsolete and should not be used for writing")]
-    ObsoleteMode3,
-    #[error("Packing data into 4-bit mode is not supported (data would be lost)")]
-    PackingInto4Bit,
-}
+

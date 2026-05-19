@@ -2,11 +2,11 @@
 
 use crate::Error;
 use crate::engine::block::{VolumeShape, VoxelBlock};
-use crate::engine::codec::EndianCodec;
+use crate::mode::Voxel;
 
 /// Helper to read and decode a voxel block from the reader.
 #[inline]
-fn read_and_decode<T: EndianCodec + Send + Copy + Default + crate::mode::Voxel>(
+fn read_and_decode<T: Voxel>(
     reader: &crate::Reader,
     offset: [usize; 3],
     shape: [usize; 3],
@@ -44,7 +44,7 @@ impl<'a, T> SliceIter<'a, T> {
 
 impl<'a, T> Iterator for SliceIter<'a, T>
 where
-    T: EndianCodec + Send + Copy + Default + crate::mode::Voxel,
+    T: Voxel,
 {
     type Item = Result<VoxelBlock<T>, Error>;
 
@@ -64,10 +64,18 @@ where
     }
 
     fn nth(&mut self, n: usize) -> Option<Self::Item> {
-        self.z = n;
+        self.z = self.z.saturating_add(n);
         self.next()
     }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let remaining = self.nz.saturating_sub(self.z);
+        (remaining, Some(remaining))
+    }
 }
+
+impl<'a, T> ExactSizeIterator for SliceIter<'a, T> where T: Voxel {}
+impl<'a, T> core::iter::FusedIterator for SliceIter<'a, T> where T: Voxel {}
 
 pub struct SlabIter<'a, T> {
     reader: &'a crate::Reader,
@@ -87,7 +95,7 @@ impl<'a, T> SlabIter<'a, T> {
             nz: shape.nz,
             nx: shape.nx,
             ny: shape.ny,
-            slab_size: k,
+            slab_size: k.max(1),
             _phantom: core::marker::PhantomData,
         }
     }
@@ -95,7 +103,7 @@ impl<'a, T> SlabIter<'a, T> {
 
 impl<'a, T> Iterator for SlabIter<'a, T>
 where
-    T: EndianCodec + Send + Copy + Default + crate::mode::Voxel,
+    T: Voxel,
 {
     type Item = Result<VoxelBlock<T>, Error>;
 
@@ -116,10 +124,19 @@ where
     }
 
     fn nth(&mut self, n: usize) -> Option<Self::Item> {
-        self.z = n * self.slab_size;
+        self.z = self.z.saturating_add(n * self.slab_size);
         self.next()
     }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let remaining = self.nz.saturating_sub(self.z);
+        let count = remaining.div_ceil(self.slab_size);
+        (count, Some(count))
+    }
 }
+
+impl<'a, T> ExactSizeIterator for SlabIter<'a, T> where T: Voxel {}
+impl<'a, T> core::iter::FusedIterator for SlabIter<'a, T> where T: Voxel {}
 
 pub struct BlockIter<'a, T> {
     reader: &'a crate::Reader,
@@ -131,6 +148,7 @@ pub struct BlockIter<'a, T> {
 
 impl<'a, T> BlockIter<'a, T> {
     pub fn new(reader: &'a crate::Reader, shape: VolumeShape, chunk_shape: [usize; 3]) -> Self {
+        assert!(chunk_shape[0] > 0 && chunk_shape[1] > 0 && chunk_shape[2] > 0, "chunk_shape must be positive in all dimensions");
         Self {
             reader,
             position: [0, 0, 0],
@@ -143,7 +161,7 @@ impl<'a, T> BlockIter<'a, T> {
 
 impl<'a, T> Iterator for BlockIter<'a, T>
 where
-    T: EndianCodec + Send + Copy + Default + crate::mode::Voxel,
+    T: Voxel,
 {
     type Item = Result<VoxelBlock<T>, Error>;
 
@@ -174,3 +192,5 @@ where
         Some(read_and_decode(self.reader, [px, py, pz], [sx, sy, sz]))
     }
 }
+
+impl<'a, T> core::iter::FusedIterator for BlockIter<'a, T> where T: Voxel {}

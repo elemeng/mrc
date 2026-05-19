@@ -94,6 +94,18 @@ impl Mode {
     pub fn is_float(&self) -> bool {
         matches!(self, Self::Float32 | Self::Float32Complex | Self::Float16)
     }
+
+    /// Byte size for a given number of voxels.
+    ///
+    /// For most modes this is `n * byte_size()`, but `Packed4Bit`
+    /// stores two voxels per byte so the result is `n.div_ceil(2)`.
+    #[inline]
+    pub fn byte_size_for_count(&self, n: usize) -> usize {
+        match self {
+            Self::Packed4Bit => n.div_ceil(2),
+            _ => n * self.byte_size(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
@@ -152,11 +164,11 @@ impl Packed4Bit {
 
 /// Trait for MRC voxel types with compile-time mode tracking.
 ///
-/// Each voxel type knows its MRC mode constant, enabling the conversion matrix
-/// to dispatch kernels without runtime branching.
+/// Each voxel type knows its MRC mode constant, enabling type-safe I/O
+/// without runtime mode dispatch.
 ///
-/// Note: BYTE_SIZE is inherited from EndianCodec supertrait.
-pub trait Voxel: crate::engine::codec::EndianCodec + Copy + Send + Sync + 'static {
+/// Note: `BYTE_SIZE` is inherited from the `EndianCodec` supertrait.
+pub trait Voxel: crate::engine::codec::EndianCodec + Copy + Send + Sync + Default + 'static {
     /// The MRC mode constant for this voxel type
     const MODE: Mode;
 }

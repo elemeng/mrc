@@ -613,10 +613,10 @@ impl HeaderBuilder {
         self
     }
 
-    /// Set the extended header type string.
-    pub fn exttyp(mut self, exttyp: &str) -> Result<Self, &'static str> {
-        self.header.set_exttyp_str(exttyp)?;
-        Ok(self)
+    /// Set the extended header type (4-byte ASCII identifier).
+    pub fn exttyp(mut self, exttyp: [u8; 4]) -> Self {
+        self.header.set_exttyp(exttyp);
+        self
     }
 
     /// Set the extended header size in bytes.

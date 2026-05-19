@@ -3,6 +3,7 @@
 use crate::engine::block::{VolumeShape, VoxelBlock};
 use crate::engine::codec::{EndianCodec, decode_slice};
 use crate::engine::endian::FileEndian;
+use crate::mode::Voxel;
 use crate::{Error, Header, Mode};
 
 use std::vec::Vec;
@@ -106,21 +107,29 @@ impl MmapReader {
     }
 
     /// Get the extended header bytes, if any.
-    pub fn ext_header_bytes(&self) -> &[u8] {
+    pub fn ext_header_bytes(&self) -> Result<&[u8], Error> {
         let ext_size = self.header.nsymbt as usize;
         if ext_size == 0 {
-            return &[];
+            return Ok(&[]);
         }
-        &self.mmap[1024..1024 + ext_size]
+        let end = 1024 + ext_size;
+        if end > self.mmap.len() {
+            return Err(Error::InvalidHeader);
+        }
+        Ok(&self.mmap[1024..end])
     }
 
     /// Get the raw data bytes from the memory map.
     ///
     /// This returns a slice starting at the beginning of voxel data
     /// (after the header and extended header).
-    pub fn data_bytes(&self) -> &[u8] {
+    pub fn data_bytes(&self) -> Result<&[u8], Error> {
         let data_size = self.header.data_size();
-        &self.mmap[self.data_offset..self.data_offset + data_size]
+        let end = self.data_offset + data_size;
+        if end > self.mmap.len() {
+            return Err(Error::InvalidHeader);
+        }
+        Ok(&self.mmap[self.data_offset..end])
     }
 
     /// Read a block of voxels as raw bytes from the mmap.
@@ -131,6 +140,10 @@ impl MmapReader {
 
         if ox + sx > nx || oy + sy > ny || oz + sz > nz {
             return Err(Error::BoundsError);
+        }
+
+        if self.mode() == Mode::Packed4Bit {
+            return Err(Error::UnsupportedMode);
         }
 
         let start_byte = self.data_offset
@@ -147,11 +160,10 @@ impl MmapReader {
     /// Read and decode a block of voxels to the specified type.
     ///
     /// Returns an error if `T` does not match the file's voxel mode.
-    pub fn read_block<T: EndianCodec + Send + Copy + Default + crate::mode::Voxel>(
-        &self,
-        offset: [usize; 3],
-        shape: [usize; 3],
-    ) -> Result<VoxelBlock<T>, Error> {
+    pub fn read_block<T: Voxel>(&self, offset: [usize; 3], shape: [usize; 3]) -> Result<VoxelBlock<T>, Error> {
+        if T::MODE == Mode::Packed4Bit {
+            return Err(Error::UnsupportedMode);
+        }
         let bytes = self.read_block_bytes(offset, shape)?;
         let data = self.decode_block::<T>(bytes)?;
         Ok(VoxelBlock { offset, shape, data })
@@ -161,10 +173,7 @@ impl MmapReader {
     ///
     /// # Errors
     /// Returns `Error::ModeMismatch` if `T` does not match the file mode.
-    pub(crate) fn decode_block<T: EndianCodec + Send + Copy + Default + crate::mode::Voxel>(
-        &self,
-        bytes: &[u8],
-    ) -> Result<Vec<T>, Error> {
+    pub(crate) fn decode_block<T: Voxel>(&self, bytes: &[u8]) -> Result<Vec<T>, Error> {
         if T::MODE != self.mode() {
             return Err(Error::ModeMismatch {
                 file_mode: self.mode(),
@@ -173,14 +182,14 @@ impl MmapReader {
         }
 
         if self.endian == FileEndian::native() {
-            self.decode_block_zero_copy(bytes)
+            self.decode_block_native_endian(bytes)
         } else {
             Ok(decode_slice(bytes, self.endian))
         }
     }
 
-    /// Zero-copy decode: transmute bytes directly to Vec<T>.
-    fn decode_block_zero_copy<T: EndianCodec + Copy>(&self, bytes: &[u8]) -> Result<Vec<T>, Error> {
+    /// Native-endian decode: memcpy bytes directly to Vec<T>.
+    fn decode_block_native_endian<T: EndianCodec + Copy>(&self, bytes: &[u8]) -> Result<Vec<T>, Error> {
         let n = bytes.len() / T::BYTE_SIZE;
         let mut result = Vec::with_capacity(n);
         unsafe {
@@ -195,17 +204,17 @@ impl MmapReader {
     }
 
     /// Iterate over slices (Z axis).
-    pub fn slices<T>(&self) -> MmapSliceIter<'_, T> {
+    pub fn slices<T: Voxel>(&self) -> MmapSliceIter<'_, T> {
         MmapSliceIter::new(self, self.shape)
     }
 
     /// Iterate over slabs (k slices at a time).
-    pub fn slabs<T>(&self, k: usize) -> MmapSlabIter<'_, T> {
+    pub fn slabs<T: Voxel>(&self, k: usize) -> MmapSlabIter<'_, T> {
         MmapSlabIter::new(self, self.shape, k)
     }
 
     /// Iterate over arbitrary blocks.
-    pub fn blocks<T>(&self, block_shape: [usize; 3]) -> MmapBlockIter<'_, T> {
+    pub fn blocks<T: Voxel>(&self, block_shape: [usize; 3]) -> MmapBlockIter<'_, T> {
         MmapBlockIter::new(self, self.shape, block_shape)
     }
 
@@ -365,7 +374,7 @@ impl<'a, T> MmapSliceIter<'a, T> {
 
 impl<'a, T> Iterator for MmapSliceIter<'a, T>
 where
-    T: EndianCodec + Send + Copy + Default + crate::mode::Voxel,
+    T: Voxel,
 {
     type Item = Result<VoxelBlock<T>, Error>;
 
@@ -392,10 +401,18 @@ where
     }
 
     fn nth(&mut self, n: usize) -> Option<Self::Item> {
-        self.z = n;
+        self.z = self.z.saturating_add(n);
         self.next()
     }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let remaining = self.nz.saturating_sub(self.z);
+        (remaining, Some(remaining))
+    }
 }
+
+impl<'a, T> ExactSizeIterator for MmapSliceIter<'a, T> where T: Voxel {}
+impl<'a, T> core::iter::FusedIterator for MmapSliceIter<'a, T> where T: Voxel {}
 
 /// Slab iterator for MmapReader.
 pub struct MmapSlabIter<'a, T> {
@@ -416,7 +433,7 @@ impl<'a, T> MmapSlabIter<'a, T> {
             nz: shape.nz,
             nx: shape.nx,
             ny: shape.ny,
-            slab_size: k,
+            slab_size: k.max(1),
             _phantom: core::marker::PhantomData,
         }
     }
@@ -424,7 +441,7 @@ impl<'a, T> MmapSlabIter<'a, T> {
 
 impl<'a, T> Iterator for MmapSlabIter<'a, T>
 where
-    T: EndianCodec + Send + Copy + Default + crate::mode::Voxel,
+    T: Voxel,
 {
     type Item = Result<VoxelBlock<T>, Error>;
 
@@ -452,10 +469,19 @@ where
     }
 
     fn nth(&mut self, n: usize) -> Option<Self::Item> {
-        self.z = n * self.slab_size;
+        self.z = self.z.saturating_add(n * self.slab_size);
         self.next()
     }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let remaining = self.nz.saturating_sub(self.z);
+        let count = remaining.div_ceil(self.slab_size);
+        (count, Some(count))
+    }
 }
+
+impl<'a, T> ExactSizeIterator for MmapSlabIter<'a, T> where T: Voxel {}
+impl<'a, T> core::iter::FusedIterator for MmapSlabIter<'a, T> where T: Voxel {}
 
 /// Block iterator for MmapReader.
 pub struct MmapBlockIter<'a, T> {
@@ -468,6 +494,7 @@ pub struct MmapBlockIter<'a, T> {
 
 impl<'a, T> MmapBlockIter<'a, T> {
     pub fn new(reader: &'a MmapReader, shape: VolumeShape, block_shape: [usize; 3]) -> Self {
+        assert!(block_shape[0] > 0 && block_shape[1] > 0 && block_shape[2] > 0, "block_shape must be positive in all dimensions");
         Self {
             reader,
             position: [0, 0, 0],
@@ -480,7 +507,7 @@ impl<'a, T> MmapBlockIter<'a, T> {
 
 impl<'a, T> Iterator for MmapBlockIter<'a, T>
 where
-    T: EndianCodec + Send + Copy + Default + crate::mode::Voxel,
+    T: Voxel,
 {
     type Item = Result<VoxelBlock<T>, Error>;
 
@@ -522,3 +549,5 @@ where
         }
     }
 }
+
+impl<'a, T> core::iter::FusedIterator for MmapBlockIter<'a, T> where T: Voxel {}

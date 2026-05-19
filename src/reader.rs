@@ -3,13 +3,15 @@
 use crate::engine::block::VolumeShape;
 use crate::engine::codec::{EndianCodec, decode_slice};
 use crate::engine::endian::FileEndian;
-use crate::iter::{BlockIter, SliceIter, SlabIter};
+use crate::iter::{BlockIter, SlabIter, SliceIter};
+use crate::mode::Voxel;
 use crate::{Error, Header, Mode};
 
 use std::vec::Vec;
 
 /// Iterator over slices yielding `f32` voxel blocks.
-pub type SliceIterF32<'a> = Box<dyn Iterator<Item = Result<crate::engine::block::VoxelBlock<f32>, Error>> + 'a>;
+pub type SliceIterF32<'a> =
+    Box<dyn Iterator<Item = Result<crate::engine::block::VoxelBlock<f32>, Error>> + 'a>;
 
 pub struct Reader {
     header: Header,
@@ -47,8 +49,7 @@ impl Reader {
         file.read_exact(&mut data)?;
 
         let endian = header.detect_endian();
-        let shape =
-            VolumeShape::new(header.nx as usize, header.ny as usize, header.nz as usize);
+        let shape = VolumeShape::new(header.nx as usize, header.ny as usize, header.nz as usize);
 
         Ok(Self {
             header,
@@ -71,15 +72,15 @@ impl Reader {
         &self.header
     }
 
-    pub fn slices<T>(&self) -> SliceIter<'_, T> {
+    pub fn slices<T: Voxel>(&self) -> SliceIter<'_, T> {
         SliceIter::new(self, self.shape)
     }
 
-    pub fn slabs<T>(&self, k: usize) -> SlabIter<'_, T> {
+    pub fn slabs<T: Voxel>(&self, k: usize) -> SlabIter<'_, T> {
         SlabIter::new(self, self.shape, k)
     }
 
-    pub fn blocks<T>(&self, chunk_shape: [usize; 3]) -> BlockIter<'_, T> {
+    pub fn blocks<T: Voxel>(&self, chunk_shape: [usize; 3]) -> BlockIter<'_, T> {
         BlockIter::new(self, self.shape, chunk_shape)
     }
 
@@ -97,10 +98,15 @@ impl Reader {
             return Err(Error::BoundsError);
         }
 
-        let bytes_per_voxel = self.mode().byte_size();
+        if self.mode() == Mode::Packed4Bit {
+            return Err(Error::UnsupportedMode);
+        }
 
-        let start_byte = (ox + oy * nx + oz * nx * ny) * bytes_per_voxel;
-        let end_byte = start_byte + sx * sy * sz * bytes_per_voxel;
+        let count = sx * sy * sz;
+        let byte_len = self.mode().byte_size_for_count(count);
+
+        let start_byte = (ox + oy * nx + oz * nx * ny) * self.mode().byte_size();
+        let end_byte = start_byte + byte_len;
 
         if end_byte > self.data.len() {
             return Err(Error::BoundsError);
@@ -112,24 +118,24 @@ impl Reader {
     /// Read and decode a block of voxels to the specified type.
     ///
     /// Returns an error if `T` does not match the file's voxel mode.
-    pub fn read_block<T: EndianCodec + Send + Copy + Default + crate::mode::Voxel>(
-        &self,
-        offset: [usize; 3],
-        shape: [usize; 3],
-    ) -> Result<crate::engine::block::VoxelBlock<T>, Error> {
+    pub fn read_block<T: Voxel>(&self, offset: [usize; 3], shape: [usize; 3]) -> Result<crate::engine::block::VoxelBlock<T>, Error> {
+        if T::MODE == Mode::Packed4Bit {
+            return Err(Error::UnsupportedMode);
+        }
         let bytes = self.read_block_bytes(offset, shape)?;
         let data = self.decode_block::<T>(&bytes)?;
-        Ok(crate::engine::block::VoxelBlock { offset, shape, data })
+        Ok(crate::engine::block::VoxelBlock {
+            offset,
+            shape,
+            data,
+        })
     }
 
     /// Decode a block of voxels to the specified type.
     ///
     /// # Errors
     /// Returns `Error::ModeMismatch` if `T` does not match the file mode.
-    pub(crate) fn decode_block<T: EndianCodec + Send + Copy + Default + crate::mode::Voxel>(
-        &self,
-        bytes: &[u8],
-    ) -> Result<Vec<T>, Error> {
+    pub(crate) fn decode_block<T: Voxel>(&self, bytes: &[u8]) -> Result<Vec<T>, Error> {
         if T::MODE != self.mode() {
             return Err(Error::ModeMismatch {
                 file_mode: self.mode(),
@@ -138,14 +144,14 @@ impl Reader {
         }
 
         if self.endian == FileEndian::native() {
-            self.decode_block_zero_copy(bytes)
+            self.decode_block_native_endian(bytes)
         } else {
             Ok(decode_slice(bytes, self.endian))
         }
     }
 
-    /// Zero-copy decode: transmute bytes directly to Vec<T>
-    fn decode_block_zero_copy<T: EndianCodec + Copy>(&self, bytes: &[u8]) -> Result<Vec<T>, Error> {
+    /// Native-endian decode: memcpy bytes directly to Vec<T>.
+    fn decode_block_native_endian<T: EndianCodec + Copy>(&self, bytes: &[u8]) -> Result<Vec<T>, Error> {
         let n = bytes.len() / T::BYTE_SIZE;
         let mut result = Vec::with_capacity(n);
         unsafe {
@@ -162,12 +168,11 @@ impl Reader {
     /// Iterate over slices, automatically converting common types to `f32`.
     ///
     /// Supported source modes: `Float32`, `Int16`, `Uint16`, `Int8`.
-    pub fn slices_f32(&self) -> Result<SliceIterF32<'_>, Error>
-    {
+    pub fn slices_f32(&self) -> Result<SliceIterF32<'_>, Error> {
         use crate::engine::block::VoxelBlock;
 
         match self.mode() {
-            Mode::Float32 => Ok(Box::new(self.slices::<f32>() )),
+            Mode::Float32 => Ok(Box::new(self.slices::<f32>())),
             Mode::Int16 => Ok(Box::new(self.slices::<i16>().map(|r| {
                 let b = r?;
                 let data = crate::engine::convert::convert_i16_slice_to_f32(&b.data);
@@ -202,12 +207,11 @@ impl Reader {
     /// Iterate over slabs, automatically converting common types to `f32`.
     ///
     /// Supported source modes: `Float32`, `Int16`, `Uint16`, `Int8`.
-    pub fn slabs_f32(&self, k: usize) -> Result<SliceIterF32<'_>, Error>
-    {
+    pub fn slabs_f32(&self, k: usize) -> Result<SliceIterF32<'_>, Error> {
         use crate::engine::block::VoxelBlock;
 
         match self.mode() {
-            Mode::Float32 => Ok(Box::new(self.slabs::<f32>(k) )),
+            Mode::Float32 => Ok(Box::new(self.slabs::<f32>(k))),
             Mode::Int16 => Ok(Box::new(self.slabs::<i16>(k).map(|r| {
                 let b = r?;
                 let data = crate::engine::convert::convert_i16_slice_to_f32(&b.data);

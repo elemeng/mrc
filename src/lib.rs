@@ -35,19 +35,20 @@ pub use engine::convert::{
     unpack_u4_to_i8, unpack_u4_to_u16,
 };
 
-pub use error::{ConversionError, Error, HeaderValidationError, RangeCheck};
+pub use error::{Error, HeaderValidationError};
 pub use header::{ExtHeader, ExtHeaderMut, Header, HeaderBuilder};
 pub use mode::{
     ComplexToRealStrategy, Float32Complex, Int16Complex, M0Interpretation, Mode, Packed4Bit, Voxel,
 };
-pub use reader::Reader;
+pub use reader::{Reader, SliceIterF32};
+pub use iter::{BlockIter, SliceIter, SlabIter};
 pub use writer::{Writer, WriterBuilder};
 
 #[cfg(feature = "mmap")]
 pub use writer::{MmapWriter, MmapWriterBuilder};
 
 #[cfg(feature = "mmap")]
-pub use mmap_reader::MmapReader;
+pub use mmap_reader::{MmapReader, MmapSliceIterF32, MmapBlockIter, MmapSliceIter, MmapSlabIter};
 
 /// Open an MRC file for reading.
 pub fn open<P: AsRef<std::path::Path>>(path: P) -> Result<Reader, Error> {
