@@ -2,16 +2,16 @@
 
 [![Rust](https://img.shields.io/badge/Rust-1.85+-orange.svg)](https://rust-lang.org) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) [![Crates.io](https://img.shields.io/crates/v/mrc.svg)](https://crates.io/crates/mrc) [![Docs.rs](https://img.shields.io/docsrs/mrc.svg)](https://docs.rs/mrc)
 
-> **Zero-copy, zero-allocation MRC-2014 file format reader/writer for Rust**
+> **Type-safe MRC-2014 file format reader/writer for Rust**
 
 A high-performance, memory-efficient library for reading and writing MRC (Medical Research Council) format files used in cryo-electron microscopy and structural biology. Designed for scientific computing with safety and performance as top priorities.
 
 ## ✨ Why mrc?
 
-- **🚀 Zero-copy**: Direct memory mapping with no intermediate buffers
-- **⚡ SIMD-accelerated**: AVX2/NEON accelerated type conversions
-- **🔄 Type conversion**: Automatic conversion between voxel types
-- **🔒 100% safe**: No unsafe blocks in public API
+- **🚀 Iterator-centric**: Stream slices, slabs, or blocks on demand
+- **⚡ SIMD-accelerated**: AVX2/NEON for the common i16→f32 path
+- **🔒 Type-safe I/O**: Compile-time mode matching prevents silent data corruption
+- **🗺️ Memory-mapped I/O**: `MmapReader` / `MmapWriter` for files larger than RAM
 
 **Note: This crate is currently under active development. While most features are functional, occasional bugs and API changes are possible. Contributions are welcome—please report issues and share your ideas!**
 
@@ -21,8 +21,8 @@ A high-performance, memory-efficient library for reading and writing MRC (Medica
 [dependencies]
 mrc = "0.2"
 
-# For all features
-mrc = { version = "0.2", features = ["std", "mmap", "f16", "simd", "parallel"] }
+# For all features (defaults are usually sufficient)
+mrc = { version = "0.2", features = ["mmap", "f16", "simd", "parallel"] }
 ```
 
 ## 🚀 Quick Start
@@ -69,9 +69,8 @@ fn main() -> Result<(), mrc::Error> {
         println!("Slice {}: {} voxels", block.offset[2], block.len());
     }
 
-    // Or read with automatic type conversion
-    // Read Int16 file as Float32 (uses SIMD when available)
-    for slice in reader.slices_converted::<i16, f32>() {
+    // Or read with automatic conversion to f32 (common cryo-EM workflow)
+    for slice in reader.slices_f32()? {
         let block = slice?;
         let sum: f32 = block.data.iter().sum();
         println!("Slice sum: {}", sum);
@@ -103,7 +102,8 @@ fn main() -> Result<(), mrc::Error> {
         writer.write_block(&block)?;
     }
 
-    // Finalize writes the header with correct statistics
+    // Finalize rewrites the header to disk.
+    // Note: dmin/dmax/dmean/rms are NOT updated automatically.
     writer.finalize()?;
     Ok(())
 }
@@ -181,28 +181,35 @@ for chunk in reader.blocks::<f32>([64, 64, 64]) {
 
 ### Type Conversion
 
-Automatic type conversion is supported via the `Convert` trait:
+The crate intentionally does **not** provide generic type conversion — that is
+the caller's responsibility. Only two overwhelmingly common cryo-EM workflows
+are supported as conveniences:
 
 ```rust
-// Read file as one type, convert to another
-for slice in reader.slices_converted::<i16, f32>() {
+// Read an Int16/Uint16/Int8/Float32 file as f32
+for slice in reader.slices_f32()? {
     let block = slice?;
-    // i16 data automatically converted to f32
+    // block.data is Vec<f32>
 }
 
-// Write with type conversion
+// Write f32 data to a Float16 file
 let mut writer = create("output.mrc")
     .shape([256, 256, 128])
-    .mode::<i16>()  // File stores i16
+    .mode::<f16>()
     .finish()?;
 
-let f32_data: VoxelBlock<f32> = ...;
-writer.write_converted::<f32, i16>(&f32_data)?;  // Converts f32 -> i16
+let f32_data: VoxelBlock<f32> = /* ... */;
+writer.write_f16_from_f32(&f32_data)?;
 ```
+
+**Safety note:** `reader.slices::<f32>()` on an Int16 file returns
+`Error::ModeMismatch` instead of silently decoding 2-byte voxels as 4-byte
+floats.
 
 ### Memory-Mapped I/O
 
-For large files (>1GB), memory-mapped I/O lets the OS handle paging:
+For large files that don't fit in RAM, memory-mapped I/O lets the OS handle
+paging:
 
 ```rust
 use mrc::MmapReader;
@@ -215,10 +222,8 @@ for slice in reader.slices::<f32>() {
     // OS automatically pages data in/out
 }
 
-// Direct byte access for zero-copy scenarios
-if reader.can_zero_copy::<f32>() {
-    let bytes = reader.data_bytes();  // &[u8] backed by mmap
-}
+// Direct byte access (zero-copy)
+let bytes = reader.data_bytes()?;  // &[u8] backed by mmap
 ```
 
 | Use | When |
@@ -245,35 +250,32 @@ if reader.can_zero_copy::<f32>() {
 
 ### SIMD Acceleration
 
-The library automatically uses SIMD instructions (AVX2 on x86_64, NEON on AArch64) for type conversions:
-
-```rust
-// These conversions use SIMD when available:
-// i8 → f32, i16 → f32, u16 → f32, u8 → f32
-
-// Access SIMD functions directly
-#[cfg(feature = "simd")]
-{
-    let f32_data = mrc::convert_i16_slice_to_f32(&i16_data);
-}
-```
+The `simd` feature (enabled by default) uses AVX2 (x86_64) or NEON (AArch64)
+to accelerate the common i16→f32 and u16→f32 paths inside `slices_f32()` and
+`slabs_f32()`. No explicit SIMD code is required in user code.
 
 ### Zero-Copy Reading
 
-When the file's native type matches your target type and endianness:
+`Reader` loads the entire file into memory (as raw bytes) and decodes slices
+on demand. For true zero-copy access, use `MmapReader` or `MmapWriter`:
 
 ```rust
-let reader = Reader::open("data.mrc")?;
+use mrc::{MmapReader, MmapWriter, SliceAccess};
 
-// Check if zero-copy is possible
-if reader.can_zero_copy::<f32>() {
-    println!("Using zero-copy fast path!");
-}
-
-// The iterator will use zero-copy automatically when possible
+// Memory-mapped reading
+let reader = MmapReader::open("data.mrc")?;
 for slice in reader.slices::<f32>() {
-    // No allocation or conversion happening here
+    // Decodes on demand; raw bytes are backed by the OS page cache
 }
+
+// Memory-mapped writing with direct slice mutation
+let mut writer = mrc::create("out.mrc")
+    .shape([512, 512, 256])
+    .mode::<f32>()
+    .mmap()
+    .finish()?;
+let slice = writer.slice_mut::<f32>(0)?;
+slice[0] = 1.0;
 ```
 
 ### Parallel Writing
@@ -328,7 +330,7 @@ header.beta = 90.0;
 header.gamma = 90.0;
 
 // Extended header type (optional)
-header.set_exttyp_str("FEI1")?;
+header.set_exttyp(*b"FEI1");
 ```
 
 ### Key Header Fields
@@ -352,7 +354,7 @@ header.set_exttyp_str("FEI1")?;
 
 - [x] Complete MRC-2014 format support
 - [x] Iterator-centric API (slices, slabs, blocks)
-- [x] Type conversion pipeline
+- [x] Type-safe I/O with compile-time mode checking
 - [x] SIMD acceleration (AVX2, NEON)
 - [x] Zero-copy fast paths
 - [x] Parallel encoding

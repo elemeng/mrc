@@ -15,8 +15,8 @@ impl VolumeShape {
         Self { nx, ny, nz }
     }
 
-    pub const fn total_voxels(&self) -> usize {
-        self.nx * self.ny * self.nz
+    pub fn total_voxels(&self) -> Option<usize> {
+        self.nx.checked_mul(self.ny)?.checked_mul(self.nz)
     }
 
     pub const fn is_empty(&self) -> bool {
@@ -28,7 +28,19 @@ impl VolumeShape {
     pub fn contains_block(&self, offset: [usize; 3], shape: [usize; 3]) -> bool {
         let [ox, oy, oz] = offset;
         let [sx, sy, sz] = shape;
-        ox + sx <= self.nx && oy + sy <= self.ny && oz + sz <= self.nz
+        ox.checked_add(sx).is_some_and(|x| x <= self.nx)
+            && oy.checked_add(sy).is_some_and(|y| y <= self.ny)
+            && oz.checked_add(sz).is_some_and(|z| z <= self.nz)
+    }
+
+    /// Compute the linear voxel index for a given 3D offset.
+    /// Returns `None` if the calculation overflows `usize`.
+    pub fn checked_linear_index(&self, offset: [usize; 3]) -> Option<usize> {
+        let [ox, oy, oz] = offset;
+        ox.checked_add(
+            oy.checked_mul(self.nx)?
+                .checked_add(oz.checked_mul(self.nx)?.checked_mul(self.ny)?)?,
+        )
     }
 }
 
@@ -42,9 +54,11 @@ pub struct VoxelBlock<T> {
 
 impl<T> VoxelBlock<T> {
     pub fn new(offset: [usize; 3], shape: [usize; 3], data: Vec<T>) -> Self {
+        let expected = shape[0].checked_mul(shape[1])
+            .and_then(|v| v.checked_mul(shape[2]))
+            .expect("Block shape dimensions overflow usize");
         assert_eq!(
-            data.len(),
-            shape[0] * shape[1] * shape[2],
+            data.len(), expected,
             "Data length must match block shape"
         );
         Self {
@@ -60,7 +74,9 @@ impl<T> VoxelBlock<T> {
         shape: [usize; 3],
         data: Vec<T>,
     ) -> Result<Self, crate::Error> {
-        let expected = shape[0] * shape[1] * shape[2];
+        let expected = shape[0].checked_mul(shape[1])
+            .and_then(|v| v.checked_mul(shape[2]))
+            .ok_or(crate::Error::BoundsError)?;
         if data.len() != expected {
             return Err(crate::Error::BlockShapeMismatch {
                 expected,
@@ -91,8 +107,12 @@ impl<T> VoxelBlock<T> {
 /// Trait for writers that provide direct slice access to voxel data.
 ///
 /// # Safety Warning
-/// The caller must ensure the type T matches the file's voxel mode exactly.
-/// Using the wrong type will produce incorrect data without any runtime error.
+/// The caller must ensure:
+/// - The type `T` matches the file's voxel mode exactly.
+/// - The file's data offset is aligned for `T` (always true for files created
+///   by this crate, but may not hold for arbitrary third-party files).
+///
+/// Violating either precondition causes undefined behaviour.
 /// For type-safe access, use `write_block` instead.
 pub trait SliceAccess {
     /// Get an immutable slice of voxels at the given z-index.

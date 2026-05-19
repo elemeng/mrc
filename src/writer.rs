@@ -9,6 +9,7 @@ use crate::{Error, Header, Mode};
 use std::path::PathBuf;
 use std::vec::Vec;
 
+#[derive(Debug)]
 pub struct WriterBuilder {
     path: PathBuf,
     header: Header,
@@ -48,6 +49,7 @@ impl WriterBuilder {
     }
 }
 
+#[derive(Debug)]
 pub struct Writer {
     file: std::fs::File,
     header: Header,
@@ -132,11 +134,16 @@ impl Writer {
         let [ox, oy, oz] = block.offset;
         let [sx, sy, sz] = block.shape;
 
-        let start_offset = self.data_offset + ((ox + oy * nx + oz * nx * ny) * self.bytes_per_voxel) as u64;
-        let byte_len = sx * sy * sz * self.bytes_per_voxel;
+        let linear = (ox as u64)
+            + (oy as u64) * (nx as u64)
+            + (oz as u64) * (nx as u64) * (ny as u64);
+        let start_offset = self.data_offset
+            + linear * (self.bytes_per_voxel as u64);
+        let byte_len = (sx as u64) * (sy as u64) * (sz as u64) * (self.bytes_per_voxel as u64);
 
         // Encode to a temporary buffer and write directly
-        let mut buffer = vec![0u8; byte_len];
+        let byte_len_usize = byte_len.try_into().map_err(|_| Error::BoundsError)?;
+        let mut buffer = vec![0u8; byte_len_usize];
         let file_endian = self.header.detect_endian();
         encode_slice(&block.data, &mut buffer, file_endian);
 
@@ -168,7 +175,11 @@ impl Writer {
         let [ox, oy, oz] = block.offset;
 
         let chunk_size = 1024 * 1024; // 1M voxels per chunk
-        let base_offset = self.data_offset + ((ox + oy * nx + oz * nx * ny) * self.bytes_per_voxel) as u64;
+        let linear = (ox as u64)
+            + (oy as u64) * (nx as u64)
+            + (oz as u64) * (nx as u64) * (ny as u64);
+        let base_offset = self.data_offset
+            + linear * (self.bytes_per_voxel as u64);
         let file_endian = self.header.detect_endian();
 
         // Encode in parallel
@@ -178,7 +189,8 @@ impl Writer {
         // Write chunks sequentially (cross-platform)
         use std::io::{Seek, SeekFrom, Write};
         for (chunk_idx, encoded) in encoded_chunks {
-            let offset = base_offset + (chunk_idx * chunk_size * self.bytes_per_voxel) as u64;
+            let offset = base_offset
+                + (chunk_idx as u64) * (chunk_size as u64) * (self.bytes_per_voxel as u64);
             self.file.seek(SeekFrom::Start(offset))?;
             self.file.write_all(&encoded)?;
         }
@@ -225,6 +237,7 @@ impl Writer {
 // ============================================================================
 
 #[cfg(feature = "mmap")]
+#[derive(Debug)]
 pub struct MmapWriterBuilder {
     path: PathBuf,
     header: Header,
@@ -250,6 +263,7 @@ impl MmapWriterBuilder {
 }
 
 #[cfg(feature = "mmap")]
+#[derive(Debug)]
 pub struct MmapWriter {
     mmap: memmap2::MmapMut,
     header: Header,
@@ -275,7 +289,9 @@ impl MmapWriter {
             return Err(Error::InvalidHeader);
         }
 
-        let total_size = header.data_offset() + header.data_size();
+        let total_size = header.data_offset()
+            .checked_add(header.data_size().ok_or(Error::InvalidHeader)?)
+            .ok_or(Error::InvalidHeader)?;
         let mut file = OpenOptions::new()
             .read(true)
             .write(true)
@@ -340,12 +356,16 @@ impl MmapWriter {
             return Err(Error::BoundsError);
         }
 
-        let [nx, ny, _nz] = [self.shape.nx, self.shape.ny, self.shape.nz];
-        let [ox, oy, oz] = block.offset;
         let [sx, sy, sz] = block.shape;
 
-        let start_offset = self.data_offset + (ox + oy * nx + oz * nx * ny) * self.bytes_per_voxel;
-        let end_offset = start_offset + sx * sy * sz * self.bytes_per_voxel;
+        let linear = self.shape.checked_linear_index(block.offset).ok_or(Error::BoundsError)?;
+        let start_offset = self.data_offset.checked_add(
+            linear.checked_mul(self.bytes_per_voxel).ok_or(Error::BoundsError)?
+        ).ok_or(Error::BoundsError)?;
+        let count = sx.checked_mul(sy).and_then(|v| v.checked_mul(sz))
+            .ok_or(Error::BoundsError)?;
+        let byte_len = count.checked_mul(self.bytes_per_voxel).ok_or(Error::BoundsError)?;
+        let end_offset = start_offset.checked_add(byte_len).ok_or(Error::BoundsError)?;
 
         if end_offset > self.mmap.len() {
             return Err(Error::BoundsError);
@@ -376,11 +396,11 @@ impl MmapWriter {
             return Err(Error::BoundsError);
         }
 
-        let [nx, ny, _nz] = [self.shape.nx, self.shape.ny, self.shape.nz];
-        let [ox, oy, oz] = block.offset;
-
         let chunk_size = 1024 * 1024; // 1M voxels per chunk
-        let base_offset = self.data_offset + (ox + oy * nx + oz * nx * ny) * self.bytes_per_voxel;
+        let linear = self.shape.checked_linear_index(block.offset).ok_or(Error::BoundsError)?;
+        let base_offset = self.data_offset.checked_add(
+            linear.checked_mul(self.bytes_per_voxel).ok_or(Error::BoundsError)?
+        ).ok_or(Error::BoundsError)?;
         let file_endian = self.header.detect_endian();
 
         // Get raw pointer as usize for parallel writes
@@ -392,7 +412,8 @@ impl MmapWriter {
             .par_chunks(chunk_size)
             .enumerate()
             .for_each(|(chunk_idx, chunk)| {
-                let start_offset = base_offset + chunk_idx * chunk_size * self.bytes_per_voxel;
+                let start_offset = base_offset
+                    + chunk_idx * chunk_size * self.bytes_per_voxel;
                 let ptr = (mmap_ptr + start_offset) as *mut u8;
                 let dst = unsafe {
                     core::slice::from_raw_parts_mut(ptr, chunk.len() * self.bytes_per_voxel)
@@ -440,6 +461,10 @@ impl SliceAccess for MmapWriter {
         let start_offset = self.data_offset + z * nx * ny * self.bytes_per_voxel;
         let end_offset = start_offset + nx * ny * self.bytes_per_voxel;
 
+        if start_offset % core::mem::align_of::<T>() != 0 {
+            return Err(Error::InvalidHeader);
+        }
+
         let bytes = &self.mmap[start_offset..end_offset];
         unsafe {
             let ptr = bytes.as_ptr() as *const T;
@@ -465,6 +490,10 @@ impl SliceAccess for MmapWriter {
 
         let start_offset = self.data_offset + z * nx * ny * self.bytes_per_voxel;
         let end_offset = start_offset + nx * ny * self.bytes_per_voxel;
+
+        if start_offset % core::mem::align_of::<T>() != 0 {
+            return Err(Error::InvalidHeader);
+        }
 
         let bytes = &mut self.mmap[start_offset..end_offset];
         unsafe {

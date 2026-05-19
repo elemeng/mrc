@@ -126,7 +126,9 @@ impl Header {
     /// (NVERSION) field is uninitialized and should be set via `set_nversion()` when needed.
     ///
     /// # Example
-    /// ```ignore
+    /// ```
+    /// use mrc::Header;
+    ///
     /// let mut header = Header::new();
     /// header.set_nversion(20141);
     /// ```
@@ -175,18 +177,21 @@ impl Header {
     #[inline]
     /// Size, in bytes, of the voxel data block.
     ///
-    /// Returns zero for invalid mode or zero dimensions.
-    pub fn data_size(&self) -> usize {
-        let n = (self.nx as usize) * (self.ny as usize) * (self.nz as usize);
+    /// Returns `None` if the dimensions are so large that the calculation
+    /// overflows `usize`.
+    pub fn data_size(&self) -> Option<usize> {
+        let n = (self.nx as usize)
+            .checked_mul(self.ny as usize)?
+            .checked_mul(self.nz as usize)?;
         match Mode::from_i32(self.mode) {
             Some(mode) => {
                 let byte_size = mode.byte_size();
                 match mode {
-                    Mode::Packed4Bit => n.div_ceil(2), // two voxels per byte
-                    _ => n * byte_size,
+                    Mode::Packed4Bit => Some(n.div_ceil(2)), // two voxels per byte
+                    _ => n.checked_mul(byte_size),
                 }
             }
-            None => 0, // unknown/unsupported
+            None => Some(0), // unknown/unsupported
         }
     }
 
@@ -557,7 +562,9 @@ impl<'a> ExtHeaderMut<'a> {
 /// Builder for constructing validated MRC headers.
 ///
 /// # Example
-/// ```ignore
+/// ```
+/// use mrc::HeaderBuilder;
+///
 /// let header = HeaderBuilder::new()
 ///     .shape([512, 512, 256])
 ///     .mode::<f32>()

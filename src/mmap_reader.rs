@@ -8,6 +8,10 @@ use crate::{Error, Header, Mode};
 
 use std::vec::Vec;
 
+/// Iterator over slices yielding `f32` voxel blocks.
+#[cfg(feature = "mmap")]
+pub type MmapSliceIterF32<'a> = Box<dyn Iterator<Item = Result<VoxelBlock<f32>, Error>> + 'a>;
+
 /// Memory-mapped MRC file reader.
 ///
 /// Provides zero-copy access to MRC files by memory-mapping them into the process address space.
@@ -26,11 +30,8 @@ use std::vec::Vec;
 ///     // process block.data
 /// }
 /// ```
-/// Iterator over slices yielding `f32` voxel blocks.
 #[cfg(feature = "mmap")]
-pub type MmapSliceIterF32<'a> = Box<dyn Iterator<Item = Result<VoxelBlock<f32>, Error>> + 'a>;
-
-#[cfg(feature = "mmap")]
+#[derive(Debug)]
 pub struct MmapReader {
     mmap: memmap2::Mmap,
     header: Header,
@@ -124,8 +125,8 @@ impl MmapReader {
     /// This returns a slice starting at the beginning of voxel data
     /// (after the header and extended header).
     pub fn data_bytes(&self) -> Result<&[u8], Error> {
-        let data_size = self.header.data_size();
-        let end = self.data_offset + data_size;
+        let data_size = self.header.data_size().ok_or(Error::InvalidHeader)?;
+        let end = self.data_offset.checked_add(data_size).ok_or(Error::InvalidHeader)?;
         if end > self.mmap.len() {
             return Err(Error::InvalidHeader);
         }
@@ -146,9 +147,14 @@ impl MmapReader {
             return Err(Error::UnsupportedMode);
         }
 
-        let start_byte = self.data_offset
-            + (ox + oy * nx + oz * nx * ny) * self.bytes_per_voxel;
-        let end_byte = start_byte + sx * sy * sz * self.bytes_per_voxel;
+        let linear = self.shape.checked_linear_index(offset).ok_or(Error::BoundsError)?;
+        let start_byte = self.data_offset.checked_add(
+            linear.checked_mul(self.bytes_per_voxel).ok_or(Error::BoundsError)?
+        ).ok_or(Error::BoundsError)?;
+        let count = sx.checked_mul(sy).and_then(|v| v.checked_mul(sz))
+            .ok_or(Error::BoundsError)?;
+        let byte_len = count.checked_mul(self.bytes_per_voxel).ok_or(Error::BoundsError)?;
+        let end_byte = start_byte.checked_add(byte_len).ok_or(Error::BoundsError)?;
 
         if end_byte > self.mmap.len() {
             return Err(Error::BoundsError);
@@ -304,6 +310,12 @@ impl MmapReader {
         let ny = self.shape.ny;
         let nz = self.shape.nz;
         (0..nz).map(move |z| {
+            if self.mode() != Mode::Int8 {
+                return Err(Error::ModeMismatch {
+                    file_mode: self.mode(),
+                    requested_mode: Mode::Int8,
+                });
+            }
             let bytes = self.read_block_bytes([0, 0, z], [nx, ny, 1])?;
             let data = crate::engine::convert::reinterpret_m0(bytes, interp);
             Ok(VoxelBlock {
@@ -324,7 +336,18 @@ impl MmapReader {
         let ny = self.shape.ny;
         let nz = self.shape.nz;
         let mut z = 0usize;
+        let mut error_returned = false;
         std::iter::from_fn(move || {
+            if error_returned {
+                return None;
+            }
+            if self.mode() != Mode::Int8 {
+                error_returned = true;
+                return Some(Err(Error::ModeMismatch {
+                    file_mode: self.mode(),
+                    requested_mode: Mode::Int8,
+                }));
+            }
             if z >= nz {
                 return None;
             }
@@ -350,6 +373,7 @@ impl MmapReader {
 // ============================================================================
 
 /// Slice iterator for MmapReader.
+#[derive(Debug)]
 pub struct MmapSliceIter<'a, T> {
     reader: &'a MmapReader,
     z: usize,
@@ -415,6 +439,7 @@ impl<'a, T> ExactSizeIterator for MmapSliceIter<'a, T> where T: Voxel {}
 impl<'a, T> core::iter::FusedIterator for MmapSliceIter<'a, T> where T: Voxel {}
 
 /// Slab iterator for MmapReader.
+#[derive(Debug)]
 pub struct MmapSlabIter<'a, T> {
     reader: &'a MmapReader,
     z: usize,
@@ -469,7 +494,7 @@ where
     }
 
     fn nth(&mut self, n: usize) -> Option<Self::Item> {
-        self.z = self.z.saturating_add(n * self.slab_size);
+        self.z = self.z.saturating_add(n.saturating_mul(self.slab_size));
         self.next()
     }
 
@@ -484,6 +509,7 @@ impl<'a, T> ExactSizeIterator for MmapSlabIter<'a, T> where T: Voxel {}
 impl<'a, T> core::iter::FusedIterator for MmapSlabIter<'a, T> where T: Voxel {}
 
 /// Block iterator for MmapReader.
+#[derive(Debug)]
 pub struct MmapBlockIter<'a, T> {
     reader: &'a MmapReader,
     position: [usize; 3],

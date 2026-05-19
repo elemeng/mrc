@@ -13,6 +13,7 @@ use std::vec::Vec;
 pub type SliceIterF32<'a> =
     Box<dyn Iterator<Item = Result<crate::engine::block::VoxelBlock<f32>, Error>> + 'a>;
 
+#[derive(Debug)]
 pub struct Reader {
     header: Header,
     ext_header: Vec<u8>,
@@ -37,7 +38,7 @@ impl Reader {
             return Err(Error::InvalidHeader);
         }
 
-        let data_size = header.data_size();
+        let data_size = header.data_size().ok_or(Error::InvalidHeader)?;
 
         let ext_size = header.nsymbt as usize;
         let mut ext_header = vec![0u8; ext_size];
@@ -102,11 +103,14 @@ impl Reader {
             return Err(Error::UnsupportedMode);
         }
 
-        let count = sx * sy * sz;
+        let linear = self.shape.checked_linear_index(offset).ok_or(Error::BoundsError)?;
+        let start_byte = linear
+            .checked_mul(self.mode().byte_size())
+            .ok_or(Error::BoundsError)?;
+        let count = sx.checked_mul(sy).and_then(|v| v.checked_mul(sz))
+            .ok_or(Error::BoundsError)?;
         let byte_len = self.mode().byte_size_for_count(count);
-
-        let start_byte = (ox + oy * nx + oz * nx * ny) * self.mode().byte_size();
-        let end_byte = start_byte + byte_len;
+        let end_byte = start_byte.checked_add(byte_len).ok_or(Error::BoundsError)?;
 
         if end_byte > self.data.len() {
             return Err(Error::BoundsError);
@@ -255,6 +259,12 @@ impl Reader {
         let ny = self.shape.ny;
         let nz = self.shape.nz;
         (0..nz).map(move |z| {
+            if self.mode() != Mode::Int8 {
+                return Err(Error::ModeMismatch {
+                    file_mode: self.mode(),
+                    requested_mode: Mode::Int8,
+                });
+            }
             let bytes = self.read_block_bytes([0, 0, z], [nx, ny, 1])?;
             let data = crate::engine::convert::reinterpret_m0(&bytes, interp);
             Ok(crate::engine::block::VoxelBlock {
@@ -275,7 +285,18 @@ impl Reader {
         let ny = self.shape.ny;
         let nz = self.shape.nz;
         let mut z = 0usize;
+        let mut error_returned = false;
         std::iter::from_fn(move || {
+            if error_returned {
+                return None;
+            }
+            if self.mode() != Mode::Int8 {
+                error_returned = true;
+                return Some(Err(Error::ModeMismatch {
+                    file_mode: self.mode(),
+                    requested_mode: Mode::Int8,
+                }));
+            }
             if z >= nz {
                 return None;
             }

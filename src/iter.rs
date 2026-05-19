@@ -20,6 +20,7 @@ fn read_and_decode<T: Voxel>(
     })
 }
 
+#[derive(Debug)]
 pub struct SliceIter<'a, T> {
     reader: &'a crate::Reader,
     z: usize,
@@ -77,6 +78,7 @@ where
 impl<'a, T> ExactSizeIterator for SliceIter<'a, T> where T: Voxel {}
 impl<'a, T> core::iter::FusedIterator for SliceIter<'a, T> where T: Voxel {}
 
+#[derive(Debug)]
 pub struct SlabIter<'a, T> {
     reader: &'a crate::Reader,
     z: usize,
@@ -124,7 +126,7 @@ where
     }
 
     fn nth(&mut self, n: usize) -> Option<Self::Item> {
-        self.z = self.z.saturating_add(n * self.slab_size);
+        self.z = self.z.saturating_add(n.saturating_mul(self.slab_size));
         self.next()
     }
 
@@ -138,22 +140,23 @@ where
 impl<'a, T> ExactSizeIterator for SlabIter<'a, T> where T: Voxel {}
 impl<'a, T> core::iter::FusedIterator for SlabIter<'a, T> where T: Voxel {}
 
+#[derive(Debug)]
 pub struct BlockIter<'a, T> {
     reader: &'a crate::Reader,
     position: [usize; 3],
     shape: VolumeShape,
-    chunk_shape: [usize; 3],
+    block_shape: [usize; 3],
     _phantom: core::marker::PhantomData<T>,
 }
 
 impl<'a, T> BlockIter<'a, T> {
-    pub fn new(reader: &'a crate::Reader, shape: VolumeShape, chunk_shape: [usize; 3]) -> Self {
-        assert!(chunk_shape[0] > 0 && chunk_shape[1] > 0 && chunk_shape[2] > 0, "chunk_shape must be positive in all dimensions");
+    pub fn new(reader: &'a crate::Reader, shape: VolumeShape, block_shape: [usize; 3]) -> Self {
+        assert!(block_shape[0] > 0 && block_shape[1] > 0 && block_shape[2] > 0, "block_shape must be positive in all dimensions");
         Self {
             reader,
             position: [0, 0, 0],
             shape,
-            chunk_shape,
+            block_shape,
             _phantom: core::marker::PhantomData,
         }
     }
@@ -167,7 +170,7 @@ where
 
     fn next(&mut self) -> Option<Self::Item> {
         let [nx, ny, nz] = [self.shape.nx, self.shape.ny, self.shape.nz];
-        let [cx, cy, cz] = self.chunk_shape;
+        let [cx, cy, cz] = self.block_shape;
         let [px, py, pz] = self.position;
 
         if pz >= nz {

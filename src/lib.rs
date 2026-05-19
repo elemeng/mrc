@@ -7,6 +7,31 @@
 //! This crate focuses on a single responsibility: **correctly reading and writing
 //! MRC files**. Type conversion is the caller's responsibility, with only a small
 //! set of MRC-specific conveniences (e.g. `slices_f32` for the common i16→f32 case).
+//!
+//! # Quick Example
+//!
+//! ```ignore
+//! use mrc::{Reader, create, VoxelBlock};
+//!
+//! // Reading
+//! let reader = Reader::open("protein.mrc")?;
+//! for slice in reader.slices::<f32>() {
+//!     let block = slice?;
+//!     // block.data is Vec<f32>
+//! }
+//!
+//! // Writing
+//! let mut writer = create("output.mrc")
+//!     .shape([512, 512, 256])
+//!     .mode::<f32>()
+//!     .finish()?;
+//! writer.write_block(&VoxelBlock::new(
+//!     [0, 0, 0],
+//!     [512, 512, 1],
+//!     vec![0.0f32; 512 * 512],
+//! ))?;
+//! writer.finalize()?;
+//! ```
 
 #![cfg_attr(feature = "f16", feature(f16))]
 

@@ -18,9 +18,11 @@ use std::vec::Vec;
 #[cfg(feature = "simd")]
 use super::simd;
 
-/// Trait for converting between voxel types.
+/// Internal trait for value-level conversions used by convenience functions.
 ///
-/// This enables the type-level conversion graph described in engine.md.
+/// Not part of the public API — the crate intentionally does not expose
+/// generic type conversion. Only MRC-specific conveniences (e.g. `slices_f32`)
+/// are provided.
 pub(crate) trait Convert<S>: Sized {
     /// Convert a source value to the destination type
     fn convert(src: S) -> Self;
