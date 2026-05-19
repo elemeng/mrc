@@ -238,8 +238,7 @@ impl EndianCodec for f16 {
 
 /// Decode a slice of values from bytes with automatic parallel processing.
 ///
-/// This is the primary entry point for Layer 2 decoding.
-/// Uses 1MB chunks for optimal cache behavior.
+/// Uses 1MB chunks for optimal cache behaviour when the `parallel` feature is enabled.
 pub fn decode_slice<T: EndianCodec + Send + Copy + Default>(
     bytes: &[u8],
     endian: FileEndian,
@@ -280,8 +279,7 @@ pub fn decode_slice<T: EndianCodec + Send + Copy + Default>(
 
 /// Encode a slice of values to bytes with automatic parallel processing.
 ///
-/// This is the primary entry point for Layer 2 encoding.
-/// Uses 1MB chunks for optimal cache behavior.
+/// Uses 1MB chunks for optimal cache behaviour when the `parallel` feature is enabled.
 pub fn encode_slice<T: EndianCodec + Sync>(values: &[T], bytes: &mut [u8], endian: FileEndian) {
     assert_eq!(values.len() * T::BYTE_SIZE, bytes.len());
 

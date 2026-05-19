@@ -1,19 +1,16 @@
-//! Type Conversion Layer (Layer 4 of the pipeline)
+//! MRC-specific type conversions.
 //!
-//! This module implements voxel type conversions:
-//! ```text
-//! Typed voxel values → Converted voxel values
-//! ```
+//! This module provides conversions for the overwhelmingly common cryo-EM
+//! workflows that the crate supports as conveniences:
 //!
-//! Conversions include:
-//! - Int8 → Float32
-//! - Int16 → Float32
-//! - Uint16 → Float32
-//! - Float16 → Float32
-//! - Float32 → Int16
-//! - Int16Complex ↔ Float32Complex
-//! - Packed4Bit → all integer types
-//! - u8 → all types
+//! - `i8`/`i16`/`u16` → `f32` (for `slices_f32` / `slabs_f32`)
+//! - `f32` → `f16` (for `write_f16_from_f32`)
+//! - Mode 0 reinterpretation (signed vs unsigned `i8`)
+//! - 4-bit packed data unpacking
+//!
+//! Generic type conversion (`Convert` trait matrix) was intentionally removed
+//! to keep the crate focused on MRC I/O. The remaining conversions are
+//! `pub(crate)`; only the public free functions in `lib.rs` are exposed.
 
 use crate::mode::{Float32Complex, Int16Complex, M0Interpretation, Packed4Bit};
 use std::vec::Vec;

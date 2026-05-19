@@ -57,6 +57,10 @@ pub struct Writer {
 }
 
 impl Writer {
+    /// Create a new MRC file from a pre-built header.
+    ///
+    /// The header's endianness is forced to little-endian per crate policy.
+    /// For most use cases, prefer [`WriterBuilder`](crate::WriterBuilder).
     pub fn create<P: AsRef<std::path::Path>>(path: P, mut header: Header) -> Result<Self, Error> {
         use std::io::Write;
 
@@ -256,6 +260,10 @@ pub struct MmapWriter {
 
 #[cfg(feature = "mmap")]
 impl MmapWriter {
+    /// Create a new memory-mapped MRC file from a pre-built header.
+    ///
+    /// The header's endianness is forced to little-endian per crate policy.
+    /// For most use cases, prefer [`MmapWriterBuilder`](crate::MmapWriterBuilder).
     pub fn create<P: AsRef<std::path::Path>>(path: P, mut header: Header) -> Result<Self, Error> {
         use std::fs::OpenOptions;
         use std::io::Write;

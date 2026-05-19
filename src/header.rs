@@ -355,13 +355,9 @@ impl Header {
         self.machst = endian.to_machst();
     }
 
-    /// Decode header from raw bytes with correct endianness
+    /// Decode header from raw bytes with correct endianness.
     ///
-    /// This is the ONLY safe way to read a header from raw bytes.
     /// Endianness is detected from the MACHST field and applied automatically.
-    ///
-    /// # Safety
-    /// The input slice must be exactly 1024 bytes.
     pub fn decode_from_bytes(bytes: &[u8; 1024]) -> Self {
         use crate::engine::codec::EndianCodec;
         use crate::engine::endian::FileEndian;
@@ -432,13 +428,9 @@ impl Header {
         header
     }
 
-    /// Encode header to raw bytes with correct endianness
+    /// Encode header to raw bytes with correct endianness.
     ///
-    /// This is the ONLY safe way to write a header to raw bytes.
     /// Endianness is determined from the MACHST field and applied automatically.
-    ///
-    /// # Safety
-    /// The output slice must be exactly 1024 bytes.
     pub fn encode_to_bytes(&self, out: &mut [u8; 1024]) {
         use crate::engine::codec::EndianCodec;
 
