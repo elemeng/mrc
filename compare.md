@@ -211,3 +211,198 @@ Python's `mrcfile.validator` cross-checks data statistics against header values,
 | Embedding in Rust/C++ applications | 🦀 Rust `mrc` |
 
 **The two libraries are not competitors — they are complementary tools for different layers of the scientific-computing stack.** Python `mrcfile` is the gold standard for human-driven exploration; Rust `mrc` is the better foundation for automated, performance-critical infrastructure.
+
+
+---
+
+## Appendix A: Endianness — The Tricky Part
+
+Endianness is the single most error-prone aspect of the MRC format. Both libraries approach it very differently, and each has subtle correctness and performance implications.
+
+### A.1 MACHST Recognition
+
+The MRC2014 spec (Note 11) says bytes 213–214 contain 4 nibbles indicating float, complex, integer and character datatype representations. In practice, only two stamps are commonly seen:
+
+| Stamp | Meaning | Python recognition | Rust recognition |
+|-------|---------|-------------------|------------------|
+| `0x44 0x44 0x00 0x00` | Little-endian | ✅ LE | ✅ LE |
+| `0x11 0x11 0x00 0x00` | Big-endian | ✅ BE | ✅ BE |
+| `0x44 0x41 0x00 0x00` | CCP4 LE variant | ✅ LE (`0x44`/`0x41`) | ⚠️ Warns, falls back to LE |
+| Anything else | Unknown / corrupt | ❌ `ValueError` | ⚠️ Warns, falls back to LE |
+
+**Python is slightly more robust** because it recognises the CCP4 `0x44 0x41` variant explicitly. Rust's fallback to LE happens to produce the same result for that stamp, but the warning message is less informative.
+
+### A.2 The Mode-Fallback Strategy (Python's Secret Weapon)
+
+This is where the two implementations diverge most dramatically.
+
+**Python's approach** (`mrcinterpreter.py:229-254`):
+
+```python
+# Check mode is valid; if not, try the opposite byte order
+if self._permissive:
+    try:
+        utils.dtype_from_mode(header.mode)
+    except ValueError:
+        try:
+            opp_mode = header.mode.view(header.mode.dtype.newbyteorder())
+            utils.dtype_from_mode(opp_mode)
+            # If we get here the new byte order is probably correct
+            header.dtype = header.dtype.newbyteorder()
+            warnings.warn(
+                f"Machine stamp '{pretty_machst}' does not match the apparent"
+                f" byte order '{header.mode.dtype.byteorder}'",
+                RuntimeWarning,
+            )
+        except ValueError:
+            pass  # Neither byte order gives a valid mode
+```
+
+If the mode number is garbage under the detected endianness, Python **re-interprets the entire header under the opposite endianness** and checks again. If that yields a valid mode, it proceeds with the opposite endianness and issues a warning.
+
+**Why this matters:** Real-world MRC files exist where the machine stamp is wrong but the rest of the file is correctly encoded in the opposite endianness. Python can open these; Rust cannot.
+
+**Rust's approach:** No fallback. Once `FileEndian::from_machst()` returns a value, that value is used for the entire file. If the mode number is invalid under that endianness, `validate_detailed()` returns `UnsupportedMode` and the open fails.
+
+**Verdict:** **Python wins for robustness** with malformed files. **Rust wins for predictability** — you never get a silent byte-order flip.
+
+### A.3 Header Decoding Architecture
+
+**Python** uses NumPy's dtype system:
+
+1. Read 1024 bytes into a `bytearray`.
+2. `np.frombuffer(header_arr, dtype=HEADER_DTYPE).view(np.recarray)` — zero-copy view.
+3. `header.dtype = header.dtype.newbyteorder(byte_order)` — **zero-cost view re-interpretation**. NumPy does not copy or transform any bytes; it simply changes the metadata that says "read field X as big-endian instead of little-endian".
+4. Subsequent field access (`header.mode`, `header.dmin`) uses NumPy's C-level byte-swapping at read time.
+
+**Rust** uses explicit per-field decoding:
+
+1. Read 1024 bytes into a `[u8; 1024]`.
+2. Call `detect_endian()` on the MACHST.
+3. For each field, explicitly call `i32::decode(bytes, offset, file_endian)` or `f32::decode(...)`.
+4. Each decode constructs a 2-byte or 4-byte array and calls `from_le_bytes`/`from_be_bytes`.
+
+**Performance implication:**
+
+- **Python**: Decoding is deferred. The 1024-byte header is never "decoded" into native types as a bulk operation. Each field access pays a small C-level byte-swap cost. For a single header, this is negligible.
+- **Rust**: The entire header is eagerly decoded into a `Header` struct (56 fields × 4 bytes ≈ 224 native-endian values). This costs ~224 array constructions + byte-swap operations up front, but subsequent access is free.
+
+For a single file open, the difference is unmeasurable. For batch processing millions of files, Rust's eager approach is slightly faster because it avoids repeated byte-swap overhead.
+
+### A.4 Data Decoding Architecture
+
+**Python** (`mrcinterpreter.py:386`):
+
+```python
+np.frombuffer(data_arr, dtype=dtype).reshape(shape)
+```
+
+This creates a **zero-copy view** of the raw bytes. If the file is non-native endian, NumPy stores the byte-order flag in the array's dtype metadata. Every subsequent array operation (indexing, slicing, `mean()`, `astype()`) performs byte-swapping on demand inside NumPy's C loops.
+
+**Rust** (`engine/codec.rs:242-274`):
+
+```rust
+pub fn decode_slice<T: EndianCodec>(bytes: &[u8], endian: FileEndian) -> Vec<T> {
+    // ... allocates a Vec<T> and converts every element
+}
+```
+
+This creates a **new native-endian `Vec<T>`** by copying and transforming every element. After this call, the data lives in native-endian format in RAM, and all subsequent access is zero-cost.
+
+**The critical trade-off:**
+
+| Scenario | Python | Rust |
+|----------|--------|------|
+| **Native-endian file** | Zero-copy view | Zero-copy `ptr::copy_nonoverlapping` |
+| **Non-native endian file** | Zero-copy view, but every access byte-swaps | One-time copy+swap, then zero-cost |
+| **Read once, convert to f32** | View → `astype('f32')` (NumPy C loop with on-the-fly swap) | `decode_slice::<i16>` + SIMD `convert_i16_to_f32` |
+| **Read slice, do math** | NumPy C ufunc with on-the-fly swap | Already native, plain Rust math |
+
+**Performance verdict:**
+
+- **Native endian**: Roughly equivalent. Both are zero-copy.
+- **Non-native endian**: **Rust wins for repeated access** because the one-time conversion cost is amortised. Python pays the byte-swap cost on every access.
+- **Single-pass streaming**: **Roughly equivalent**. Python's `astype()` C loop is well-optimised, but Rust's explicit SIMD (`simd.rs`) can be faster for the i16→f32 path.
+
+### A.5 The `data_dtype_from_header` Subtlety
+
+Python has a clever correctness check that Rust lacks:
+
+```python
+def data_dtype_from_header(header):
+    mode = header.mode
+    return dtype_from_mode(mode).newbyteorder(mode.dtype.byteorder)
+```
+
+Notice it uses **`mode.dtype.byteorder`** (the byte order of the *mode field itself* after header byte-order swapping), not the global header byte order. This ensures that if the header was somehow partially byte-swapped, the data dtype tracks the mode field's actual endianness.
+
+Rust uses a single global `FileEndian` for the entire file:
+```rust
+let endian = header.detect_endian();
+// ... used for header fields, data blocks, and nversion
+```
+
+If a malformed file had a header encoded in BE but data in LE, Rust would decode both as BE and produce garbage. Python's per-field dtype tracking is more resilient to such pathological cases.
+
+### A.6 FEI Extended Header — Mixed Endianness
+
+This is where both implementations are genuinely complex, but Rust's approach is arguably **more correct**.
+
+**Python** (`dtypes.py:85-236`) constructs a mixed-endian numpy dtype:
+
+```python
+fei_dtype_dict = [
+    ("Metadata size", ">i4"),      # explicit big-endian
+    ("Metadata version", ">i4"),  # explicit big-endian
+    ("Bitmask 1", "<u4"),          # explicit little-endian (!)
+    ("Timestamp", ">f8"),          # explicit big-endian
+    # ...
+]
+```
+
+If the file is little-endian, Python calls `dtype.newbyteorder("<")` on the entire structured dtype. In NumPy, this swaps the endianness of **every field individually**, including the bitmask fields. A field originally declared as `<u4` (little-endian) becomes `>u4` (big-endian) after the swap.
+
+But the FEI specification says bitmask fields should **always** be little-endian, regardless of the file's global endianness. So after `newbyteorder("<")`, Python's bitmask fields would be interpreted as big-endian, which is **incorrect**.
+
+In practice, this may go unnoticed because:
+1. Most FEI files in the wild are big-endian, so `newbyteorder` is never called.
+2. The bitmask fields are often unused or their incorrect values don't affect typical workflows.
+
+**Rust** (`fei.rs`) handles this explicitly:
+
+```rust
+// Numeric fields: always big-endian per FEI spec
+metadata_size: be_u32(bytes, 0),
+timestamp:     be_f64(bytes, 12),
+// ...
+
+// Bitmask fields: always little-endian per FEI spec
+bitmask_1:     le_u32(bytes, 8),
+bitmask_2:     le_u32(bytes, 297),
+// ...
+```
+
+Rust **never** swaps the bitmask endianness. It unconditionally uses `from_be_bytes` for numeric fields and `from_le_bytes` for bitmask fields, regardless of the file's global `FileEndian`. This matches the FEI specification exactly.
+
+**Verdict:** **Rust is more correct** for FEI extended header mixed endianness because it explicitly preserves the bitmask fields as little-endian without relying on NumPy's global byte-order swapping.
+
+### A.7 NVERSION Endianness
+
+Both libraries handle this slightly differently:
+
+**Python**: `nversion` is part of the numpy structured dtype, so it automatically inherits the header's byte order when `newbyteorder()` is called.
+
+**Rust**: `nversion()` and `set_nversion()` explicitly call `detect_endian()` and use `i32::decode(..., file_endian)`. This is more explicit but also more fragile — if `machst` is wrong, `nversion` will be decoded incorrectly with no fallback.
+
+### A.8 Summary Table
+
+| Aspect | Python `mrcfile` | Rust `mrc` | Winner |
+|--------|------------------|------------|--------|
+| **MACHST recognition** | `0x44 0x44`, `0x44 0x41`, `0x11 0x11` | `0x44 0x44`, `0x11 0x11` | 🐍 Python |
+| **Byte-order fallback** | Auto-flips if mode invalid | None | 🐍 Python (robustness) / 🦀 Rust (predictability) |
+| **Header decoding** | Lazy (NumPy view) | Eager (struct init) | Tie |
+| **Native-endian data** | Zero-copy view | Zero-copy memcpy | Tie |
+| **Non-native data access** | On-the-fly swap | Pre-converted Vec | 🦀 Rust (repeated access) |
+| **Data dtype tracking** | Per-field (`mode.dtype.byteorder`) | Global `FileEndian` | 🐍 Python (correctness) |
+| **FEI mixed endianness** | Global `newbyteorder()` (bitmasks may flip) | Explicit `be_*`/`le_*` helpers | 🦀 Rust (spec compliance) |
+| **NVERSION handling** | Inherited from dtype | Explicit per-call | 🐍 Python (simplicity) |
