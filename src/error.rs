@@ -20,6 +20,11 @@ pub enum Error {
     ModeMismatch { file_mode: crate::Mode, requested_mode: crate::Mode },
     #[error("Invalid header: {0}")]
     InvalidHeaderDetailed(#[from] HeaderValidationError),
+    #[error("Stats mismatch: header claims dmin={claimed_dmin}, dmax={claimed_dmax}, dmean={claimed_dmean}, rms={claimed_rms} but actual data has dmin={actual_dmin}, dmax={actual_dmax}, dmean={actual_dmean}, rms={actual_rms}")]
+    StatsMismatch {
+        claimed_dmin: f32, claimed_dmax: f32, claimed_dmean: f32, claimed_rms: f32,
+        actual_dmin: f32, actual_dmax: f32, actual_dmean: f32, actual_rms: f32,
+    },
     #[cfg(feature = "mmap")]
     #[error("Memory mapping error")]
     Mmap,
@@ -50,5 +55,9 @@ pub enum HeaderValidationError {
     InvalidVolumeStack { nz: i32, mz: i32, ispg: i32 },
     #[error("Invalid sampling: mx={mx}, my={my}, mz={mz} (must all be positive)")]
     InvalidSampling { mx: i32, my: i32, mz: i32 },
+    #[error("Label count mismatch: nlabl={nlabl} but {actual} non-empty labels found")]
+    LabelCountMismatch { nlabl: i32, actual: i32 },
+    #[error("Empty label at index {index} before all filled labels")]
+    EmptyLabelBeforeFilled { index: i32 },
 }
 

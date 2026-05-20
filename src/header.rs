@@ -251,6 +251,21 @@ impl Header {
             return Err(HeaderValidationError::InvalidNlabl(self.nlabl));
         }
 
+        // Label sequence validation: nlabl must match actual non-empty labels,
+        // and no empty labels may appear between filled ones.
+        let actual_labels = self.count_non_empty_labels();
+        if actual_labels != self.nlabl as usize {
+            return Err(HeaderValidationError::LabelCountMismatch {
+                nlabl: self.nlabl,
+                actual: actual_labels as i32,
+            });
+        }
+        for i in 0..self.nlabl as usize {
+            if self.label_is_empty(i) {
+                return Err(HeaderValidationError::EmptyLabelBeforeFilled { index: i as i32 });
+            }
+        }
+
         let nversion = self.nversion();
         if nversion != 20140 && nversion != 20141 {
             return Err(HeaderValidationError::InvalidNversion(nversion));
@@ -460,6 +475,17 @@ impl Header {
     /// Labels are truncated to 80 bytes and non-printable ASCII characters
     /// (outside 0x20–0x7E) are replaced with spaces. If 10 labels are already
     /// stored, the oldest label is dropped (FIFO).
+    /// Check whether the i-th label is empty (all whitespace / zeros).
+    fn label_is_empty(&self, index: usize) -> bool {
+        let start = index * 80;
+        self.label[start..start + 80].iter().all(|&b| b == 0 || b == b' ')
+    }
+
+    /// Count how many of the 10 label slots contain non-empty text.
+    fn count_non_empty_labels(&self) -> usize {
+        (0..10).filter(|&i| !self.label_is_empty(i)).count()
+    }
+
     pub fn add_label(&mut self, text: &str) {
         // Filter to printable ASCII and truncate to 80 bytes
         let filtered: String = text
@@ -470,12 +496,12 @@ impl Header {
         let bytes = filtered.as_bytes();
         let len = bytes.len();
 
-        let count = self.nlabl.max(0).min(10) as usize;
+        let count = self.count_non_empty_labels();
         if count < 10 {
-            // Store in the next free slot
-            let start = count * 80;
+            // Find the first empty slot
+            let slot = (0..10).find(|&i| self.label_is_empty(i)).unwrap_or(count);
+            let start = slot * 80;
             self.label[start..start + len].copy_from_slice(bytes);
-            self.nlabl = (count + 1) as i32;
         } else {
             // Shift existing labels up (FIFO) and store in slot 9
             for i in 1..10 {
@@ -486,6 +512,7 @@ impl Header {
             let start = 9 * 80;
             self.label[start..start + len].copy_from_slice(bytes);
         }
+        self.nlabl = self.count_non_empty_labels() as i32;
     }
 
     #[inline]
@@ -509,6 +536,87 @@ impl Header {
         let current_nversion = self.nversion();
         self.machst = endian.to_machst();
         self.set_nversion(current_nversion);
+    }
+
+    // -------------------------------------------------------------------------
+    // Volume type introspection (following Python mrcfile conventions)
+    // -------------------------------------------------------------------------
+
+    /// Returns `true` if this is a single 2D image (`nz == 1`).
+    pub fn is_single_image(&self) -> bool {
+        self.nz == 1
+    }
+
+    /// Returns `true` if this is an image stack (`ispg == 0`).
+    pub fn is_image_stack(&self) -> bool {
+        self.ispg == 0
+    }
+
+    /// Returns `true` if this is a single 3D volume (`ispg != 0` and not a
+    /// volume stack).
+    pub fn is_volume(&self) -> bool {
+        !self.is_image_stack() && !self.is_volume_stack()
+    }
+
+    /// Returns `true` if this is a volume stack (`ispg` in 401–630).
+    pub fn is_volume_stack(&self) -> bool {
+        (400..=630).contains(&self.ispg)
+    }
+
+    /// Configure the header as an image stack.
+    ///
+    /// Sets `ispg = 0` and `mz = 1`.
+    pub fn set_image_stack(&mut self) {
+        self.ispg = 0;
+        self.mz = 1;
+    }
+
+    /// Configure the header as a single volume.
+    ///
+    /// Sets `ispg = 1` and `mz = nz`.
+    pub fn set_volume(&mut self) {
+        self.ispg = 1;
+        self.mz = self.nz;
+    }
+
+    // -------------------------------------------------------------------------
+    // Computed convenience properties
+    // -------------------------------------------------------------------------
+
+    /// Voxel size in Ångströms per pixel, computed as `cella / mxyz`.
+    ///
+    /// Returns `[xlen / mx, ylen / my, zlen / mz]`.
+    /// If any of `mx`, `my`, `mz` is zero, that component returns `0.0`.
+    pub fn voxel_size(&self) -> [f32; 3] {
+        [
+            if self.mx == 0 { 0.0 } else { self.xlen / self.mx as f32 },
+            if self.my == 0 { 0.0 } else { self.ylen / self.my as f32 },
+            if self.mz == 0 { 0.0 } else { self.zlen / self.mz as f32 },
+        ]
+    }
+
+    /// Starting grid point / origin offset.
+    ///
+    /// Returns `[nxstart, nystart, nzstart]`.
+    pub fn nstart(&self) -> [i32; 3] {
+        [self.nxstart, self.nystart, self.nzstart]
+    }
+
+    /// Logical data shape following Python `mrcfile` conventions.
+    ///
+    /// | Type | Shape |
+    /// |------|-------|
+    /// | Single image | `(1, 1, ny, nx)` |
+    /// | Image stack | `(1, nz, ny, nx)` |
+    /// | Volume | `(1, nz, ny, nx)` |
+    /// | Volume stack | `(nz / mz, mz, ny, nx)` |
+    pub fn logical_shape(&self) -> [usize; 4] {
+        if self.is_volume_stack() && self.mz > 0 {
+            let nvolumes = (self.nz / self.mz) as usize;
+            [nvolumes, self.mz as usize, self.ny as usize, self.nx as usize]
+        } else {
+            [1, self.nz as usize, self.ny as usize, self.nx as usize]
+        }
     }
 
     /// Decode header from raw bytes with correct endianness.
