@@ -23,7 +23,7 @@ use std::arch::is_x86_feature_detected;
 /// Convert a slice of i8 values to f32 using SIMD acceleration.
 ///
 /// Uses 32-lane SIMD when available (AVX2 on x86_64, NEON on AArch64).
-pub fn convert_i8_to_f32_simd(src: &[i8]) -> Vec<f32> {
+pub(crate) fn convert_i8_to_f32_simd(src: &[i8]) -> Vec<f32> {
     #[cfg(target_arch = "x86_64")]
     {
         if is_x86_feature_detected!("avx2") {
@@ -44,7 +44,7 @@ pub fn convert_i8_to_f32_simd(src: &[i8]) -> Vec<f32> {
 /// Convert a slice of i16 values to f32 using SIMD acceleration.
 ///
 /// Uses 16-lane SIMD when available.
-pub fn convert_i16_to_f32_simd(src: &[i16]) -> Vec<f32> {
+pub(crate) fn convert_i16_to_f32_simd(src: &[i16]) -> Vec<f32> {
     #[cfg(target_arch = "x86_64")]
     {
         if is_x86_feature_detected!("avx2") {
@@ -62,7 +62,7 @@ pub fn convert_i16_to_f32_simd(src: &[i16]) -> Vec<f32> {
 }
 
 /// Convert a slice of u16 values to f32 using SIMD acceleration.
-pub fn convert_u16_to_f32_simd(src: &[u16]) -> Vec<f32> {
+pub(crate) fn convert_u16_to_f32_simd(src: &[u16]) -> Vec<f32> {
     #[cfg(target_arch = "x86_64")]
     {
         if is_x86_feature_detected!("avx2") {

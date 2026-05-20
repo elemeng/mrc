@@ -13,6 +13,28 @@ use std::vec::Vec;
 pub type SliceIterF32<'a> =
     Box<dyn Iterator<Item = Result<crate::engine::block::VoxelBlock<f32>, Error>> + 'a>;
 
+/// MRC file reader using standard file I/O.
+///
+/// The entire file is read into memory on open, making this suitable for
+/// smaller files or when random access to any slice is needed.
+///
+/// For large files that don't fit in RAM, consider [`MmapReader`](crate::MmapReader)
+/// (requires the `mmap` feature).
+///
+/// # Example
+///
+/// ```no_run
+/// use mrc::Reader;
+///
+/// fn main() -> Result<(), Box<dyn std::error::Error>> {
+///     let reader = Reader::open("protein.mrc")?;
+///     for slice in reader.slices::<f32>() {
+///         let block = slice?;
+///         // block.data is Vec<f32>
+///     }
+///     Ok(())
+/// }
+/// ```
 #[derive(Debug)]
 pub struct Reader {
     header: Header,

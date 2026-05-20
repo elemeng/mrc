@@ -11,6 +11,9 @@ use crate::mode::{M0Interpretation, Voxel};
 use crate::{Error, Header, Mode};
 use std::path::Path;
 
+/// Shorthand for the complex boxed-iterator return type used by slice/slab APIs.
+type BoxIter<'a, T> = Box<dyn Iterator<Item = Result<VoxelBlock<T>, Error>> + 'a>;
+
 /// Detected compression format of an MRC file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CompressionType {
@@ -176,7 +179,7 @@ impl MrcReader {
     }
 
     /// Iterate over slices, converting common types to `f32`.
-    pub fn slices_f32(&self) -> Result<Box<dyn Iterator<Item = Result<VoxelBlock<f32>, Error>> + '_>, Error> {
+    pub fn slices_f32(&self) -> Result<BoxIter<'_, f32>, Error> {
         match self {
             MrcReader::Plain(r) => r.slices_f32(),
             #[cfg(feature = "gzip")]
@@ -187,7 +190,7 @@ impl MrcReader {
     }
 
     /// Iterate over slabs, converting common types to `f32`.
-    pub fn slabs_f32(&self, k: usize) -> Result<Box<dyn Iterator<Item = Result<VoxelBlock<f32>, Error>> + '_>, Error> {
+    pub fn slabs_f32(&self, k: usize) -> Result<BoxIter<'_, f32>, Error> {
         match self {
             MrcReader::Plain(r) => r.slabs_f32(k),
             #[cfg(feature = "gzip")]
@@ -200,7 +203,7 @@ impl MrcReader {
     /// Iterate over slices, automatically converting Mode 6 (`Uint16`) to `u8`.
     ///
     /// Returns an error if the file is not Mode 6 or if any value exceeds 255.
-    pub fn slices_u8(&self) -> Result<Box<dyn Iterator<Item = Result<VoxelBlock<u8>, Error>> + '_>, Error> {
+    pub fn slices_u8(&self) -> Result<BoxIter<'_, u8>, Error> {
         match self {
             MrcReader::Plain(r) => Ok(Box::new(r.slices_u8()?)),
             #[cfg(feature = "gzip")]
@@ -214,7 +217,7 @@ impl MrcReader {
     pub fn slices_mode0(
         &self,
         interp: M0Interpretation,
-    ) -> Result<Box<dyn Iterator<Item = Result<VoxelBlock<f32>, Error>> + '_>, Error> {
+    ) -> Result<BoxIter<'_, f32>, Error> {
         match self {
             MrcReader::Plain(r) => {
                 Ok(Box::new(r.slices_mode0(interp)))
@@ -285,6 +288,7 @@ impl MrcReader {
     }
 
     /// Access the underlying plain [`Reader`](crate::Reader), if any.
+    #[allow(unreachable_patterns)]
     pub fn as_reader(&self) -> Option<&crate::Reader> {
         match self {
             MrcReader::Plain(r) => Some(r),
@@ -314,7 +318,6 @@ impl MrcReader {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write;
 
     #[test]
     fn test_detect_compression_plain() {
@@ -326,6 +329,7 @@ mod tests {
     #[test]
     #[cfg(feature = "gzip")]
     fn test_detect_compression_gzip() {
+        use std::io::Write;
         let tmp = tempfile::NamedTempFile::new().unwrap();
         let mut file = std::fs::File::create(tmp.path()).unwrap();
         file.write_all(&[0x1f, 0x8b, 0x08, 0x00]).unwrap();
@@ -336,6 +340,7 @@ mod tests {
     #[test]
     #[cfg(feature = "bzip2")]
     fn test_detect_compression_bzip2() {
+        use std::io::Write;
         let tmp = tempfile::NamedTempFile::new().unwrap();
         let mut file = std::fs::File::create(tmp.path()).unwrap();
         file.write_all(b"BZh").unwrap();
@@ -400,10 +405,14 @@ mod tests {
 
         let reader = MrcReader::open(tmp.path()).unwrap();
         assert!(reader.is_plain());
+        #[cfg(feature = "gzip")]
         assert!(!reader.is_gzip());
+        #[cfg(feature = "bzip2")]
         assert!(!reader.is_bzip2());
         assert!(reader.as_reader().is_some());
+        #[cfg(feature = "gzip")]
         assert!(reader.as_gzip_reader().is_none());
+        #[cfg(feature = "bzip2")]
         assert!(reader.as_bzip2_reader().is_none());
     }
 

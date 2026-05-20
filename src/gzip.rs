@@ -14,6 +14,9 @@ use std::fs::File;
 use std::io::{Read, Write};
 use std::path::Path;
 
+/// Shorthand for the complex boxed-iterator return type used by slice/slab APIs.
+type BoxIterF32<'a> = Box<dyn Iterator<Item = Result<VoxelBlock<f32>, Error>> + 'a>;
+
 /// Gzip-compressed MRC file reader.
 ///
 /// The entire file is decompressed into memory on open, after which the API
@@ -178,7 +181,7 @@ impl GzipReader {
         }
     }
 
-    pub fn slices_f32(&self) -> Result<Box<dyn Iterator<Item = Result<crate::engine::block::VoxelBlock<f32>, Error>> + '_>, Error> {
+    pub fn slices_f32(&self) -> Result<BoxIterF32<'_>, Error> {
         use crate::engine::block::VoxelBlock;
         let nx = self.shape.nx;
         let ny = self.shape.ny;
@@ -214,7 +217,7 @@ impl GzipReader {
     /// Iterate over slabs, automatically converting common types to `f32`.
     ///
     /// Supported source modes: `Float32`, `Int16`, `Uint16`, `Int8`.
-    pub fn slabs_f32(&self, k: usize) -> Result<Box<dyn Iterator<Item = Result<VoxelBlock<f32>, Error>> + '_>, Error> {
+    pub fn slabs_f32(&self, k: usize) -> Result<BoxIterF32<'_>, Error> {
         use crate::engine::block::VoxelBlock;
         let nx = self.shape.nx;
         let ny = self.shape.ny;

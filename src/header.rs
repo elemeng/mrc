@@ -459,7 +459,7 @@ impl Header {
     ///
     /// Returns up to `nlabl` labels, each trimmed of trailing whitespace.
     pub fn get_labels(&self) -> Vec<String> {
-        let count = self.nlabl.max(0).min(10) as usize;
+        let count = self.nlabl.clamp(0, 10) as usize;
         let mut labels = Vec::with_capacity(count);
         for i in 0..count {
             let start = i * 80;

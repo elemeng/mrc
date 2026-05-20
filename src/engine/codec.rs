@@ -18,8 +18,9 @@ use std::vec::Vec;
 /// Provides symmetric encode/decode operations with guaranteed consistency.
 ///
 /// # Example
-/// ```
-/// use mrc::EndianCodec;
+/// ```ignore
+/// // EndianCodec is an internal trait; this example is for crate developers.
+/// use mrc::engine::codec::EndianCodec;
 /// use mrc::FileEndian;
 ///
 /// let value: i16 = 0x1234;
@@ -239,7 +240,7 @@ impl EndianCodec for f16 {
 /// Decode a slice of values from bytes with automatic parallel processing.
 ///
 /// Uses 1MB chunks for optimal cache behaviour when the `parallel` feature is enabled.
-pub fn decode_slice<T: EndianCodec + Send + Copy + Default>(
+pub(crate) fn decode_slice<T: EndianCodec + Send + Copy + Default>(
     bytes: &[u8],
     endian: FileEndian,
 ) -> Vec<T> {
@@ -247,12 +248,10 @@ pub fn decode_slice<T: EndianCodec + Send + Copy + Default>(
     let mut result = Vec::with_capacity(n);
     result.resize(n, T::default());
 
-    // 1MB chunks for cache efficiency
-    const CHUNK_VOXELS: usize = 262_144;
-
     #[cfg(feature = "parallel")]
     {
         use rayon::prelude::*;
+        const CHUNK_VOXELS: usize = 262_144;
         result
             .par_chunks_mut(CHUNK_VOXELS)
             .zip(bytes.par_chunks(CHUNK_VOXELS * T::BYTE_SIZE))
@@ -265,8 +264,8 @@ pub fn decode_slice<T: EndianCodec + Send + Copy + Default>(
 
     #[cfg(not(feature = "parallel"))]
     {
-        for i in 0..n {
-            result[i] = T::from_bytes(bytes, i * T::BYTE_SIZE, endian);
+        for (i, slot) in result.iter_mut().enumerate() {
+            *slot = T::from_bytes(bytes, i * T::BYTE_SIZE, endian);
         }
     }
 
@@ -280,15 +279,13 @@ pub fn decode_slice<T: EndianCodec + Send + Copy + Default>(
 /// Encode a slice of values to bytes with automatic parallel processing.
 ///
 /// Uses 1MB chunks for optimal cache behaviour when the `parallel` feature is enabled.
-pub fn encode_slice<T: EndianCodec + Sync>(values: &[T], bytes: &mut [u8], endian: FileEndian) {
+pub(crate) fn encode_slice<T: EndianCodec + Sync>(values: &[T], bytes: &mut [u8], endian: FileEndian) {
     assert_eq!(values.len() * T::BYTE_SIZE, bytes.len());
-
-    // 1MB chunks for cache efficiency
-    const CHUNK_VOXELS: usize = 262_144;
 
     #[cfg(feature = "parallel")]
     {
         use rayon::prelude::*;
+        const CHUNK_VOXELS: usize = 262_144;
         bytes
             .par_chunks_mut(CHUNK_VOXELS * T::BYTE_SIZE)
             .zip(values.par_chunks(CHUNK_VOXELS))
@@ -322,7 +319,7 @@ thread_local! {
 
 /// Encode a block with parallel processing and thread-local buffers.
 #[cfg(feature = "parallel")]
-pub fn encode_block_parallel<T: EndianCodec + Sync>(
+pub(crate) fn encode_block_parallel<T: EndianCodec + Sync>(
     values: &[T],
     chunk_size: usize,
     endian: FileEndian,

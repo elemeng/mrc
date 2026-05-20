@@ -1,14 +1,40 @@
 //! MRC file writer with block-based API
 
-use crate::engine::block::{SliceAccess, VolumeShape, VoxelBlock};
-use crate::engine::codec::{encode_block_parallel, encode_slice};
+#[cfg(feature = "mmap")]
+use crate::engine::block::SliceAccess;
+use crate::engine::block::{VolumeShape, VoxelBlock};
+use crate::engine::codec::encode_slice;
+#[cfg(feature = "parallel")]
+use crate::engine::codec::encode_block_parallel;
 use crate::engine::endian::FileEndian;
 use crate::mode::Voxel;
 use crate::{Error, Header, Mode};
 
 use std::path::PathBuf;
+#[cfg(feature = "f16")]
 use std::vec::Vec;
 
+/// Builder for configuring and creating a new MRC file writer.
+///
+/// # Example
+///
+/// ```no_run
+/// use mrc::{create, VoxelBlock};
+///
+/// fn main() -> Result<(), Box<dyn std::error::Error>> {
+///     let mut writer = create("output.mrc")
+///         .shape([512, 512, 256])
+///         .mode::<f32>()
+///         .finish()?;
+///
+///     writer.write_block(&VoxelBlock::new(
+///         [0, 0, 0], [512, 512, 1],
+///         vec![0.0f32; 512 * 512],
+///     ))?;
+///     writer.finalize()?;
+///     Ok(())
+/// }
+/// ```
 #[derive(Debug)]
 pub struct WriterBuilder {
     path: PathBuf,
@@ -16,6 +42,7 @@ pub struct WriterBuilder {
 }
 
 impl WriterBuilder {
+    /// Create a new builder with default header values.
     pub fn new<P: AsRef<std::path::Path>>(path: P) -> Self {
         Self {
             path: path.as_ref().to_path_buf(),
@@ -52,6 +79,14 @@ impl WriterBuilder {
     }
 }
 
+/// MRC file writer using standard file I/O.
+///
+/// For most use cases, prefer creating via [`WriterBuilder`](crate::WriterBuilder)
+/// or the [`create`](crate::create) convenience function.
+///
+/// The writer maintains an open file handle and writes data blocks directly
+/// to disk. Call [`finalize`](Self::finalize) when done to ensure the header
+/// is correctly rewritten.
 #[derive(Debug)]
 pub struct Writer {
     file: std::fs::File,
@@ -298,6 +333,30 @@ fn update_header_stats_from_bytes(header: &mut Header, bytes: &[u8]) {
 // MmapWriter
 // ============================================================================
 
+/// Builder for configuring and creating a memory-mapped MRC file writer.
+///
+/// Memory-mapped writers are useful when you need to modify specific regions
+/// of an existing file without rewriting the entire dataset.
+///
+/// # Example
+///
+/// ```no_run
+/// use mrc::{create, VoxelBlock};
+///
+/// fn main() -> Result<(), Box<dyn std::error::Error>> {
+///     let mut writer = create("output.mrc")
+///         .shape([512, 512, 256])
+///         .mode::<f32>()
+///         .mmap()
+///         .finish()?;
+///
+///     writer.write_block(&VoxelBlock::new(
+///         [0, 0, 0], [512, 512, 1],
+///         vec![0.0f32; 512 * 512],
+///     ))?;
+///     Ok(())
+/// }
+/// ```
 #[cfg(feature = "mmap")]
 #[derive(Debug)]
 pub struct MmapWriterBuilder {
@@ -307,6 +366,15 @@ pub struct MmapWriterBuilder {
 
 #[cfg(feature = "mmap")]
 impl MmapWriterBuilder {
+    /// Create a new builder with default header values.
+    pub fn new<P: AsRef<std::path::Path>>(path: P) -> Self {
+        Self {
+            path: path.as_ref().to_path_buf(),
+            header: Header::new(),
+        }
+    }
+
+    /// Set the volume dimensions.
     pub fn shape(mut self, shape: [usize; 3]) -> Self {
         self.header.nx = shape[0] as i32;
         self.header.ny = shape[1] as i32;
@@ -324,6 +392,14 @@ impl MmapWriterBuilder {
     }
 }
 
+/// Memory-mapped MRC file writer.
+///
+/// Writes data directly into a memory-mapped region, letting the OS handle
+/// paging and flushing. This is efficient for large files and random-access
+/// modifications, but requires the `mmap` feature.
+///
+/// For most use cases, prefer creating via [`MmapWriterBuilder`](crate::MmapWriterBuilder)
+/// or chaining [`WriterBuilder::mmap`](crate::WriterBuilder::mmap).
 #[cfg(feature = "mmap")]
 #[derive(Debug)]
 pub struct MmapWriter {

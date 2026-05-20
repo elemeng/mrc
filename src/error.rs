@@ -1,6 +1,8 @@
-//! Error types for MRC operations
+//! Error types for MRC operations.
 
-/// Error type
+/// The top-level error type for MRC I/O operations.
+///
+/// Most fallible functions in this crate return `Result<T, Error>`.
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
     #[error("IO error: {0}")]
@@ -32,7 +34,10 @@ pub enum Error {
     FileSizeMismatch { expected: usize, actual: usize },
 }
 
-/// Errors that can occur during header validation.
+/// Errors that can occur during detailed header validation.
+///
+/// These are returned by [`Header::validate_detailed`](crate::Header::validate_detailed)
+/// and surfaced through [`Error::InvalidHeaderDetailed`](crate::Error::InvalidHeaderDetailed).
 #[derive(thiserror::Error, Debug, Clone, PartialEq)]
 pub enum HeaderValidationError {
     #[error("Invalid dimensions: nx={nx}, ny={ny}, nz={nz} (must all be positive)")]

@@ -53,7 +53,7 @@ mod mmap_reader;
 mod gzip;
 
 #[cfg(feature = "bzip2")]
-mod bzip2mrc;
+mod bzip2;
 
 mod fei;
 
@@ -63,14 +63,9 @@ mod engine;
 pub use engine::block::{SliceAccess, VolumeShape, VoxelBlock};
 pub use engine::endian::FileEndian;
 
-// Re-export codec trait for advanced users who need custom voxel types
-pub use engine::codec::EndianCodec;
-
 // Re-export MRC-specific format utilities
 pub use engine::convert::{
     convert_u16_slice_to_u8, convert_u8_slice_to_u16, reinterpret_m0,
-    unpack_u4_bytes_to_f32, unpack_u4_bytes_to_u16, unpack_u4_to_f32, unpack_u4_to_i8,
-    unpack_u4_to_u16,
 };
 
 pub use error::{Error, HeaderValidationError};
@@ -92,7 +87,7 @@ pub use mmap_reader::{MmapReader, MmapSliceIterF32, MmapBlockIter, MmapSliceIter
 pub use gzip::{GzipReader, GzipWriter};
 
 #[cfg(feature = "bzip2")]
-pub use bzip2mrc::{Bzip2Reader, Bzip2Writer};
+pub use bzip2::{Bzip2Reader, Bzip2Writer};
 
 pub use fei::{Fei1Metadata, Fei2Metadata, parse_fei1_records, parse_fei2_records, FEI1_RECORD_SIZE, FEI2_RECORD_SIZE};
 
@@ -106,4 +101,16 @@ pub fn open<P: AsRef<std::path::Path>>(path: P) -> Result<MrcReader, Error> {
 /// Create a new MRC file for writing.
 pub fn create<P: AsRef<std::path::Path>>(path: P) -> WriterBuilder {
     WriterBuilder::new(path)
+}
+
+/// Open an MRC file via memory mapping (requires the `mmap` feature).
+#[cfg(feature = "mmap")]
+pub fn open_mmap<P: AsRef<std::path::Path>>(path: P) -> Result<MmapReader, Error> {
+    MmapReader::open(path)
+}
+
+/// Create a new memory-mapped MRC file for writing (requires the `mmap` feature).
+#[cfg(feature = "mmap")]
+pub fn create_mmap<P: AsRef<std::path::Path>>(path: P) -> MmapWriterBuilder {
+    MmapWriterBuilder::new(path)
 }

@@ -7,7 +7,7 @@ use crate::mode::{Float32Complex, Int16Complex, Mode};
 /// Compute (dmin, dmax, dmean, rms) from raw data bytes.
 ///
 /// Returns sentinel values `(0.0, -1.0, -2.0, -1.0)` for empty data.
-pub fn compute_stats(bytes: &[u8], mode: Mode, endian: FileEndian) -> (f32, f32, f32, f32) {
+pub(crate) fn compute_stats(bytes: &[u8], mode: Mode, endian: FileEndian) -> (f32, f32, f32, f32) {
     match mode {
         Mode::Float32 => {
             let data = decode_slice::<f32>(bytes, endian);
@@ -41,6 +41,8 @@ pub fn compute_stats(bytes: &[u8], mode: Mode, endian: FileEndian) -> (f32, f32,
             let data_f32: Vec<f32> = data.iter().map(|&v| v as f32).collect();
             stats_real(&data_f32)
         }
+        #[cfg(not(feature = "f16"))]
+        Mode::Float16 => (0.0, -1.0, -2.0, -1.0),
         Mode::Packed4Bit => {
             // Packed4Bit: each byte holds 2 values (low nibble, high nibble)
             let num_values = bytes.len() * 2;
@@ -113,7 +115,7 @@ fn rms_complex_i16(data: &[Int16Complex]) -> f32 {
 ///
 /// Uses the same logic as Python's `np.isclose(rtol=0.01, atol=0.0)`:
 /// `|a - b| <= rtol * max(|a|, |b|)`.
-pub fn is_close(a: f32, b: f32, rtol: f32) -> bool {
+pub(crate) fn is_close(a: f32, b: f32, rtol: f32) -> bool {
     if a == b {
         return true;
     }
@@ -126,7 +128,7 @@ pub fn is_close(a: f32, b: f32, rtol: f32) -> bool {
 ///
 /// Uses a 1 % relative tolerance (matching Python `mrcfile`'s `np.isclose(rtol=0.01)`).
 /// For complex modes, only RMS is checked.
-pub fn validate_header_stats(header: &crate::Header, data_bytes: &[u8]) -> Result<(), crate::Error> {
+pub(crate) fn validate_header_stats(header: &crate::Header, data_bytes: &[u8]) -> Result<(), crate::Error> {
     let endian = header.detect_endian();
     let mode = crate::Mode::from_i32(header.mode).unwrap_or(crate::Mode::Float32);
     let (actual_dmin, actual_dmax, actual_dmean, actual_rms) =
