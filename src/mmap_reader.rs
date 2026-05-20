@@ -69,14 +69,18 @@ impl MmapReader {
         let mut header_bytes = [0u8; 1024];
         file.read_exact(&mut header_bytes)?;
 
-        let header = Header::decode_from_bytes(&header_bytes);
+        let (header, endian_warning) = Header::decode_from_bytes_with_info(&header_bytes);
 
-        let warnings = if permissive {
+        let mut warnings = if permissive {
             header.validate_permissive().map_err(Error::InvalidHeaderDetailed)?
         } else {
             header.validate_detailed().map_err(Error::InvalidHeaderDetailed)?;
             Vec::new()
         };
+
+        if let Some(msg) = endian_warning {
+            warnings.push(msg.to_string());
+        }
 
         // Map the entire file
         let mmap = unsafe {

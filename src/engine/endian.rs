@@ -8,33 +8,61 @@ pub enum FileEndian {
 }
 
 impl FileEndian {
-    /// Detect file endianness from MACHST machine stamp
+    /// Detect file endianness from MACHST machine stamp.
+    ///
+    /// Recognises the standard stamps (`0x44 0x44` for little-endian,
+    /// `0x11 0x11` for big-endian) as well as the CCP4 variant
+    /// `0x44 0x41`. Any unknown stamp falls back to little-endian with
+    /// a warning printed to stderr.
     pub fn from_machst(machst: &[u8; 4]) -> Self {
-        let endian = if machst[0] == 0x44 && machst[1] == 0x44 {
-            FileEndian::LittleEndian
+        Self::from_machst_with_info(machst).endian
+    }
+
+    /// Detect endianness and return metadata about the stamp.
+    pub fn from_machst_with_info(machst: &[u8; 4]) -> MachstInfo {
+        if machst[0] == 0x44 && machst[1] == 0x44 {
+            MachstInfo {
+                endian: FileEndian::LittleEndian,
+                is_standard: true,
+                description: "0x44 0x44 (little-endian)",
+            }
+        } else if machst[0] == 0x44 && machst[1] == 0x41 {
+            MachstInfo {
+                endian: FileEndian::LittleEndian,
+                is_standard: true,
+                description: "0x44 0x41 (little-endian, CCP4 variant)",
+            }
         } else if machst[0] == 0x11 && machst[1] == 0x11 {
-            FileEndian::BigEndian
+            MachstInfo {
+                endian: FileEndian::BigEndian,
+                is_standard: true,
+                description: "0x11 0x11 (big-endian)",
+            }
         } else {
-            FileEndian::LittleEndian
-        };
-
-        if machst[2] != 0 || machst[3] != 0 {
             eprintln!(
-                "Warning: Non-standard MACHST padding bytes: {:02X} {:02X} {:02X} {:02X}",
-                machst[0],
-                machst[1],
-                machst[2],
-                machst[3]
+                "Warning: Non-standard MACHST: {:02X} {:02X} {:02X} {:02X} — falling back to little-endian",
+                machst[0], machst[1], machst[2], machst[3]
             );
+            MachstInfo {
+                endian: FileEndian::LittleEndian,
+                is_standard: false,
+                description: "non-standard (fallback to little-endian)",
+            }
         }
-
-        endian
     }
 
     pub fn to_machst(self) -> [u8; 4] {
         match self {
             FileEndian::LittleEndian => [0x44, 0x44, 0x00, 0x00],
             FileEndian::BigEndian => [0x11, 0x11, 0x00, 0x00],
+        }
+    }
+
+    /// Return the opposite endianness.
+    pub fn opposite(self) -> Self {
+        match self {
+            FileEndian::LittleEndian => FileEndian::BigEndian,
+            FileEndian::BigEndian => FileEndian::LittleEndian,
         }
     }
 
@@ -53,5 +81,52 @@ impl FileEndian {
     #[inline]
     pub fn is_native(self) -> bool {
         self == Self::native()
+    }
+}
+
+/// Metadata about a MACHST machine stamp.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MachstInfo {
+    pub endian: FileEndian,
+    pub is_standard: bool,
+    pub description: &'static str,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_machst_le_standard() {
+        let info = FileEndian::from_machst_with_info(&[0x44, 0x44, 0x00, 0x00]);
+        assert_eq!(info.endian, FileEndian::LittleEndian);
+        assert!(info.is_standard);
+    }
+
+    #[test]
+    fn test_machst_le_ccp4_variant() {
+        let info = FileEndian::from_machst_with_info(&[0x44, 0x41, 0x00, 0x00]);
+        assert_eq!(info.endian, FileEndian::LittleEndian);
+        assert!(info.is_standard);
+    }
+
+    #[test]
+    fn test_machst_be_standard() {
+        let info = FileEndian::from_machst_with_info(&[0x11, 0x11, 0x00, 0x00]);
+        assert_eq!(info.endian, FileEndian::BigEndian);
+        assert!(info.is_standard);
+    }
+
+    #[test]
+    fn test_machst_non_standard_fallback() {
+        let info = FileEndian::from_machst_with_info(&[0xAB, 0xCD, 0x00, 0x00]);
+        assert_eq!(info.endian, FileEndian::LittleEndian);
+        assert!(!info.is_standard);
+    }
+
+    #[test]
+    fn test_opposite() {
+        assert_eq!(FileEndian::LittleEndian.opposite(), FileEndian::BigEndian);
+        assert_eq!(FileEndian::BigEndian.opposite(), FileEndian::LittleEndian);
     }
 }

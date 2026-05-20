@@ -227,10 +227,10 @@ The MRC2014 spec (Note 11) says bytes 213–214 contain 4 nibbles indicating flo
 |-------|---------|-------------------|------------------|
 | `0x44 0x44 0x00 0x00` | Little-endian | ✅ LE | ✅ LE |
 | `0x11 0x11 0x00 0x00` | Big-endian | ✅ BE | ✅ BE |
-| `0x44 0x41 0x00 0x00` | CCP4 LE variant | ✅ LE (`0x44`/`0x41`) | ⚠️ Warns, falls back to LE |
+| `0x44 0x41 0x00 0x00` | CCP4 LE variant | ✅ LE (`0x44`/`0x41`) | ✅ LE (`0x44`/`0x41`) |
 | Anything else | Unknown / corrupt | ❌ `ValueError` | ⚠️ Warns, falls back to LE |
 
-**Python is slightly more robust** because it recognises the CCP4 `0x44 0x41` variant explicitly. Rust's fallback to LE happens to produce the same result for that stamp, but the warning message is less informative.
+**Now equivalent.** The Rust implementation recognises the CCP4 `0x44 0x41` variant explicitly, matching Python. Unknown stamps fall back to little-endian in both libraries.
 
 ### A.2 The Mode-Fallback Strategy (Python's Secret Weapon)
 
@@ -264,7 +264,7 @@ If the mode number is garbage under the detected endianness, Python **re-interpr
 
 **Rust's approach:** No fallback. Once `FileEndian::from_machst()` returns a value, that value is used for the entire file. If the mode number is invalid under that endianness, `validate_detailed()` returns `UnsupportedMode` and the open fails.
 
-**Verdict:** **Python wins for robustness** with malformed files. **Rust wins for predictability** — you never get a silent byte-order flip.
+**Verdict:** **Tie for robustness; Rust wins for explicitness.** Both libraries now silently correct the byte order when the MACHST is wrong but the data is self-consistent. Rust additionally returns the correction as a structured warning string rather than a global `RuntimeWarning`, making it easier to handle programmatically.
 
 ### A.3 Header Decoding Architecture
 
@@ -392,14 +392,14 @@ Both libraries handle this slightly differently:
 
 **Python**: `nversion` is part of the numpy structured dtype, so it automatically inherits the header's byte order when `newbyteorder()` is called.
 
-**Rust**: `nversion()` and `set_nversion()` explicitly call `detect_endian()` and use `i32::decode(..., file_endian)`. This is more explicit but also more fragile — if `machst` is wrong, `nversion` will be decoded incorrectly with no fallback.
+**Rust**: `nversion()` and `set_nversion()` explicitly call `detect_endian()` and use `i32::decode(..., file_endian)`. In addition, `set_file_endian()` now **preserves and re-encodes** the current `nversion` value when the byte order changes, ensuring the field never becomes garbled during endianness transitions.
 
 ### A.8 Summary Table
 
 | Aspect | Python `mrcfile` | Rust `mrc` | Winner |
 |--------|------------------|------------|--------|
-| **MACHST recognition** | `0x44 0x44`, `0x44 0x41`, `0x11 0x11` | `0x44 0x44`, `0x11 0x11` | 🐍 Python |
-| **Byte-order fallback** | Auto-flips if mode invalid | None | 🐍 Python (robustness) / 🦀 Rust (predictability) |
+| **MACHST recognition** | `0x44 0x44`, `0x44 0x41`, `0x11 0x11` | `0x44 0x44`, `0x44 0x41`, `0x11 0x11` | Tie |
+| **Byte-order fallback** | Auto-flips if mode invalid | Auto-flips if mode invalid | Tie |
 | **Header decoding** | Lazy (NumPy view) | Eager (struct init) | Tie |
 | **Native-endian data** | Zero-copy view | Zero-copy memcpy | Tie |
 | **Non-native data access** | On-the-fly swap | Pre-converted Vec | 🦀 Rust (repeated access) |

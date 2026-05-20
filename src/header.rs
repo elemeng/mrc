@@ -498,30 +498,69 @@ impl Header {
     /// Set the file endianness for this header
     ///
     /// This sets the MACHST machine stamp to the appropriate value for the
-    /// specified endianness. This is primarily used internally when reading
-    /// existing files to preserve their endianness.
+    /// specified endianness and re-encodes NVERSION so that it remains valid.
     ///
     /// # Note
     /// Per crate policy, new MRC files are always written in little-endian format.
     /// This method is not intended for creating big-endian files from scratch.
     pub fn set_file_endian(&mut self, endian: crate::FileEndian) {
+        // Preserve the current nversion value before swapping endianness,
+        // then re-encode it in the new byte order.
+        let current_nversion = self.nversion();
         self.machst = endian.to_machst();
+        self.set_nversion(current_nversion);
     }
 
     /// Decode header from raw bytes with correct endianness.
     ///
     /// Endianness is detected from the MACHST field and applied automatically.
+    /// If the detected endianness produces an invalid MODE value, the opposite
+    /// endianness is tried as a fallback (matching the behaviour of the
+    /// reference Python `mrcfile` library).
     pub fn decode_from_bytes(bytes: &[u8; 1024]) -> Self {
-        use crate::engine::codec::EndianCodec;
+        Self::decode_from_bytes_with_info(bytes).0
+    }
+
+    /// Decode header and return any byte-order fallback that occurred.
+    ///
+    /// Returns `(header, warning)` where `warning` is `Some` if the MACHST
+    /// indicated one endianness but the MODE field was only valid under the
+    /// opposite endianness.
+    pub fn decode_from_bytes_with_info(bytes: &[u8; 1024]) -> (Self, Option<&'static str>) {
         use crate::engine::endian::FileEndian;
 
-        // Detect endianness from MACHST
         let machst = [bytes[OFFSET_MACHST], bytes[OFFSET_MACHST + 1], bytes[OFFSET_MACHST + 2], bytes[OFFSET_MACHST + 3]];
-        let file_endian = FileEndian::from_machst(&machst);
+        let detected = FileEndian::from_machst(&machst);
+
+        let header = Self::decode_with_endian(bytes, detected);
+
+        // Byte-order fallback: if MODE is invalid under detected endianness,
+        // try the opposite endianness. This handles malformed files where
+        // the MACHST is wrong but the rest of the file is correctly encoded.
+        if crate::Mode::from_i32(header.mode).is_none() {
+            let opposite = detected.opposite();
+            let candidate = Self::decode_with_endian(bytes, opposite);
+            if crate::Mode::from_i32(candidate.mode).is_some() {
+                let warning = match detected {
+                    FileEndian::LittleEndian => {
+                        "MACHST indicates little-endian but MODE is valid only as big-endian; using big-endian"
+                    }
+                    FileEndian::BigEndian => {
+                        "MACHST indicates big-endian but MODE is valid only as little-endian; using little-endian"
+                    }
+                };
+                return (candidate, Some(warning));
+            }
+        }
+
+        (header, None)
+    }
+
+    fn decode_with_endian(bytes: &[u8; 1024], file_endian: crate::FileEndian) -> Self {
+        use crate::engine::codec::EndianCodec;
 
         let mut header = Self::new();
 
-        // Read all i32 fields
         header.nx = i32::decode(bytes, OFFSET_NX, file_endian);
         header.ny = i32::decode(bytes, OFFSET_NY, file_endian);
         header.nz = i32::decode(bytes, OFFSET_NZ, file_endian);
@@ -533,7 +572,6 @@ impl Header {
         header.my = i32::decode(bytes, OFFSET_MY, file_endian);
         header.mz = i32::decode(bytes, OFFSET_MZ, file_endian);
 
-        // Read all f32 fields
         header.xlen = f32::decode(bytes, OFFSET_XLEN, file_endian);
         header.ylen = f32::decode(bytes, OFFSET_YLEN, file_endian);
         header.zlen = f32::decode(bytes, OFFSET_ZLEN, file_endian);
@@ -541,41 +579,28 @@ impl Header {
         header.beta = f32::decode(bytes, OFFSET_BETA, file_endian);
         header.gamma = f32::decode(bytes, OFFSET_GAMMA, file_endian);
 
-        // Read axis mapping fields
         header.mapc = i32::decode(bytes, OFFSET_MAPC, file_endian);
         header.mapr = i32::decode(bytes, OFFSET_MAPR, file_endian);
         header.maps = i32::decode(bytes, OFFSET_MAPS, file_endian);
 
-        // Read density statistics
         header.dmin = f32::decode(bytes, OFFSET_DMIN, file_endian);
         header.dmax = f32::decode(bytes, OFFSET_DMAX, file_endian);
         header.dmean = f32::decode(bytes, OFFSET_DMEAN, file_endian);
 
-        // Read space group and extended header size
         header.ispg = i32::decode(bytes, OFFSET_ISPG, file_endian);
         header.nsymbt = i32::decode(bytes, OFFSET_NSYMBT, file_endian);
 
-        // Read extra bytes
         header.extra.copy_from_slice(&bytes[OFFSET_EXTRA..OFFSET_ORIGIN]);
 
-        // Read origin coordinates
         header.origin[0] = f32::decode(bytes, OFFSET_ORIGIN, file_endian);
         header.origin[1] = f32::decode(bytes, OFFSET_ORIGIN + 4, file_endian);
         header.origin[2] = f32::decode(bytes, OFFSET_ORIGIN + 8, file_endian);
 
-        // Read MAP identifier - ASCII, no endian conversion
         header.map.copy_from_slice(&bytes[OFFSET_MAP..OFFSET_MACHST]);
-
-        // Read MACHST - byte signature, no endian conversion
         header.machst.copy_from_slice(&bytes[OFFSET_MACHST..OFFSET_RMS]);
 
-        // Read RMS
         header.rms = f32::decode(bytes, OFFSET_RMS, file_endian);
-
-        // Read label count
         header.nlabl = i32::decode(bytes, OFFSET_NLABL, file_endian);
-
-        // Read labels - ASCII, no endian conversion
         header.label.copy_from_slice(&bytes[OFFSET_LABEL..1024]);
 
         header
@@ -794,5 +819,131 @@ impl HeaderBuilder {
 impl Default for HeaderBuilder {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Build a valid little-endian header encoded as raw bytes.
+    fn le_header_bytes() -> [u8; 1024] {
+        let mut h = Header::new();
+        h.nx = 64;
+        h.ny = 64;
+        h.nz = 64;
+        h.mx = 64;
+        h.my = 64;
+        h.mz = 64;
+        h.mode = 2; // Float32
+        h.set_file_endian(crate::FileEndian::LittleEndian);
+        let mut bytes = [0u8; 1024];
+        h.encode_to_bytes(&mut bytes);
+        bytes
+    }
+
+    /// Build a valid big-endian header encoded as raw bytes.
+    fn be_header_bytes() -> [u8; 1024] {
+        let mut h = Header::new();
+        h.nx = 64;
+        h.ny = 64;
+        h.nz = 64;
+        h.mx = 64;
+        h.my = 64;
+        h.mz = 64;
+        h.mode = 2; // Float32
+        h.set_file_endian(crate::FileEndian::BigEndian);
+        let mut bytes = [0u8; 1024];
+        h.encode_to_bytes(&mut bytes);
+        bytes
+    }
+
+    #[test]
+    fn test_decode_roundtrip_le() {
+        let original = le_header_bytes();
+        let decoded = Header::decode_from_bytes(&original);
+        assert_eq!(decoded.nx, 64);
+        assert_eq!(decoded.mode, 2);
+        assert_eq!(decoded.detect_endian(), crate::FileEndian::LittleEndian);
+    }
+
+    #[test]
+    fn test_decode_roundtrip_be() {
+        let original = be_header_bytes();
+        let decoded = Header::decode_from_bytes(&original);
+        assert_eq!(decoded.nx, 64);
+        assert_eq!(decoded.mode, 2);
+        assert_eq!(decoded.detect_endian(), crate::FileEndian::BigEndian);
+    }
+
+    #[test]
+    fn test_byte_order_fallback_le_stamp_be_data() {
+        // Create a file that claims to be LE (0x44 0x44) but is actually BE-encoded.
+        let mut bytes = be_header_bytes();
+        // Overwrite MACHST to claim LE
+        bytes[212] = 0x44;
+        bytes[213] = 0x44;
+        bytes[214] = 0x00;
+        bytes[215] = 0x00;
+
+        let (decoded, warning) = Header::decode_from_bytes_with_info(&bytes);
+
+        // Without fallback, nx would be 0x4000_0000 (garbage under LE interpretation)
+        // With fallback, nx should correctly decode as 64.
+        assert_eq!(decoded.nx, 64, "byte-order fallback should have corrected nx");
+        assert_eq!(decoded.mode, 2);
+        assert!(
+            warning.is_some(),
+            "should emit a warning when MACHST mismatches actual byte order"
+        );
+    }
+
+    #[test]
+    fn test_byte_order_fallback_be_stamp_le_data() {
+        // Create a file that claims to be BE (0x11 0x11) but is actually LE-encoded.
+        let mut bytes = le_header_bytes();
+        // Overwrite MACHST to claim BE
+        bytes[212] = 0x11;
+        bytes[213] = 0x11;
+        bytes[214] = 0x00;
+        bytes[215] = 0x00;
+
+        let (decoded, warning) = Header::decode_from_bytes_with_info(&bytes);
+
+        assert_eq!(decoded.nx, 64, "byte-order fallback should have corrected nx");
+        assert_eq!(decoded.mode, 2);
+        assert!(warning.is_some());
+    }
+
+    #[test]
+    fn test_no_fallback_when_machst_matches() {
+        let bytes = le_header_bytes();
+        let (decoded, warning) = Header::decode_from_bytes_with_info(&bytes);
+        assert_eq!(decoded.nx, 64);
+        assert!(warning.is_none(), "no warning when MACHST is correct");
+    }
+
+    #[test]
+    fn test_ccp41_machst_recognised() {
+        let mut bytes = le_header_bytes();
+        bytes[212] = 0x44;
+        bytes[213] = 0x41;
+        let decoded = Header::decode_from_bytes(&bytes);
+        assert_eq!(decoded.nx, 64);
+        assert_eq!(decoded.detect_endian(), crate::FileEndian::LittleEndian);
+    }
+
+    #[test]
+    fn test_nversion_le() {
+        let mut h = Header::new();
+        h.set_file_endian(crate::FileEndian::LittleEndian);
+        assert_eq!(h.nversion(), 20141);
+    }
+
+    #[test]
+    fn test_nversion_be() {
+        let mut h = Header::new();
+        h.set_file_endian(crate::FileEndian::BigEndian);
+        assert_eq!(h.nversion(), 20141);
     }
 }
