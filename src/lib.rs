@@ -45,6 +45,11 @@ mod writer;
 #[cfg(feature = "mmap")]
 mod mmap_reader;
 
+#[cfg(feature = "gzip")]
+mod gzip;
+
+mod fei;
+
 mod engine;
 
 // Re-export core types
@@ -74,6 +79,11 @@ pub use writer::{MmapWriter, MmapWriterBuilder};
 
 #[cfg(feature = "mmap")]
 pub use mmap_reader::{MmapReader, MmapSliceIterF32, MmapBlockIter, MmapSliceIter, MmapSlabIter};
+
+#[cfg(feature = "gzip")]
+pub use gzip::{GzipReader, GzipWriter};
+
+pub use fei::{Fei1Metadata, Fei2Metadata, parse_fei1_records, parse_fei2_records, FEI1_RECORD_SIZE, FEI2_RECORD_SIZE};
 
 /// Open an MRC file for reading.
 pub fn open<P: AsRef<std::path::Path>>(path: P) -> Result<Reader, Error> {

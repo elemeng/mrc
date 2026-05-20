@@ -48,6 +48,18 @@ impl MmapReader {
     /// The file is mapped read-only into the process address space.
     /// The OS will page data in/out as needed, making this efficient for large files.
     pub fn open<P: AsRef<std::path::Path>>(path: P) -> Result<Self, Error> {
+        Self::_open(path, false).map(|(r, _)| r)
+    }
+
+    /// Open an MRC file via memory mapping in **permissive** mode.
+    ///
+    /// Non-fatal header issues are collected as warning strings instead of
+    /// causing hard errors.
+    pub fn open_permissive<P: AsRef<std::path::Path>>(path: P) -> Result<(Self, Vec<String>), Error> {
+        Self::_open(path, true)
+    }
+
+    fn _open<P: AsRef<std::path::Path>>(path: P, permissive: bool) -> Result<(Self, Vec<String>), Error> {
         use std::fs::File;
         use std::io::Read;
 
@@ -59,7 +71,12 @@ impl MmapReader {
 
         let header = Header::decode_from_bytes(&header_bytes);
 
-        header.validate_detailed()?;
+        let warnings = if permissive {
+            header.validate_permissive().map_err(Error::InvalidHeaderDetailed)?
+        } else {
+            header.validate_detailed().map_err(Error::InvalidHeaderDetailed)?;
+            Vec::new()
+        };
 
         // Map the entire file
         let mmap = unsafe {
@@ -72,17 +89,29 @@ impl MmapReader {
         let shape =
             VolumeShape::new(header.nx as usize, header.ny as usize, header.nz as usize);
 
+        if !permissive {
+            let expected_size = header.data_offset()
+                .checked_add(header.data_size().ok_or(Error::InvalidHeader)?)
+                .ok_or(Error::InvalidHeader)?;
+            if mmap.len() != expected_size {
+                return Err(Error::FileSizeMismatch {
+                    expected: expected_size,
+                    actual: mmap.len(),
+                });
+            }
+        }
+
         let mode = Mode::from_i32(header.mode).ok_or(Error::UnsupportedMode)?;
         let bytes_per_voxel = mode.byte_size();
 
-        Ok(Self {
+        Ok((Self {
             mmap,
             header,
             data_offset: header.data_offset(),
             endian,
             shape,
             bytes_per_voxel,
-        })
+        }, warnings))
     }
 
     /// Get the volume shape (dimensions).

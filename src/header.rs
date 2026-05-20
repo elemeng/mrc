@@ -35,6 +35,17 @@ const OFFSET_RMS: usize = 216;
 const OFFSET_NLABL: usize = 220;
 const OFFSET_LABEL: usize = 224;
 
+/// Default `extra` bytes with NVERSION=20141 encoded in little-endian.
+const DEFAULT_EXTRA: [u8; 100] = {
+    let mut e = [0u8; 100];
+    // NVERSION = 20141 (latest MRC2014 update), stored little-endian in extra[12..16]
+    e[12] = 0xAD;
+    e[13] = 0x4E;
+    e[14] = 0x00;
+    e[15] = 0x00;
+    e
+};
+
 #[repr(C, align(4))]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Header {
@@ -122,16 +133,8 @@ impl Header {
     ///
     /// # Endianness
     /// Per crate policy, new MRC files are always written in little-endian format.
-    /// This constructor sets `machst` to little-endian by default. The `extra[12..16]`
-    /// (NVERSION) field is uninitialized and should be set via `set_nversion()` when needed.
-    ///
-    /// # Example
-    /// ```
-    /// use mrc::Header;
-    ///
-    /// let mut header = Header::new();
-    /// header.set_nversion(20141);
-    /// ```
+    /// This constructor sets `machst` to little-endian by default and initialises
+    /// `nversion` to `20141` (latest MRC2014 update).
     pub const fn new() -> Self {
         Self {
             nx: 0,
@@ -153,12 +156,12 @@ impl Header {
             mapc: 1,                  // Column → X
             mapr: 2,                  // Row    → Y
             maps: 3,                  // Section→ Z
-            dmin: f32::INFINITY,      // Set higher than dmax to indicate not well-determined
-            dmax: f32::NEG_INFINITY,  // Set lower than dmin to indicate not well-determined
-            dmean: f32::NEG_INFINITY, // Less than both to indicate not well-determined
+            dmin: 0.0,      // Set higher than dmax to indicate not well-determined
+            dmax: -1.0,     // Set lower than dmin to indicate not well-determined
+            dmean: -2.0,    // Less than both to indicate not well-determined
             ispg: 1,                  // P1 space group.
             nsymbt: 0,
-            extra: [0u8; 100], // NVERSION not set (no premature encoding)
+            extra: DEFAULT_EXTRA,
             origin: [0.0; 3],
             map: *b"MAP ",
             machst: [0x44, 0x44, 0x00, 0x00], // Little-endian (crate policy for new files)
@@ -248,7 +251,104 @@ impl Header {
             return Err(HeaderValidationError::InvalidNlabl(self.nlabl));
         }
 
+        let nversion = self.nversion();
+        if nversion != 20140 && nversion != 20141 {
+            return Err(HeaderValidationError::InvalidNversion(nversion));
+        }
+
+        if self.mx <= 0 || self.my <= 0 || self.mz <= 0 {
+            return Err(HeaderValidationError::InvalidSampling {
+                mx: self.mx,
+                my: self.my,
+                mz: self.mz,
+            });
+        }
+
+        if self.ispg >= 400 && self.ispg <= 630 && self.mz != 0 && self.nz % self.mz != 0 {
+            return Err(HeaderValidationError::InvalidVolumeStack {
+                nz: self.nz,
+                mz: self.mz,
+                ispg: self.ispg,
+            });
+        }
+
         Ok(())
+    }
+
+    /// Permissive validation that returns warnings instead of hard errors
+    /// for most non-critical issues.
+    ///
+    /// Only **fatal** problems (dimensions ≤ 0 or completely unsupported mode)
+    /// produce an `Err`. Everything else is collected as a human-readable
+    /// warning string.
+    pub fn validate_permissive(&self) -> Result<Vec<String>, crate::HeaderValidationError> {
+        use crate::HeaderValidationError;
+        let mut warnings = Vec::new();
+
+        if self.nx <= 0 || self.ny <= 0 || self.nz <= 0 {
+            return Err(HeaderValidationError::InvalidDimensions {
+                nx: self.nx,
+                ny: self.ny,
+                nz: self.nz,
+            });
+        }
+
+        if Mode::from_i32(self.mode).is_none() {
+            return Err(HeaderValidationError::UnsupportedMode(self.mode));
+        }
+
+        if !self.validate_map() {
+            warnings.push(format!(
+                "MAP field is non-standard: {:?}",
+                String::from_utf8_lossy(&self.map)
+            ));
+        }
+
+        if !(self.ispg == 0 || (self.ispg >= 1 && self.ispg <= 230) || (self.ispg >= 400 && self.ispg <= 630)) {
+            warnings.push(format!("ISPG {} is outside the standard ranges (0, 1-230, 400-630)", self.ispg));
+        }
+
+        if !(matches!(self.mapc, 1..=3)
+            && matches!(self.mapr, 1..=3)
+            && matches!(self.maps, 1..=3)
+            && self.mapc != self.mapr
+            && self.mapc != self.maps
+            && self.mapr != self.maps)
+        {
+            warnings.push(format!(
+                "Axis mapping ({}, {}, {}) is not a permutation of (1, 2, 3)",
+                self.mapc, self.mapr, self.maps
+            ));
+        }
+
+        if self.nsymbt < 0 {
+            warnings.push(format!("NSYMBT is negative ({})", self.nsymbt));
+        }
+
+        if self.nlabl < 0 || self.nlabl > 10 {
+            warnings.push(format!("NLABL {} is outside 0-10", self.nlabl));
+        }
+
+        let nversion = self.nversion();
+        if nversion != 20140 && nversion != 20141 {
+            warnings.push(format!("NVERSION {} is not 20140 or 20141", nversion));
+        }
+
+        if self.mx <= 0 || self.my <= 0 || self.mz <= 0 {
+            warnings.push(format!(
+                "Sampling (mx={}, my={}, mz={}) is not all positive",
+                self.mx, self.my, self.mz
+            ));
+        }
+
+        if self.ispg >= 400 && self.ispg <= 630 && self.mz != 0 && self.nz % self.mz != 0 {
+            warnings.push(format!(
+                "Volume stack: nz ({}) is not divisible by mz ({}) for ispg={}",
+                self.nz, self.mz, self.ispg
+            ));
+        }
+
+        Ok(warnings)
     }
 
     #[inline]
@@ -338,6 +438,54 @@ impl Header {
         let file_endian = self.detect_endian();
         let start = OFFSET_NVERSION - OFFSET_EXTRA;
         value.encode(&mut self.extra[start..start + 4], 0, file_endian);
+    }
+
+    /// Get the list of non-empty text labels.
+    ///
+    /// Returns up to `nlabl` labels, each trimmed of trailing whitespace.
+    pub fn get_labels(&self) -> Vec<String> {
+        let count = self.nlabl.max(0).min(10) as usize;
+        let mut labels = Vec::with_capacity(count);
+        for i in 0..count {
+            let start = i * 80;
+            let bytes = &self.label[start..start + 80];
+            let text = String::from_utf8_lossy(bytes);
+            labels.push(text.trim_end().to_string());
+        }
+        labels
+    }
+
+    /// Add a text label to the header.
+    ///
+    /// Labels are truncated to 80 bytes and non-printable ASCII characters
+    /// (outside 0x20–0x7E) are replaced with spaces. If 10 labels are already
+    /// stored, the oldest label is dropped (FIFO).
+    pub fn add_label(&mut self, text: &str) {
+        // Filter to printable ASCII and truncate to 80 bytes
+        let filtered: String = text
+            .chars()
+            .map(|c| if c.is_ascii_graphic() || c == ' ' { c } else { ' ' })
+            .take(80)
+            .collect();
+        let bytes = filtered.as_bytes();
+        let len = bytes.len();
+
+        let count = self.nlabl.max(0).min(10) as usize;
+        if count < 10 {
+            // Store in the next free slot
+            let start = count * 80;
+            self.label[start..start + len].copy_from_slice(bytes);
+            self.nlabl = (count + 1) as i32;
+        } else {
+            // Shift existing labels up (FIFO) and store in slot 9
+            for i in 1..10 {
+                let src = (i - 1) * 80;
+                let dst = i * 80;
+                self.label.copy_within(src..src + 80, dst);
+            }
+            let start = 9 * 80;
+            self.label[start..start + len].copy_from_slice(bytes);
+        }
     }
 
     #[inline]
@@ -585,10 +733,16 @@ impl HeaderBuilder {
     }
 
     /// Set the volume dimensions.
+    ///
+    /// Also synchronises `mx`, `my`, `mz` to match `nx`, `ny`, `nz`, following
+    /// the convention used by the reference Python `mrcfile` library.
     pub fn shape(mut self, shape: [usize; 3]) -> Self {
         self.header.nx = shape[0] as i32;
         self.header.ny = shape[1] as i32;
         self.header.nz = shape[2] as i32;
+        self.header.mx = self.header.nx;
+        self.header.my = self.header.ny;
+        self.header.mz = self.header.nz;
         self
     }
 

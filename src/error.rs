@@ -23,6 +23,8 @@ pub enum Error {
     #[cfg(feature = "mmap")]
     #[error("Memory mapping error")]
     Mmap,
+    #[error("File size mismatch: expected {expected} bytes, got {actual} bytes")]
+    FileSizeMismatch { expected: usize, actual: usize },
 }
 
 /// Errors that can occur during header validation.
@@ -42,5 +44,11 @@ pub enum HeaderValidationError {
     InvalidNsymbt(i32),
     #[error("Invalid nlabl: {0} (must be between 0 and 10)")]
     InvalidNlabl(i32),
+    #[error("Invalid nversion: {0} (expected 20140 or 20141)")]
+    InvalidNversion(i32),
+    #[error("Invalid volume stack: nz={nz} is not divisible by mz={mz} (required when ispg={ispg} indicates a volume stack)")]
+    InvalidVolumeStack { nz: i32, mz: i32, ispg: i32 },
+    #[error("Invalid sampling: mx={mx}, my={my}, mz={mz} (must all be positive)")]
+    InvalidSampling { mx: i32, my: i32, mz: i32 },
 }
 

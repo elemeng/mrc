@@ -3,7 +3,7 @@
 use crate::engine::block::{SliceAccess, VolumeShape, VoxelBlock};
 use crate::engine::codec::{encode_block_parallel, encode_slice};
 use crate::engine::endian::FileEndian;
-use crate::mode::Voxel;
+use crate::mode::{Float32Complex, Int16Complex, Voxel};
 use crate::{Error, Header, Mode};
 
 use std::path::PathBuf;
@@ -228,6 +228,131 @@ impl Writer {
 
         Ok(())
     }
+
+    /// Scan the written data block and update `dmin`, `dmax`, `dmean` and `rms`
+    /// in the header to match the actual file contents.
+    ///
+    /// This is an optional convenience; it reads the entire data block back
+    /// from disk, so it can be expensive for large files.
+    pub fn update_header_stats(&mut self) -> Result<(), Error> {
+        use std::io::{Read, Seek, SeekFrom};
+        let data_size = self.header.data_size().ok_or(Error::InvalidHeader)?;
+        self.file.seek(SeekFrom::Start(self.data_offset))?;
+        let mut buf = vec![0u8; data_size];
+        self.file.read_exact(&mut buf)?;
+        update_header_stats_from_bytes(&mut self.header, &buf);
+        Ok(())
+    }
+}
+
+// ============================================================================
+// Stats helpers
+// ============================================================================
+
+fn stats_real<T>(data: &[T]) -> (f32, f32, f32, f32)
+where
+    T: Copy + Into<f64>,
+{
+    if data.is_empty() {
+        return (0.0, -1.0, -2.0, -1.0);
+    }
+    let iter = || data.iter().copied().map(Into::<f64>::into);
+    let min = iter().fold(f64::INFINITY, f64::min) as f32;
+    let max = iter().fold(f64::NEG_INFINITY, f64::max) as f32;
+    let sum: f64 = iter().sum();
+    let mean = (sum / data.len() as f64) as f32;
+    let variance: f64 = iter().map(|v| {
+        let d = v - mean as f64;
+        d * d
+    }).sum::<f64>() / data.len() as f64;
+    let rms = variance.sqrt() as f32;
+    (min, max, mean, rms)
+}
+
+fn rms_complex_f32(data: &[Float32Complex]) -> f32 {
+    if data.is_empty() {
+        return -1.0;
+    }
+    let mean_real = data.iter().map(|c| c.real as f64).sum::<f64>() / data.len() as f64;
+    let mean_imag = data.iter().map(|c| c.imag as f64).sum::<f64>() / data.len() as f64;
+    let variance: f64 = data.iter().map(|c| {
+        let dr = c.real as f64 - mean_real;
+        let di = c.imag as f64 - mean_imag;
+        dr * dr + di * di
+    }).sum::<f64>() / data.len() as f64;
+    variance.sqrt() as f32
+}
+
+fn rms_complex_i16(data: &[Int16Complex]) -> f32 {
+    if data.is_empty() {
+        return -1.0;
+    }
+    let mean_real = data.iter().map(|c| c.real as f64).sum::<f64>() / data.len() as f64;
+    let mean_imag = data.iter().map(|c| c.imag as f64).sum::<f64>() / data.len() as f64;
+    let variance: f64 = data.iter().map(|c| {
+        let dr = c.real as f64 - mean_real;
+        let di = c.imag as f64 - mean_imag;
+        dr * dr + di * di
+    }).sum::<f64>() / data.len() as f64;
+    variance.sqrt() as f32
+}
+
+fn update_header_stats_from_bytes(header: &mut Header, bytes: &[u8]) {
+    use crate::engine::codec::decode_slice;
+    let endian = header.detect_endian();
+    match Mode::from_i32(header.mode) {
+        Some(Mode::Float32) => {
+            let data = decode_slice::<f32>(bytes, endian);
+            let (min, max, mean, rms) = stats_real(&data);
+            header.dmin = min;
+            header.dmax = max;
+            header.dmean = mean;
+            header.rms = rms;
+        }
+        Some(Mode::Int16) => {
+            let data = decode_slice::<i16>(bytes, endian);
+            let (min, max, mean, rms) = stats_real(&data);
+            header.dmin = min;
+            header.dmax = max;
+            header.dmean = mean;
+            header.rms = rms;
+        }
+        Some(Mode::Uint16) => {
+            let data = decode_slice::<u16>(bytes, endian);
+            let (min, max, mean, rms) = stats_real(&data);
+            header.dmin = min;
+            header.dmax = max;
+            header.dmean = mean;
+            header.rms = rms;
+        }
+        Some(Mode::Int8) => {
+            let data = decode_slice::<i8>(bytes, endian);
+            let (min, max, mean, rms) = stats_real(&data);
+            header.dmin = min;
+            header.dmax = max;
+            header.dmean = mean;
+            header.rms = rms;
+        }
+        Some(Mode::Float32Complex) => {
+            let data = decode_slice::<Float32Complex>(bytes, endian);
+            header.rms = rms_complex_f32(&data);
+        }
+        Some(Mode::Int16Complex) => {
+            let data = decode_slice::<Int16Complex>(bytes, endian);
+            header.rms = rms_complex_i16(&data);
+        }
+        #[cfg(feature = "f16")]
+        Some(Mode::Float16) => {
+            let data = decode_slice::<f16>(bytes, endian);
+            let data_f32: Vec<f32> = data.iter().map(|&v| v as f32).collect();
+            let (min, max, mean, rms) = stats_real(&data_f32);
+            header.dmin = min;
+            header.dmax = max;
+            header.dmean = mean;
+            header.rms = rms;
+        }
+        _ => {}
+    }
 }
 
 // ============================================================================
@@ -445,6 +570,18 @@ impl MmapWriter {
             shape: block.shape,
             data,
         })
+    }
+
+    /// Scan the written data block and update header statistics.
+    ///
+    /// Unlike [`Writer::update_header_stats`], this does not need to read from
+    /// disk because the data is already accessible via the memory map.
+    pub fn update_header_stats(&mut self) {
+        let data_size = self.header.data_size().unwrap_or(0);
+        let end = self.data_offset + data_size;
+        if end <= self.mmap.len() {
+            update_header_stats_from_bytes(&mut self.header, &self.mmap[self.data_offset..end]);
+        }
     }
 }
 

@@ -24,6 +24,20 @@ pub struct Reader {
 
 impl Reader {
     pub fn open<P: AsRef<std::path::Path>>(path: P) -> Result<Self, Error> {
+        Self::_open(path, false).map(|(r, _)| r)
+    }
+
+    /// Open an MRC file in **permissive** mode.
+    ///
+    /// Non-fatal header issues (unusual MAP field, unexpected `nversion`,
+    /// non-standard axis mapping, etc.) are collected as warning strings
+    /// instead of causing a hard error. Only genuinely unreadable files
+    /// (negative dimensions, unsupported mode, IO failure) return `Err`.
+    pub fn open_permissive<P: AsRef<std::path::Path>>(path: P) -> Result<(Self, Vec<String>), Error> {
+        Self::_open(path, true)
+    }
+
+    fn _open<P: AsRef<std::path::Path>>(path: P, permissive: bool) -> Result<(Self, Vec<String>), Error> {
         use std::fs::File;
         use std::io::Read;
 
@@ -34,7 +48,12 @@ impl Reader {
 
         let header = Header::decode_from_bytes(&header_bytes);
 
-        header.validate_detailed()?;
+        let warnings = if permissive {
+            header.validate_permissive().map_err(Error::InvalidHeaderDetailed)?
+        } else {
+            header.validate_detailed().map_err(Error::InvalidHeaderDetailed)?;
+            Vec::new()
+        };
 
         let data_size = header.data_size().ok_or(Error::InvalidHeader)?;
 
@@ -47,16 +66,27 @@ impl Reader {
         let mut data = vec![0u8; data_size];
         file.read_exact(&mut data)?;
 
+        if !permissive {
+            // Check for trailing bytes (file larger than header + ext_header + data)
+            let mut trailing = [0u8; 1];
+            if file.read(&mut trailing)? > 0 {
+                return Err(Error::FileSizeMismatch {
+                    expected: header.data_offset() + data_size,
+                    actual: header.data_offset() + data_size + 1, // at least 1 extra byte
+                });
+            }
+        }
+
         let endian = header.detect_endian();
         let shape = VolumeShape::new(header.nx as usize, header.ny as usize, header.nz as usize);
 
-        Ok(Self {
+        Ok((Self {
             header,
             ext_header,
             data,
             endian,
             shape,
-        })
+        }, warnings))
     }
 
     pub fn shape(&self) -> VolumeShape {
