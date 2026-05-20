@@ -1,7 +1,5 @@
 //! MRC file writer with block-based API
 
-#[cfg(feature = "mmap")]
-use crate::engine::block::SliceAccess;
 use crate::engine::block::{VolumeShape, VoxelBlock};
 use crate::engine::codec::encode_slice;
 #[cfg(feature = "parallel")]
@@ -62,6 +60,38 @@ impl WriterBuilder {
 
     pub fn mode<T: Voxel>(mut self) -> Self {
         self.header.mode = T::MODE.as_i32();
+        self
+    }
+
+    /// Set the cell dimensions in Angstroms.
+    pub fn cell_lengths(mut self, xlen: f32, ylen: f32, zlen: f32) -> Self {
+        self.header.xlen = xlen;
+        self.header.ylen = ylen;
+        self.header.zlen = zlen;
+        self
+    }
+
+    /// Set the space group number.
+    pub fn ispg(mut self, ispg: i32) -> Self {
+        self.header.ispg = ispg;
+        self
+    }
+
+    /// Set the extended header type (4-byte ASCII identifier).
+    pub fn exttyp(mut self, exttyp: [u8; 4]) -> Self {
+        self.header.set_exttyp(exttyp);
+        self
+    }
+
+    /// Set the extended header size in bytes.
+    pub fn nsymbt(mut self, nsymbt: i32) -> Self {
+        self.header.nsymbt = nsymbt;
+        self
+    }
+
+    /// Set the origin coordinates.
+    pub fn origin(mut self, origin: [f32; 3]) -> Self {
+        self.header.origin = origin;
         self
     }
 
@@ -375,15 +405,52 @@ impl MmapWriterBuilder {
     }
 
     /// Set the volume dimensions.
+    ///
+    /// Also synchronises `mx`, `my`, `mz` to match `nx`, `ny`, `nz`.
     pub fn shape(mut self, shape: [usize; 3]) -> Self {
         self.header.nx = shape[0] as i32;
         self.header.ny = shape[1] as i32;
         self.header.nz = shape[2] as i32;
+        self.header.mx = self.header.nx;
+        self.header.my = self.header.ny;
+        self.header.mz = self.header.nz;
         self
     }
 
     pub fn mode<T: Voxel>(mut self) -> Self {
         self.header.mode = T::MODE.as_i32();
+        self
+    }
+
+    /// Set the cell dimensions in Angstroms.
+    pub fn cell_lengths(mut self, xlen: f32, ylen: f32, zlen: f32) -> Self {
+        self.header.xlen = xlen;
+        self.header.ylen = ylen;
+        self.header.zlen = zlen;
+        self
+    }
+
+    /// Set the space group number.
+    pub fn ispg(mut self, ispg: i32) -> Self {
+        self.header.ispg = ispg;
+        self
+    }
+
+    /// Set the extended header type (4-byte ASCII identifier).
+    pub fn exttyp(mut self, exttyp: [u8; 4]) -> Self {
+        self.header.set_exttyp(exttyp);
+        self
+    }
+
+    /// Set the extended header size in bytes.
+    pub fn nsymbt(mut self, nsymbt: i32) -> Self {
+        self.header.nsymbt = nsymbt;
+        self
+    }
+
+    /// Set the origin coordinates.
+    pub fn origin(mut self, origin: [f32; 3]) -> Self {
+        self.header.origin = origin;
         self
     }
 
@@ -614,18 +681,24 @@ impl MmapWriter {
     ///
     /// Unlike [`Writer::update_header_stats`], this does not need to read from
     /// disk because the data is already accessible via the memory map.
-    pub fn update_header_stats(&mut self) {
-        let data_size = self.header.data_size().unwrap_or(0);
-        let end = self.data_offset + data_size;
+    pub fn update_header_stats(&mut self) -> Result<(), Error> {
+        let data_size = self.header.data_size().ok_or(Error::InvalidHeader)?;
+        let end = self.data_offset.checked_add(data_size).ok_or(Error::InvalidHeader)?;
         if end <= self.mmap.len() {
             update_header_stats_from_bytes(&mut self.header, &self.mmap[self.data_offset..end]);
         }
+        Ok(())
     }
 }
 
 #[cfg(feature = "mmap")]
-impl SliceAccess for MmapWriter {
-    fn slice<T: crate::engine::codec::EndianCodec>(&self, z: usize) -> Result<&[T], Error> {
+impl MmapWriter {
+    /// Get an immutable slice of voxels at the given z-index.
+    ///
+    /// # Safety
+    /// The caller must ensure the type `T` matches the file's voxel mode exactly.
+    /// Violating this precondition causes undefined behaviour.
+    pub fn slice<T: crate::engine::codec::EndianCodec>(&self, z: usize) -> Result<&[T], Error> {
         let [nx, ny, nz] = [self.shape.nx, self.shape.ny, self.shape.nz];
         if z >= nz {
             return Err(Error::BoundsError);
@@ -652,7 +725,12 @@ impl SliceAccess for MmapWriter {
         }
     }
 
-    fn slice_mut<T: crate::engine::codec::EndianCodec>(
+    /// Get a mutable slice of voxels at the given z-index.
+    ///
+    /// # Safety
+    /// The caller must ensure the type `T` matches the file's voxel mode exactly.
+    /// Violating this precondition causes undefined behaviour.
+    pub fn slice_mut<T: crate::engine::codec::EndianCodec>(
         &mut self,
         z: usize,
     ) -> Result<&mut [T], Error> {
@@ -681,10 +759,7 @@ impl SliceAccess for MmapWriter {
             Ok(core::slice::from_raw_parts_mut(ptr, nx * ny))
         }
     }
-}
 
-#[cfg(feature = "mmap")]
-impl MmapWriter {
     pub fn finalize(&mut self) -> Result<(), Error> {
         let mut header_bytes = [0u8; 1024];
         self.header.encode_to_bytes(&mut header_bytes);

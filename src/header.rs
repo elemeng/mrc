@@ -470,11 +470,6 @@ impl Header {
         labels
     }
 
-    /// Add a text label to the header.
-    ///
-    /// Labels are truncated to 80 bytes and non-printable ASCII characters
-    /// (outside 0x20–0x7E) are replaced with spaces. If 10 labels are already
-    /// stored, the oldest label is dropped (FIFO).
     /// Check whether the i-th label is empty (all whitespace / zeros).
     fn label_is_empty(&self, index: usize) -> bool {
         let start = index * 80;
@@ -486,6 +481,11 @@ impl Header {
         (0..10).filter(|&i| !self.label_is_empty(i)).count()
     }
 
+    /// Add a text label to the header.
+    ///
+    /// Labels are truncated to 80 bytes and non-printable ASCII characters
+    /// (outside 0x20–0x7E) are replaced with spaces. If 10 labels are already
+    /// stored, the oldest label is dropped (FIFO).
     pub fn add_label(&mut self, text: &str) {
         // Filter to printable ASCII and truncate to 80 bytes
         let filtered: String = text
@@ -778,65 +778,6 @@ impl Header {
 
         // Write labels - ASCII, no endian conversion
         out[OFFSET_LABEL..1024].copy_from_slice(&self.label);
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct ExtHeader<'a> {
-    bytes: &'a [u8],
-}
-
-impl<'a> ExtHeader<'a> {
-    #[inline]
-    pub fn new(bytes: &'a [u8]) -> Self {
-        Self { bytes }
-    }
-
-    #[inline]
-    pub fn len(&self) -> usize {
-        self.bytes.len()
-    }
-
-    #[inline]
-    pub fn is_empty(&self) -> bool {
-        self.bytes.is_empty()
-    }
-
-    #[inline]
-    pub fn as_bytes(&self) -> &'a [u8] {
-        self.bytes
-    }
-}
-
-#[derive(Debug)]
-pub struct ExtHeaderMut<'a> {
-    bytes: &'a mut [u8],
-}
-
-impl<'a> ExtHeaderMut<'a> {
-    #[inline]
-    pub fn new(bytes: &'a mut [u8]) -> Self {
-        Self { bytes }
-    }
-
-    #[inline]
-    pub fn len(&self) -> usize {
-        self.bytes.len()
-    }
-
-    #[inline]
-    pub fn is_empty(&self) -> bool {
-        self.bytes.is_empty()
-    }
-
-    #[inline]
-    pub fn as_bytes(&self) -> &[u8] {
-        self.bytes
-    }
-
-    #[inline]
-    pub fn as_bytes_mut(&mut self) -> &mut [u8] {
-        self.bytes
     }
 }
 

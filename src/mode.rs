@@ -213,22 +213,6 @@ impl Voxel for f16 {
     const MODE: Mode = Mode::Float16;
 }
 
-impl Voxel for Packed4Bit {
-    const MODE: Mode = Mode::Packed4Bit;
-}
-
-// Implement EndianCodec directly - this provides both decode and encode
-// Note: Packed4Bit is endian-independent since it's byte-level packing (2 values per byte)
-impl crate::engine::codec::EndianCodec for Packed4Bit {
-    const BYTE_SIZE: usize = 1;
-
-    #[inline]
-    fn from_bytes(bytes: &[u8], offset: usize, _endian: crate::FileEndian) -> Self {
-        Self(bytes[offset])
-    }
-
-    #[inline]
-    fn to_bytes(&self, bytes: &mut [u8], offset: usize, _endian: crate::FileEndian) {
-        bytes[offset] = self.0;
-    }
-}
+// Note: Packed4Bit does not implement Voxel or EndianCodec because full
+// read/write support for 4-bit packed data is not yet implemented.
+// The Packed4Bit type is provided for manual unpacking via first()/second().

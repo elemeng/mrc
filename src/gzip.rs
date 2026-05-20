@@ -5,17 +5,14 @@
 //! behaviour of the reference Python `mrcfile` library.
 
 use crate::engine::block::{VolumeShape, VoxelBlock};
-use crate::engine::codec::decode_slice;
 use crate::engine::endian::FileEndian;
+use crate::iter::{BlockIter, SliceIter, SlabIter};
 use crate::mode::Voxel;
 use crate::{Error, Header, Mode};
 
 use std::fs::File;
 use std::io::{Read, Write};
 use std::path::Path;
-
-/// Shorthand for the complex boxed-iterator return type used by slice/slab APIs.
-type BoxIterF32<'a> = Box<dyn Iterator<Item = Result<VoxelBlock<f32>, Error>> + 'a>;
 
 /// Gzip-compressed MRC file reader.
 ///
@@ -114,8 +111,24 @@ impl GzipReader {
         &self.header
     }
 
+    pub fn endian(&self) -> FileEndian {
+        self.endian
+    }
+
     pub fn ext_header_bytes(&self) -> &[u8] {
         &self.ext_header
+    }
+
+    pub fn slices<T: Voxel>(&self) -> SliceIter<'_, T, Self> {
+        SliceIter::new(self, self.shape)
+    }
+
+    pub fn slabs<T: Voxel>(&self, k: usize) -> SlabIter<'_, T, Self> {
+        SlabIter::new(self, self.shape, k)
+    }
+
+    pub fn blocks<T: Voxel>(&self, chunk_shape: [usize; 3]) -> BlockIter<'_, T, Self> {
+        BlockIter::new(self, self.shape, chunk_shape)
     }
 
     pub fn read_block_bytes(
@@ -123,32 +136,10 @@ impl GzipReader {
         offset: [usize; 3],
         shape: [usize; 3],
     ) -> Result<Vec<u8>, Error> {
-        let [nx, ny, nz] = [self.shape.nx, self.shape.ny, self.shape.nz];
-        let [ox, oy, oz] = offset;
-        let [sx, sy, sz] = shape;
-
-        if ox + sx > nx || oy + sy > ny || oz + sz > nz {
-            return Err(Error::BoundsError);
-        }
-
-        if self.mode() == Mode::Packed4Bit {
-            return Err(Error::UnsupportedMode);
-        }
-
-        let linear = self.shape.checked_linear_index(offset).ok_or(Error::BoundsError)?;
-        let start_byte = linear
-            .checked_mul(self.mode().byte_size())
-            .ok_or(Error::BoundsError)?;
-        let count = sx.checked_mul(sy).and_then(|v| v.checked_mul(sz))
-            .ok_or(Error::BoundsError)?;
-        let byte_len = self.mode().byte_size_for_count(count);
-        let end_byte = start_byte.checked_add(byte_len).ok_or(Error::BoundsError)?;
-
-        if end_byte > self.data.len() {
-            return Err(Error::BoundsError);
-        }
-
-        Ok(self.data[start_byte..end_byte].to_vec())
+        let (start, end) = crate::reader_common::validate_block_read(
+            self.shape, self.mode(), self.data.len(), offset, shape,
+        )?;
+        Ok(self.data[start..end].to_vec())
     }
 
     pub fn read_block<T: Voxel>(&self, offset: [usize; 3], shape: [usize; 3]) -> Result<VoxelBlock<T>, Error> {
@@ -158,101 +149,29 @@ impl GzipReader {
     }
 
     pub(crate) fn decode_block<T: Voxel>(&self, bytes: &[u8]) -> Result<Vec<T>, Error> {
-        if T::MODE != self.mode() {
-            return Err(Error::ModeMismatch {
-                file_mode: self.mode(),
-                requested_mode: T::MODE,
-            });
-        }
-        if self.endian == FileEndian::native() {
-            let n = bytes.len() / T::BYTE_SIZE;
-            let mut result = Vec::with_capacity(n);
-            unsafe {
-                core::ptr::copy_nonoverlapping(
-                    bytes.as_ptr(),
-                    result.as_mut_ptr() as *mut u8,
-                    bytes.len(),
-                );
-                result.set_len(n);
-            }
-            Ok(result)
-        } else {
-            Ok(decode_slice(bytes, self.endian))
-        }
+        crate::reader_common::decode_block(bytes, self.mode(), self.endian)
     }
 
-    pub fn slices_f32(&self) -> Result<BoxIterF32<'_>, Error> {
-        use crate::engine::block::VoxelBlock;
-        let nx = self.shape.nx;
-        let ny = self.shape.ny;
-        let nz = self.shape.nz;
-        match self.mode() {
-            Mode::Float32 => Ok(Box::new((0..nz).map(move |z| {
-                let bytes = self.read_block_bytes([0, 0, z], [nx, ny, 1])?;
-                let data = self.decode_block::<f32>(&bytes)?;
-                Ok(VoxelBlock { offset: [0, 0, z], shape: [nx, ny, 1], data })
-            }))),
-            Mode::Int16 => Ok(Box::new((0..nz).map(move |z| {
-                let bytes = self.read_block_bytes([0, 0, z], [nx, ny, 1])?;
-                let data = self.decode_block::<i16>(&bytes)?;
-                let data = crate::engine::convert::convert_i16_slice_to_f32(&data);
-                Ok(VoxelBlock { offset: [0, 0, z], shape: [nx, ny, 1], data })
-            }))),
-            Mode::Uint16 => Ok(Box::new((0..nz).map(move |z| {
-                let bytes = self.read_block_bytes([0, 0, z], [nx, ny, 1])?;
-                let data = self.decode_block::<u16>(&bytes)?;
-                let data = crate::engine::convert::convert_u16_slice_to_f32(&data);
-                Ok(VoxelBlock { offset: [0, 0, z], shape: [nx, ny, 1], data })
-            }))),
-            Mode::Int8 => Ok(Box::new((0..nz).map(move |z| {
-                let bytes = self.read_block_bytes([0, 0, z], [nx, ny, 1])?;
-                let data = self.decode_block::<i8>(&bytes)?;
-                let data = crate::engine::convert::convert_i8_slice_to_f32(&data);
-                Ok(VoxelBlock { offset: [0, 0, z], shape: [nx, ny, 1], data })
-            }))),
-            _ => Err(Error::UnsupportedMode),
-        }
+    pub fn slices_f32(&self) -> Result<crate::SliceIterF32<'_>, Error> {
+        crate::reader_common::slices_f32(
+            self.shape,
+            self.mode(),
+            self.endian,
+            |offset, shape| self.read_block_bytes(offset, shape),
+        )
     }
 
     /// Iterate over slabs, automatically converting common types to `f32`.
     ///
     /// Supported source modes: `Float32`, `Int16`, `Uint16`, `Int8`.
-    pub fn slabs_f32(&self, k: usize) -> Result<BoxIterF32<'_>, Error> {
-        use crate::engine::block::VoxelBlock;
-        let nx = self.shape.nx;
-        let ny = self.shape.ny;
-        let nz = self.shape.nz;
-        let k = k.max(1);
-        match self.mode() {
-            Mode::Float32 => Ok(Box::new((0..nz).step_by(k).map(move |z| {
-                let sz = k.min(nz - z);
-                let bytes = self.read_block_bytes([0, 0, z], [nx, ny, sz])?;
-                let data = self.decode_block::<f32>(&bytes)?;
-                Ok(VoxelBlock { offset: [0, 0, z], shape: [nx, ny, sz], data })
-            }))),
-            Mode::Int16 => Ok(Box::new((0..nz).step_by(k).map(move |z| {
-                let sz = k.min(nz - z);
-                let bytes = self.read_block_bytes([0, 0, z], [nx, ny, sz])?;
-                let data = self.decode_block::<i16>(&bytes)?;
-                let data = crate::engine::convert::convert_i16_slice_to_f32(&data);
-                Ok(VoxelBlock { offset: [0, 0, z], shape: [nx, ny, sz], data })
-            }))),
-            Mode::Uint16 => Ok(Box::new((0..nz).step_by(k).map(move |z| {
-                let sz = k.min(nz - z);
-                let bytes = self.read_block_bytes([0, 0, z], [nx, ny, sz])?;
-                let data = self.decode_block::<u16>(&bytes)?;
-                let data = crate::engine::convert::convert_u16_slice_to_f32(&data);
-                Ok(VoxelBlock { offset: [0, 0, z], shape: [nx, ny, sz], data })
-            }))),
-            Mode::Int8 => Ok(Box::new((0..nz).step_by(k).map(move |z| {
-                let sz = k.min(nz - z);
-                let bytes = self.read_block_bytes([0, 0, z], [nx, ny, sz])?;
-                let data = self.decode_block::<i8>(&bytes)?;
-                let data = crate::engine::convert::convert_i8_slice_to_f32(&data);
-                Ok(VoxelBlock { offset: [0, 0, z], shape: [nx, ny, sz], data })
-            }))),
-            _ => Err(Error::UnsupportedMode),
-        }
+    pub fn slabs_f32(&self, k: usize) -> Result<crate::SliceIterF32<'_>, Error> {
+        crate::reader_common::slabs_f32(
+            self.shape,
+            self.mode(),
+            self.endian,
+            k,
+            |offset, shape| self.read_block_bytes(offset, shape),
+        )
     }
 
     /// Iterate over slices, automatically converting Mode 6 (`Uint16`) to `u8`.

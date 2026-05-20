@@ -3,16 +3,17 @@
 use crate::Error;
 use crate::engine::block::{VolumeShape, VoxelBlock};
 use crate::mode::Voxel;
+use crate::reader_common::VoxelSource;
 
-/// Helper to read and decode a voxel block from the reader.
+/// Helper to read and decode a voxel block from a VoxelSource.
 #[inline]
 fn read_and_decode<T: Voxel>(
-    reader: &crate::Reader,
+    reader: &impl VoxelSource,
     offset: [usize; 3],
     shape: [usize; 3],
 ) -> Result<VoxelBlock<T>, Error> {
-    let bytes = reader.read_block_bytes(offset, shape)?;
-    let data = reader.decode_block::<T>(&bytes)?;
+    let bytes = reader.vs_read_block_bytes(offset, shape)?;
+    let data = reader.vs_decode_block::<T>(&bytes)?;
     Ok(VoxelBlock {
         offset,
         shape,
@@ -21,8 +22,8 @@ fn read_and_decode<T: Voxel>(
 }
 
 #[derive(Debug)]
-pub struct SliceIter<'a, T> {
-    reader: &'a crate::Reader,
+pub struct SliceIter<'a, T, R: VoxelSource> {
+    reader: &'a R,
     z: usize,
     nz: usize,
     nx: usize,
@@ -30,8 +31,8 @@ pub struct SliceIter<'a, T> {
     _phantom: core::marker::PhantomData<T>,
 }
 
-impl<'a, T> SliceIter<'a, T> {
-    pub fn new(reader: &'a crate::Reader, shape: VolumeShape) -> Self {
+impl<'a, T, R: VoxelSource> SliceIter<'a, T, R> {
+    pub fn new(reader: &'a R, shape: VolumeShape) -> Self {
         Self {
             reader,
             z: 0,
@@ -43,7 +44,7 @@ impl<'a, T> SliceIter<'a, T> {
     }
 }
 
-impl<'a, T> Iterator for SliceIter<'a, T>
+impl<'a, T, R: VoxelSource> Iterator for SliceIter<'a, T, R>
 where
     T: Voxel,
 {
@@ -75,12 +76,12 @@ where
     }
 }
 
-impl<'a, T> ExactSizeIterator for SliceIter<'a, T> where T: Voxel {}
-impl<'a, T> core::iter::FusedIterator for SliceIter<'a, T> where T: Voxel {}
+impl<'a, T, R: VoxelSource> ExactSizeIterator for SliceIter<'a, T, R> where T: Voxel {}
+impl<'a, T, R: VoxelSource> core::iter::FusedIterator for SliceIter<'a, T, R> where T: Voxel {}
 
 #[derive(Debug)]
-pub struct SlabIter<'a, T> {
-    reader: &'a crate::Reader,
+pub struct SlabIter<'a, T, R: VoxelSource> {
+    reader: &'a R,
     z: usize,
     nz: usize,
     nx: usize,
@@ -89,8 +90,8 @@ pub struct SlabIter<'a, T> {
     _phantom: core::marker::PhantomData<T>,
 }
 
-impl<'a, T> SlabIter<'a, T> {
-    pub fn new(reader: &'a crate::Reader, shape: VolumeShape, k: usize) -> Self {
+impl<'a, T, R: VoxelSource> SlabIter<'a, T, R> {
+    pub fn new(reader: &'a R, shape: VolumeShape, k: usize) -> Self {
         Self {
             reader,
             z: 0,
@@ -103,7 +104,7 @@ impl<'a, T> SlabIter<'a, T> {
     }
 }
 
-impl<'a, T> Iterator for SlabIter<'a, T>
+impl<'a, T, R: VoxelSource> Iterator for SlabIter<'a, T, R>
 where
     T: Voxel,
 {
@@ -137,20 +138,20 @@ where
     }
 }
 
-impl<'a, T> ExactSizeIterator for SlabIter<'a, T> where T: Voxel {}
-impl<'a, T> core::iter::FusedIterator for SlabIter<'a, T> where T: Voxel {}
+impl<'a, T, R: VoxelSource> ExactSizeIterator for SlabIter<'a, T, R> where T: Voxel {}
+impl<'a, T, R: VoxelSource> core::iter::FusedIterator for SlabIter<'a, T, R> where T: Voxel {}
 
 #[derive(Debug)]
-pub struct BlockIter<'a, T> {
-    reader: &'a crate::Reader,
+pub struct BlockIter<'a, T, R: VoxelSource> {
+    reader: &'a R,
     position: [usize; 3],
     shape: VolumeShape,
     block_shape: [usize; 3],
     _phantom: core::marker::PhantomData<T>,
 }
 
-impl<'a, T> BlockIter<'a, T> {
-    pub fn new(reader: &'a crate::Reader, shape: VolumeShape, block_shape: [usize; 3]) -> Self {
+impl<'a, T, R: VoxelSource> BlockIter<'a, T, R> {
+    pub fn new(reader: &'a R, shape: VolumeShape, block_shape: [usize; 3]) -> Self {
         assert!(block_shape[0] > 0 && block_shape[1] > 0 && block_shape[2] > 0, "block_shape must be positive in all dimensions");
         Self {
             reader,
@@ -162,7 +163,7 @@ impl<'a, T> BlockIter<'a, T> {
     }
 }
 
-impl<'a, T> Iterator for BlockIter<'a, T>
+impl<'a, T, R: VoxelSource> Iterator for BlockIter<'a, T, R>
 where
     T: Voxel,
 {
@@ -196,4 +197,4 @@ where
     }
 }
 
-impl<'a, T> core::iter::FusedIterator for BlockIter<'a, T> where T: Voxel {}
+impl<'a, T, R: VoxelSource> core::iter::FusedIterator for BlockIter<'a, T, R> where T: Voxel {}

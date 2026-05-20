@@ -105,35 +105,6 @@ impl<T> VoxelBlock<T> {
     }
 }
 
-/// Trait for writers that provide direct slice access to voxel data.
-///
-/// # Safety Warning
-/// The caller must ensure:
-/// - The type `T` matches the file's voxel mode exactly.
-/// - The file's data offset is aligned for `T` (always true for files created
-///   by this crate, but may not hold for arbitrary third-party files).
-///
-/// Violating either precondition causes undefined behaviour.
-/// For type-safe access, use `write_block` instead.
-pub trait SliceAccess {
-    /// Get an immutable slice of voxels at the given z-index.
-    fn slice<T: crate::engine::codec::EndianCodec>(
-        &self,
-        z: usize,
-    ) -> Result<&[T], crate::Error>;
-
-    /// Get a mutable slice of voxels at the given z-index.
-    ///
-    /// # Example
-    /// ```ignore
-    /// // Correct: file was created with mode f32
-    /// let slice = writer.slice_mut::<f32>(0)?;
-    ///
-    /// // Wrong: undefined behavior if file mode is not i16
-    /// let slice = writer.slice_mut::<i16>(0)?; // Don't do this!
-    /// ```
-    fn slice_mut<T: crate::engine::codec::EndianCodec>(
-        &mut self,
-        z: usize,
-    ) -> Result<&mut [T], crate::Error>;
-}
+// SliceAccess methods are provided as inherent methods on MmapWriter.
+// This trait is intentionally not public because MmapWriter is currently
+// the only type that supports zero-copy slice access.

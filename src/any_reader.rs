@@ -11,9 +11,6 @@ use crate::mode::{M0Interpretation, Voxel};
 use crate::{Error, Header, Mode};
 use std::path::Path;
 
-/// Shorthand for the complex boxed-iterator return type used by slice/slab APIs.
-type BoxIter<'a, T> = Box<dyn Iterator<Item = Result<VoxelBlock<T>, Error>> + 'a>;
-
 /// Detected compression format of an MRC file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CompressionType {
@@ -167,6 +164,17 @@ impl MrcReader {
         }
     }
 
+    /// Decode a block of bytes to the requested voxel type.
+    pub(crate) fn decode_block<T: Voxel>(&self, bytes: &[u8]) -> Result<Vec<T>, Error> {
+        match self {
+            MrcReader::Plain(r) => r.decode_block(bytes),
+            #[cfg(feature = "gzip")]
+            MrcReader::Gzip(r) => r.decode_block(bytes),
+            #[cfg(feature = "bzip2")]
+            MrcReader::Bzip2(r) => r.decode_block(bytes),
+        }
+    }
+
     /// Read and decode a voxel block.
     pub fn read_block<T: Voxel>(&self, offset: [usize; 3], shape: [usize; 3]) -> Result<VoxelBlock<T>, Error> {
         match self {
@@ -179,7 +187,7 @@ impl MrcReader {
     }
 
     /// Iterate over slices, converting common types to `f32`.
-    pub fn slices_f32(&self) -> Result<BoxIter<'_, f32>, Error> {
+    pub fn slices_f32(&self) -> Result<crate::SliceIterF32<'_>, Error> {
         match self {
             MrcReader::Plain(r) => r.slices_f32(),
             #[cfg(feature = "gzip")]
@@ -190,7 +198,7 @@ impl MrcReader {
     }
 
     /// Iterate over slabs, converting common types to `f32`.
-    pub fn slabs_f32(&self, k: usize) -> Result<BoxIter<'_, f32>, Error> {
+    pub fn slabs_f32(&self, k: usize) -> Result<crate::SliceIterF32<'_>, Error> {
         match self {
             MrcReader::Plain(r) => r.slabs_f32(k),
             #[cfg(feature = "gzip")]
@@ -203,7 +211,7 @@ impl MrcReader {
     /// Iterate over slices, automatically converting Mode 6 (`Uint16`) to `u8`.
     ///
     /// Returns an error if the file is not Mode 6 or if any value exceeds 255.
-    pub fn slices_u8(&self) -> Result<BoxIter<'_, u8>, Error> {
+    pub fn slices_u8(&self) -> Result<Box<dyn Iterator<Item = Result<VoxelBlock<u8>, Error>> + '_>, Error> {
         match self {
             MrcReader::Plain(r) => Ok(Box::new(r.slices_u8()?)),
             #[cfg(feature = "gzip")]
@@ -217,7 +225,7 @@ impl MrcReader {
     pub fn slices_mode0(
         &self,
         interp: M0Interpretation,
-    ) -> Result<BoxIter<'_, f32>, Error> {
+    ) -> Result<crate::SliceIterF32<'_>, Error> {
         match self {
             MrcReader::Plain(r) => {
                 Ok(Box::new(r.slices_mode0(interp)))
@@ -247,7 +255,7 @@ impl MrcReader {
     /// Raw data bytes (after header and extended header).
     pub fn data_bytes(&self) -> &[u8] {
         match self {
-            MrcReader::Plain(r) => r.data(),
+            MrcReader::Plain(r) => r.data_bytes(),
             #[cfg(feature = "gzip")]
             MrcReader::Gzip(r) => r.data_bytes(),
             #[cfg(feature = "bzip2")]
@@ -260,15 +268,30 @@ impl MrcReader {
         match self {
             MrcReader::Plain(r) => r.endian(),
             #[cfg(feature = "gzip")]
-            MrcReader::Gzip(r) => r.header().detect_endian(),
+            MrcReader::Gzip(r) => r.endian(),
             #[cfg(feature = "bzip2")]
-            MrcReader::Bzip2(r) => r.header().detect_endian(),
+            MrcReader::Bzip2(r) => r.endian(),
         }
     }
 
     // -------------------------------------------------------------------------
     // Type introspection
     // -------------------------------------------------------------------------
+
+    /// Iterate over slices of the requested voxel type.
+    pub fn slices<T: Voxel>(&self) -> crate::iter::SliceIter<'_, T, Self> {
+        crate::iter::SliceIter::new(self, self.shape())
+    }
+
+    /// Iterate over slabs (k slices at a time) of the requested voxel type.
+    pub fn slabs<T: Voxel>(&self, k: usize) -> crate::iter::SlabIter<'_, T, Self> {
+        crate::iter::SlabIter::new(self, self.shape(), k)
+    }
+
+    /// Iterate over arbitrary blocks of the requested voxel type.
+    pub fn blocks<T: Voxel>(&self, chunk_shape: [usize; 3]) -> crate::iter::BlockIter<'_, T, Self> {
+        crate::iter::BlockIter::new(self, self.shape(), chunk_shape)
+    }
 
     /// Returns `true` if this is an uncompressed (plain) MRC file.
     pub fn is_plain(&self) -> bool {

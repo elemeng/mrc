@@ -1,16 +1,12 @@
 //! Memory-mapped MRC file reader with zero-copy API
 
 use crate::engine::block::{VolumeShape, VoxelBlock};
-use crate::engine::codec::{EndianCodec, decode_slice};
 use crate::engine::endian::FileEndian;
+use crate::iter::{BlockIter, SliceIter, SlabIter};
 use crate::mode::Voxel;
 use crate::{Error, Header, Mode};
 
 use std::vec::Vec;
-
-/// Iterator over slices yielding `f32` voxel blocks.
-#[cfg(feature = "mmap")]
-pub type MmapSliceIterF32<'a> = Box<dyn Iterator<Item = Result<VoxelBlock<f32>, Error>> + 'a>;
 
 /// Memory-mapped MRC file reader.
 ///
@@ -41,7 +37,6 @@ pub struct MmapReader {
     data_offset: usize,
     endian: FileEndian,
     shape: VolumeShape,
-    bytes_per_voxel: usize,
 }
 
 #[cfg(feature = "mmap")]
@@ -96,28 +91,32 @@ impl MmapReader {
         let shape =
             VolumeShape::new(header.nx as usize, header.ny as usize, header.nz as usize);
 
+        // Validate file size
+        let data_size = header.data_size().ok_or(Error::InvalidHeader)?;
+        let expected_size = header.data_offset()
+            .checked_add(data_size)
+            .ok_or(Error::InvalidHeader)?;
         if !permissive {
-            let expected_size = header.data_offset()
-                .checked_add(header.data_size().ok_or(Error::InvalidHeader)?)
-                .ok_or(Error::InvalidHeader)?;
             if mmap.len() != expected_size {
                 return Err(Error::FileSizeMismatch {
                     expected: expected_size,
                     actual: mmap.len(),
                 });
             }
+        } else if mmap.len() < header.data_offset() {
+            return Err(Error::FileSizeMismatch {
+                expected: header.data_offset(),
+                actual: mmap.len(),
+            });
         }
 
-        let mode = Mode::from_i32(header.mode).ok_or(Error::UnsupportedMode)?;
-        let bytes_per_voxel = mode.byte_size();
-
+        let _mode = Mode::from_i32(header.mode).ok_or(Error::UnsupportedMode)?;
         Ok((Self {
             mmap,
             header,
             data_offset: header.data_offset(),
             endian,
             shape,
-            bytes_per_voxel,
         }, warnings))
     }
 
@@ -142,29 +141,26 @@ impl MmapReader {
     }
 
     /// Get the extended header bytes, if any.
-    pub fn ext_header_bytes(&self) -> Result<&[u8], Error> {
+    pub fn ext_header_bytes(&self) -> &[u8] {
         let ext_size = self.header.nsymbt as usize;
         if ext_size == 0 {
-            return Ok(&[]);
+            return &[];
         }
         let end = 1024 + ext_size;
-        if end > self.mmap.len() {
-            return Err(Error::InvalidHeader);
-        }
-        Ok(&self.mmap[1024..end])
+        &self.mmap[1024..end]
     }
 
     /// Get the raw data bytes from the memory map.
     ///
     /// This returns a slice starting at the beginning of voxel data
     /// (after the header and extended header).
-    pub fn data_bytes(&self) -> Result<&[u8], Error> {
-        let data_size = self.header.data_size().ok_or(Error::InvalidHeader)?;
-        let end = self.data_offset.checked_add(data_size).ok_or(Error::InvalidHeader)?;
+    pub fn data_bytes(&self) -> &[u8] {
+        let data_size = self.header.data_size().unwrap_or(0);
+        let end = self.data_offset + data_size;
         if end > self.mmap.len() {
-            return Err(Error::InvalidHeader);
+            return &self.mmap[self.data_offset..];
         }
-        Ok(&self.mmap[self.data_offset..end])
+        &self.mmap[self.data_offset..end]
     }
 
     /// Cross-check header statistics against actual data.
@@ -176,38 +172,16 @@ impl MmapReader {
     /// # Errors
     /// Returns [`Error::StatsMismatch`] if any statistic deviates by more than 1 %.
     pub fn validate_header_stats(&self) -> Result<(), Error> {
-        let data_bytes = self.data_bytes()?;
-        crate::engine::stats::validate_header_stats(&self.header, data_bytes)
+        crate::engine::stats::validate_header_stats(&self.header, self.data_bytes())
     }
 
     /// Read a block of voxels as raw bytes from the mmap.
     pub fn read_block_bytes(&self, offset: [usize; 3], shape: [usize; 3]) -> Result<&[u8], Error> {
-        let [nx, ny, nz] = [self.shape.nx, self.shape.ny, self.shape.nz];
-        let [ox, oy, oz] = offset;
-        let [sx, sy, sz] = shape;
-
-        if ox + sx > nx || oy + sy > ny || oz + sz > nz {
-            return Err(Error::BoundsError);
-        }
-
-        if self.mode() == Mode::Packed4Bit {
-            return Err(Error::UnsupportedMode);
-        }
-
-        let linear = self.shape.checked_linear_index(offset).ok_or(Error::BoundsError)?;
-        let start_byte = self.data_offset.checked_add(
-            linear.checked_mul(self.bytes_per_voxel).ok_or(Error::BoundsError)?
-        ).ok_or(Error::BoundsError)?;
-        let count = sx.checked_mul(sy).and_then(|v| v.checked_mul(sz))
-            .ok_or(Error::BoundsError)?;
-        let byte_len = count.checked_mul(self.bytes_per_voxel).ok_or(Error::BoundsError)?;
-        let end_byte = start_byte.checked_add(byte_len).ok_or(Error::BoundsError)?;
-
-        if end_byte > self.mmap.len() {
-            return Err(Error::BoundsError);
-        }
-
-        Ok(&self.mmap[start_byte..end_byte])
+        let data_len = self.mmap.len().saturating_sub(self.data_offset);
+        let (start, end) = crate::reader_common::validate_block_read(
+            self.shape, self.mode(), data_len, offset, shape,
+        )?;
+        Ok(&self.mmap[self.data_offset + start..self.data_offset + end])
     }
 
     /// Read and decode a block of voxels to the specified type.
@@ -224,122 +198,47 @@ impl MmapReader {
     /// # Errors
     /// Returns `Error::ModeMismatch` if `T` does not match the file mode.
     pub(crate) fn decode_block<T: Voxel>(&self, bytes: &[u8]) -> Result<Vec<T>, Error> {
-        if T::MODE != self.mode() {
-            return Err(Error::ModeMismatch {
-                file_mode: self.mode(),
-                requested_mode: T::MODE,
-            });
-        }
-
-        if self.endian == FileEndian::native() {
-            self.decode_block_native_endian(bytes)
-        } else {
-            Ok(decode_slice(bytes, self.endian))
-        }
-    }
-
-    /// Native-endian decode: memcpy bytes directly to Vec<T>.
-    fn decode_block_native_endian<T: EndianCodec + Copy>(&self, bytes: &[u8]) -> Result<Vec<T>, Error> {
-        let n = bytes.len() / T::BYTE_SIZE;
-        let mut result = Vec::with_capacity(n);
-        unsafe {
-            core::ptr::copy_nonoverlapping(
-                bytes.as_ptr(),
-                result.as_mut_ptr() as *mut u8,
-                bytes.len(),
-            );
-            result.set_len(n);
-        }
-        Ok(result)
+        crate::reader_common::decode_block(bytes, self.mode(), self.endian)
     }
 
     /// Iterate over slices (Z axis).
-    pub fn slices<T: Voxel>(&self) -> MmapSliceIter<'_, T> {
-        MmapSliceIter::new(self, self.shape)
+    pub fn slices<T: Voxel>(&self) -> SliceIter<'_, T, Self> {
+        SliceIter::new(self, self.shape)
     }
 
     /// Iterate over slabs (k slices at a time).
-    pub fn slabs<T: Voxel>(&self, k: usize) -> MmapSlabIter<'_, T> {
-        MmapSlabIter::new(self, self.shape, k)
+    pub fn slabs<T: Voxel>(&self, k: usize) -> SlabIter<'_, T, Self> {
+        SlabIter::new(self, self.shape, k)
     }
 
     /// Iterate over arbitrary blocks.
-    pub fn blocks<T: Voxel>(&self, block_shape: [usize; 3]) -> MmapBlockIter<'_, T> {
-        MmapBlockIter::new(self, self.shape, block_shape)
+    pub fn blocks<T: Voxel>(&self, block_shape: [usize; 3]) -> BlockIter<'_, T, Self> {
+        BlockIter::new(self, self.shape, block_shape)
     }
 
     /// Iterate over slices, automatically converting common types to `f32`.
     ///
     /// Supported source modes: `Float32`, `Int16`, `Uint16`, `Int8`.
-    pub fn slices_f32(&self) -> Result<MmapSliceIterF32<'_>, Error> {
-        match self.mode() {
-            Mode::Float32 => Ok(Box::new(self.slices::<f32>() )),
-            Mode::Int16 => Ok(Box::new(self.slices::<i16>().map(|r| {
-                let b = r?;
-                let data = crate::engine::convert::convert_i16_slice_to_f32(&b.data);
-                Ok(VoxelBlock {
-                    offset: b.offset,
-                    shape: b.shape,
-                    data,
-                })
-            }))),
-            Mode::Uint16 => Ok(Box::new(self.slices::<u16>().map(|r| {
-                let b = r?;
-                let data = crate::engine::convert::convert_u16_slice_to_f32(&b.data);
-                Ok(VoxelBlock {
-                    offset: b.offset,
-                    shape: b.shape,
-                    data,
-                })
-            }))),
-            Mode::Int8 => Ok(Box::new(self.slices::<i8>().map(|r| {
-                let b = r?;
-                let data = crate::engine::convert::convert_i8_slice_to_f32(&b.data);
-                Ok(VoxelBlock {
-                    offset: b.offset,
-                    shape: b.shape,
-                    data,
-                })
-            }))),
-            _ => Err(Error::UnsupportedMode),
-        }
+    pub fn slices_f32(&self) -> Result<crate::SliceIterF32<'_>, Error> {
+        crate::reader_common::slices_f32(
+            self.shape,
+            self.mode(),
+            self.endian,
+            |offset, shape| self.read_block_bytes(offset, shape).map(|b| b.to_vec()),
+        )
     }
 
     /// Iterate over slabs, automatically converting common types to `f32`.
     ///
     /// Supported source modes: `Float32`, `Int16`, `Uint16`, `Int8`.
-    pub fn slabs_f32(&self, k: usize) -> Result<MmapSliceIterF32<'_>, Error> {
-        match self.mode() {
-            Mode::Float32 => Ok(Box::new(self.slabs::<f32>(k) )),
-            Mode::Int16 => Ok(Box::new(self.slabs::<i16>(k).map(|r| {
-                let b = r?;
-                let data = crate::engine::convert::convert_i16_slice_to_f32(&b.data);
-                Ok(VoxelBlock {
-                    offset: b.offset,
-                    shape: b.shape,
-                    data,
-                })
-            }))),
-            Mode::Uint16 => Ok(Box::new(self.slabs::<u16>(k).map(|r| {
-                let b = r?;
-                let data = crate::engine::convert::convert_u16_slice_to_f32(&b.data);
-                Ok(VoxelBlock {
-                    offset: b.offset,
-                    shape: b.shape,
-                    data,
-                })
-            }))),
-            Mode::Int8 => Ok(Box::new(self.slabs::<i8>(k).map(|r| {
-                let b = r?;
-                let data = crate::engine::convert::convert_i8_slice_to_f32(&b.data);
-                Ok(VoxelBlock {
-                    offset: b.offset,
-                    shape: b.shape,
-                    data,
-                })
-            }))),
-            _ => Err(Error::UnsupportedMode),
-        }
+    pub fn slabs_f32(&self, k: usize) -> Result<crate::SliceIterF32<'_>, Error> {
+        crate::reader_common::slabs_f32(
+            self.shape,
+            self.mode(),
+            self.endian,
+            k,
+            |offset, shape| self.read_block_bytes(offset, shape).map(|b| b.to_vec()),
+        )
     }
 
     /// Iterate over slices, automatically converting Mode 6 (`Uint16`) to `u8`.
@@ -437,212 +336,4 @@ impl MmapReader {
     }
 }
 
-// ============================================================================
-// MmapReader Iterators
-// ============================================================================
 
-/// Slice iterator for MmapReader.
-#[derive(Debug)]
-pub struct MmapSliceIter<'a, T> {
-    reader: &'a MmapReader,
-    z: usize,
-    nz: usize,
-    nx: usize,
-    ny: usize,
-    _phantom: core::marker::PhantomData<T>,
-}
-
-impl<'a, T> MmapSliceIter<'a, T> {
-    pub fn new(reader: &'a MmapReader, shape: VolumeShape) -> Self {
-        Self {
-            reader,
-            z: 0,
-            nz: shape.nz,
-            nx: shape.nx,
-            ny: shape.ny,
-            _phantom: core::marker::PhantomData,
-        }
-    }
-}
-
-impl<'a, T> Iterator for MmapSliceIter<'a, T>
-where
-    T: Voxel,
-{
-    type Item = Result<VoxelBlock<T>, Error>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.z >= self.nz {
-            return None;
-        }
-
-        let z = self.z;
-        self.z += 1;
-
-        let offset = [0, 0, z];
-        let shape = [self.nx, self.ny, 1];
-
-        match self.reader.read_block_bytes(offset, shape) {
-            Ok(bytes) => {
-                match self.reader.decode_block::<T>(bytes) {
-                    Ok(data) => Some(Ok(VoxelBlock { offset, shape, data })),
-                    Err(e) => Some(Err(e)),
-                }
-            }
-            Err(e) => Some(Err(e)),
-        }
-    }
-
-    fn nth(&mut self, n: usize) -> Option<Self::Item> {
-        self.z = self.z.saturating_add(n);
-        self.next()
-    }
-
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        let remaining = self.nz.saturating_sub(self.z);
-        (remaining, Some(remaining))
-    }
-}
-
-impl<'a, T> ExactSizeIterator for MmapSliceIter<'a, T> where T: Voxel {}
-impl<'a, T> core::iter::FusedIterator for MmapSliceIter<'a, T> where T: Voxel {}
-
-/// Slab iterator for MmapReader.
-#[derive(Debug)]
-pub struct MmapSlabIter<'a, T> {
-    reader: &'a MmapReader,
-    z: usize,
-    nz: usize,
-    nx: usize,
-    ny: usize,
-    slab_size: usize,
-    _phantom: core::marker::PhantomData<T>,
-}
-
-impl<'a, T> MmapSlabIter<'a, T> {
-    pub fn new(reader: &'a MmapReader, shape: VolumeShape, k: usize) -> Self {
-        Self {
-            reader,
-            z: 0,
-            nz: shape.nz,
-            nx: shape.nx,
-            ny: shape.ny,
-            slab_size: k.max(1),
-            _phantom: core::marker::PhantomData,
-        }
-    }
-}
-
-impl<'a, T> Iterator for MmapSlabIter<'a, T>
-where
-    T: Voxel,
-{
-    type Item = Result<VoxelBlock<T>, Error>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.z >= self.nz {
-            return None;
-        }
-
-        let z = self.z;
-        let size = self.slab_size.min(self.nz - z);
-        self.z += size;
-
-        let offset = [0, 0, z];
-        let shape = [self.nx, self.ny, size];
-
-        match self.reader.read_block_bytes(offset, shape) {
-            Ok(bytes) => {
-                match self.reader.decode_block::<T>(bytes) {
-                    Ok(data) => Some(Ok(VoxelBlock { offset, shape, data })),
-                    Err(e) => Some(Err(e)),
-                }
-            }
-            Err(e) => Some(Err(e)),
-        }
-    }
-
-    fn nth(&mut self, n: usize) -> Option<Self::Item> {
-        self.z = self.z.saturating_add(n.saturating_mul(self.slab_size));
-        self.next()
-    }
-
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        let remaining = self.nz.saturating_sub(self.z);
-        let count = remaining.div_ceil(self.slab_size);
-        (count, Some(count))
-    }
-}
-
-impl<'a, T> ExactSizeIterator for MmapSlabIter<'a, T> where T: Voxel {}
-impl<'a, T> core::iter::FusedIterator for MmapSlabIter<'a, T> where T: Voxel {}
-
-/// Block iterator for MmapReader.
-#[derive(Debug)]
-pub struct MmapBlockIter<'a, T> {
-    reader: &'a MmapReader,
-    position: [usize; 3],
-    shape: VolumeShape,
-    block_shape: [usize; 3],
-    _phantom: core::marker::PhantomData<T>,
-}
-
-impl<'a, T> MmapBlockIter<'a, T> {
-    pub fn new(reader: &'a MmapReader, shape: VolumeShape, block_shape: [usize; 3]) -> Self {
-        assert!(block_shape[0] > 0 && block_shape[1] > 0 && block_shape[2] > 0, "block_shape must be positive in all dimensions");
-        Self {
-            reader,
-            position: [0, 0, 0],
-            shape,
-            block_shape,
-            _phantom: core::marker::PhantomData,
-        }
-    }
-}
-
-impl<'a, T> Iterator for MmapBlockIter<'a, T>
-where
-    T: Voxel,
-{
-    type Item = Result<VoxelBlock<T>, Error>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let [nx, ny, nz] = [self.shape.nx, self.shape.ny, self.shape.nz];
-        let [bx, by, bz] = self.block_shape;
-        let [px, py, pz] = self.position;
-
-        if pz >= nz {
-            return None;
-        }
-
-        let sx = bx.min(nx - px);
-        let sy = by.min(ny - py);
-        let sz = bz.min(nz - pz);
-
-        // Update position for next iteration
-        self.position[0] += bx;
-        if self.position[0] >= nx {
-            self.position[0] = 0;
-            self.position[1] += by;
-            if self.position[1] >= ny {
-                self.position[1] = 0;
-                self.position[2] += bz;
-            }
-        }
-
-        let offset = [px, py, pz];
-        let shape = [sx, sy, sz];
-
-        match self.reader.read_block_bytes(offset, shape) {
-            Ok(bytes) => {
-                match self.reader.decode_block::<T>(bytes) {
-                    Ok(data) => Some(Ok(VoxelBlock { offset, shape, data })),
-                    Err(e) => Some(Err(e)),
-                }
-            }
-            Err(e) => Some(Err(e)),
-        }
-    }
-}
-
-impl<'a, T> core::iter::FusedIterator for MmapBlockIter<'a, T> where T: Voxel {}
