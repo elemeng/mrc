@@ -144,6 +144,15 @@ impl Float32Complex {
     }
 }
 
+/// 4-bit data packed two values per byte (mode 101).
+///
+/// # Nibble ordering
+/// The MRC2014 specification does not explicitly define which nibble comes
+/// first. This implementation follows the de-facto convention used by CCP4,
+/// IMOD and other major packages:
+///
+/// * **low nibble** (`bits 0–3`) → first voxel
+/// * **high nibble** (`bits 4–7`) → second voxel
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct Packed4Bit(pub(crate) u8);
 
@@ -153,10 +162,12 @@ impl Packed4Bit {
         Self(value)
     }
 
+    /// First voxel stored in the low nibble (bits 0–3).
     pub fn first(&self) -> u8 {
         self.0 & 0x0F
     }
 
+    /// Second voxel stored in the high nibble (bits 4–7).
     pub fn second(&self) -> u8 {
         (self.0 >> 4) & 0x0F
     }

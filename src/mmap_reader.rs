@@ -59,9 +59,7 @@ impl MmapReader {
 
         let header = Header::decode_from_bytes(&header_bytes);
 
-        if !header.validate() {
-            return Err(Error::InvalidHeader);
-        }
+        header.validate_detailed()?;
 
         // Map the entire file
         let mmap = unsafe {
@@ -167,9 +165,6 @@ impl MmapReader {
     ///
     /// Returns an error if `T` does not match the file's voxel mode.
     pub fn read_block<T: Voxel>(&self, offset: [usize; 3], shape: [usize; 3]) -> Result<VoxelBlock<T>, Error> {
-        if T::MODE == Mode::Packed4Bit {
-            return Err(Error::UnsupportedMode);
-        }
         let bytes = self.read_block_bytes(offset, shape)?;
         let data = self.decode_block::<T>(bytes)?;
         Ok(VoxelBlock { offset, shape, data })

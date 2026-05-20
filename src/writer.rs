@@ -69,9 +69,7 @@ impl Writer {
         // New files are always little-endian per crate policy
         header.set_file_endian(FileEndian::LittleEndian);
 
-        if !header.validate() {
-            return Err(Error::InvalidHeader);
-        }
+        header.validate_detailed()?;
 
         let mut file = std::fs::File::create(path)?;
 
@@ -285,9 +283,7 @@ impl MmapWriter {
         // New files are always little-endian per crate policy
         header.set_file_endian(FileEndian::LittleEndian);
 
-        if !header.validate() {
-            return Err(Error::InvalidHeader);
-        }
+        header.validate_detailed()?;
 
         let total_size = header.data_offset()
             .checked_add(header.data_size().ok_or(Error::InvalidHeader)?)
@@ -305,6 +301,15 @@ impl MmapWriter {
         let mut header_bytes = [0u8; 1024];
         header.encode_to_bytes(&mut header_bytes);
         file.write_all(&header_bytes)?;
+
+        // Explicitly zero the extended header region so the mmap does not see
+        // uninitialised bytes (the data region is implicitly zero because the
+        // file was truncated before set_len).
+        let ext_size = header.nsymbt as usize;
+        if ext_size > 0 {
+            let zeros = vec![0u8; ext_size];
+            file.write_all(&zeros)?;
+        }
 
         let mmap = unsafe {
             memmap2::MmapOptions::new()
