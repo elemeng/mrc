@@ -48,6 +48,9 @@ mod mmap_reader;
 #[cfg(feature = "gzip")]
 mod gzip;
 
+#[cfg(feature = "bzip2")]
+mod bzip2mrc;
+
 mod fei;
 
 mod engine;
@@ -82,6 +85,9 @@ pub use mmap_reader::{MmapReader, MmapSliceIterF32, MmapBlockIter, MmapSliceIter
 
 #[cfg(feature = "gzip")]
 pub use gzip::{GzipReader, GzipWriter};
+
+#[cfg(feature = "bzip2")]
+pub use bzip2mrc::{Bzip2Reader, Bzip2Writer};
 
 pub use fei::{Fei1Metadata, Fei2Metadata, parse_fei1_records, parse_fei2_records, FEI1_RECORD_SIZE, FEI2_RECORD_SIZE};
 
