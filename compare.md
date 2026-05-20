@@ -10,7 +10,7 @@
 |-----------|--------|-----|
 | **User Experience** | 🐍 Python `mrcfile` | Deep NumPy integration, mature convenience API, automatic edge-case handling, and a larger community make it far more ergonomic for day-to-day scientific computing. |
 | **Performance** | 🦀 Rust `mrc` | Zero-copy fast paths, SIMD-accelerated type conversion, parallel encoding, no GIL, and explicit memory control give it a decisive edge in throughput and memory efficiency. |
-| **MRC-2014 Compliance** | 🐍 Python `mrcfile` | More exhaustive validation (stats cross-checks, label sequence validation, file-size checks, `nversion` enforcement) and richer extended-header support (full FEI1/FEI2 dtypes). |
+| **MRC-2014 Compliance** | 🐍 Python `mrcfile` (narrowly) | Python has stats cross-checks and full 185-field FEI extended-header dtypes. Rust now matches Python on label sequence validation, file-size checks, `nversion` enforcement, volume stack validation, and byte-order fallback. |
 
 Both implementations are **high-quality**. The choice between them is primarily a choice of ecosystem: Python for exploratory data analysis and prototyping; Rust for production pipelines, embedded tools, and performance-critical workflows.
 
@@ -35,9 +35,9 @@ NumPy is the *lingua franca* of cryo-EM data. Being able to write `mrc.data.mean
 
 | Feature | Python `mrcfile` | Rust `mrc` | Notes |
 |---------|------------------|------------|-------|
-| **Auto-compression detection** | ✅ `open()` peeks magic bytes (`\x1f\x8b`, `BZ`) | ❌ Caller must choose `Reader`, `GzipReader`, or `Bzip2Reader` | Python is seamless; Rust is explicit |
-| **Auto `ispg` / shape heuristics** | ✅ `set_data()` infers image stack vs volume vs volume stack | ❌ Manual `ispg` and `mz` management | Python saves users from MRC arcana |
-| **Voxel size helpers** | ✅ `voxel_size` property (computes `cella / mxyz`) | ❌ Manual `xlen / mx` division | Small but frequent operation |
+| **Auto-compression detection** | ✅ `open()` peeks magic bytes (`\x1f\x8b`, `BZ`) | ✅ `MrcReader::open()` auto-detects; `detect_compression()` helper exposed | Now equivalent |
+| **Auto `ispg` / shape heuristics** | ✅ `set_data()` infers image stack vs volume vs volume stack | ✅ `set_image_stack()`, `set_volume()`, `set_volume_stack()` helpers | Python is automatic; Rust is explicit but convenient |
+| **Voxel size helpers** | ✅ `voxel_size` property (computes `cella / mxyz`) | ✅ `voxel_size()` and `nstart()` methods | Now equivalent |
 | **Label management** | ✅ `get_labels()`, `add_label()` with ASCII filtering | ✅ `get_labels()`, `add_label()` (added recently) | Now roughly equivalent |
 | **Context manager** | ✅ `with mrcfile.open(...) as mrc:` | ❌ Manual `drop` / no RAII sugar | Python's `with` is idiomatic |
 | **Async open** | ⚠️ `open_async()` (thread-based, crude) | ❌ Not implemented | Both are weak; Python's is barely usable |
@@ -49,10 +49,10 @@ NumPy is the *lingua franca* of cryo-EM data. Being able to write `mrc.data.mean
 
 | Aspect | Python `mrcfile` | Rust `mrc` |
 |--------|------------------|------------|
-| **Strict validation** | `validate()` runs ~10 checks including stats accuracy (`np.isclose`) | `validate_detailed()` checks dimensions, mode, map, axis mapping, etc. | Python is more exhaustive |
+| **Strict validation** | `validate()` runs ~10 checks including stats accuracy (`np.isclose`) | `validate_detailed()` + `validate_header_stats()` with 1 % tolerance | Now equivalent |
 | **Permissive mode** | ✅ `permissive=True` with `warnings` module integration | ✅ `open_permissive()` returns `(Reader, Vec<String>)` | Roughly equivalent; Python uses global warning registry, Rust uses explicit return values |
 | **Error clarity** | Python tracebacks with full context | Typed `Error` enum with `thiserror` messages | Rust's types are better for programmatic handling; Python's tracebacks are better for interactive debugging |
-| **Byte-order recovery** | ✅ Tries opposite endian if mode invalid | ❌ No fallback | Python is more robust for malformed files |
+| **Byte-order recovery** | ✅ Tries opposite endian if mode invalid | ✅ `decode_from_bytes_with_info()` auto-flips + returns warning | Now equivalent |
 
 **Verdict**: **Python wins for interactive debugging**; **Rust wins for production reliability**.
 
@@ -144,10 +144,10 @@ NumPy is the *lingua franca* of cryo-EM data. Being able to write `mrc.data.mean
 | **Extended header (raw)** | ✅ `extended_header` void array | ✅ `ExtHeader` / `ExtHeaderMut` | Equivalent |
 | **Extended header (FEI1/FEI2)** | ✅ Full 185-field numpy dtype with mixed endianness | ✅ `Fei1Metadata` / `Fei2Metadata` with ~40 common fields | Python covers more fields; Rust covers the most common cryo-EM metadata |
 | **Extended header (CCP4/SERI/AGAR/HDF5)** | ⚠️ Recognised `exttyp`, no structured parser | ❌ Not implemented | Both are limited |
-| **Validation depth** | 10+ checks + stats cross-check | 10+ checks (recently added file size, nversion, volume stack) | Python still validates stats accuracy and label gaps, which Rust does not |
-| **MACHST handling** | `0x44 0x44`, `0x44 0x41`, `0x11 0x11` + endian fallback | `0x44 0x44`, `0x11 0x11` | Python is more robust for unusual stamps |
-| **Label validation** | `nlabl` matches actual labels, no gaps | `0 <= nlabl <= 10` | Python is stricter |
-| **uint8 handling** | Auto-widens to `uint16` (mode 6) | Not supported as a `Voxel` type | Neither has native uint8; Python auto-converts |
+| **Validation depth** | 10+ checks + stats cross-check | 10+ checks + stats cross-check (`validate_header_stats()`) + file size + label gaps + volume stack + sampling | Now equivalent |
+| **MACHST handling** | `0x44 0x44`, `0x44 0x41`, `0x11 0x11` + endian fallback | `0x44 0x44`, `0x44 0x41`, `0x11 0x11` + endian fallback | Now equivalent |
+| **Label validation** | `nlabl` matches actual labels, no gaps | `nlabl` matches actual labels, no gaps, ASCII filtering, FIFO eviction | Now equivalent |
+| **uint8 handling** | Auto-widens to `uint16` (mode 6) | ✅ `write_u8_block()` auto-widens; `slices_u8()` narrows on read | Now equivalent |
 
 **Verdict**: **Python is more compliant and exhaustive** for validation and metadata coverage. **Rust is more complete for data-mode support** (modes 3 and 101).
 
@@ -193,9 +193,9 @@ Python's GIL and memory overhead make it a poor choice for high-concurrency I/O.
 
 ### 5.4 "I need to validate a large archive of MRC files for compliance"
 
-**Winner: Python**
+**Winner: Tie**
 
-Python's `mrcfile.validator` cross-checks data statistics against header values, validates label sequences, and catches subtle non-compliance that Rust's validator currently skips.
+Both libraries cross-check data statistics against header values (`validate_header_stats()` in Rust, `np.isclose` in Python), validate label sequences, file sizes, volume stack divisibility, and nversion compliance. Rust's `mrc-validate` CLI tool and `open_permissive()` mode collect all issues as structured warnings with non-zero exit codes, making it ideal for CI/CD batch validation. Python's interactive validator is better for one-off manual inspection.
 
 ---
 
@@ -206,7 +206,7 @@ Python's `mrcfile.validator` cross-checks data statistics against header values,
 | Interactive analysis, prototyping, plotting | 🐍 Python `mrcfile` |
 | Production pipelines, web services, CLI tools | 🦀 Rust `mrc` |
 | High-throughput batch conversion (i16→f32, etc.) | 🦀 Rust `mrc` |
-| Compliance validation, metadata inspection | 🐍 Python `mrcfile` |
+| Compliance validation, metadata inspection | Tie | Both have stats cross-check, label validation, file-size checks, and permissive modes |
 | Embedding in existing Python workflows | 🐍 Python `mrcfile` (until PyO3 bindings exist) |
 | Embedding in Rust/C++ applications | 🦀 Rust `mrc` |
 
@@ -262,7 +262,7 @@ If the mode number is garbage under the detected endianness, Python **re-interpr
 
 **Why this matters:** Real-world MRC files exist where the machine stamp is wrong but the rest of the file is correctly encoded in the opposite endianness. Python can open these; Rust cannot.
 
-**Rust's approach:** No fallback. Once `FileEndian::from_machst()` returns a value, that value is used for the entire file. If the mode number is invalid under that endianness, `validate_detailed()` returns `UnsupportedMode` and the open fails.
+**Rust's approach:** `Header::decode_from_bytes_with_info()` detects endianness from MACHST, then checks if the mode is valid. If not, it re-decodes the entire header under the opposite endianness. If that yields a valid mode, it proceeds with the opposite endianness and returns a warning string.
 
 **Verdict:** **Tie for robustness; Rust wins for explicitness.** Both libraries now silently correct the byte order when the MACHST is wrong but the data is self-consistent. Rust additionally returns the correction as a structured warning string rather than a global `RuntimeWarning`, making it easier to handle programmatically.
 
