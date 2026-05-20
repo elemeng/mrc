@@ -10,31 +10,35 @@
 //!
 //! # Quick Example
 //!
-//! ```ignore
-//! use mrc::{Reader, create, VoxelBlock};
+//! ```no_run
+//! use mrc::{open, create, VoxelBlock};
 //!
-//! // Reading
-//! let reader = Reader::open("protein.mrc")?;
-//! for slice in reader.slices::<f32>() {
-//!     let block = slice?;
-//!     // block.data is Vec<f32>
+//! fn main() -> Result<(), Box<dyn std::error::Error>> {
+//!     // Reading (auto-detects gzip/bzip2)
+//!     let reader = open("protein.mrc")?;
+//!     for slice in reader.slices_f32()? {
+//!         let block = slice?;
+//!         // block.data is Vec<f32>
+//!     }
+//!
+//!     // Writing
+//!     let mut writer = create("output.mrc")
+//!         .shape([512, 512, 256])
+//!         .mode::<f32>()
+//!         .finish()?;
+//!     writer.write_block(&VoxelBlock::new(
+//!         [0, 0, 0],
+//!         [512, 512, 1],
+//!         vec![0.0f32; 512 * 512],
+//!     ))?;
+//!     writer.finalize()?;
+//!     Ok(())
 //! }
-//!
-//! // Writing
-//! let mut writer = create("output.mrc")
-//!     .shape([512, 512, 256])
-//!     .mode::<f32>()
-//!     .finish()?;
-//! writer.write_block(&VoxelBlock::new(
-//!     [0, 0, 0],
-//!     [512, 512, 1],
-//!     vec![0.0f32; 512 * 512],
-//! ))?;
-//! writer.finalize()?;
 //! ```
 
 #![cfg_attr(feature = "f16", feature(f16))]
 
+mod any_reader;
 mod error;
 mod header;
 mod iter;
@@ -64,8 +68,9 @@ pub use engine::codec::EndianCodec;
 
 // Re-export MRC-specific format utilities
 pub use engine::convert::{
-    reinterpret_m0, unpack_u4_bytes_to_f32, unpack_u4_bytes_to_u16, unpack_u4_to_f32,
-    unpack_u4_to_i8, unpack_u4_to_u16,
+    convert_u16_slice_to_u8, convert_u8_slice_to_u16, reinterpret_m0,
+    unpack_u4_bytes_to_f32, unpack_u4_bytes_to_u16, unpack_u4_to_f32, unpack_u4_to_i8,
+    unpack_u4_to_u16,
 };
 
 pub use error::{Error, HeaderValidationError};
@@ -91,9 +96,11 @@ pub use bzip2mrc::{Bzip2Reader, Bzip2Writer};
 
 pub use fei::{Fei1Metadata, Fei2Metadata, parse_fei1_records, parse_fei2_records, FEI1_RECORD_SIZE, FEI2_RECORD_SIZE};
 
-/// Open an MRC file for reading.
-pub fn open<P: AsRef<std::path::Path>>(path: P) -> Result<Reader, Error> {
-    Reader::open(path)
+pub use any_reader::{CompressionType, MrcReader, detect_compression};
+
+/// Open an MRC file for reading, auto-detecting gzip or bzip2 compression.
+pub fn open<P: AsRef<std::path::Path>>(path: P) -> Result<MrcReader, Error> {
+    MrcReader::open(path)
 }
 
 /// Create a new MRC file for writing.

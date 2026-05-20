@@ -18,16 +18,19 @@ pub type MmapSliceIterF32<'a> = Box<dyn Iterator<Item = Result<VoxelBlock<f32>, 
 /// This is ideal for reading large files that don't fit in RAM, as the OS handles paging.
 ///
 /// # Example
-/// ```ignore
+/// ```no_run
 /// use mrc::MmapReader;
 ///
-/// let reader = MmapReader::open("large_file.mrc")?;
-/// println!("Dimensions: {:?}", reader.shape());
+/// fn main() -> Result<(), Box<dyn std::error::Error>> {
+///     let reader = MmapReader::open("large_file.mrc")?;
+///     println!("Dimensions: {:?}", reader.shape());
 ///
-/// // Iterate over slices with zero-copy when file type matches
-/// for slice in reader.slices::<f32>() {
-///     let block = slice?;
-///     // process block.data
+///     // Iterate over slices with zero-copy when file type matches
+///     for slice in reader.slices::<f32>() {
+///         let block = slice?;
+///         // process block.data
+///     }
+///     Ok(())
 /// }
 /// ```
 #[cfg(feature = "mmap")]
@@ -162,6 +165,19 @@ impl MmapReader {
             return Err(Error::InvalidHeader);
         }
         Ok(&self.mmap[self.data_offset..end])
+    }
+
+    /// Cross-check header statistics against actual data.
+    ///
+    /// Computes `dmin`, `dmax`, `dmean` and `rms` from the memory-mapped data
+    /// block and compares them with the header values using a 1 % relative
+    /// tolerance (matching Python `mrcfile`'s `np.isclose(rtol=0.01)`).
+    ///
+    /// # Errors
+    /// Returns [`Error::StatsMismatch`] if any statistic deviates by more than 1 %.
+    pub fn validate_header_stats(&self) -> Result<(), Error> {
+        let data_bytes = self.data_bytes()?;
+        crate::engine::stats::validate_header_stats(&self.header, data_bytes)
     }
 
     /// Read a block of voxels as raw bytes from the mmap.
@@ -324,6 +340,31 @@ impl MmapReader {
             }))),
             _ => Err(Error::UnsupportedMode),
         }
+    }
+
+    /// Iterate over slices, automatically converting Mode 6 (`Uint16`) to `u8`.
+    ///
+    /// Returns an error if the file is not Mode 6 or if any value exceeds 255.
+    pub fn slices_u8(&self) -> Result<impl Iterator<Item = Result<VoxelBlock<u8>, Error>> + '_, Error> {
+        if self.mode() != Mode::Uint16 {
+            return Err(Error::ModeMismatch {
+                file_mode: self.mode(),
+                requested_mode: Mode::Uint16,
+            });
+        }
+        let nx = self.shape.nx;
+        let ny = self.shape.ny;
+        let nz = self.shape.nz;
+        Ok((0..nz).map(move |z| {
+            let bytes = self.read_block_bytes([0, 0, z], [nx, ny, 1])?;
+            let u16_data = self.decode_block::<u16>(bytes)?;
+            let u8_data = crate::engine::convert::convert_u16_slice_to_u8(&u16_data)?;
+            Ok(VoxelBlock {
+                offset: [0, 0, z],
+                shape: [nx, ny, 1],
+                data: u8_data,
+            })
+        }))
     }
 
     /// Iterate over slices for Mode 0 (8-bit) files with signed/unsigned interpretation.

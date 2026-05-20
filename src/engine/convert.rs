@@ -626,3 +626,67 @@ mod tests {
         assert!((phase - 0.9272952).abs() < 1e-6);
     }
 }
+
+// ============================================================================
+// u8 → u16 widening (Mode 6 convenience)
+// ============================================================================
+
+/// Widen a `u8` slice to `u16` for writing as Mode 6 (Uint16).
+///
+/// This matches Python `mrcfile`'s behaviour when given `np.uint8` data:
+/// the data is automatically widened to `uint16` (mode 6) because MRC-2014
+/// does not define a native unsigned 8-bit mode.
+pub fn convert_u8_slice_to_u16(src: &[u8]) -> Vec<u16> {
+    src.iter().map(|&v| v as u16).collect()
+}
+
+/// Narrow a `u16` slice to `u8`, returning `Err` if any value exceeds 255.
+///
+/// This is the reverse of [`convert_u8_slice_to_u16`] and is used when
+/// reading a Mode 6 file that was originally created from `u8` data.
+pub fn convert_u16_slice_to_u8(src: &[u16]) -> Result<Vec<u8>, crate::Error> {
+    let mut out = Vec::with_capacity(src.len());
+    for &v in src {
+        if v > 255 {
+            return Err(crate::Error::TypeMismatch {
+                expected: 1,
+                actual: 2,
+            });
+        }
+        out.push(v as u8);
+    }
+    Ok(out)
+}
+
+#[cfg(test)]
+mod u8_tests {
+    use super::*;
+
+    #[test]
+    fn test_convert_u8_to_u16() {
+        let src: Vec<u8> = vec![0, 1, 127, 128, 255];
+        let dst = convert_u8_slice_to_u16(&src);
+        assert_eq!(dst, vec![0u16, 1, 127, 128, 255]);
+    }
+
+    #[test]
+    fn test_convert_u16_to_u8_ok() {
+        let src: Vec<u16> = vec![0, 1, 127, 128, 255];
+        let dst = convert_u16_slice_to_u8(&src).unwrap();
+        assert_eq!(dst, vec![0u8, 1, 127, 128, 255]);
+    }
+
+    #[test]
+    fn test_convert_u16_to_u8_overflow() {
+        let src: Vec<u16> = vec![0, 256];
+        assert!(convert_u16_slice_to_u8(&src).is_err());
+    }
+
+    #[test]
+    fn test_u8_roundtrip() {
+        let original: Vec<u8> = (0..=255).collect();
+        let widened = convert_u8_slice_to_u16(&original);
+        let narrowed = convert_u16_slice_to_u8(&widened).unwrap();
+        assert_eq!(original, narrowed);
+    }
+}

@@ -30,6 +30,18 @@ pub struct GzipReader {
 impl GzipReader {
     /// Open a gzip-compressed MRC file.
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self, Error> {
+        Self::_open(path, false).map(|(r, _)| r)
+    }
+
+    /// Open a gzip-compressed MRC file in **permissive** mode.
+    ///
+    /// Non-fatal header issues are collected as warning strings instead of
+    /// causing hard errors.
+    pub fn open_permissive<P: AsRef<Path>>(path: P) -> Result<(Self, Vec<String>), Error> {
+        Self::_open(path, true)
+    }
+
+    fn _open<P: AsRef<Path>>(path: P, permissive: bool) -> Result<(Self, Vec<String>), Error> {
         let file = File::open(path)?;
         let mut decoder = flate2::read::GzDecoder::new(file);
         let mut buf = Vec::new();
@@ -41,17 +53,35 @@ impl GzipReader {
 
         let mut header_bytes = [0u8; 1024];
         header_bytes.copy_from_slice(&buf[..1024]);
-        let header = Header::decode_from_bytes(&header_bytes);
-        header.validate_detailed()?;
+        let (header, endian_warning) = Header::decode_from_bytes_with_info(&header_bytes);
+
+        let mut warnings = if permissive {
+            header.validate_permissive().map_err(Error::InvalidHeaderDetailed)?
+        } else {
+            header.validate_detailed().map_err(Error::InvalidHeaderDetailed)?;
+            Vec::new()
+        };
+
+        if let Some(msg) = endian_warning {
+            warnings.push(msg.to_string());
+        }
 
         let data_size = header.data_size().ok_or(Error::InvalidHeader)?;
         let ext_size = header.nsymbt as usize;
 
-        if buf.len() != 1024 + ext_size + data_size {
-            return Err(Error::FileSizeMismatch {
-                expected: 1024 + ext_size + data_size,
-                actual: buf.len(),
-            });
+        if !permissive {
+            if buf.len() != 1024 + ext_size + data_size {
+                return Err(Error::FileSizeMismatch {
+                    expected: 1024 + ext_size + data_size,
+                    actual: buf.len(),
+                });
+            }
+        } else if buf.len() != 1024 + ext_size + data_size {
+            warnings.push(format!(
+                "File size mismatch: expected {} bytes, got {}",
+                1024 + ext_size + data_size,
+                buf.len()
+            ));
         }
 
         let ext_header = buf[1024..1024 + ext_size].to_vec();
@@ -60,13 +90,13 @@ impl GzipReader {
         let endian = header.detect_endian();
         let shape = VolumeShape::new(header.nx as usize, header.ny as usize, header.nz as usize);
 
-        Ok(Self {
+        Ok((Self {
             header,
             ext_header,
             data,
             endian,
             shape,
-        })
+        }, warnings))
     }
 
     pub fn shape(&self) -> VolumeShape {
@@ -181,6 +211,72 @@ impl GzipReader {
         }
     }
 
+    /// Iterate over slabs, automatically converting common types to `f32`.
+    ///
+    /// Supported source modes: `Float32`, `Int16`, `Uint16`, `Int8`.
+    pub fn slabs_f32(&self, k: usize) -> Result<Box<dyn Iterator<Item = Result<VoxelBlock<f32>, Error>> + '_>, Error> {
+        use crate::engine::block::VoxelBlock;
+        let nx = self.shape.nx;
+        let ny = self.shape.ny;
+        let nz = self.shape.nz;
+        let k = k.max(1);
+        match self.mode() {
+            Mode::Float32 => Ok(Box::new((0..nz).step_by(k).map(move |z| {
+                let sz = k.min(nz - z);
+                let bytes = self.read_block_bytes([0, 0, z], [nx, ny, sz])?;
+                let data = self.decode_block::<f32>(&bytes)?;
+                Ok(VoxelBlock { offset: [0, 0, z], shape: [nx, ny, sz], data })
+            }))),
+            Mode::Int16 => Ok(Box::new((0..nz).step_by(k).map(move |z| {
+                let sz = k.min(nz - z);
+                let bytes = self.read_block_bytes([0, 0, z], [nx, ny, sz])?;
+                let data = self.decode_block::<i16>(&bytes)?;
+                let data = crate::engine::convert::convert_i16_slice_to_f32(&data);
+                Ok(VoxelBlock { offset: [0, 0, z], shape: [nx, ny, sz], data })
+            }))),
+            Mode::Uint16 => Ok(Box::new((0..nz).step_by(k).map(move |z| {
+                let sz = k.min(nz - z);
+                let bytes = self.read_block_bytes([0, 0, z], [nx, ny, sz])?;
+                let data = self.decode_block::<u16>(&bytes)?;
+                let data = crate::engine::convert::convert_u16_slice_to_f32(&data);
+                Ok(VoxelBlock { offset: [0, 0, z], shape: [nx, ny, sz], data })
+            }))),
+            Mode::Int8 => Ok(Box::new((0..nz).step_by(k).map(move |z| {
+                let sz = k.min(nz - z);
+                let bytes = self.read_block_bytes([0, 0, z], [nx, ny, sz])?;
+                let data = self.decode_block::<i8>(&bytes)?;
+                let data = crate::engine::convert::convert_i8_slice_to_f32(&data);
+                Ok(VoxelBlock { offset: [0, 0, z], shape: [nx, ny, sz], data })
+            }))),
+            _ => Err(Error::UnsupportedMode),
+        }
+    }
+
+    /// Iterate over slices, automatically converting Mode 6 (`Uint16`) to `u8`.
+    ///
+    /// Returns an error if the file is not Mode 6 or if any value exceeds 255.
+    pub fn slices_u8(&self) -> Result<impl Iterator<Item = Result<VoxelBlock<u8>, Error>> + '_, Error> {
+        if self.mode() != Mode::Uint16 {
+            return Err(Error::ModeMismatch {
+                file_mode: self.mode(),
+                requested_mode: Mode::Uint16,
+            });
+        }
+        let nx = self.shape.nx;
+        let ny = self.shape.ny;
+        let nz = self.shape.nz;
+        Ok((0..nz).map(move |z| {
+            let bytes = self.read_block_bytes([0, 0, z], [nx, ny, 1])?;
+            let u16_data = self.decode_block::<u16>(&bytes)?;
+            let u8_data = crate::engine::convert::convert_u16_slice_to_u8(&u16_data)?;
+            Ok(VoxelBlock {
+                offset: [0, 0, z],
+                shape: [nx, ny, 1],
+                data: u8_data,
+            })
+        }))
+    }
+
     pub fn slices_mode0(
         &self,
         interp: crate::mode::M0Interpretation,
@@ -203,6 +299,23 @@ impl GzipReader {
                 data,
             })
         })
+    }
+
+    /// Cross-check header statistics against actual data.
+    ///
+    /// Computes `dmin`, `dmax`, `dmean` and `rms` from the decompressed data
+    /// block and compares them with the header values using a 1 % relative
+    /// tolerance (matching Python `mrcfile`'s `np.isclose(rtol=0.01)`).
+    ///
+    /// # Errors
+    /// Returns [`Error::StatsMismatch`] if any statistic deviates by more than 1 %.
+    pub fn validate_header_stats(&self) -> Result<(), Error> {
+        crate::engine::stats::validate_header_stats(&self.header, &self.data)
+    }
+
+    /// Get a reference to the raw decompressed data bytes.
+    pub fn data_bytes(&self) -> &[u8] {
+        &self.data
     }
 }
 
@@ -286,6 +399,26 @@ impl GzipWriter {
 
         self.data[start_byte..start_byte + byte_len].copy_from_slice(&buffer);
         Ok(())
+    }
+
+    /// Write a block of `u8` data by automatically widening to `u16` (Mode 6).
+    ///
+    /// The file must have been created with [`Mode::Uint16`]. Each `u8` voxel
+    /// is widened to `u16` before writing, matching Python `mrcfile`'s
+    /// auto-conversion behaviour for `np.uint8` data.
+    pub fn write_u8_block(&mut self, block: &VoxelBlock<u8>) -> Result<(), Error> {
+        if self.mode() != Mode::Uint16 {
+            return Err(Error::ModeMismatch {
+                file_mode: self.mode(),
+                requested_mode: Mode::Uint16,
+            });
+        }
+        let widened = crate::engine::convert::convert_u8_slice_to_u16(&block.data);
+        self.write_block(&VoxelBlock {
+            offset: block.offset,
+            shape: block.shape,
+            data: widened,
+        })
     }
 
     pub fn finalize(self) -> Result<(), Error> {

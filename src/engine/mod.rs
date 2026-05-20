@@ -11,6 +11,7 @@ pub mod block;
 pub mod codec;
 pub mod convert;
 pub mod endian;
+pub mod stats;
 
 #[cfg(feature = "simd")]
 pub mod simd;

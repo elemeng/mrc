@@ -304,6 +304,31 @@ impl Reader {
         })
     }
 
+    /// Iterate over slices, automatically converting Mode 6 (`Uint16`) to `u8`.
+    ///
+    /// Returns an error if the file is not Mode 6 or if any value exceeds 255.
+    pub fn slices_u8(&self) -> Result<impl Iterator<Item = Result<crate::engine::block::VoxelBlock<u8>, Error>> + '_, Error> {
+        if self.mode() != Mode::Uint16 {
+            return Err(Error::ModeMismatch {
+                file_mode: self.mode(),
+                requested_mode: Mode::Uint16,
+            });
+        }
+        let nx = self.shape.nx;
+        let ny = self.shape.ny;
+        let nz = self.shape.nz;
+        Ok((0..nz).map(move |z| {
+            let bytes = self.read_block_bytes([0, 0, z], [nx, ny, 1])?;
+            let u16_data = self.decode_block::<u16>(&bytes)?;
+            let u8_data = crate::engine::convert::convert_u16_slice_to_u8(&u16_data)?;
+            Ok(crate::engine::block::VoxelBlock {
+                offset: [0, 0, z],
+                shape: [nx, ny, 1],
+                data: u8_data,
+            })
+        }))
+    }
+
     /// Iterate over slabs for Mode 0 (8-bit) files with signed/unsigned interpretation.
     pub fn slabs_mode0(
         &self,
@@ -350,6 +375,18 @@ impl Reader {
     /// Get a reference to the raw data bytes
     pub fn data(&self) -> &[u8] {
         &self.data
+    }
+
+    /// Cross-check header statistics against actual data.
+    ///
+    /// Computes `dmin`, `dmax`, `dmean` and `rms` from the data block and
+    /// compares them with the header values using a 1 % relative tolerance
+    /// (matching Python `mrcfile`'s `np.isclose(rtol=0.01)`).
+    ///
+    /// # Errors
+    /// Returns [`Error::StatsMismatch`] if any statistic deviates by more than 1 %.
+    pub fn validate_header_stats(&self) -> Result<(), Error> {
+        crate::engine::stats::validate_header_stats(&self.header, &self.data)
     }
 
     /// Get the file endianness

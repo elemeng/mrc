@@ -3,7 +3,7 @@
 use crate::engine::block::{SliceAccess, VolumeShape, VoxelBlock};
 use crate::engine::codec::{encode_block_parallel, encode_slice};
 use crate::engine::endian::FileEndian;
-use crate::mode::{Float32Complex, Int16Complex, Voxel};
+use crate::mode::Voxel;
 use crate::{Error, Header, Mode};
 
 use std::path::PathBuf;
@@ -27,6 +27,9 @@ impl WriterBuilder {
         self.header.nx = shape[0] as i32;
         self.header.ny = shape[1] as i32;
         self.header.nz = shape[2] as i32;
+        self.header.mx = self.header.nx;
+        self.header.my = self.header.ny;
+        self.header.mz = self.header.nz;
         self
     }
 
@@ -71,7 +74,12 @@ impl Writer {
 
         header.validate_detailed()?;
 
-        let mut file = std::fs::File::create(path)?;
+        let mut file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(path)?;
 
         let mut header_bytes = [0u8; 1024];
         header.encode_to_bytes(&mut header_bytes);
@@ -150,6 +158,29 @@ impl Writer {
         self.file.write_all(&buffer)?;
 
         Ok(())
+    }
+
+    /// Write a block of `u8` data by automatically widening to `u16` (Mode 6).
+    ///
+    /// The file must have been created with [`Mode::Uint16`]. Each `u8` voxel
+    /// is widened to `u16` before writing, matching Python `mrcfile`'s
+    /// auto-conversion behaviour for `np.uint8` data.
+    ///
+    /// # Errors
+    /// Returns [`Error::ModeMismatch`] if the file mode is not `Uint16`.
+    pub fn write_u8_block(&mut self, block: &VoxelBlock<u8>) -> Result<(), Error> {
+        if self.mode() != Mode::Uint16 {
+            return Err(Error::ModeMismatch {
+                file_mode: self.mode(),
+                requested_mode: Mode::Uint16,
+            });
+        }
+        let widened = crate::engine::convert::convert_u8_slice_to_u16(&block.data);
+        self.write_block(&VoxelBlock {
+            offset: block.offset,
+            shape: block.shape,
+            data: widened,
+        })
     }
 
     /// Write a block with parallel encoding and sequential file I/O.
@@ -249,110 +280,18 @@ impl Writer {
 // Stats helpers
 // ============================================================================
 
-fn stats_real<T>(data: &[T]) -> (f32, f32, f32, f32)
-where
-    T: Copy + Into<f64>,
-{
-    if data.is_empty() {
-        return (0.0, -1.0, -2.0, -1.0);
-    }
-    let iter = || data.iter().copied().map(Into::<f64>::into);
-    let min = iter().fold(f64::INFINITY, f64::min) as f32;
-    let max = iter().fold(f64::NEG_INFINITY, f64::max) as f32;
-    let sum: f64 = iter().sum();
-    let mean = (sum / data.len() as f64) as f32;
-    let variance: f64 = iter().map(|v| {
-        let d = v - mean as f64;
-        d * d
-    }).sum::<f64>() / data.len() as f64;
-    let rms = variance.sqrt() as f32;
-    (min, max, mean, rms)
-}
-
-fn rms_complex_f32(data: &[Float32Complex]) -> f32 {
-    if data.is_empty() {
-        return -1.0;
-    }
-    let mean_real = data.iter().map(|c| c.real as f64).sum::<f64>() / data.len() as f64;
-    let mean_imag = data.iter().map(|c| c.imag as f64).sum::<f64>() / data.len() as f64;
-    let variance: f64 = data.iter().map(|c| {
-        let dr = c.real as f64 - mean_real;
-        let di = c.imag as f64 - mean_imag;
-        dr * dr + di * di
-    }).sum::<f64>() / data.len() as f64;
-    variance.sqrt() as f32
-}
-
-fn rms_complex_i16(data: &[Int16Complex]) -> f32 {
-    if data.is_empty() {
-        return -1.0;
-    }
-    let mean_real = data.iter().map(|c| c.real as f64).sum::<f64>() / data.len() as f64;
-    let mean_imag = data.iter().map(|c| c.imag as f64).sum::<f64>() / data.len() as f64;
-    let variance: f64 = data.iter().map(|c| {
-        let dr = c.real as f64 - mean_real;
-        let di = c.imag as f64 - mean_imag;
-        dr * dr + di * di
-    }).sum::<f64>() / data.len() as f64;
-    variance.sqrt() as f32
-}
-
 fn update_header_stats_from_bytes(header: &mut Header, bytes: &[u8]) {
-    use crate::engine::codec::decode_slice;
     let endian = header.detect_endian();
-    match Mode::from_i32(header.mode) {
-        Some(Mode::Float32) => {
-            let data = decode_slice::<f32>(bytes, endian);
-            let (min, max, mean, rms) = stats_real(&data);
-            header.dmin = min;
-            header.dmax = max;
-            header.dmean = mean;
-            header.rms = rms;
-        }
-        Some(Mode::Int16) => {
-            let data = decode_slice::<i16>(bytes, endian);
-            let (min, max, mean, rms) = stats_real(&data);
-            header.dmin = min;
-            header.dmax = max;
-            header.dmean = mean;
-            header.rms = rms;
-        }
-        Some(Mode::Uint16) => {
-            let data = decode_slice::<u16>(bytes, endian);
-            let (min, max, mean, rms) = stats_real(&data);
-            header.dmin = min;
-            header.dmax = max;
-            header.dmean = mean;
-            header.rms = rms;
-        }
-        Some(Mode::Int8) => {
-            let data = decode_slice::<i8>(bytes, endian);
-            let (min, max, mean, rms) = stats_real(&data);
-            header.dmin = min;
-            header.dmax = max;
-            header.dmean = mean;
-            header.rms = rms;
-        }
-        Some(Mode::Float32Complex) => {
-            let data = decode_slice::<Float32Complex>(bytes, endian);
-            header.rms = rms_complex_f32(&data);
-        }
-        Some(Mode::Int16Complex) => {
-            let data = decode_slice::<Int16Complex>(bytes, endian);
-            header.rms = rms_complex_i16(&data);
-        }
-        #[cfg(feature = "f16")]
-        Some(Mode::Float16) => {
-            let data = decode_slice::<f16>(bytes, endian);
-            let data_f32: Vec<f32> = data.iter().map(|&v| v as f32).collect();
-            let (min, max, mean, rms) = stats_real(&data_f32);
-            header.dmin = min;
-            header.dmax = max;
-            header.dmean = mean;
-            header.rms = rms;
-        }
-        _ => {}
-    }
+    let mode = Mode::from_i32(header.mode);
+    let (dmin, dmax, dmean, rms) = crate::engine::stats::compute_stats(
+        bytes,
+        mode.unwrap_or(Mode::Float32),
+        endian,
+    );
+    header.dmin = dmin;
+    header.dmax = dmax;
+    header.dmean = dmean;
+    header.rms = rms;
 }
 
 // ============================================================================
@@ -469,6 +408,29 @@ impl MmapWriter {
 
     pub fn mode(&self) -> Mode {
         Mode::from_i32(self.header.mode).unwrap_or(Mode::Float32)
+    }
+
+    /// Write a block of `u8` data by automatically widening to `u16` (Mode 6).
+    ///
+    /// The file must have been created with [`Mode::Uint16`]. Each `u8` voxel
+    /// is widened to `u16` before writing, matching Python `mrcfile`'s
+    /// auto-conversion behaviour for `np.uint8` data.
+    ///
+    /// # Errors
+    /// Returns [`Error::ModeMismatch`] if the file mode is not `Uint16`.
+    pub fn write_u8_block(&mut self, block: &VoxelBlock<u8>) -> Result<(), Error> {
+        if self.mode() != Mode::Uint16 {
+            return Err(Error::ModeMismatch {
+                file_mode: self.mode(),
+                requested_mode: Mode::Uint16,
+            });
+        }
+        let widened = crate::engine::convert::convert_u8_slice_to_u16(&block.data);
+        self.write_block(&VoxelBlock {
+            offset: block.offset,
+            shape: block.shape,
+            data: widened,
+        })
     }
 
     /// Write a block of voxels to the memory-mapped file.
