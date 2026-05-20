@@ -37,6 +37,7 @@
 //! ```
 
 #![cfg_attr(feature = "f16", feature(f16))]
+#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
 
 mod any_reader;
 mod error;

@@ -54,9 +54,10 @@ pub struct VoxelBlock<T> {
 
 impl<T> VoxelBlock<T> {
     pub fn new(offset: [usize; 3], shape: [usize; 3], data: Vec<T>) -> Self {
-        let expected = shape[0].checked_mul(shape[1])
-            .and_then(|v| v.checked_mul(shape[2]))
-            .expect("Block shape dimensions overflow usize");
+        let expected = match shape[0].checked_mul(shape[1]).and_then(|v| v.checked_mul(shape[2])) {
+            Some(v) => v,
+            None => panic!("Block shape dimensions overflow usize"),
+        };
         assert_eq!(
             data.len(), expected,
             "Data length must match block shape"
