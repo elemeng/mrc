@@ -91,8 +91,8 @@ pub(crate) fn convert_u16_slice_to_f32(src: &[u16]) -> Vec<f32> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::vec;
     use crate::ComplexToRealStrategy;
+    use std::vec;
 
     // Test batch conversions
     #[test]
@@ -209,7 +209,10 @@ mod tests {
     // Test ComplexToRealStrategy
     #[test]
     fn test_complex_to_real_strategies() {
-        let c = crate::mode::Float32Complex { real: 3.0, imag: 4.0 };
+        let c = crate::mode::Float32Complex {
+            real: 3.0,
+            imag: 4.0,
+        };
         assert_eq!(c.to_real(ComplexToRealStrategy::RealPart), 3.0);
         assert_eq!(c.to_real(ComplexToRealStrategy::ImaginaryPart), 4.0);
         assert_eq!(c.to_real(ComplexToRealStrategy::Magnitude), 5.0);

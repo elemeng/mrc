@@ -182,7 +182,11 @@ impl MrcReader {
     }
 
     /// Read and decode a voxel block.
-    pub fn read_block<T: Voxel>(&self, offset: [usize; 3], shape: [usize; 3]) -> Result<VoxelBlock<T>, Error> {
+    pub fn read_block<T: Voxel>(
+        &self,
+        offset: [usize; 3],
+        shape: [usize; 3],
+    ) -> Result<VoxelBlock<T>, Error> {
         match self {
             MrcReader::Plain(r) => r.read_block(offset, shape),
             #[cfg(feature = "gzip")]
@@ -219,31 +223,22 @@ impl MrcReader {
     /// Returns an error if the file is not Mode 6 or if any value exceeds 255.
     pub fn slices_u8(&self) -> Result<crate::SliceIterU8<'_>, Error> {
         match self {
-            MrcReader::Plain(r) => Ok(Box::new(r.slices_u8()?)),
+            MrcReader::Plain(r) => r.slices_u8(),
             #[cfg(feature = "gzip")]
-            MrcReader::Gzip(r) => Ok(Box::new(r.slices_u8()?)),
+            MrcReader::Gzip(r) => r.slices_u8(),
             #[cfg(feature = "bzip2")]
-            MrcReader::Bzip2(r) => Ok(Box::new(r.slices_u8()?)),
+            MrcReader::Bzip2(r) => r.slices_u8(),
         }
     }
 
     /// Iterate over slices for Mode 0 with explicit signed/unsigned choice.
-    pub fn slices_mode0(
-        &self,
-        interp: M0Interpretation,
-    ) -> Result<crate::SliceIterF32<'_>, Error> {
+    pub fn slices_mode0(&self, interp: M0Interpretation) -> Result<crate::SliceIterF32<'_>, Error> {
         match self {
-            MrcReader::Plain(r) => {
-                Ok(Box::new(r.slices_mode0(interp)))
-            }
+            MrcReader::Plain(r) => Ok(r.slices_mode0(interp)),
             #[cfg(feature = "gzip")]
-            MrcReader::Gzip(r) => {
-                Ok(Box::new(r.slices_mode0(interp)))
-            }
+            MrcReader::Gzip(r) => Ok(r.slices_mode0(interp)),
             #[cfg(feature = "bzip2")]
-            MrcReader::Bzip2(r) => {
-                Ok(Box::new(r.slices_mode0(interp)))
-            }
+            MrcReader::Bzip2(r) => Ok(r.slices_mode0(interp)),
         }
     }
 
@@ -352,7 +347,10 @@ mod tests {
     fn test_detect_compression_plain() {
         let tmp = tempfile::NamedTempFile::new().unwrap();
         std::fs::write(tmp.path(), b"MAP ").unwrap();
-        assert_eq!(detect_compression(tmp.path()).unwrap(), CompressionType::Plain);
+        assert_eq!(
+            detect_compression(tmp.path()).unwrap(),
+            CompressionType::Plain
+        );
     }
 
     #[test]
@@ -363,7 +361,10 @@ mod tests {
         let mut file = std::fs::File::create(tmp.path()).unwrap();
         file.write_all(&[0x1f, 0x8b, 0x08, 0x00]).unwrap();
         drop(file);
-        assert_eq!(detect_compression(tmp.path()).unwrap(), CompressionType::Gzip);
+        assert_eq!(
+            detect_compression(tmp.path()).unwrap(),
+            CompressionType::Gzip
+        );
     }
 
     #[test]
@@ -374,12 +375,15 @@ mod tests {
         let mut file = std::fs::File::create(tmp.path()).unwrap();
         file.write_all(b"BZh").unwrap();
         drop(file);
-        assert_eq!(detect_compression(tmp.path()).unwrap(), CompressionType::Bzip2);
+        assert_eq!(
+            detect_compression(tmp.path()).unwrap(),
+            CompressionType::Bzip2
+        );
     }
 
     #[test]
     fn test_mrc_reader_open_plain() {
-        use crate::{create, VoxelBlock};
+        use crate::{VoxelBlock, create};
 
         let tmp = tempfile::NamedTempFile::new().unwrap();
         let mut writer = create(tmp.path())
@@ -389,7 +393,9 @@ mod tests {
             .unwrap();
         for z in 0..2 {
             let data = vec![1.0f32; 8 * 8];
-            writer.write_block(&VoxelBlock::new([0, 0, z], [8, 8, 1], data)).unwrap();
+            writer
+                .write_block(&VoxelBlock::new([0, 0, z], [8, 8, 1], data))
+                .unwrap();
         }
         writer.finalize().unwrap();
 
@@ -400,7 +406,7 @@ mod tests {
 
     #[test]
     fn test_mrc_reader_open_permissive() {
-        use crate::{create, VoxelBlock};
+        use crate::{VoxelBlock, create};
 
         let tmp = tempfile::NamedTempFile::new().unwrap();
         let mut writer = create(tmp.path())
@@ -410,7 +416,9 @@ mod tests {
             .unwrap();
         for z in 0..2 {
             let data = vec![1.0f32; 8 * 8];
-            writer.write_block(&VoxelBlock::new([0, 0, z], [8, 8, 1], data)).unwrap();
+            writer
+                .write_block(&VoxelBlock::new([0, 0, z], [8, 8, 1], data))
+                .unwrap();
         }
         writer.finalize().unwrap();
 
@@ -421,7 +429,7 @@ mod tests {
 
     #[test]
     fn test_mrc_reader_type_accessors() {
-        use crate::{create, VoxelBlock};
+        use crate::{VoxelBlock, create};
 
         let tmp = tempfile::NamedTempFile::new().unwrap();
         let mut writer = create(tmp.path())
@@ -429,7 +437,9 @@ mod tests {
             .mode::<f32>()
             .finish()
             .unwrap();
-        writer.write_block(&VoxelBlock::new([0, 0, 0], [4, 4, 1], vec![0.0f32; 16])).unwrap();
+        writer
+            .write_block(&VoxelBlock::new([0, 0, 0], [4, 4, 1], vec![0.0f32; 16]))
+            .unwrap();
         writer.finalize().unwrap();
 
         let reader = MrcReader::open(tmp.path()).unwrap();
@@ -447,7 +457,7 @@ mod tests {
 
     #[test]
     fn test_mrc_reader_validate_header_stats() {
-        use crate::{create, VoxelBlock};
+        use crate::{VoxelBlock, create};
 
         let tmp = tempfile::NamedTempFile::new().unwrap();
         let mut writer = create(tmp.path())
@@ -455,7 +465,9 @@ mod tests {
             .mode::<f32>()
             .finish()
             .unwrap();
-        writer.write_block(&VoxelBlock::new([0, 0, 0], [4, 4, 1], vec![1.0f32; 16])).unwrap();
+        writer
+            .write_block(&VoxelBlock::new([0, 0, 0], [4, 4, 1], vec![1.0f32; 16]))
+            .unwrap();
         writer.update_header_stats().unwrap();
         writer.finalize().unwrap();
 
@@ -465,7 +477,7 @@ mod tests {
 
     #[test]
     fn test_mrc_reader_data_bytes() {
-        use crate::{create, VoxelBlock};
+        use crate::{VoxelBlock, create};
 
         let tmp = tempfile::NamedTempFile::new().unwrap();
         let mut writer = create(tmp.path())
@@ -474,7 +486,9 @@ mod tests {
             .finish()
             .unwrap();
         let data: Vec<f32> = vec![1.0, 2.0, 3.0, 4.0];
-        writer.write_block(&VoxelBlock::new([0, 0, 0], [2, 2, 1], data.clone())).unwrap();
+        writer
+            .write_block(&VoxelBlock::new([0, 0, 0], [2, 2, 1], data.clone()))
+            .unwrap();
         writer.finalize().unwrap();
 
         let reader = MrcReader::open(tmp.path()).unwrap();
@@ -487,7 +501,7 @@ mod tests {
 
     #[test]
     fn test_mrc_reader_slices_u8() {
-        use crate::{create, VoxelBlock};
+        use crate::{VoxelBlock, create};
 
         let tmp = tempfile::NamedTempFile::new().unwrap();
         let mut writer = create(tmp.path())
@@ -495,7 +509,13 @@ mod tests {
             .mode::<u16>()
             .finish()
             .unwrap();
-        writer.write_u8_block(&VoxelBlock::new([0, 0, 0], [2, 2, 1], vec![10u8, 20, 30, 40])).unwrap();
+        writer
+            .write_u8_block(&VoxelBlock::new(
+                [0, 0, 0],
+                [2, 2, 1],
+                vec![10u8, 20, 30, 40],
+            ))
+            .unwrap();
         writer.finalize().unwrap();
 
         let reader = MrcReader::open(tmp.path()).unwrap();

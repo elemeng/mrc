@@ -31,29 +31,33 @@ pub trait VoxelSource: private::Sealed {
     ///
     /// Returns `Cow::Borrowed` for zero-copy backends (e.g. [`MmapReader`](crate::MmapReader))
     /// and `Cow::Owned` for in-memory backends.
-    fn vs_read_block_bytes<'a>(&'a self, offset: [usize; 3], shape: [usize; 3]) -> Result<Cow<'a, [u8]>, Error>;
+    fn vs_read_block_bytes<'a>(
+        &'a self,
+        offset: [usize; 3],
+        shape: [usize; 3],
+    ) -> Result<Cow<'a, [u8]>, Error>;
 
     /// Decode raw bytes to the requested voxel type, checking mode compatibility.
     fn vs_decode_block<T: Voxel>(&self, bytes: &[u8]) -> Result<Vec<T>, Error>;
 }
 
-/// Validate a block read request and compute its byte range in the data region.
+/// Validate a block read/write request.
 ///
 /// Checks that the requested block is fully contained within the volume bounds
-/// and that the resulting byte range does not exceed the available data length.
-/// Returns `(start_byte, end_byte)` relative to the start of the data region.
+/// and that the data region is large enough for the last row of the block.
+/// Returns the total byte length of the gathered block.
 ///
 /// # Errors
 ///
 /// * [`Error::BoundsError`] if the block exceeds volume bounds or the data length.
 /// * [`Error::UnsupportedMode`] if the mode is [`Mode::Packed4Bit`].
-pub fn validate_block_read(
+pub fn validate_block_bounds(
     volume_shape: VolumeShape,
     mode: Mode,
     data_len: usize,
     offset: [usize; 3],
     block_shape: [usize; 3],
-) -> Result<(usize, usize), Error> {
+) -> Result<usize, Error> {
     let [nx, ny, nz] = [volume_shape.nx, volume_shape.ny, volume_shape.nz];
     let [ox, oy, oz] = offset;
     let [sx, sy, sz] = block_shape;
@@ -66,20 +70,68 @@ pub fn validate_block_read(
         return Err(Error::UnsupportedMode);
     }
 
-    let linear = volume_shape.checked_linear_index(offset).ok_or(Error::BoundsError)?;
-    let start_byte = linear
-        .checked_mul(mode.byte_size())
-        .ok_or(Error::BoundsError)?;
-    let count = sx.checked_mul(sy).and_then(|v| v.checked_mul(sz))
+    let count = sx
+        .checked_mul(sy)
+        .and_then(|v| v.checked_mul(sz))
         .ok_or(Error::BoundsError)?;
     let byte_len = mode.byte_size_for_count(count);
-    let end_byte = start_byte.checked_add(byte_len).ok_or(Error::BoundsError)?;
 
-    if end_byte > data_len {
+    if count == 0 {
+        return Ok(0);
+    }
+
+    // Verify the data region is large enough for the last row of the block.
+    let last_row_start = volume_shape
+        .checked_linear_index([ox, oy + sy - 1, oz + sz - 1])
+        .ok_or(Error::BoundsError)?;
+    let last_byte = last_row_start
+        .checked_mul(mode.byte_size())
+        .and_then(|s| s.checked_add(sx * mode.byte_size()))
+        .ok_or(Error::BoundsError)?;
+
+    if last_byte > data_len {
         return Err(Error::BoundsError);
     }
 
-    Ok((start_byte, end_byte))
+    Ok(byte_len)
+}
+
+/// Gather a non-contiguous 3D block from raw data bytes into a contiguous Vec.
+///
+/// The source `data` is treated as a C-ordered `[nx, ny, nz]` array where X is the
+/// fastest axis. The returned Vec contains the sub-block in C-order.
+pub fn gather_block_bytes(
+    data: &[u8],
+    volume_shape: VolumeShape,
+    mode: Mode,
+    offset: [usize; 3],
+    block_shape: [usize; 3],
+) -> Vec<u8> {
+    let [nx, ny, _nz] = [volume_shape.nx, volume_shape.ny, volume_shape.nz];
+    let [ox, oy, oz] = offset;
+    let [sx, sy, sz] = block_shape;
+    let b = mode.byte_size();
+
+    // Fast path: full XY slab is contiguous in the file.
+    if ox == 0 && sx == nx && oy == 0 && sy == ny {
+        let linear = oz * nx * ny;
+        let start = linear * b;
+        let byte_len = sx * sy * sz * b;
+        return data[start..start + byte_len].to_vec();
+    }
+
+    let mut dst = vec![0u8; sx * sy * sz * b];
+    for z in 0..sz {
+        for y in 0..sy {
+            let src_linear = ox + (oy + y) * nx + (oz + z) * nx * ny;
+            let src_start = src_linear * b;
+            let dst_linear = y * sx + z * sx * sy;
+            let dst_start = dst_linear * b;
+            dst[dst_start..dst_start + sx * b]
+                .copy_from_slice(&data[src_start..src_start + sx * b]);
+        }
+    }
+    dst
 }
 
 /// Decode a raw byte block to the requested voxel type.
@@ -119,11 +171,7 @@ pub fn decode_native_endian<T: EndianCodec + Copy>(bytes: &[u8]) -> Result<Vec<T
     let n = bytes.len() / T::BYTE_SIZE;
     let mut result = Vec::with_capacity(n);
     unsafe {
-        core::ptr::copy_nonoverlapping(
-            bytes.as_ptr(),
-            result.as_mut_ptr() as *mut u8,
-            bytes.len(),
-        );
+        core::ptr::copy_nonoverlapping(bytes.as_ptr(), result.as_mut_ptr() as *mut u8, bytes.len());
         result.set_len(n);
     }
     Ok(result)
@@ -216,10 +264,142 @@ pub fn slabs_f32<'a>(
     })))
 }
 
+/// Parse and validate an MRC header from raw bytes.
+///
+/// Returns the decoded header, any warning messages, the detected endianness,
+/// and the expected data size in bytes.
+pub fn parse_header(
+    header_bytes: &[u8; 1024],
+    permissive: bool,
+) -> Result<(crate::Header, Vec<String>, crate::FileEndian, usize), crate::Error> {
+    let (header, endian_warning) = crate::Header::decode_from_bytes_with_info(header_bytes);
+    let mut warnings = if permissive {
+        header
+            .validate_permissive()
+            .map_err(crate::Error::InvalidHeaderDetailed)?
+    } else {
+        header
+            .validate_detailed()
+            .map_err(crate::Error::InvalidHeaderDetailed)?;
+        Vec::new()
+    };
+    if let Some(msg) = endian_warning {
+        warnings.push(msg.to_string());
+    }
+    let data_size = header.data_size().ok_or(crate::Error::InvalidHeader)?;
+    let endian = header.detect_endian();
+    Ok((header, warnings, endian, data_size))
+}
+
+// ---------------------------------------------------------------------------
+// Shared convenience iterator builders
+// ---------------------------------------------------------------------------
+
+/// Build a `slices_u8` iterator.
+pub fn slices_u8<'a>(
+    shape: VolumeShape,
+    mode: Mode,
+    mut read_bytes: impl FnMut([usize; 3], [usize; 3]) -> Result<Vec<u8>, Error> + 'a,
+    mut decode_u16: impl FnMut(&[u8]) -> Result<Vec<u16>, Error> + 'a,
+) -> Result<Box<dyn Iterator<Item = Result<VoxelBlock<u8>, Error>> + 'a>, Error> {
+    if mode != Mode::Uint16 {
+        return Err(Error::ModeMismatch {
+            file_mode: mode,
+            requested_mode: Mode::Uint16,
+        });
+    }
+    let nx = shape.nx;
+    let ny = shape.ny;
+    let nz = shape.nz;
+    Ok(Box::new((0..nz).map(move |z| {
+        let bytes = read_bytes([0, 0, z], [nx, ny, 1])?;
+        let u16_data = decode_u16(&bytes)?;
+        let u8_data = crate::engine::convert::convert_u16_slice_to_u8(&u16_data)?;
+        Ok(VoxelBlock {
+            offset: [0, 0, z],
+            shape: [nx, ny, 1],
+            data: u8_data,
+        })
+    })))
+}
+
+/// Build a `slices_mode0` iterator.
+pub fn slices_mode0<'a>(
+    shape: VolumeShape,
+    mode: Mode,
+    interp: crate::mode::M0Interpretation,
+    mut read_bytes: impl FnMut([usize; 3], [usize; 3]) -> Result<Vec<u8>, Error> + 'a,
+) -> Box<dyn Iterator<Item = Result<VoxelBlock<f32>, Error>> + 'a> {
+    let nx = shape.nx;
+    let ny = shape.ny;
+    let nz = shape.nz;
+    Box::new((0..nz).map(move |z| {
+        if mode != Mode::Int8 {
+            return Err(Error::ModeMismatch {
+                file_mode: mode,
+                requested_mode: Mode::Int8,
+            });
+        }
+        let bytes = read_bytes([0, 0, z], [nx, ny, 1])?;
+        let data = crate::engine::convert::reinterpret_m0(&bytes, interp);
+        Ok(VoxelBlock {
+            offset: [0, 0, z],
+            shape: [nx, ny, 1],
+            data,
+        })
+    }))
+}
+
+/// Build a `slabs_mode0` iterator.
+pub fn slabs_mode0<'a>(
+    shape: VolumeShape,
+    mode: Mode,
+    k: usize,
+    interp: crate::mode::M0Interpretation,
+    mut read_bytes: impl FnMut([usize; 3], [usize; 3]) -> Result<Vec<u8>, Error> + 'a,
+) -> Box<dyn Iterator<Item = Result<VoxelBlock<f32>, Error>> + 'a> {
+    let nx = shape.nx;
+    let ny = shape.ny;
+    let nz = shape.nz;
+    let mut z = 0usize;
+    let mut error_returned = false;
+    Box::new(std::iter::from_fn(move || {
+        if error_returned {
+            return None;
+        }
+        if mode != Mode::Int8 {
+            error_returned = true;
+            return Some(Err(Error::ModeMismatch {
+                file_mode: mode,
+                requested_mode: Mode::Int8,
+            }));
+        }
+        if z >= nz {
+            return None;
+        }
+        let start = z;
+        let size = k.min(nz - z);
+        z += size;
+        let bytes = match read_bytes([0, 0, start], [nx, ny, size]) {
+            Ok(b) => b,
+            Err(e) => return Some(Err(e)),
+        };
+        let data = crate::engine::convert::reinterpret_m0(&bytes, interp);
+        Some(Ok(VoxelBlock {
+            offset: [0, 0, start],
+            shape: [nx, ny, size],
+            data,
+        }))
+    }))
+}
 
 impl private::Sealed for crate::Reader {}
 impl VoxelSource for crate::Reader {
-    fn vs_read_block_bytes<'a>(&'a self, offset: [usize; 3], shape: [usize; 3]) -> Result<Cow<'a, [u8]>, Error> {
+    fn vs_read_block_bytes<'a>(
+        &'a self,
+        offset: [usize; 3],
+        shape: [usize; 3],
+    ) -> Result<Cow<'a, [u8]>, Error> {
         self.read_block_bytes(offset, shape).map(Cow::Owned)
     }
     fn vs_decode_block<T: Voxel>(&self, bytes: &[u8]) -> Result<Vec<T>, Error> {
@@ -231,7 +411,11 @@ impl VoxelSource for crate::Reader {
 impl private::Sealed for crate::GzipReader {}
 #[cfg(feature = "gzip")]
 impl VoxelSource for crate::GzipReader {
-    fn vs_read_block_bytes<'a>(&'a self, offset: [usize; 3], shape: [usize; 3]) -> Result<Cow<'a, [u8]>, Error> {
+    fn vs_read_block_bytes<'a>(
+        &'a self,
+        offset: [usize; 3],
+        shape: [usize; 3],
+    ) -> Result<Cow<'a, [u8]>, Error> {
         self.0.read_block_bytes(offset, shape).map(Cow::Owned)
     }
     fn vs_decode_block<T: Voxel>(&self, bytes: &[u8]) -> Result<Vec<T>, Error> {
@@ -243,7 +427,11 @@ impl VoxelSource for crate::GzipReader {
 impl private::Sealed for crate::Bzip2Reader {}
 #[cfg(feature = "bzip2")]
 impl VoxelSource for crate::Bzip2Reader {
-    fn vs_read_block_bytes<'a>(&'a self, offset: [usize; 3], shape: [usize; 3]) -> Result<Cow<'a, [u8]>, Error> {
+    fn vs_read_block_bytes<'a>(
+        &'a self,
+        offset: [usize; 3],
+        shape: [usize; 3],
+    ) -> Result<Cow<'a, [u8]>, Error> {
         self.0.read_block_bytes(offset, shape).map(Cow::Owned)
     }
     fn vs_decode_block<T: Voxel>(&self, bytes: &[u8]) -> Result<Vec<T>, Error> {
@@ -255,8 +443,12 @@ impl VoxelSource for crate::Bzip2Reader {
 impl private::Sealed for crate::MmapReader {}
 #[cfg(feature = "mmap")]
 impl VoxelSource for crate::MmapReader {
-    fn vs_read_block_bytes<'a>(&'a self, offset: [usize; 3], shape: [usize; 3]) -> Result<Cow<'a, [u8]>, Error> {
-        self.read_block_bytes(offset, shape).map(Cow::Borrowed)
+    fn vs_read_block_bytes<'a>(
+        &'a self,
+        offset: [usize; 3],
+        shape: [usize; 3],
+    ) -> Result<Cow<'a, [u8]>, Error> {
+        self.read_block_bytes(offset, shape).map(Cow::Owned)
     }
     fn vs_decode_block<T: Voxel>(&self, bytes: &[u8]) -> Result<Vec<T>, Error> {
         self.decode_block(bytes)
@@ -265,7 +457,11 @@ impl VoxelSource for crate::MmapReader {
 
 impl private::Sealed for crate::MrcReader {}
 impl VoxelSource for crate::MrcReader {
-    fn vs_read_block_bytes<'a>(&'a self, offset: [usize; 3], shape: [usize; 3]) -> Result<Cow<'a, [u8]>, Error> {
+    fn vs_read_block_bytes<'a>(
+        &'a self,
+        offset: [usize; 3],
+        shape: [usize; 3],
+    ) -> Result<Cow<'a, [u8]>, Error> {
         self.read_block_bytes(offset, shape).map(Cow::Owned)
     }
     fn vs_decode_block<T: Voxel>(&self, bytes: &[u8]) -> Result<Vec<T>, Error> {

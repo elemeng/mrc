@@ -12,8 +12,8 @@
 
 use crate::Error;
 use crate::engine::block::{VolumeShape, VoxelBlock};
-use crate::mode::Voxel;
 use crate::io::reader_common::VoxelSource;
+use crate::mode::Voxel;
 
 /// Helper to read and decode a voxel block from a VoxelSource.
 #[inline]
@@ -180,7 +180,10 @@ impl<'a, T, R: VoxelSource> BlockIter<'a, T, R> {
     ///
     /// Panics if any dimension of `block_shape` is zero.
     pub fn new(reader: &'a R, shape: VolumeShape, block_shape: [usize; 3]) -> Self {
-        assert!(block_shape[0] > 0 && block_shape[1] > 0 && block_shape[2] > 0, "block_shape must be positive in all dimensions");
+        assert!(
+            block_shape[0] > 0 && block_shape[1] > 0 && block_shape[2] > 0,
+            "block_shape must be positive in all dimensions"
+        );
         Self {
             reader,
             position: [0, 0, 0],

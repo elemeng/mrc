@@ -62,14 +62,14 @@ pub struct VoxelBlock<T> {
 impl<T> VoxelBlock<T> {
     /// Create a new voxel block, panicking if `data.len()` does not match `shape`.
     pub fn new(offset: [usize; 3], shape: [usize; 3], data: Vec<T>) -> Self {
-        let expected = match shape[0].checked_mul(shape[1]).and_then(|v| v.checked_mul(shape[2])) {
+        let expected = match shape[0]
+            .checked_mul(shape[1])
+            .and_then(|v| v.checked_mul(shape[2]))
+        {
             Some(v) => v,
             None => panic!("Block shape dimensions overflow usize"),
         };
-        assert_eq!(
-            data.len(), expected,
-            "Data length must match block shape"
-        );
+        assert_eq!(data.len(), expected, "Data length must match block shape");
         Self {
             offset,
             shape,
@@ -83,7 +83,8 @@ impl<T> VoxelBlock<T> {
         shape: [usize; 3],
         data: Vec<T>,
     ) -> Result<Self, crate::Error> {
-        let expected = shape[0].checked_mul(shape[1])
+        let expected = shape[0]
+            .checked_mul(shape[1])
             .and_then(|v| v.checked_mul(shape[2]))
             .ok_or(crate::Error::BoundsError)?;
         if data.len() != expected {
@@ -115,7 +116,3 @@ impl<T> VoxelBlock<T> {
             && self.shape == [volume_shape.nx, volume_shape.ny, volume_shape.nz]
     }
 }
-
-// SliceAccess methods are provided as inherent methods on MmapWriter.
-// This trait is intentionally not public because MmapWriter is currently
-// the only type that supports zero-copy slice access.

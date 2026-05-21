@@ -7,7 +7,7 @@
 
 use crate::engine::block::{VolumeShape, VoxelBlock};
 use crate::engine::endian::FileEndian;
-use crate::iter::{BlockIter, SliceIter, SlabIter};
+use crate::iter::{BlockIter, SlabIter, SliceIter};
 use crate::mode::Voxel;
 use crate::{Error, Header, Mode};
 
@@ -58,11 +58,16 @@ impl MmapReader {
     ///
     /// Non-fatal header issues are collected as warning strings instead of
     /// causing hard errors.
-    pub fn open_permissive<P: AsRef<std::path::Path>>(path: P) -> Result<(Self, Vec<String>), Error> {
+    pub fn open_permissive<P: AsRef<std::path::Path>>(
+        path: P,
+    ) -> Result<(Self, Vec<String>), Error> {
         Self::_open(path, true)
     }
 
-    fn _open<P: AsRef<std::path::Path>>(path: P, permissive: bool) -> Result<(Self, Vec<String>), Error> {
+    fn _open<P: AsRef<std::path::Path>>(
+        path: P,
+        permissive: bool,
+    ) -> Result<(Self, Vec<String>), Error> {
         use std::fs::File;
         use std::io::Read;
 
@@ -72,18 +77,8 @@ impl MmapReader {
         let mut header_bytes = [0u8; 1024];
         file.read_exact(&mut header_bytes)?;
 
-        let (header, endian_warning) = Header::decode_from_bytes_with_info(&header_bytes);
-
-        let mut warnings = if permissive {
-            header.validate_permissive().map_err(Error::InvalidHeaderDetailed)?
-        } else {
-            header.validate_detailed().map_err(Error::InvalidHeaderDetailed)?;
-            Vec::new()
-        };
-
-        if let Some(msg) = endian_warning {
-            warnings.push(msg.to_string());
-        }
+        let (header, warnings, endian, data_size) =
+            crate::io::reader_common::parse_header(&header_bytes, permissive)?;
 
         // Map the entire file
         let mmap = unsafe {
@@ -92,13 +87,11 @@ impl MmapReader {
                 .map_err(|_| Error::Mmap)?
         };
 
-        let endian = header.detect_endian();
-        let shape =
-            VolumeShape::new(header.nx as usize, header.ny as usize, header.nz as usize);
+        let shape = VolumeShape::new(header.nx as usize, header.ny as usize, header.nz as usize);
 
         // Validate file size
-        let data_size = header.data_size().ok_or(Error::InvalidHeader)?;
-        let expected_size = header.data_offset()
+        let expected_size = header
+            .data_offset()
             .checked_add(data_size)
             .ok_or(Error::InvalidHeader)?;
         if !permissive {
@@ -116,13 +109,16 @@ impl MmapReader {
         }
 
         let _mode = Mode::from_i32(header.mode).ok_or(Error::UnsupportedMode)?;
-        Ok((Self {
-            mmap,
-            header,
-            data_offset: header.data_offset(),
-            endian,
-            shape,
-        }, warnings))
+        Ok((
+            Self {
+                mmap,
+                header,
+                data_offset: header.data_offset(),
+                endian,
+                shape,
+            },
+            warnings,
+        ))
     }
 
     /// Get the volume shape (dimensions).
@@ -181,21 +177,46 @@ impl MmapReader {
     }
 
     /// Read a block of voxels as raw bytes from the mmap.
-    pub fn read_block_bytes(&self, offset: [usize; 3], shape: [usize; 3]) -> Result<&[u8], Error> {
+    ///
+    /// Supports arbitrary sub-blocks; non-contiguous regions are gathered
+    /// into a contiguous buffer automatically.
+    pub fn read_block_bytes(
+        &self,
+        offset: [usize; 3],
+        shape: [usize; 3],
+    ) -> Result<Vec<u8>, Error> {
         let data_len = self.mmap.len().saturating_sub(self.data_offset);
-        let (start, end) = crate::io::reader_common::validate_block_read(
-            self.shape, self.mode(), data_len, offset, shape,
+        crate::io::reader_common::validate_block_bounds(
+            self.shape,
+            self.mode(),
+            data_len,
+            offset,
+            shape,
         )?;
-        Ok(&self.mmap[self.data_offset + start..self.data_offset + end])
+        Ok(crate::io::reader_common::gather_block_bytes(
+            &self.mmap[self.data_offset..],
+            self.shape,
+            self.mode(),
+            offset,
+            shape,
+        ))
     }
 
     /// Read and decode a block of voxels to the specified type.
     ///
     /// Returns an error if `T` does not match the file's voxel mode.
-    pub fn read_block<T: Voxel>(&self, offset: [usize; 3], shape: [usize; 3]) -> Result<VoxelBlock<T>, Error> {
+    pub fn read_block<T: Voxel>(
+        &self,
+        offset: [usize; 3],
+        shape: [usize; 3],
+    ) -> Result<VoxelBlock<T>, Error> {
         let bytes = self.read_block_bytes(offset, shape)?;
-        let data = self.decode_block::<T>(bytes)?;
-        Ok(VoxelBlock { offset, shape, data })
+        let data = self.decode_block::<T>(&bytes)?;
+        Ok(VoxelBlock {
+            offset,
+            shape,
+            data,
+        })
     }
 
     /// Decode a block of voxels to the specified type.
@@ -229,7 +250,10 @@ impl MmapReader {
             self.shape,
             self.mode(),
             self.endian,
-            |offset, shape| self.read_block_bytes(offset, shape).map(std::borrow::Cow::Borrowed),
+            |offset, shape| {
+                self.read_block_bytes(offset, shape)
+                    .map(std::borrow::Cow::Owned)
+            },
         )
     }
 
@@ -242,33 +266,25 @@ impl MmapReader {
             self.mode(),
             self.endian,
             k,
-            |offset, shape| self.read_block_bytes(offset, shape).map(std::borrow::Cow::Borrowed),
+            |offset, shape| {
+                self.read_block_bytes(offset, shape)
+                    .map(std::borrow::Cow::Owned)
+            },
         )
     }
 
     /// Iterate over slices, automatically converting Mode 6 (`Uint16`) to `u8`.
     ///
     /// Returns an error if the file is not Mode 6 or if any value exceeds 255.
-    pub fn slices_u8(&self) -> Result<impl Iterator<Item = Result<VoxelBlock<u8>, Error>> + '_, Error> {
-        if self.mode() != Mode::Uint16 {
-            return Err(Error::ModeMismatch {
-                file_mode: self.mode(),
-                requested_mode: Mode::Uint16,
-            });
-        }
-        let nx = self.shape.nx;
-        let ny = self.shape.ny;
-        let nz = self.shape.nz;
-        Ok((0..nz).map(move |z| {
-            let bytes = self.read_block_bytes([0, 0, z], [nx, ny, 1])?;
-            let u16_data = self.decode_block::<u16>(bytes)?;
-            let u8_data = crate::engine::convert::convert_u16_slice_to_u8(&u16_data)?;
-            Ok(VoxelBlock {
-                offset: [0, 0, z],
-                shape: [nx, ny, 1],
-                data: u8_data,
-            })
-        }))
+    pub fn slices_u8(
+        &self,
+    ) -> Result<Box<dyn Iterator<Item = Result<VoxelBlock<u8>, Error>> + '_>, Error> {
+        crate::io::reader_common::slices_u8(
+            self.shape,
+            self.mode(),
+            |offset, shape| self.read_block_bytes(offset, shape),
+            |bytes| self.decode_block::<u16>(bytes),
+        )
     }
 
     /// Iterate over slices for Mode 0 (8-bit) files with signed/unsigned interpretation.
@@ -278,24 +294,9 @@ impl MmapReader {
     pub fn slices_mode0(
         &self,
         interp: crate::mode::M0Interpretation,
-    ) -> impl Iterator<Item = Result<VoxelBlock<f32>, Error>> + '_ {
-        let nx = self.shape.nx;
-        let ny = self.shape.ny;
-        let nz = self.shape.nz;
-        (0..nz).map(move |z| {
-            if self.mode() != Mode::Int8 {
-                return Err(Error::ModeMismatch {
-                    file_mode: self.mode(),
-                    requested_mode: Mode::Int8,
-                });
-            }
-            let bytes = self.read_block_bytes([0, 0, z], [nx, ny, 1])?;
-            let data = crate::engine::convert::reinterpret_m0(bytes, interp);
-            Ok(VoxelBlock {
-                offset: [0, 0, z],
-                shape: [nx, ny, 1],
-                data,
-            })
+    ) -> Box<dyn Iterator<Item = Result<VoxelBlock<f32>, Error>> + '_> {
+        crate::io::reader_common::slices_mode0(self.shape, self.mode(), interp, |offset, shape| {
+            self.read_block_bytes(offset, shape)
         })
     }
 
@@ -304,41 +305,13 @@ impl MmapReader {
         &self,
         k: usize,
         interp: crate::mode::M0Interpretation,
-    ) -> impl Iterator<Item = Result<VoxelBlock<f32>, Error>> + '_ {
-        let nx = self.shape.nx;
-        let ny = self.shape.ny;
-        let nz = self.shape.nz;
-        let mut z = 0usize;
-        let mut error_returned = false;
-        std::iter::from_fn(move || {
-            if error_returned {
-                return None;
-            }
-            if self.mode() != Mode::Int8 {
-                error_returned = true;
-                return Some(Err(Error::ModeMismatch {
-                    file_mode: self.mode(),
-                    requested_mode: Mode::Int8,
-                }));
-            }
-            if z >= nz {
-                return None;
-            }
-            let start = z;
-            let size = k.min(nz - z);
-            z += size;
-            let bytes = match self.read_block_bytes([0, 0, start], [nx, ny, size]) {
-                Ok(b) => b,
-                Err(e) => return Some(Err(e)),
-            };
-            let data = crate::engine::convert::reinterpret_m0(bytes, interp);
-            Some(Ok(VoxelBlock {
-                offset: [0, 0, start],
-                shape: [nx, ny, size],
-                data,
-            }))
-        })
+    ) -> Box<dyn Iterator<Item = Result<VoxelBlock<f32>, Error>> + '_> {
+        crate::io::reader_common::slabs_mode0(
+            self.shape,
+            self.mode(),
+            k,
+            interp,
+            |offset, shape| self.read_block_bytes(offset, shape),
+        )
     }
 }
-
-

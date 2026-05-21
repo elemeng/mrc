@@ -254,28 +254,30 @@ pub(crate) fn decode_slice<T: EndianCodec + Send + Copy>(
     }
     let n = bytes.len() / T::BYTE_SIZE;
     let mut result = Vec::with_capacity(n);
-    // SAFETY: all elements are overwritten below.
-    unsafe {
-        result.set_len(n);
-    }
 
     // Fast path: native endian is a simple memcpy.
     if endian == FileEndian::native() {
+        // SAFETY: result has capacity n; we copy exactly n * BYTE_SIZE bytes,
+        // fully initializing every element before setting the length.
         unsafe {
             core::ptr::copy_nonoverlapping(
                 bytes.as_ptr(),
                 result.as_mut_ptr() as *mut u8,
                 bytes.len(),
             );
+            result.set_len(n);
         }
         return result;
     }
+
+    // SAFETY: result has capacity n; every element is initialized below.
+    let result_slice = unsafe { std::slice::from_raw_parts_mut(result.as_mut_ptr(), n) };
 
     #[cfg(feature = "parallel")]
     {
         use rayon::prelude::*;
         const CHUNK_VOXELS: usize = 262_144;
-        result
+        result_slice
             .par_chunks_mut(CHUNK_VOXELS)
             .zip(bytes.par_chunks(CHUNK_VOXELS * T::BYTE_SIZE))
             .for_each(|(dst, src)| {
@@ -287,11 +289,15 @@ pub(crate) fn decode_slice<T: EndianCodec + Send + Copy>(
 
     #[cfg(not(feature = "parallel"))]
     {
-        for (i, slot) in result.iter_mut().enumerate() {
+        for (i, slot) in result_slice.iter_mut().enumerate() {
             *slot = T::from_bytes(bytes, i * T::BYTE_SIZE, endian);
         }
     }
 
+    // SAFETY: all n elements have been initialized above.
+    unsafe {
+        result.set_len(n);
+    }
     result
 }
 

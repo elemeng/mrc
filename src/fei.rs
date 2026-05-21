@@ -195,7 +195,9 @@ pub fn parse_fei1_records(bytes: &[u8]) -> Option<Vec<Fei1Metadata>> {
     let mut records = Vec::with_capacity(count);
     for i in 0..count {
         let start = i * FEI1_RECORD_SIZE;
-        records.push(Fei1Metadata::from_bytes(&bytes[start..start + FEI1_RECORD_SIZE])?);
+        records.push(Fei1Metadata::from_bytes(
+            &bytes[start..start + FEI1_RECORD_SIZE],
+        )?);
     }
     Some(records)
 }
@@ -212,7 +214,9 @@ pub fn parse_fei2_records(bytes: &[u8]) -> Option<Vec<Fei2Metadata>> {
     let mut records = Vec::with_capacity(count);
     for i in 0..count {
         let start = i * FEI2_RECORD_SIZE;
-        records.push(Fei2Metadata::from_bytes(&bytes[start..start + FEI2_RECORD_SIZE])?);
+        records.push(Fei2Metadata::from_bytes(
+            &bytes[start..start + FEI2_RECORD_SIZE],
+        )?);
     }
     Some(records)
 }
@@ -223,32 +227,59 @@ pub fn parse_fei2_records(bytes: &[u8]) -> Option<Vec<Fei2Metadata>> {
 
 #[inline]
 fn be_u32(bytes: &[u8], offset: usize) -> u32 {
-    u32::from_be_bytes([bytes[offset], bytes[offset + 1], bytes[offset + 2], bytes[offset + 3]])
+    u32::from_be_bytes([
+        bytes[offset],
+        bytes[offset + 1],
+        bytes[offset + 2],
+        bytes[offset + 3],
+    ])
 }
 
 #[inline]
 fn le_u32(bytes: &[u8], offset: usize) -> u32 {
-    u32::from_le_bytes([bytes[offset], bytes[offset + 1], bytes[offset + 2], bytes[offset + 3]])
+    u32::from_le_bytes([
+        bytes[offset],
+        bytes[offset + 1],
+        bytes[offset + 2],
+        bytes[offset + 3],
+    ])
 }
 
 #[inline]
 fn be_i32(bytes: &[u8], offset: usize) -> i32 {
-    i32::from_be_bytes([bytes[offset], bytes[offset + 1], bytes[offset + 2], bytes[offset + 3]])
+    i32::from_be_bytes([
+        bytes[offset],
+        bytes[offset + 1],
+        bytes[offset + 2],
+        bytes[offset + 3],
+    ])
 }
 
 #[inline]
 fn be_i64(bytes: &[u8], offset: usize) -> i64 {
     i64::from_be_bytes([
-        bytes[offset], bytes[offset + 1], bytes[offset + 2], bytes[offset + 3],
-        bytes[offset + 4], bytes[offset + 5], bytes[offset + 6], bytes[offset + 7],
+        bytes[offset],
+        bytes[offset + 1],
+        bytes[offset + 2],
+        bytes[offset + 3],
+        bytes[offset + 4],
+        bytes[offset + 5],
+        bytes[offset + 6],
+        bytes[offset + 7],
     ])
 }
 
 #[inline]
 fn be_f64(bytes: &[u8], offset: usize) -> f64 {
     f64::from_be_bytes([
-        bytes[offset], bytes[offset + 1], bytes[offset + 2], bytes[offset + 3],
-        bytes[offset + 4], bytes[offset + 5], bytes[offset + 6], bytes[offset + 7],
+        bytes[offset],
+        bytes[offset + 1],
+        bytes[offset + 2],
+        bytes[offset + 3],
+        bytes[offset + 4],
+        bytes[offset + 5],
+        bytes[offset + 6],
+        bytes[offset + 7],
     ])
 }
 

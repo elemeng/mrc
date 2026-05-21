@@ -26,15 +26,26 @@ pub enum Error {
 
     /// The requested voxel type does not match the file's stored mode.
     #[error("Mode mismatch: file stores {file_mode:?}, requested {requested_mode:?}")]
-    ModeMismatch { file_mode: crate::Mode, requested_mode: crate::Mode },
+    ModeMismatch {
+        file_mode: crate::Mode,
+        requested_mode: crate::Mode,
+    },
     /// Detailed header validation failed.
     #[error("Invalid header: {0}")]
     InvalidHeaderDetailed(#[from] HeaderValidationError),
     /// Header statistics do not match the actual data.
-    #[error("Stats mismatch: header claims dmin={claimed_dmin}, dmax={claimed_dmax}, dmean={claimed_dmean}, rms={claimed_rms} but actual data has dmin={actual_dmin}, dmax={actual_dmax}, dmean={actual_dmean}, rms={actual_rms}")]
+    #[error(
+        "Stats mismatch: header claims dmin={claimed_dmin}, dmax={claimed_dmax}, dmean={claimed_dmean}, rms={claimed_rms} but actual data has dmin={actual_dmin}, dmax={actual_dmax}, dmean={actual_dmean}, rms={actual_rms}"
+    )]
     StatsMismatch {
-        claimed_dmin: f32, claimed_dmax: f32, claimed_dmean: f32, claimed_rms: f32,
-        actual_dmin: f32, actual_dmax: f32, actual_dmean: f32, actual_rms: f32,
+        claimed_dmin: f32,
+        claimed_dmax: f32,
+        claimed_dmean: f32,
+        claimed_rms: f32,
+        actual_dmin: f32,
+        actual_dmax: f32,
+        actual_dmean: f32,
+        actual_rms: f32,
     },
     /// Memory mapping failed (requires the `mmap` feature).
     #[cfg(feature = "mmap")]
@@ -43,7 +54,6 @@ pub enum Error {
     /// The file size does not match the header's declared data size.
     #[error("File size mismatch: expected {expected} bytes, got {actual} bytes")]
     FileSizeMismatch { expected: usize, actual: usize },
-
 }
 
 /// Errors that can occur during detailed header validation.
@@ -65,7 +75,9 @@ pub enum HeaderValidationError {
     #[error("Invalid ISPG: {0} (expected 0, 1-230, or 400-630)")]
     InvalidIspg(i32),
     /// The axis mapping is not a permutation of (1, 2, 3).
-    #[error("Invalid axis mapping: mapc={mapc}, mapr={mapr}, maps={maps} (must be a permutation of 1,2,3)")]
+    #[error(
+        "Invalid axis mapping: mapc={mapc}, mapr={mapr}, maps={maps} (must be a permutation of 1,2,3)"
+    )]
     InvalidAxisMapping { mapc: i32, mapr: i32, maps: i32 },
     /// The extended header size is negative.
     #[error("Invalid nsymbt: {0} (must be non-negative)")]
@@ -77,7 +89,9 @@ pub enum HeaderValidationError {
     #[error("Invalid nversion: {0} (expected 20140 or 20141)")]
     InvalidNversion(i32),
     /// Volume stack consistency check failed (`nz` must be divisible by `mz`).
-    #[error("Invalid volume stack: nz={nz} is not divisible by mz={mz} (required when ispg={ispg} indicates a volume stack)")]
+    #[error(
+        "Invalid volume stack: nz={nz} is not divisible by mz={mz} (required when ispg={ispg} indicates a volume stack)"
+    )]
     InvalidVolumeStack { nz: i32, mz: i32, ispg: i32 },
     /// One or more sampling values are non-positive.
     #[error("Invalid sampling: mx={mx}, my={my}, mz={mz} (must all be positive)")]
@@ -88,6 +102,4 @@ pub enum HeaderValidationError {
     /// A gap was found in the label sequence.
     #[error("Empty label at index {index} before all filled labels")]
     EmptyLabelBeforeFilled { index: i32 },
-
 }
-

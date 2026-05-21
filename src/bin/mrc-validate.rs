@@ -106,7 +106,13 @@ fn main() {
         match header.validate_detailed() {
             Ok(()) => true,
             Err(e) => {
-                print_result(path, compression_label, &Error::InvalidHeaderDetailed(e), &warnings, false);
+                print_result(
+                    path,
+                    compression_label,
+                    &Error::InvalidHeaderDetailed(e),
+                    &warnings,
+                    false,
+                );
                 process::exit(1);
             }
         }
@@ -116,13 +122,22 @@ fn main() {
     let stats_ok = match reader.validate_header_stats() {
         Ok(()) => true,
         Err(Error::StatsMismatch { .. }) => {
-            print_result(path, compression_label, &Error::StatsMismatch {
-                claimed_dmin: header.dmin,
-                claimed_dmax: header.dmax,
-                claimed_dmean: header.dmean,
-                claimed_rms: header.rms,
-                actual_dmin: 0.0, actual_dmax: 0.0, actual_dmean: 0.0, actual_rms: 0.0,
-            }, &warnings, false);
+            print_result(
+                path,
+                compression_label,
+                &Error::StatsMismatch {
+                    claimed_dmin: header.dmin,
+                    claimed_dmax: header.dmax,
+                    claimed_dmean: header.dmean,
+                    claimed_rms: header.rms,
+                    actual_dmin: 0.0,
+                    actual_dmax: 0.0,
+                    actual_dmean: 0.0,
+                    actual_rms: 0.0,
+                },
+                &warnings,
+                false,
+            );
             process::exit(1);
         }
         Err(e) => {
@@ -131,7 +146,13 @@ fn main() {
         }
     };
 
-    print_result(path, compression_label, &Error::InvalidHeader, &warnings, header_ok && stats_ok);
+    print_result(
+        path,
+        compression_label,
+        &Error::InvalidHeader,
+        &warnings,
+        header_ok && stats_ok,
+    );
 
     // Print file info
     println!();
@@ -163,12 +184,25 @@ fn print_result(path: &str, compression: &str, error: &Error, _warnings: &[Strin
             Error::InvalidHeaderDetailed(e) => {
                 println!("❌ {} ({}): INVALID - {}", path, compression, e);
             }
-            Error::StatsMismatch { claimed_dmin, claimed_dmax, claimed_dmean, claimed_rms, actual_dmin, actual_dmax, actual_dmean, actual_rms } => {
+            Error::StatsMismatch {
+                claimed_dmin,
+                claimed_dmax,
+                claimed_dmean,
+                claimed_rms,
+                actual_dmin,
+                actual_dmax,
+                actual_dmean,
+                actual_rms,
+            } => {
                 println!("❌ {} ({}): STATS MISMATCH", path, compression);
-                println!("     Claimed: dmin={}, dmax={}, dmean={}, rms={}",
-                         claimed_dmin, claimed_dmax, claimed_dmean, claimed_rms);
-                println!("     Actual:  dmin={}, dmax={}, dmean={}, rms={}",
-                         actual_dmin, actual_dmax, actual_dmean, actual_rms);
+                println!(
+                    "     Claimed: dmin={}, dmax={}, dmean={}, rms={}",
+                    claimed_dmin, claimed_dmax, claimed_dmean, claimed_rms
+                );
+                println!(
+                    "     Actual:  dmin={}, dmax={}, dmean={}, rms={}",
+                    actual_dmin, actual_dmax, actual_dmean, actual_rms
+                );
             }
             e => {
                 println!("❌ {} ({}): ERROR - {}", path, compression, e);

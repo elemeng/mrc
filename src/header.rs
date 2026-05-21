@@ -163,13 +163,13 @@ impl Header {
             alpha: 90.0,
             beta: 90.0,
             gamma: 90.0,
-            mapc: 1,                  // Column → X
-            mapr: 2,                  // Row    → Y
-            maps: 3,                  // Section→ Z
-            dmin: 0.0,      // Set higher than dmax to indicate not well-determined
-            dmax: -1.0,     // Set lower than dmin to indicate not well-determined
-            dmean: -2.0,    // Less than both to indicate not well-determined
-            ispg: 1,                  // P1 space group.
+            mapc: 1,     // Column → X
+            mapr: 2,     // Row    → Y
+            maps: 3,     // Section→ Z
+            dmin: 0.0,   // Set higher than dmax to indicate not well-determined
+            dmax: -1.0,  // Set lower than dmin to indicate not well-determined
+            dmean: -2.0, // Less than both to indicate not well-determined
+            ispg: 1,     // P1 space group.
             nsymbt: 0,
             extra: DEFAULT_EXTRA,
             origin: [0.0; 3],
@@ -204,7 +204,7 @@ impl Header {
                     _ => n.checked_mul(byte_size),
                 }
             }
-            None => Some(0), // unknown/unsupported
+            None => None, // unknown/unsupported mode
         }
     }
 
@@ -235,7 +235,10 @@ impl Header {
             return Err(HeaderValidationError::InvalidMap(self.map));
         }
 
-        if !(self.ispg == 0 || (self.ispg >= 1 && self.ispg <= 230) || (self.ispg >= 400 && self.ispg <= 630)) {
+        if !(self.ispg == 0
+            || (self.ispg >= 1 && self.ispg <= 230)
+            || (self.ispg >= 400 && self.ispg <= 630))
+        {
             return Err(HeaderValidationError::InvalidIspg(self.ispg));
         }
 
@@ -329,8 +332,14 @@ impl Header {
             ));
         }
 
-        if !(self.ispg == 0 || (self.ispg >= 1 && self.ispg <= 230) || (self.ispg >= 400 && self.ispg <= 630)) {
-            warnings.push(format!("ISPG {} is outside the standard ranges (0, 1-230, 400-630)", self.ispg));
+        if !(self.ispg == 0
+            || (self.ispg >= 1 && self.ispg <= 230)
+            || (self.ispg >= 400 && self.ispg <= 630))
+        {
+            warnings.push(format!(
+                "ISPG {} is outside the standard ranges (0, 1-230, 400-630)",
+                self.ispg
+            ));
         }
 
         if !(matches!(self.mapc, 1..=3)
@@ -483,7 +492,9 @@ impl Header {
     /// Check whether the i-th label is empty (all whitespace / zeros).
     fn label_is_empty(&self, index: usize) -> bool {
         let start = index * 80;
-        self.label[start..start + 80].iter().all(|&b| b == 0 || b == b' ')
+        self.label[start..start + 80]
+            .iter()
+            .all(|&b| b == 0 || b == b' ')
     }
 
     /// Count how many of the 10 label slots contain non-empty text.
@@ -500,7 +511,13 @@ impl Header {
         // Filter to printable ASCII and truncate to 80 bytes
         let filtered: String = text
             .chars()
-            .map(|c| if c.is_ascii_graphic() || c == ' ' { c } else { ' ' })
+            .map(|c| {
+                if c.is_ascii_graphic() || c == ' ' {
+                    c
+                } else {
+                    ' '
+                }
+            })
             .take(80)
             .collect();
         let bytes = filtered.as_bytes();
@@ -511,6 +528,7 @@ impl Header {
             // Find the first empty slot
             let slot = (0..10).find(|&i| self.label_is_empty(i)).unwrap_or(count);
             let start = slot * 80;
+            self.label[start..start + 80].fill(b' ');
             self.label[start..start + len].copy_from_slice(bytes);
         } else {
             // Shift existing labels up (FIFO) and store in slot 9
@@ -520,6 +538,7 @@ impl Header {
                 self.label.copy_within(src..src + 80, dst);
             }
             let start = 9 * 80;
+            self.label[start..start + 80].fill(b' ');
             self.label[start..start + len].copy_from_slice(bytes);
         }
         self.nlabl = self.count_non_empty_labels() as i32;
@@ -599,9 +618,21 @@ impl Header {
     /// If any of `mx`, `my`, `mz` is zero, that component returns `0.0`.
     pub fn voxel_size(&self) -> [f32; 3] {
         [
-            if self.mx == 0 { 0.0 } else { self.xlen / self.mx as f32 },
-            if self.my == 0 { 0.0 } else { self.ylen / self.my as f32 },
-            if self.mz == 0 { 0.0 } else { self.zlen / self.mz as f32 },
+            if self.mx == 0 {
+                0.0
+            } else {
+                self.xlen / self.mx as f32
+            },
+            if self.my == 0 {
+                0.0
+            } else {
+                self.ylen / self.my as f32
+            },
+            if self.mz == 0 {
+                0.0
+            } else {
+                self.zlen / self.mz as f32
+            },
         ]
     }
 
@@ -623,7 +654,12 @@ impl Header {
     pub fn logical_shape(&self) -> [usize; 4] {
         if self.is_volume_stack() && self.mz > 0 {
             let nvolumes = (self.nz / self.mz) as usize;
-            [nvolumes, self.mz as usize, self.ny as usize, self.nx as usize]
+            [
+                nvolumes,
+                self.mz as usize,
+                self.ny as usize,
+                self.nx as usize,
+            ]
         } else {
             [1, self.nz as usize, self.ny as usize, self.nx as usize]
         }
@@ -647,7 +683,12 @@ impl Header {
     pub fn decode_from_bytes_with_info(bytes: &[u8; 1024]) -> (Self, Option<&'static str>) {
         use crate::engine::endian::FileEndian;
 
-        let machst = [bytes[OFFSET_MACHST], bytes[OFFSET_MACHST + 1], bytes[OFFSET_MACHST + 2], bytes[OFFSET_MACHST + 3]];
+        let machst = [
+            bytes[OFFSET_MACHST],
+            bytes[OFFSET_MACHST + 1],
+            bytes[OFFSET_MACHST + 2],
+            bytes[OFFSET_MACHST + 3],
+        ];
         let detected = FileEndian::from_machst(&machst);
 
         let header = Self::decode_with_endian(bytes, detected);
@@ -708,14 +749,20 @@ impl Header {
         header.ispg = i32::decode(bytes, OFFSET_ISPG, file_endian);
         header.nsymbt = i32::decode(bytes, OFFSET_NSYMBT, file_endian);
 
-        header.extra.copy_from_slice(&bytes[OFFSET_EXTRA..OFFSET_ORIGIN]);
+        header
+            .extra
+            .copy_from_slice(&bytes[OFFSET_EXTRA..OFFSET_ORIGIN]);
 
         header.origin[0] = f32::decode(bytes, OFFSET_ORIGIN, file_endian);
         header.origin[1] = f32::decode(bytes, OFFSET_ORIGIN + 4, file_endian);
         header.origin[2] = f32::decode(bytes, OFFSET_ORIGIN + 8, file_endian);
 
-        header.map.copy_from_slice(&bytes[OFFSET_MAP..OFFSET_MACHST]);
-        header.machst.copy_from_slice(&bytes[OFFSET_MACHST..OFFSET_RMS]);
+        header
+            .map
+            .copy_from_slice(&bytes[OFFSET_MAP..OFFSET_MACHST]);
+        header
+            .machst
+            .copy_from_slice(&bytes[OFFSET_MACHST..OFFSET_RMS]);
 
         header.rms = f32::decode(bytes, OFFSET_RMS, file_endian);
         header.nlabl = i32::decode(bytes, OFFSET_NLABL, file_endian);
@@ -949,7 +996,10 @@ mod tests {
 
         // Without fallback, nx would be 0x4000_0000 (garbage under LE interpretation)
         // With fallback, nx should correctly decode as 64.
-        assert_eq!(decoded.nx, 64, "byte-order fallback should have corrected nx");
+        assert_eq!(
+            decoded.nx, 64,
+            "byte-order fallback should have corrected nx"
+        );
         assert_eq!(decoded.mode, 2);
         assert!(
             warning.is_some(),
@@ -969,7 +1019,10 @@ mod tests {
 
         let (decoded, warning) = Header::decode_from_bytes_with_info(&bytes);
 
-        assert_eq!(decoded.nx, 64, "byte-order fallback should have corrected nx");
+        assert_eq!(
+            decoded.nx, 64,
+            "byte-order fallback should have corrected nx"
+        );
         assert_eq!(decoded.mode, 2);
         assert!(warning.is_some());
     }

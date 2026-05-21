@@ -4,8 +4,8 @@
 //! file in memory and compresses on [`CompressedWriter::finalize`]. This matches
 //! the behaviour of the reference Python `mrcfile` library.
 
+use crate::Error;
 use crate::engine::block::VolumeShape;
-use crate::{Error, Header};
 
 use std::fs::File;
 use std::io::Read;
@@ -67,20 +67,9 @@ impl crate::Reader {
 
         let mut header_bytes = [0u8; 1024];
         header_bytes.copy_from_slice(&buf[..1024]);
-        let (header, endian_warning) = Header::decode_from_bytes_with_info(&header_bytes);
+        let (header, mut warnings, endian, data_size) =
+            crate::io::reader_common::parse_header(&header_bytes, permissive)?;
 
-        let mut warnings = if permissive {
-            header.validate_permissive().map_err(Error::InvalidHeaderDetailed)?
-        } else {
-            header.validate_detailed().map_err(Error::InvalidHeaderDetailed)?;
-            Vec::new()
-        };
-
-        if let Some(msg) = endian_warning {
-            warnings.push(msg.to_string());
-        }
-
-        let data_size = header.data_size().ok_or(Error::InvalidHeader)?;
         let ext_size = header.nsymbt as usize;
 
         if !permissive {
@@ -101,16 +90,18 @@ impl crate::Reader {
         let ext_header = buf[1024..1024 + ext_size].to_vec();
         let data = buf[1024 + ext_size..].to_vec();
 
-        let endian = header.detect_endian();
         let shape = VolumeShape::new(header.nx as usize, header.ny as usize, header.nz as usize);
 
-        Ok((Self {
-            header,
-            ext_header,
-            data,
-            endian,
-            shape,
-        }, warnings))
+        Ok((
+            Self {
+                header,
+                ext_header,
+                data,
+                endian,
+                shape,
+            },
+            warnings,
+        ))
     }
 }
 
