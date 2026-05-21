@@ -768,3 +768,139 @@ impl MmapWriter {
         Ok(())
     }
 }
+
+// -------------------------------------------------------------------------
+// Compressed writer (gzip / bzip2)
+// -------------------------------------------------------------------------
+
+/// Compression backend for [`CompressedWriter`].
+pub trait Compressor {
+    /// Compress `data` and return the compressed bytes.
+    fn compress(data: &[u8]) -> Result<Vec<u8>, Error>;
+}
+
+/// MRC file writer that buffers the entire file in memory and compresses it
+/// on [`finalize`].
+///
+/// Because compressed formats do not support random access, this writer keeps
+/// header and data in a `Vec<u8>` and writes the compressed result only when
+/// [`finalize`] is called.
+#[derive(Debug)]
+pub struct CompressedWriter<C: Compressor> {
+    header: Header,
+    data: Vec<u8>,
+    path: std::path::PathBuf,
+    data_offset: usize,
+    bytes_per_voxel: usize,
+    shape: VolumeShape,
+    _marker: std::marker::PhantomData<C>,
+}
+
+impl<C: Compressor> CompressedWriter<C> {
+    /// Create a new compressed MRC file.
+    pub fn create<P: AsRef<std::path::Path>>(path: P, header: Header) -> Result<Self, Error> {
+        let mut header = header;
+        header.set_file_endian(FileEndian::LittleEndian);
+        header.validate_detailed()?;
+
+        let data_size = header.data_size().ok_or(Error::InvalidHeader)?;
+        let data = vec![0u8; data_size];
+
+        let mode = Mode::from_i32(header.mode).ok_or(Error::UnsupportedMode)?;
+        if mode == Mode::Packed4Bit {
+            return Err(Error::UnsupportedMode);
+        }
+        let bytes_per_voxel = mode.byte_size();
+        let shape = VolumeShape::new(header.nx as usize, header.ny as usize, header.nz as usize);
+
+        Ok(Self {
+            header,
+            data,
+            path: path.as_ref().to_path_buf(),
+            data_offset: header.data_offset(),
+            bytes_per_voxel,
+            shape,
+            _marker: std::marker::PhantomData,
+        })
+    }
+
+    pub fn shape(&self) -> VolumeShape {
+        self.shape
+    }
+
+    pub fn mode(&self) -> Mode {
+        Mode::from_i32(self.header.mode).unwrap_or(Mode::Float32)
+    }
+
+    pub fn header(&self) -> &Header {
+        &self.header
+    }
+
+    /// Write a block of voxels to the file.
+    ///
+    /// The type `T` must match the file's voxel mode exactly.
+    pub fn write_block<T: Voxel>(&mut self, block: &VoxelBlock<T>) -> Result<(), Error> {
+        if T::MODE != self.mode() {
+            return Err(Error::ModeMismatch {
+                file_mode: self.mode(),
+                requested_mode: T::MODE,
+            });
+        }
+
+        if !self.shape.contains_block(block.offset, block.shape) {
+            return Err(Error::BoundsError);
+        }
+
+        let [nx, ny, _nz] = [self.shape.nx, self.shape.ny, self.shape.nz];
+        let [ox, oy, oz] = block.offset;
+        let [sx, sy, sz] = block.shape;
+
+        let linear = ox + oy * nx + oz * nx * ny;
+        let start_byte = self.data_offset + linear * self.bytes_per_voxel;
+        let byte_len = sx * sy * sz * self.bytes_per_voxel;
+
+        let mut buffer = vec![0u8; byte_len];
+        let file_endian = self.header.detect_endian();
+        crate::engine::codec::encode_slice(&block.data, &mut buffer, file_endian);
+
+        self.data[start_byte..start_byte + byte_len].copy_from_slice(&buffer);
+        Ok(())
+    }
+
+    /// Write a block of `u8` data by automatically widening to `u16` (Mode 6).
+    ///
+    /// The file must have been created with [`Mode::Uint16`]. Each `u8` voxel
+    /// is widened to `u16` before writing, matching Python `mrcfile`'s
+    /// auto-conversion behaviour for `np.uint8` data.
+    pub fn write_u8_block(&mut self, block: &VoxelBlock<u8>) -> Result<(), Error> {
+        if self.mode() != Mode::Uint16 {
+            return Err(Error::ModeMismatch {
+                file_mode: self.mode(),
+                requested_mode: Mode::Uint16,
+            });
+        }
+        let widened = crate::engine::convert::convert_u8_slice_to_u16(&block.data);
+        self.write_block(&VoxelBlock {
+            offset: block.offset,
+            shape: block.shape,
+            data: widened,
+        })
+    }
+
+    pub fn finalize(self) -> Result<(), Error> {
+        let mut header_bytes = [0u8; 1024];
+        self.header.encode_to_bytes(&mut header_bytes);
+
+        let ext_size = self.header.nsymbt as usize;
+        let mut file_bytes = Vec::with_capacity(1024 + ext_size + self.data.len());
+        file_bytes.extend_from_slice(&header_bytes);
+        if ext_size > 0 {
+            file_bytes.resize(file_bytes.len() + ext_size, 0);
+        }
+        file_bytes.extend_from_slice(&self.data);
+
+        let compressed = C::compress(&file_bytes)?;
+        std::fs::write(&self.path, compressed)?;
+        Ok(())
+    }
+}

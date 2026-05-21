@@ -32,11 +32,11 @@ use std::vec::Vec;
 /// ```
 #[derive(Debug)]
 pub struct Reader {
-    header: Header,
-    ext_header: Vec<u8>,
-    data: Vec<u8>,
-    endian: FileEndian,
-    shape: VolumeShape,
+    pub(crate) header: Header,
+    pub(crate) ext_header: Vec<u8>,
+    pub(crate) data: Vec<u8>,
+    pub(crate) endian: FileEndian,
+    pub(crate) shape: VolumeShape,
 }
 
 impl Reader {

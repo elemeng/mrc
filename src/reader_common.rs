@@ -193,10 +193,10 @@ impl private::Sealed for crate::GzipReader {}
 #[cfg(feature = "gzip")]
 impl VoxelSource for crate::GzipReader {
     fn vs_read_block_bytes<'a>(&'a self, offset: [usize; 3], shape: [usize; 3]) -> Result<Cow<'a, [u8]>, Error> {
-        self.read_block_bytes(offset, shape).map(Cow::Owned)
+        self.0.read_block_bytes(offset, shape).map(Cow::Owned)
     }
     fn vs_decode_block<T: Voxel>(&self, bytes: &[u8]) -> Result<Vec<T>, Error> {
-        self.decode_block(bytes)
+        self.0.decode_block(bytes)
     }
 }
 
@@ -205,10 +205,10 @@ impl private::Sealed for crate::Bzip2Reader {}
 #[cfg(feature = "bzip2")]
 impl VoxelSource for crate::Bzip2Reader {
     fn vs_read_block_bytes<'a>(&'a self, offset: [usize; 3], shape: [usize; 3]) -> Result<Cow<'a, [u8]>, Error> {
-        self.read_block_bytes(offset, shape).map(Cow::Owned)
+        self.0.read_block_bytes(offset, shape).map(Cow::Owned)
     }
     fn vs_decode_block<T: Voxel>(&self, bytes: &[u8]) -> Result<Vec<T>, Error> {
-        self.decode_block(bytes)
+        self.0.decode_block(bytes)
     }
 }
 
