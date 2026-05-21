@@ -1,3 +1,11 @@
+//! MRC-2014 header structure and builder.
+//!
+//! The [`Header`] struct represents the 1024-byte fixed header defined by the
+//! MRC-2014 specification. It provides encode/decode methods for raw bytes,
+//! validation helpers, and convenience accessors for common metadata fields.
+//!
+//! Use [`HeaderBuilder`] to construct new headers with a fluent API.
+
 use crate::Mode;
 
 // Header field offsets (MRC2014 format)
@@ -49,7 +57,7 @@ const DEFAULT_EXTRA: [u8; 100] = {
 #[repr(C, align(4))]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Header {
-    /// number of columns in 3D data array (fast axis)
+    /// Number of columns in 3D data array (fast axis)
     pub nx: i32,
     /// Number of rows in 3D data array (medium axis)
     pub ny: i32,
@@ -69,11 +77,11 @@ pub struct Header {
     pub my: i32,
     /// Sampling along Z axis of unit cell
     pub mz: i32,
-    /// CELLA: Cell dimensions (unit cell edge length) in Angstroms (Å) along X axis
+    /// CELLA: Cell dimensions (unit cell edge length) in angstroms (Å) along X axis
     pub xlen: f32,
-    /// CELLA: Cell dimensions (unit cell edge length) in Angstroms (Å) along Y axis
+    /// CELLA: Cell dimensions (unit cell edge length) in angstroms (Å) along Y axis
     pub ylen: f32,
-    /// CELLA: Cell dimensions (unit cell edge length) in Angstroms (Å) along Z axis
+    /// CELLA: Cell dimensions (unit cell edge length) in angstroms (Å) along Z axis
     pub zlen: f32,
     /// CELLB: Cell angles in degrees between the crystallographic axes Y and Z axes
     pub alpha: f32,
@@ -81,11 +89,11 @@ pub struct Header {
     pub beta: f32,
     /// CELLB: Cell angles in degrees between the crystallographic axes X and Y axes
     pub gamma: f32,
-    /// 1-based index of column axis (1,2,3 for X,Y,Z)
+    /// One-based index of column axis (1, 2, 3 for X, Y, Z)
     pub mapc: i32,
-    /// 1-based index of row axis (1,2,3 for X,Y,Z)
+    /// One-based index of row axis (1, 2, 3 for X, Y, Z)
     pub mapr: i32,
-    /// 1-based index of section axis (1,2,3 for X,Y,Z)
+    /// One-based index of section axis (1, 2, 3 for X, Y, Z)
     pub maps: i32,
     /// Minimum density value
     pub dmin: f32,
@@ -94,8 +102,9 @@ pub struct Header {
     /// Mean density value
     pub dmean: f32,
     /// Space group number; 0 implies 2D image or image stack.
-    /// For crystallography, represents the actual spacegroup.
-    /// For volume stacks, conventionally ISPG = spacegroup number + 400.
+    ///
+    /// For crystallography, represents the actual space group.
+    /// For volume stacks, conventionally ISPG = space group number + 400.
     pub ispg: i32,
     /// Size of extended header (which follows main header) in bytes.
     /// May contain symmetry records or other metadata (indicated by EXTTYP).
@@ -107,14 +116,15 @@ pub struct Header {
     pub origin: [f32; 3],
     /// Must contain "MAP " to identify file type
     pub map: [u8; 4],
-    /// Machine stamp that encodes byte order of data
-    /// (little-endian: 0x44 0x44 0x00 0x00)
+    /// Machine stamp that encodes byte order of data.
+    ///
+    /// Little-endian files use `0x44 0x44 0x00 0x00`.
     pub machst: [u8; 4],
     /// RMS deviation of map from mean density
     pub rms: f32,
     /// Number of valid labels in `label` field (0–10)
     pub nlabl: i32,
-    /// 10 text labels of 80 bytes each
+    /// Ten text labels of 80 bytes each.
     pub label: [u8; 800],
 }
 

@@ -49,6 +49,7 @@ mod mode;
 
 // Re-export core types
 pub use engine::block::{VolumeShape, VoxelBlock};
+/// Endianness of MRC file data.
 pub use engine::endian::FileEndian;
 
 // Re-export MRC-specific format utilities
@@ -61,24 +62,33 @@ pub use header::{Header, HeaderBuilder};
 pub use mode::{
     ComplexToRealStrategy, Float32Complex, Int16Complex, M0Interpretation, Mode, Packed4Bit, Voxel,
 };
+/// Buffered MRC reader with lazy slice/slab iterators.
 pub use io::buffered::Reader;
+/// Lazy iterators over MRC voxel blocks.
 pub use iter::{BlockIter, SliceIter, SlabIter};
+/// MRC file writer and its builder.
 pub use io::writer::{Writer, WriterBuilder};
 
+/// Memory-mapped MRC writer and builder (requires `mmap` feature).
 #[cfg(feature = "mmap")]
 pub use io::writer::{MmapWriter, MmapWriterBuilder};
 
+/// Memory-mapped MRC reader (requires `mmap` feature).
 #[cfg(feature = "mmap")]
 pub use io::mmap_reader::MmapReader;
 
+/// Gzip-compressed MRC reader and writer (requires `gzip` feature).
 #[cfg(feature = "gzip")]
 pub use io::gzip::{GzipReader, GzipWriter};
 
+/// Bzip2-compressed MRC reader and writer (requires `bzip2` feature).
 #[cfg(feature = "bzip2")]
 pub use io::bzip2::{Bzip2Reader, Bzip2Writer};
 
+/// FEI extended header metadata types and parsers.
 pub use fei::{Fei1Metadata, Fei2Metadata, parse_fei1_records, parse_fei2_records, FEI1_RECORD_SIZE, FEI2_RECORD_SIZE};
 
+/// MRC reader, compression detection, and compression type enum.
 pub use io::reader::{CompressionType, MrcReader, detect_compression};
 
 /// Iterator over slices yielding `f32` voxel blocks.

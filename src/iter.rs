@@ -1,4 +1,14 @@
-//! Iterator engine for reading MRC files
+//! Lazy iterators for reading MRC files by slices, slabs, or blocks.
+//!
+//! This module provides three iterator types that yield [`VoxelBlock`]s on demand:
+//!
+//! * [`SliceIter`] – one Z-slice at a time (`[nx, ny, 1]`).
+//! * [`SlabIter`] – `k` contiguous Z-slices at a time (`[nx, ny, k]`).
+//! * [`BlockIter`] – arbitrary 3D chunks (`[cx, cy, cz]`) tiled over the volume.
+//!
+//! All iterators are lazy: voxel data is only read from the underlying source
+//! when `next()` is called. They implement [`ExactSizeIterator`] (where applicable)
+//! and [`FusedIterator`].
 
 use crate::Error;
 use crate::engine::block::{VolumeShape, VoxelBlock};
@@ -21,6 +31,9 @@ fn read_and_decode<T: Voxel>(
     })
 }
 
+/// Iterator over individual Z-slices of an MRC volume.
+///
+/// Each item is a `VoxelBlock` with shape `[nx, ny, 1]`.
 #[derive(Debug)]
 pub struct SliceIter<'a, T, R: VoxelSource> {
     reader: &'a R,
@@ -32,6 +45,7 @@ pub struct SliceIter<'a, T, R: VoxelSource> {
 }
 
 impl<'a, T, R: VoxelSource> SliceIter<'a, T, R> {
+    /// Create a new slice iterator over the given volume shape.
     pub fn new(reader: &'a R, shape: VolumeShape) -> Self {
         Self {
             reader,
@@ -79,6 +93,10 @@ where
 impl<'a, T, R: VoxelSource> ExactSizeIterator for SliceIter<'a, T, R> where T: Voxel {}
 impl<'a, T, R: VoxelSource> core::iter::FusedIterator for SliceIter<'a, T, R> where T: Voxel {}
 
+/// Iterator over contiguous Z-slabs of an MRC volume.
+///
+/// Each item is a `VoxelBlock` with shape `[nx, ny, k]` where `k` is the
+/// configured slab size (or fewer for the final slab).
 #[derive(Debug)]
 pub struct SlabIter<'a, T, R: VoxelSource> {
     reader: &'a R,
@@ -91,6 +109,9 @@ pub struct SlabIter<'a, T, R: VoxelSource> {
 }
 
 impl<'a, T, R: VoxelSource> SlabIter<'a, T, R> {
+    /// Create a new slab iterator with the given slab thickness.
+    ///
+    /// `k` is clamped to at least 1.
     pub fn new(reader: &'a R, shape: VolumeShape, k: usize) -> Self {
         Self {
             reader,
@@ -141,6 +162,10 @@ where
 impl<'a, T, R: VoxelSource> ExactSizeIterator for SlabIter<'a, T, R> where T: Voxel {}
 impl<'a, T, R: VoxelSource> core::iter::FusedIterator for SlabIter<'a, T, R> where T: Voxel {}
 
+/// Iterator over arbitrary 3D blocks tiled across an MRC volume.
+///
+/// Yields `VoxelBlock`s of the requested `block_shape`, with smaller
+/// remainder blocks at the volume boundaries.
 #[derive(Debug)]
 pub struct BlockIter<'a, T, R: VoxelSource> {
     reader: &'a R,
@@ -151,6 +176,9 @@ pub struct BlockIter<'a, T, R: VoxelSource> {
 }
 
 impl<'a, T, R: VoxelSource> BlockIter<'a, T, R> {
+    /// Create a new block iterator with the given tile shape.
+    ///
+    /// Panics if any dimension of `block_shape` is zero.
     pub fn new(reader: &'a R, shape: VolumeShape, block_shape: [usize; 3]) -> Self {
         assert!(block_shape[0] > 0 && block_shape[1] > 0 && block_shape[2] > 0, "block_shape must be positive in all dimensions");
         Self {

@@ -1,8 +1,8 @@
 //! Gzip-compressed MRC file reader and writer.
 //!
 //! Because gzip does not support random access, the writer buffers the entire
-//! file in memory and compresses on [`GzipWriter::finalize`]. This matches the
-//! behaviour of the reference Python `mrcfile` library.
+//! file in memory and compresses on [`CompressedWriter::finalize`]. This matches
+//! the behaviour of the reference Python `mrcfile` library.
 
 use crate::engine::block::VolumeShape;
 use crate::{Error, Header};
@@ -15,7 +15,7 @@ use std::vec::Vec;
 /// Gzip-compressed MRC file reader.
 ///
 /// This is a thin newtype wrapper around [`Reader`](crate::Reader). All
-/// [`Reader`] methods are available via [`Deref`].
+/// [`Reader`](crate::Reader) methods are available via [`Deref`](std::ops::Deref).
 #[derive(Debug)]
 pub struct GzipReader(pub crate::Reader);
 
@@ -129,6 +129,6 @@ impl crate::io::writer::Compressor for GzipCompressor {
 /// Gzip-compressed MRC file writer.
 ///
 /// Because gzip does not support random access, the entire file is buffered
-/// in memory and compressed only on [`finalize`](crate::io::writer::CompressedWriter::finalize).
+/// in memory and compressed only on finalize.
 /// For large volumes consider using [`Writer`](crate::Writer) instead.
 pub type GzipWriter = crate::io::writer::CompressedWriter<GzipCompressor>;

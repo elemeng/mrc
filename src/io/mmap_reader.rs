@@ -1,4 +1,9 @@
-//! Memory-mapped MRC file reader with zero-copy API
+//! Memory-mapped MRC file reader with zero-copy API.
+//!
+//! Provides [`MmapReader`], which maps the file into the process address space
+//! rather than copying it into a `Vec<u8>`. The OS pages data in and out on
+//! demand, making this ideal for very large files or when only a small subset
+//! of slices needs to be accessed.
 
 use crate::engine::block::{VolumeShape, VoxelBlock};
 use crate::engine::endian::FileEndian;

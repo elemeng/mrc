@@ -1,8 +1,12 @@
-//! Voxel block types
+//! Volume geometry and voxel block types.
+//!
+//! [`VolumeShape`] describes the dimensions of an MRC volume, and
+//! [`VoxelBlock`] is the universal container for a contiguous chunk of
+//! voxel data with a known 3D offset and shape.
 
 use std::vec::Vec;
 
-/// Volume geometry
+/// Volume geometry in voxels.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct VolumeShape {
     pub nx: usize,
@@ -11,14 +15,17 @@ pub struct VolumeShape {
 }
 
 impl VolumeShape {
+    /// Create a new volume shape.
     pub const fn new(nx: usize, ny: usize, nz: usize) -> Self {
         Self { nx, ny, nz }
     }
 
+    /// Total number of voxels, or `None` if the calculation overflows.
     pub fn total_voxels(&self) -> Option<usize> {
         self.nx.checked_mul(self.ny)?.checked_mul(self.nz)
     }
 
+    /// Returns `true` if any dimension is zero.
     pub const fn is_empty(&self) -> bool {
         self.nx == 0 || self.ny == 0 || self.nz == 0
     }
@@ -44,7 +51,7 @@ impl VolumeShape {
     }
 }
 
-/// Universal representation of voxel chunks
+/// A contiguous chunk of voxel data with a 3D offset and shape.
 #[derive(Debug, Clone)]
 pub struct VoxelBlock<T> {
     pub offset: [usize; 3],
@@ -53,6 +60,7 @@ pub struct VoxelBlock<T> {
 }
 
 impl<T> VoxelBlock<T> {
+    /// Create a new voxel block, panicking if `data.len()` does not match `shape`.
     pub fn new(offset: [usize; 3], shape: [usize; 3], data: Vec<T>) -> Self {
         let expected = match shape[0].checked_mul(shape[1]).and_then(|v| v.checked_mul(shape[2])) {
             Some(v) => v,
@@ -91,14 +99,17 @@ impl<T> VoxelBlock<T> {
         })
     }
 
+    /// Number of voxel values in this block.
     pub fn len(&self) -> usize {
         self.data.len()
     }
 
+    /// Returns `true` if this block contains no voxels.
     pub fn is_empty(&self) -> bool {
         self.data.is_empty()
     }
 
+    /// Returns `true` if this block covers the entire volume starting at the origin.
     pub fn is_full_volume(&self, volume_shape: &VolumeShape) -> bool {
         self.offset == [0, 0, 0]
             && self.shape == [volume_shape.nx, volume_shape.ny, volume_shape.nz]

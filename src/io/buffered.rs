@@ -1,4 +1,8 @@
-//! MRC file reader with iterator-centric API
+//! In-memory buffered MRC file reader.
+//!
+//! Provides [`Reader`], which loads the entire file into a `Vec<u8>` on open.
+//! This enables fast random access to any slice or block, but requires enough
+//! RAM to hold the full dataset.
 
 use crate::engine::block::VolumeShape;
 use crate::engine::endian::FileEndian;
@@ -8,7 +12,7 @@ use crate::{Error, Header, Mode};
 
 use std::vec::Vec;
 
-/// MRC file reader using standard file I/O.
+/// In-memory buffered MRC file reader.
 ///
 /// The entire file is read into memory on open, making this suitable for
 /// smaller files or when random access to any slice is needed.

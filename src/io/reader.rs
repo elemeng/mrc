@@ -58,7 +58,13 @@ pub fn detect_compression<P: AsRef<Path>>(path: P) -> Result<CompressionType, Er
     Ok(CompressionType::Plain)
 }
 
-/// A unified MRC file reader that auto-detects compression.
+/// Unified MRC file reader that auto-detects compression.
+///
+/// This enum is the recommended entry point for reading MRC files when you do
+/// not know in advance whether the file is plain, gzip-compressed, or
+/// bzip2-compressed. It peeks at the first two bytes to decide, then delegates
+/// to the appropriate concrete reader ([`Reader`](crate::Reader),
+/// [`GzipReader`](crate::GzipReader), or [`Bzip2Reader`](crate::Bzip2Reader)).
 ///
 /// Created via [`open`](crate::open) or [`MrcReader::open`].
 #[derive(Debug)]

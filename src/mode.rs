@@ -1,3 +1,10 @@
+//! Voxel mode definitions and the [`Voxel`] trait.
+//!
+//! The MRC format stores voxel data in one of several numeric modes.
+//! The [`Mode`] enum maps mode constants to their Rust representations,
+//! and the [`Voxel`] trait connects Rust types to their corresponding modes
+//! at compile time for type-safe I/O.
+
 /// Strategy for converting complex numbers to real values.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
@@ -16,11 +23,15 @@ pub enum M0Interpretation {
     Unsigned,
 }
 
+/// MRC data mode defining the on-disk representation of voxel values.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Mode {
+    /// Signed 8-bit integer (Mode 0).
     Int8 = 0,
+    /// Signed 16-bit integer (Mode 1).
     Int16 = 1,
+    /// 32-bit floating point (Mode 2).
     Float32 = 2,
     /// Complex number with 16-bit integer components (Mode 3)
     ///
@@ -36,7 +47,9 @@ pub enum Mode {
     /// de facto standard used by CCP4, IMOD, and other MRC implementations.
     /// This is not explicitly specified in MRC2014 but is universally adopted.
     Float32Complex = 4,
+    /// Unsigned 16-bit integer (Mode 6).
     Uint16 = 6,
+    /// 16-bit floating point (Mode 12, requires the `f16` feature).
     Float16 = 12,
     /// 4-bit data packed two values per byte (mode 101)
     Packed4Bit = 101,

@@ -1,4 +1,10 @@
 //! Shared helpers for all MRC reader implementations.
+//!
+//! This module contains the [`VoxelSource`] trait and helper functions that are
+//! used by [`Reader`](crate::Reader), [`MmapReader`](crate::MmapReader),
+//! [`GzipReader`](crate::GzipReader), [`Bzip2Reader`](crate::Bzip2Reader), and
+//! [`MrcReader`](crate::MrcReader) to implement block validation, endian
+//! decoding, and the `slices_f32` / `slabs_f32` convenience iterators.
 
 use crate::engine::block::{VolumeShape, VoxelBlock};
 use crate::engine::codec::{EndianCodec, decode_slice};
@@ -12,18 +18,35 @@ mod private {
     pub trait Sealed {}
 }
 
-/// Internal trait unifying all reader types for generic iterators.
+/// Sealed trait unifying all reader types for generic iterators.
+///
+/// [`SliceIter`](crate::SliceIter), [`SlabIter`](crate::SlabIter), and
+/// [`BlockIter`](crate::BlockIter) are generic over `VoxelSource` so they can
+/// work with any reader backend without monomorphising on the concrete type.
 ///
 /// This trait is sealed: it can only be implemented by types inside this crate.
 #[doc(hidden)]
 pub trait VoxelSource: private::Sealed {
+    /// Read a block of raw bytes from the data region.
+    ///
+    /// Returns `Cow::Borrowed` for zero-copy backends (e.g. [`MmapReader`](crate::MmapReader))
+    /// and `Cow::Owned` for in-memory backends.
     fn vs_read_block_bytes<'a>(&'a self, offset: [usize; 3], shape: [usize; 3]) -> Result<Cow<'a, [u8]>, Error>;
+
+    /// Decode raw bytes to the requested voxel type, checking mode compatibility.
     fn vs_decode_block<T: Voxel>(&self, bytes: &[u8]) -> Result<Vec<T>, Error>;
 }
 
-/// Validate a block read request and compute byte range.
+/// Validate a block read request and compute its byte range in the data region.
 ///
+/// Checks that the requested block is fully contained within the volume bounds
+/// and that the resulting byte range does not exceed the available data length.
 /// Returns `(start_byte, end_byte)` relative to the start of the data region.
+///
+/// # Errors
+///
+/// * [`Error::BoundsError`] if the block exceeds volume bounds or the data length.
+/// * [`Error::UnsupportedMode`] if the mode is [`Mode::Packed4Bit`].
 pub fn validate_block_read(
     volume_shape: VolumeShape,
     mode: Mode,
@@ -59,7 +82,10 @@ pub fn validate_block_read(
     Ok((start_byte, end_byte))
 }
 
-/// Decode a byte block to the requested voxel type.
+/// Decode a raw byte block to the requested voxel type.
+///
+/// Performs endian conversion if the file endianness differs from the host.
+/// Returns [`Error::ModeMismatch`] if `T` does not match `file_mode`.
 pub fn decode_block<T: Voxel>(
     bytes: &[u8],
     file_mode: Mode,
@@ -79,10 +105,13 @@ pub fn decode_block<T: Voxel>(
     }
 }
 
-/// Native-endian decode: memcpy bytes directly to Vec<T>.
+/// Fast native-endian decode: copy bytes directly into a `Vec<T>`.
+///
+/// This is a thin `memcpy` wrapper used when the file endianness matches the
+/// host, avoiding per-element swapping.
 ///
 /// # Safety
-/// This function uses `unsafe` to copy raw bytes into a typed Vec. The caller
+/// This function uses `unsafe` to copy raw bytes into a typed `Vec`. The caller
 /// must ensure that `bytes.len()` is an exact multiple of `T::BYTE_SIZE` and
 /// that the byte pattern is valid for `T`. For MRC data this always holds
 /// because the byte count is derived from `mode.byte_size() * count`.
@@ -100,7 +129,14 @@ pub fn decode_native_endian<T: EndianCodec + Copy>(bytes: &[u8]) -> Result<Vec<T
     Ok(result)
 }
 
-/// Build a `slices_f32` iterator from a generic byte reader.
+/// Build a slice iterator that automatically converts common modes to `f32`.
+///
+/// Supported source modes: `Float32`, `Int16`, `Uint16`, `Int8`.
+/// Returns [`Error::UnsupportedMode`] for other modes.
+///
+/// The `read_bytes` callback abstracts over the concrete reader backend so the
+/// same logic can be reused by [`Reader`](crate::Reader), [`MmapReader`](crate::MmapReader),
+/// and the compression wrappers.
 pub fn slices_f32<'a>(
     shape: VolumeShape,
     mode: Mode,
@@ -137,7 +173,10 @@ pub fn slices_f32<'a>(
     })))
 }
 
-/// Build a `slabs_f32` iterator from a generic byte reader.
+/// Build a slab iterator that automatically converts common modes to `f32`.
+///
+/// A slab is a contiguous group of `k` Z-slices. Supported source modes and
+/// error behaviour are the same as for [`slices_f32`].
 pub fn slabs_f32<'a>(
     shape: VolumeShape,
     mode: Mode,

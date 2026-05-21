@@ -1,4 +1,35 @@
-//! I/O module for reading and writing MRC files.
+//! I/O subsystem for reading and writing MRC files.
+//!
+//! This module provides multiple I/O strategies tailored to different use cases:
+//!
+//! | Type | Module | Description |
+//! |------|--------|-------------|
+//! | [`MrcReader`] | [`reader`] | Unified entry point that auto-detects compression (plain, gzip, bzip2) and dispatches to the correct backend. This is what [`crate::open`] returns. |
+//! | [`Reader`] | [`buffered`] | In-memory buffered reader. Reads the **entire file into RAM** on open, enabling fast random access to any slice. |
+//! | [`MmapReader`] | [`mmap_reader`] | Zero-copy memory-mapped reader. Lets the OS page data on demand; ideal for files too large to fit in RAM (requires the `mmap` feature). |
+//! | [`Writer`] | [`writer`] | Direct file I/O writer. Writes blocks straight to disk and rewrites the header on [`Writer::finalize`]. |
+//! | [`CompressedWriter`] | [`writer`] | Generic compressed writer that buffers the entire file in memory and compresses on finalize. Used via type aliases [`GzipWriter`](crate::GzipWriter) and [`Bzip2Writer`](crate::Bzip2Writer). |
+//!
+//! ## Choosing a reader
+//!
+//! * Use [`MrcReader`] / [`crate::open`] when you simply want to read a file and don't know
+//!   whether it is compressed.
+//! * Use [`Reader`] when the file fits in memory and you need repeated random access.
+//! * Use [`MmapReader`] when the file is very large or you only need to touch a small
+//!   subset of the data.
+//!
+//! ## Choosing a writer
+//!
+//! * Use [`Writer`] for normal uncompressed output.
+//! * Use [`GzipWriter`] / [`Bzip2Writer`] when you need compressed output. Note that
+//!   these buffer everything in RAM because compressed formats do not support random
+//!   access.
+//!
+//! ## Shared internals
+//!
+//! [`reader_common`] contains helper traits and functions used across all reader
+//! implementations, including the sealed [`VoxelSource`](crate::io::reader_common::VoxelSource)
+//! trait that powers the generic slice/slab iterators.
 
 pub mod buffered;
 pub mod reader;

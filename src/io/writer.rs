@@ -773,18 +773,35 @@ impl MmapWriter {
 // Compressed writer (gzip / bzip2)
 // -------------------------------------------------------------------------
 
-/// Compression backend for [`CompressedWriter`].
+/// Compression backend trait for [`CompressedWriter`].
+///
+/// Implementations of this trait plug into [`CompressedWriter`] to provide
+/// a specific compression algorithm (e.g. gzip via [`GzipCompressor`](crate::io::gzip::GzipCompressor),
+/// bzip2 via [`Bzip2Compressor`](crate::io::bzip2::Bzip2Compressor)).
+///
+/// The trait has a single method so that [`CompressedWriter`] can remain
+/// generic without carrying runtime state for the compressor.
 pub trait Compressor {
     /// Compress `data` and return the compressed bytes.
     fn compress(data: &[u8]) -> Result<Vec<u8>, Error>;
 }
 
-/// MRC file writer that buffers the entire file in memory and compresses it
-/// on [`finalize`].
+/// MRC file writer that buffers the entire file in memory and compresses on
+/// [`finalize`](CompressedWriter::finalize).
 ///
-/// Because compressed formats do not support random access, this writer keeps
-/// header and data in a `Vec<u8>` and writes the compressed result only when
-/// [`finalize`] is called.
+/// Compressed formats (gzip, bzip2) do not support random access, so this
+/// writer accumulates header and voxel data in a `Vec<u8>` during construction
+/// and [`write_block`] calls. Only when [`finalize`](CompressedWriter::finalize)
+/// is invoked does it assemble the full file, compress it via [`Compressor::compress`],
+/// and write the result to disk in one shot.
+///
+/// This design matches the behaviour of the reference Python `mrcfile` library.
+/// For large volumes that do not fit in RAM, prefer [`Writer`] (uncompressed)
+/// or write to an uncompressed file and compress it afterwards.
+///
+/// Concrete type aliases are provided for convenience:
+/// * [`GzipWriter`](crate::GzipWriter) = `CompressedWriter<GzipCompressor>`
+/// * [`Bzip2Writer`](crate::Bzip2Writer) = `CompressedWriter<Bzip2Compressor>`
 #[derive(Debug)]
 pub struct CompressedWriter<C: Compressor> {
     header: Header,

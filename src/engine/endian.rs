@@ -1,9 +1,11 @@
 //! Endianness handling for MRC files
 
-/// Endianness of MRC file data
+/// Endianness of MRC file data.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FileEndian {
+    /// Little-endian byte order.
     LittleEndian,
+    /// Big-endian byte order.
     BigEndian,
 }
 
@@ -51,6 +53,7 @@ impl FileEndian {
         }
     }
 
+    /// Returns the 4-byte MACHST stamp for this endianness.
     pub fn to_machst(self) -> [u8; 4] {
         match self {
             FileEndian::LittleEndian => [0x44, 0x44, 0x00, 0x00],
@@ -66,6 +69,7 @@ impl FileEndian {
         }
     }
 
+    /// Returns the native endianness of the host platform.
     #[inline]
     pub fn native() -> Self {
         #[cfg(target_endian = "little")]
@@ -78,6 +82,7 @@ impl FileEndian {
         }
     }
 
+    /// Returns `true` if this endianness matches the host platform.
     #[inline]
     pub fn is_native(self) -> bool {
         self == Self::native()
