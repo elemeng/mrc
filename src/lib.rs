@@ -99,6 +99,10 @@ pub use any_reader::{CompressionType, MrcReader, detect_compression};
 pub type SliceIterF32<'a> =
     Box<dyn Iterator<Item = Result<crate::engine::block::VoxelBlock<f32>, Error>> + 'a>;
 
+/// Iterator over slices yielding `u8` voxel blocks.
+pub type SliceIterU8<'a> =
+    Box<dyn Iterator<Item = Result<crate::engine::block::VoxelBlock<u8>, Error>> + 'a>;
+
 /// Open an MRC file for reading, auto-detecting gzip or bzip2 compression.
 pub fn open<P: AsRef<std::path::Path>>(path: P) -> Result<MrcReader, Error> {
     MrcReader::open(path)

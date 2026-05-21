@@ -224,7 +224,7 @@ impl MmapReader {
             self.shape,
             self.mode(),
             self.endian,
-            |offset, shape| self.read_block_bytes(offset, shape).map(|b| b.to_vec()),
+            |offset, shape| self.read_block_bytes(offset, shape).map(std::borrow::Cow::Borrowed),
         )
     }
 
@@ -237,7 +237,7 @@ impl MmapReader {
             self.mode(),
             self.endian,
             k,
-            |offset, shape| self.read_block_bytes(offset, shape).map(|b| b.to_vec()),
+            |offset, shape| self.read_block_bytes(offset, shape).map(std::borrow::Cow::Borrowed),
         )
     }
 

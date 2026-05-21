@@ -157,7 +157,7 @@ impl GzipReader {
             self.shape,
             self.mode(),
             self.endian,
-            |offset, shape| self.read_block_bytes(offset, shape),
+            |offset, shape| self.read_block_bytes(offset, shape).map(std::borrow::Cow::Owned),
         )
     }
 
@@ -170,7 +170,7 @@ impl GzipReader {
             self.mode(),
             self.endian,
             k,
-            |offset, shape| self.read_block_bytes(offset, shape),
+            |offset, shape| self.read_block_bytes(offset, shape).map(std::borrow::Cow::Owned),
         )
     }
 

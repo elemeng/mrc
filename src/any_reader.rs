@@ -211,7 +211,7 @@ impl MrcReader {
     /// Iterate over slices, automatically converting Mode 6 (`Uint16`) to `u8`.
     ///
     /// Returns an error if the file is not Mode 6 or if any value exceeds 255.
-    pub fn slices_u8(&self) -> Result<Box<dyn Iterator<Item = Result<VoxelBlock<u8>, Error>> + '_>, Error> {
+    pub fn slices_u8(&self) -> Result<crate::SliceIterU8<'_>, Error> {
         match self {
             MrcReader::Plain(r) => Ok(Box::new(r.slices_u8()?)),
             #[cfg(feature = "gzip")]
