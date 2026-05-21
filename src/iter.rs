@@ -1,9 +1,7 @@
 //! Lazy iterators for reading MRC files by slices, slabs, or blocks.
 //!
 //! All iterators are backed by a single [`RegionIter`] type parameterized by a
-//! [`Stepper`] strategy that generates `(offset, shape)` pairs. Convenience
-//! type aliases preserve backward compatibility with the old `SliceIter`,
-//! `SlabIter`, and `BlockIter` names.
+//! [`Stepper`] strategy that generates `(offset, shape)` pairs.
 
 use crate::Error;
 use crate::engine::block::{VolumeShape, VoxelBlock};
@@ -175,40 +173,4 @@ where
 {
 }
 
-// ============================================================================
-// Backward-compatible type aliases with constructors
-// ============================================================================
 
-/// Iterator over individual Z-slices of an MRC volume.
-///
-/// Each item is a `VoxelBlock` with shape `[nx, ny, 1]`.
-pub type SliceIter<'a, T, R> = RegionIter<'a, T, R, SliceStepper>;
-
-impl<'a, T, R> SliceIter<'a, T, R> {
-    /// Create a new slice iterator over the given volume shape.
-    pub fn new(reader: &'a R, volume_shape: VolumeShape) -> Self {
-        RegionIter::with_stepper(reader, volume_shape, SliceStepper::new())
-    }
-}
-
-/// Iterator over contiguous Z-slabs of an MRC volume.
-///
-/// Each item is a `VoxelBlock` with shape `[nx, ny, k]`.
-pub type SlabIter<'a, T, R> = RegionIter<'a, T, R, SlabStepper>;
-
-impl<'a, T, R> SlabIter<'a, T, R> {
-    /// Create a new slab iterator with the given slab thickness.
-    pub fn new(reader: &'a R, volume_shape: VolumeShape, k: usize) -> Self {
-        RegionIter::with_stepper(reader, volume_shape, SlabStepper::new(k))
-    }
-}
-
-/// Iterator over arbitrary 3D blocks tiled across an MRC volume.
-pub type BlockIter<'a, T, R> = RegionIter<'a, T, R, TileStepper>;
-
-impl<'a, T, R> BlockIter<'a, T, R> {
-    /// Create a new block iterator with the given tile shape.
-    pub fn new(reader: &'a R, volume_shape: VolumeShape, tile_shape: [usize; 3]) -> Self {
-        RegionIter::with_stepper(reader, volume_shape, TileStepper::new(tile_shape))
-    }
-}

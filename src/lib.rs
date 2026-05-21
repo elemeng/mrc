@@ -67,8 +67,8 @@ pub use half::f16;
 pub use io::buffered::Reader;
 /// MRC file writer and its builder.
 pub use io::writer::{Writer, WriterBuilder};
-/// Lazy iterators over MRC voxel blocks.
-pub use iter::{BlockIter, RegionIter, SlabIter, SliceIter};
+/// Lazy iterator over MRC voxel blocks.
+pub use iter::RegionIter;
 /// Stepping strategies for [`RegionIter`].
 pub use iter::{SliceStepper, SlabStepper, TileStepper};
 /// Core reader traits providing unified iterator and access methods.
