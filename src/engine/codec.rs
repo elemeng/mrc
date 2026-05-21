@@ -209,7 +209,7 @@ impl EndianCodec for Float32Complex {
 }
 
 #[cfg(feature = "f16")]
-impl EndianCodec for f16 {
+impl EndianCodec for crate::f16 {
     const BYTE_SIZE: usize = 2;
 
     #[inline]
@@ -240,13 +240,36 @@ impl EndianCodec for f16 {
 /// Decode a slice of values from bytes with automatic parallel processing.
 ///
 /// Uses 1MB chunks for optimal cache behaviour when the `parallel` feature is enabled.
-pub(crate) fn decode_slice<T: EndianCodec + Send + Copy + Default>(
+/// For native-endian files, this is a plain `memcpy`.
+pub(crate) fn decode_slice<T: EndianCodec + Send + Copy>(
     bytes: &[u8],
     endian: FileEndian,
 ) -> Vec<T> {
+    if bytes.len() % T::BYTE_SIZE != 0 {
+        panic!(
+            "decode_slice: byte length {} is not a multiple of {}",
+            bytes.len(),
+            T::BYTE_SIZE
+        );
+    }
     let n = bytes.len() / T::BYTE_SIZE;
     let mut result = Vec::with_capacity(n);
-    result.resize(n, T::default());
+    // SAFETY: all elements are overwritten below.
+    unsafe {
+        result.set_len(n);
+    }
+
+    // Fast path: native endian is a simple memcpy.
+    if endian == FileEndian::native() {
+        unsafe {
+            core::ptr::copy_nonoverlapping(
+                bytes.as_ptr(),
+                result.as_mut_ptr() as *mut u8,
+                bytes.len(),
+            );
+        }
+        return result;
+    }
 
     #[cfg(feature = "parallel")]
     {
@@ -279,8 +302,25 @@ pub(crate) fn decode_slice<T: EndianCodec + Send + Copy + Default>(
 /// Encode a slice of values to bytes with automatic parallel processing.
 ///
 /// Uses 1MB chunks for optimal cache behaviour when the `parallel` feature is enabled.
-pub(crate) fn encode_slice<T: EndianCodec + Sync>(values: &[T], bytes: &mut [u8], endian: FileEndian) {
+/// For native-endian files, this is a plain `memcpy`.
+pub(crate) fn encode_slice<T: EndianCodec + Sync>(
+    values: &[T],
+    bytes: &mut [u8],
+    endian: FileEndian,
+) {
     assert_eq!(values.len() * T::BYTE_SIZE, bytes.len());
+
+    // Fast path: native endian is a simple memcpy.
+    if endian == FileEndian::native() {
+        unsafe {
+            core::ptr::copy_nonoverlapping(
+                values.as_ptr() as *const u8,
+                bytes.as_mut_ptr(),
+                bytes.len(),
+            );
+        }
+        return;
+    }
 
     #[cfg(feature = "parallel")]
     {

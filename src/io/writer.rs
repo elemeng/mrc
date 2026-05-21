@@ -1,15 +1,14 @@
 //! MRC file writer with block-based API
 
 use crate::engine::block::{VolumeShape, VoxelBlock};
-use crate::engine::codec::encode_slice;
 #[cfg(feature = "parallel")]
 use crate::engine::codec::encode_block_parallel;
+use crate::engine::codec::encode_slice;
 use crate::engine::endian::FileEndian;
 use crate::mode::Voxel;
 use crate::{Error, Header, Mode};
 
 use std::path::PathBuf;
-#[cfg(feature = "f16")]
 use std::vec::Vec;
 
 /// Builder for configuring and creating a new MRC file writer.
@@ -159,15 +158,16 @@ impl Writer {
         let data_offset = header.data_offset() as u64;
         let mode = Mode::from_i32(header.mode).ok_or(Error::UnsupportedMode)?;
         if mode == Mode::Int16Complex {
-            eprintln!("Warning: Mode 3 (Int16Complex) is obsolete and should not be used for writing new files.");
+            eprintln!(
+                "Warning: Mode 3 (Int16Complex) is obsolete and should not be used for writing new files."
+            );
         }
         if mode == Mode::Packed4Bit {
             return Err(Error::UnsupportedMode);
         }
         let bytes_per_voxel = mode.byte_size();
 
-        let shape =
-            VolumeShape::new(header.nx as usize, header.ny as usize, header.nz as usize);
+        let shape = VolumeShape::new(header.nx as usize, header.ny as usize, header.nz as usize);
 
         Ok(Self {
             file,
@@ -189,6 +189,7 @@ impl Writer {
     /// Write a block of voxels to the file.
     ///
     /// The type `T` must match the file's voxel mode exactly.
+    /// Supports arbitrary sub-blocks by scattering row-by-row when necessary.
     pub fn write_block<T: Voxel>(&mut self, block: &VoxelBlock<T>) -> Result<(), Error> {
         if T::MODE != self.mode() {
             return Err(Error::ModeMismatch {
@@ -204,24 +205,39 @@ impl Writer {
         let [nx, ny, _nz] = [self.shape.nx, self.shape.ny, self.shape.nz];
         let [ox, oy, oz] = block.offset;
         let [sx, sy, sz] = block.shape;
-
-        let linear = (ox as u64)
-            + (oy as u64) * (nx as u64)
-            + (oz as u64) * (nx as u64) * (ny as u64);
-        let start_offset = self.data_offset
-            + linear * (self.bytes_per_voxel as u64);
-        let byte_len = (sx as u64) * (sy as u64) * (sz as u64) * (self.bytes_per_voxel as u64);
-
-        // Encode to a temporary buffer and write directly
-        let byte_len_usize = byte_len.try_into().map_err(|_| Error::BoundsError)?;
-        let mut buffer = vec![0u8; byte_len_usize];
+        let b = self.bytes_per_voxel;
         let file_endian = self.header.detect_endian();
-        encode_slice(&block.data, &mut buffer, file_endian);
 
+        // Fast path: full XY slab is contiguous in the file.
+        if ox == 0 && sx == nx && oy == 0 && sy == ny {
+            let linear =
+                (ox as u64) + (oy as u64) * (nx as u64) + (oz as u64) * (nx as u64) * (ny as u64);
+            let start_offset = self.data_offset + linear * (b as u64);
+            let byte_len = (sx as u64) * (sy as u64) * (sz as u64) * (b as u64);
+            let byte_len_usize = byte_len.try_into().map_err(|_| Error::BoundsError)?;
+            let mut buffer = vec![0u8; byte_len_usize];
+            encode_slice(&block.data, &mut buffer, file_endian);
+
+            use std::io::{Seek, SeekFrom, Write};
+            self.file.seek(SeekFrom::Start(start_offset))?;
+            self.file.write_all(&buffer)?;
+            return Ok(());
+        }
+
+        // Scatter path: write row by row.
         use std::io::{Seek, SeekFrom, Write};
-        self.file.seek(SeekFrom::Start(start_offset))?;
-        self.file.write_all(&buffer)?;
-
+        for z in 0..sz {
+            for y in 0..sy {
+                let file_linear = ox + (oy + y) * nx + (oz + z) * nx * ny;
+                let file_offset = self.data_offset + (file_linear as u64) * (b as u64);
+                let block_idx = y * sx + z * sx * sy;
+                let row_values = &block.data[block_idx..block_idx + sx];
+                let mut row_bytes = vec![0u8; sx * b];
+                encode_slice(row_values, &mut row_bytes, file_endian);
+                self.file.seek(SeekFrom::Start(file_offset))?;
+                self.file.write_all(&row_bytes)?;
+            }
+        }
         Ok(())
     }
 
@@ -252,6 +268,9 @@ impl Writer {
     ///
     /// Encoding is performed in parallel using all available cores.
     /// File writes are performed sequentially to ensure cross-platform compatibility.
+    ///
+    /// For non-contiguous blocks (sub-XY slabs), this falls back to the serial
+    /// [`write_block`](Self::write_block) implementation.
     #[cfg(feature = "parallel")]
     pub fn write_block_parallel<T: Voxel>(&mut self, block: &VoxelBlock<T>) -> Result<(), Error> {
         if T::MODE != self.mode() {
@@ -266,19 +285,22 @@ impl Writer {
         }
 
         let [nx, ny, _nz] = [self.shape.nx, self.shape.ny, self.shape.nz];
-        let [ox, oy, oz] = block.offset;
+        let [ox, oy, _oz] = block.offset;
+        let [sx, sy, _sz] = block.shape;
+
+        // Parallel fast path only works for full XY slabs (contiguous in file).
+        if ox != 0 || sx != nx || oy != 0 || sy != ny {
+            return self.write_block(block);
+        }
 
         let chunk_size = 1024 * 1024; // 1M voxels per chunk
-        let linear = (ox as u64)
-            + (oy as u64) * (nx as u64)
-            + (oz as u64) * (nx as u64) * (ny as u64);
-        let base_offset = self.data_offset
-            + linear * (self.bytes_per_voxel as u64);
+        let linear =
+            (ox as u64) + (oy as u64) * (nx as u64) + (_oz as u64) * (nx as u64) * (ny as u64);
+        let base_offset = self.data_offset + linear * (self.bytes_per_voxel as u64);
         let file_endian = self.header.detect_endian();
 
         // Encode in parallel
-        let encoded_chunks =
-            encode_block_parallel(&block.data, chunk_size, file_endian);
+        let encoded_chunks = encode_block_parallel(&block.data, chunk_size, file_endian);
 
         // Write chunks sequentially (cross-platform)
         use std::io::{Seek, SeekFrom, Write};
@@ -304,8 +326,12 @@ impl Writer {
                 requested_mode: Mode::Float16,
             });
         }
-        let data: Vec<f16> = block.data.iter().map(|&v| v as f16).collect();
-        self.write_block::<f16>(&VoxelBlock {
+        let data: Vec<crate::f16> = block
+            .data
+            .iter()
+            .map(|&v| crate::f16::from_f32(v))
+            .collect();
+        self.write_block::<crate::f16>(&VoxelBlock {
             offset: block.offset,
             shape: block.shape,
             data,
@@ -336,7 +362,7 @@ impl Writer {
         self.file.seek(SeekFrom::Start(self.data_offset))?;
         let mut buf = vec![0u8; data_size];
         self.file.read_exact(&mut buf)?;
-        update_header_stats_from_bytes(&mut self.header, &buf);
+        update_header_stats_from_bytes(&mut self.header, &buf)?;
         Ok(())
     }
 }
@@ -345,18 +371,15 @@ impl Writer {
 // Stats helpers
 // ============================================================================
 
-fn update_header_stats_from_bytes(header: &mut Header, bytes: &[u8]) {
+fn update_header_stats_from_bytes(header: &mut Header, bytes: &[u8]) -> Result<(), Error> {
     let endian = header.detect_endian();
-    let mode = Mode::from_i32(header.mode);
-    let (dmin, dmax, dmean, rms) = crate::engine::stats::compute_stats(
-        bytes,
-        mode.unwrap_or(Mode::Float32),
-        endian,
-    );
+    let mode = Mode::from_i32(header.mode).ok_or(Error::UnsupportedMode)?;
+    let (dmin, dmax, dmean, rms) = crate::engine::stats::compute_stats(bytes, mode, endian);
     header.dmin = dmin;
     header.dmax = dmax;
     header.dmean = dmean;
     header.rms = rms;
+    Ok(())
 }
 
 // ============================================================================
@@ -492,7 +515,8 @@ impl MmapWriter {
 
         header.validate_detailed()?;
 
-        let total_size = header.data_offset()
+        let total_size = header
+            .data_offset()
             .checked_add(header.data_size().ok_or(Error::InvalidHeader)?)
             .ok_or(Error::InvalidHeader)?;
         let mut file = OpenOptions::new()
@@ -500,8 +524,7 @@ impl MmapWriter {
             .write(true)
             .create(true)
             .truncate(true)
-            .open(path)
-            ?;
+            .open(path)?;
 
         file.set_len(total_size as u64)?;
 
@@ -527,7 +550,9 @@ impl MmapWriter {
         let data_offset = header.data_offset();
         let mode = Mode::from_i32(header.mode).ok_or(Error::UnsupportedMode)?;
         if mode == Mode::Int16Complex {
-            eprintln!("Warning: Mode 3 (Int16Complex) is obsolete and should not be used for writing new files.");
+            eprintln!(
+                "Warning: Mode 3 (Int16Complex) is obsolete and should not be used for writing new files."
+            );
         }
         if mode == Mode::Packed4Bit {
             return Err(Error::UnsupportedMode);
@@ -579,6 +604,7 @@ impl MmapWriter {
     /// Write a block of voxels to the memory-mapped file.
     ///
     /// The type `T` must match the file's voxel mode exactly.
+    /// Supports arbitrary sub-blocks by scattering row-by-row when necessary.
     pub fn write_block<T: Voxel>(&mut self, block: &VoxelBlock<T>) -> Result<(), Error> {
         if T::MODE != self.mode() {
             return Err(Error::ModeMismatch {
@@ -591,31 +617,62 @@ impl MmapWriter {
             return Err(Error::BoundsError);
         }
 
+        let [nx, ny, _nz] = [self.shape.nx, self.shape.ny, self.shape.nz];
+        let [ox, oy, oz] = block.offset;
         let [sx, sy, sz] = block.shape;
+        let b = self.bytes_per_voxel;
+        let file_endian = self.header.detect_endian();
 
-        let linear = self.shape.checked_linear_index(block.offset).ok_or(Error::BoundsError)?;
-        let start_offset = self.data_offset.checked_add(
-            linear.checked_mul(self.bytes_per_voxel).ok_or(Error::BoundsError)?
-        ).ok_or(Error::BoundsError)?;
-        let count = sx.checked_mul(sy).and_then(|v| v.checked_mul(sz))
-            .ok_or(Error::BoundsError)?;
-        let byte_len = count.checked_mul(self.bytes_per_voxel).ok_or(Error::BoundsError)?;
-        let end_offset = start_offset.checked_add(byte_len).ok_or(Error::BoundsError)?;
-
-        if end_offset > self.mmap.len() {
-            return Err(Error::BoundsError);
+        // Fast path: full XY slab is contiguous in the file.
+        if ox == 0 && sx == nx && oy == 0 && sy == ny {
+            let linear = self
+                .shape
+                .checked_linear_index(block.offset)
+                .ok_or(Error::BoundsError)?;
+            let start_offset = self
+                .data_offset
+                .checked_add(linear.checked_mul(b).ok_or(Error::BoundsError)?)
+                .ok_or(Error::BoundsError)?;
+            let count = sx
+                .checked_mul(sy)
+                .and_then(|v| v.checked_mul(sz))
+                .ok_or(Error::BoundsError)?;
+            let byte_len = count.checked_mul(b).ok_or(Error::BoundsError)?;
+            let end_offset = start_offset
+                .checked_add(byte_len)
+                .ok_or(Error::BoundsError)?;
+            if end_offset > self.mmap.len() {
+                return Err(Error::BoundsError);
+            }
+            encode_slice(
+                &block.data,
+                &mut self.mmap[start_offset..end_offset],
+                file_endian,
+            );
+            return Ok(());
         }
 
-        let file_endian = self.header.detect_endian();
-        encode_slice(
-            &block.data,
-            &mut self.mmap[start_offset..end_offset],
-            file_endian,
-        );
+        // Scatter path: write row by row directly into the mmap.
+        for z in 0..sz {
+            for y in 0..sy {
+                let file_linear = ox + (oy + y) * nx + (oz + z) * nx * ny;
+                let file_start = self.data_offset + file_linear * b;
+                let row_end = file_start + sx * b;
+                if row_end > self.mmap.len() {
+                    return Err(Error::BoundsError);
+                }
+                let block_idx = y * sx + z * sx * sy;
+                let row_values = &block.data[block_idx..block_idx + sx];
+                encode_slice(row_values, &mut self.mmap[file_start..row_end], file_endian);
+            }
+        }
         Ok(())
     }
 
-    /// Write a block with parallel encoding to memory-mapped region
+    /// Write a block with parallel encoding to memory-mapped region.
+    ///
+    /// For non-contiguous blocks (sub-XY slabs), this falls back to the serial
+    /// [`write_block`](Self::write_block) implementation.
     #[cfg(feature = "parallel")]
     pub fn write_block_parallel<T: Voxel>(&mut self, block: &VoxelBlock<T>) -> Result<(), Error> {
         use rayon::prelude::*;
@@ -631,11 +688,28 @@ impl MmapWriter {
             return Err(Error::BoundsError);
         }
 
+        let [nx, ny, _nz] = [self.shape.nx, self.shape.ny, self.shape.nz];
+        let [ox, oy, _oz] = block.offset;
+        let [sx, sy, _sz] = block.shape;
+
+        // Parallel fast path only works for full XY slabs (contiguous in file).
+        if ox != 0 || sx != nx || oy != 0 || sy != ny {
+            return self.write_block(block);
+        }
+
         let chunk_size = 1024 * 1024; // 1M voxels per chunk
-        let linear = self.shape.checked_linear_index(block.offset).ok_or(Error::BoundsError)?;
-        let base_offset = self.data_offset.checked_add(
-            linear.checked_mul(self.bytes_per_voxel).ok_or(Error::BoundsError)?
-        ).ok_or(Error::BoundsError)?;
+        let linear = self
+            .shape
+            .checked_linear_index(block.offset)
+            .ok_or(Error::BoundsError)?;
+        let base_offset = self
+            .data_offset
+            .checked_add(
+                linear
+                    .checked_mul(self.bytes_per_voxel)
+                    .ok_or(Error::BoundsError)?,
+            )
+            .ok_or(Error::BoundsError)?;
         let file_endian = self.header.detect_endian();
 
         // Get raw pointer as usize for parallel writes
@@ -647,8 +721,7 @@ impl MmapWriter {
             .par_chunks(chunk_size)
             .enumerate()
             .for_each(|(chunk_idx, chunk)| {
-                let start_offset = base_offset
-                    + chunk_idx * chunk_size * self.bytes_per_voxel;
+                let start_offset = base_offset + chunk_idx * chunk_size * self.bytes_per_voxel;
                 let ptr = (mmap_ptr + start_offset) as *mut u8;
                 let dst = unsafe {
                     core::slice::from_raw_parts_mut(ptr, chunk.len() * self.bytes_per_voxel)
@@ -669,8 +742,12 @@ impl MmapWriter {
                 requested_mode: Mode::Float16,
             });
         }
-        let data: Vec<f16> = block.data.iter().map(|&v| v as f16).collect();
-        self.write_block::<f16>(&VoxelBlock {
+        let data: Vec<crate::f16> = block
+            .data
+            .iter()
+            .map(|&v| crate::f16::from_f32(v))
+            .collect();
+        self.write_block::<crate::f16>(&VoxelBlock {
             offset: block.offset,
             shape: block.shape,
             data,
@@ -683,9 +760,12 @@ impl MmapWriter {
     /// disk because the data is already accessible via the memory map.
     pub fn update_header_stats(&mut self) -> Result<(), Error> {
         let data_size = self.header.data_size().ok_or(Error::InvalidHeader)?;
-        let end = self.data_offset.checked_add(data_size).ok_or(Error::InvalidHeader)?;
+        let end = self
+            .data_offset
+            .checked_add(data_size)
+            .ok_or(Error::InvalidHeader)?;
         if end <= self.mmap.len() {
-            update_header_stats_from_bytes(&mut self.header, &self.mmap[self.data_offset..end]);
+            update_header_stats_from_bytes(&mut self.header, &self.mmap[self.data_offset..end])?;
         }
         Ok(())
     }
@@ -693,73 +773,6 @@ impl MmapWriter {
 
 #[cfg(feature = "mmap")]
 impl MmapWriter {
-    /// Get an immutable slice of voxels at the given z-index.
-    ///
-    /// # Safety
-    /// The caller must ensure the type `T` matches the file's voxel mode exactly.
-    /// Violating this precondition causes undefined behaviour.
-    pub fn slice<T: crate::engine::codec::EndianCodec>(&self, z: usize) -> Result<&[T], Error> {
-        let [nx, ny, nz] = [self.shape.nx, self.shape.ny, self.shape.nz];
-        if z >= nz {
-            return Err(Error::BoundsError);
-        }
-
-        if core::mem::size_of::<T>() != self.bytes_per_voxel {
-            return Err(Error::TypeMismatch {
-                expected: self.bytes_per_voxel,
-                actual: core::mem::size_of::<T>(),
-            });
-        }
-
-        let start_offset = self.data_offset + z * nx * ny * self.bytes_per_voxel;
-        let end_offset = start_offset + nx * ny * self.bytes_per_voxel;
-
-        if start_offset % core::mem::align_of::<T>() != 0 {
-            return Err(Error::InvalidHeader);
-        }
-
-        let bytes = &self.mmap[start_offset..end_offset];
-        unsafe {
-            let ptr = bytes.as_ptr() as *const T;
-            Ok(core::slice::from_raw_parts(ptr, nx * ny))
-        }
-    }
-
-    /// Get a mutable slice of voxels at the given z-index.
-    ///
-    /// # Safety
-    /// The caller must ensure the type `T` matches the file's voxel mode exactly.
-    /// Violating this precondition causes undefined behaviour.
-    pub fn slice_mut<T: crate::engine::codec::EndianCodec>(
-        &mut self,
-        z: usize,
-    ) -> Result<&mut [T], Error> {
-        let [nx, ny, nz] = [self.shape.nx, self.shape.ny, self.shape.nz];
-        if z >= nz {
-            return Err(Error::BoundsError);
-        }
-
-        if core::mem::size_of::<T>() != self.bytes_per_voxel {
-            return Err(Error::TypeMismatch {
-                expected: self.bytes_per_voxel,
-                actual: core::mem::size_of::<T>(),
-            });
-        }
-
-        let start_offset = self.data_offset + z * nx * ny * self.bytes_per_voxel;
-        let end_offset = start_offset + nx * ny * self.bytes_per_voxel;
-
-        if start_offset % core::mem::align_of::<T>() != 0 {
-            return Err(Error::InvalidHeader);
-        }
-
-        let bytes = &mut self.mmap[start_offset..end_offset];
-        unsafe {
-            let ptr = bytes.as_mut_ptr() as *mut T;
-            Ok(core::slice::from_raw_parts_mut(ptr, nx * ny))
-        }
-    }
-
     pub fn finalize(&mut self) -> Result<(), Error> {
         let mut header_bytes = [0u8; 1024];
         self.header.encode_to_bytes(&mut header_bytes);
@@ -856,6 +869,7 @@ impl<C: Compressor> CompressedWriter<C> {
     /// Write a block of voxels to the file.
     ///
     /// The type `T` must match the file's voxel mode exactly.
+    /// Supports arbitrary sub-blocks by scattering row-by-row when necessary.
     pub fn write_block<T: Voxel>(&mut self, block: &VoxelBlock<T>) -> Result<(), Error> {
         if T::MODE != self.mode() {
             return Err(Error::ModeMismatch {
@@ -871,16 +885,34 @@ impl<C: Compressor> CompressedWriter<C> {
         let [nx, ny, _nz] = [self.shape.nx, self.shape.ny, self.shape.nz];
         let [ox, oy, oz] = block.offset;
         let [sx, sy, sz] = block.shape;
-
-        let linear = ox + oy * nx + oz * nx * ny;
-        let start_byte = self.data_offset + linear * self.bytes_per_voxel;
-        let byte_len = sx * sy * sz * self.bytes_per_voxel;
-
-        let mut buffer = vec![0u8; byte_len];
+        let b = self.bytes_per_voxel;
         let file_endian = self.header.detect_endian();
-        crate::engine::codec::encode_slice(&block.data, &mut buffer, file_endian);
 
-        self.data[start_byte..start_byte + byte_len].copy_from_slice(&buffer);
+        // Fast path: full XY slab is contiguous in the buffer.
+        if ox == 0 && sx == nx && oy == 0 && sy == ny {
+            let linear = oz * nx * ny;
+            let start_byte = self.data_offset + linear * b;
+            let byte_len = sx * sy * sz * b;
+            let dst = &mut self.data[start_byte..start_byte + byte_len];
+            crate::engine::codec::encode_slice(&block.data, dst, file_endian);
+            return Ok(());
+        }
+
+        // Scatter path: write row by row directly into self.data.
+        for z in 0..sz {
+            for y in 0..sy {
+                let file_linear = ox + (oy + y) * nx + (oz + z) * nx * ny;
+                let file_start = self.data_offset + file_linear * b;
+                let block_idx = y * sx + z * sx * sy;
+                let row_values = &block.data[block_idx..block_idx + sx];
+                let row_end = file_start + sx * b;
+                crate::engine::codec::encode_slice(
+                    row_values,
+                    &mut self.data[file_start..row_end],
+                    file_endian,
+                );
+            }
+        }
         Ok(())
     }
 

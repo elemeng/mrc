@@ -37,8 +37,8 @@ pub(crate) fn compute_stats(bytes: &[u8], mode: Mode, endian: FileEndian) -> (f3
         }
         #[cfg(feature = "f16")]
         Mode::Float16 => {
-            let data = decode_slice::<f16>(bytes, endian);
-            let data_f32: Vec<f32> = data.iter().map(|&v| v as f32).collect();
+            let data = decode_slice::<crate::f16>(bytes, endian);
+            let data_f32: Vec<f32> = data.iter().map(|&v| f32::from(v)).collect();
             stats_real(&data_f32)
         }
         #[cfg(not(feature = "f16"))]
@@ -59,56 +59,69 @@ where
     if data.is_empty() {
         return (0.0, -1.0, -2.0, -1.0);
     }
-    let iter = || data.iter().copied().map(Into::<f64>::into);
-    let min = iter().fold(f64::INFINITY, f64::min) as f32;
-    let max = iter().fold(f64::NEG_INFINITY, f64::max) as f32;
-    let sum: f64 = iter().sum();
-    let mean = (sum / data.len() as f64) as f32;
-    let variance: f64 = iter()
-        .map(|v| {
-            let d = v - mean as f64;
-            d * d
-        })
-        .sum::<f64>()
-        / data.len() as f64;
-    let rms = variance.sqrt() as f32;
-    (min, max, mean, rms)
+    let mut min = f64::INFINITY;
+    let mut max = f64::NEG_INFINITY;
+    let mut sum = 0.0f64;
+    for &v in data {
+        let vf = v.into();
+        if vf < min {
+            min = vf;
+        }
+        if vf > max {
+            max = vf;
+        }
+        sum += vf;
+    }
+    let mean = sum / data.len() as f64;
+    let mut variance_sum = 0.0f64;
+    for &v in data {
+        let d = v.into() - mean;
+        variance_sum += d * d;
+    }
+    let rms = (variance_sum / data.len() as f64).sqrt();
+    (min as f32, max as f32, mean as f32, rms as f32)
 }
 
 fn rms_complex_f32(data: &[Float32Complex]) -> f32 {
     if data.is_empty() {
         return -1.0;
     }
-    let mean_real = data.iter().map(|c| c.real as f64).sum::<f64>() / data.len() as f64;
-    let mean_imag = data.iter().map(|c| c.imag as f64).sum::<f64>() / data.len() as f64;
-    let variance: f64 = data
-        .iter()
-        .map(|c| {
-            let dr = c.real as f64 - mean_real;
-            let di = c.imag as f64 - mean_imag;
-            dr * dr + di * di
-        })
-        .sum::<f64>()
-        / data.len() as f64;
-    variance.sqrt() as f32
+    let mut sum_real = 0.0f64;
+    let mut sum_imag = 0.0f64;
+    for c in data {
+        sum_real += c.real as f64;
+        sum_imag += c.imag as f64;
+    }
+    let mean_real = sum_real / data.len() as f64;
+    let mean_imag = sum_imag / data.len() as f64;
+    let mut variance_sum = 0.0f64;
+    for c in data {
+        let dr = c.real as f64 - mean_real;
+        let di = c.imag as f64 - mean_imag;
+        variance_sum += dr * dr + di * di;
+    }
+    ((variance_sum / data.len() as f64).sqrt()) as f32
 }
 
 fn rms_complex_i16(data: &[Int16Complex]) -> f32 {
     if data.is_empty() {
         return -1.0;
     }
-    let mean_real = data.iter().map(|c| c.real as f64).sum::<f64>() / data.len() as f64;
-    let mean_imag = data.iter().map(|c| c.imag as f64).sum::<f64>() / data.len() as f64;
-    let variance: f64 = data
-        .iter()
-        .map(|c| {
-            let dr = c.real as f64 - mean_real;
-            let di = c.imag as f64 - mean_imag;
-            dr * dr + di * di
-        })
-        .sum::<f64>()
-        / data.len() as f64;
-    variance.sqrt() as f32
+    let mut sum_real = 0.0f64;
+    let mut sum_imag = 0.0f64;
+    for c in data {
+        sum_real += c.real as f64;
+        sum_imag += c.imag as f64;
+    }
+    let mean_real = sum_real / data.len() as f64;
+    let mean_imag = sum_imag / data.len() as f64;
+    let mut variance_sum = 0.0f64;
+    for c in data {
+        let dr = c.real as f64 - mean_real;
+        let di = c.imag as f64 - mean_imag;
+        variance_sum += dr * dr + di * di;
+    }
+    ((variance_sum / data.len() as f64).sqrt()) as f32
 }
 
 /// Check whether two f32 values are "close" within a relative tolerance.
@@ -128,7 +141,10 @@ pub(crate) fn is_close(a: f32, b: f32, rtol: f32) -> bool {
 ///
 /// Uses a 1 % relative tolerance (matching Python `mrcfile`'s `np.isclose(rtol=0.01)`).
 /// For complex modes, only RMS is checked.
-pub(crate) fn validate_header_stats(header: &crate::Header, data_bytes: &[u8]) -> Result<(), crate::Error> {
+pub(crate) fn validate_header_stats(
+    header: &crate::Header,
+    data_bytes: &[u8],
+) -> Result<(), crate::Error> {
     let endian = header.detect_endian();
     let mode = crate::Mode::from_i32(header.mode).unwrap_or(crate::Mode::Float32);
     let (actual_dmin, actual_dmax, actual_dmean, actual_rms) =
@@ -137,7 +153,10 @@ pub(crate) fn validate_header_stats(header: &crate::Header, data_bytes: &[u8]) -
     let rtol = 0.01f32;
 
     // For complex modes, dmin/dmax/dmean are not meaningful (sentinel values)
-    let complex = matches!(mode, crate::Mode::Float32Complex | crate::Mode::Int16Complex);
+    let complex = matches!(
+        mode,
+        crate::Mode::Float32Complex | crate::Mode::Int16Complex
+    );
 
     // Sentinel values indicating stats have not been calculated.
     let min_unset = header.dmin == 0.0 && header.dmax == -1.0 && header.dmean == -2.0;

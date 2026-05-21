@@ -36,7 +36,6 @@
 //! }
 //! ```
 
-#![cfg_attr(feature = "f16", feature(f16))]
 #![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
 
 mod engine;
@@ -53,21 +52,23 @@ pub use engine::block::{VolumeShape, VoxelBlock};
 pub use engine::endian::FileEndian;
 
 // Re-export MRC-specific format utilities
-pub use engine::convert::{
-    convert_u16_slice_to_u8, convert_u8_slice_to_u16, reinterpret_m0,
-};
+pub use engine::convert::{convert_u8_slice_to_u16, convert_u16_slice_to_u8, reinterpret_m0};
 
 pub use error::{Error, HeaderValidationError};
 pub use header::{Header, HeaderBuilder};
 pub use mode::{
     ComplexToRealStrategy, Float32Complex, Int16Complex, M0Interpretation, Mode, Packed4Bit, Voxel,
 };
+
+/// Half-precision floating point type (requires `f16` feature).
+#[cfg(feature = "f16")]
+pub use half::f16;
 /// Buffered MRC reader with lazy slice/slab iterators.
 pub use io::buffered::Reader;
-/// Lazy iterators over MRC voxel blocks.
-pub use iter::{BlockIter, SliceIter, SlabIter};
 /// MRC file writer and its builder.
 pub use io::writer::{Writer, WriterBuilder};
+/// Lazy iterators over MRC voxel blocks.
+pub use iter::{BlockIter, SlabIter, SliceIter};
 
 /// Memory-mapped MRC writer and builder (requires `mmap` feature).
 #[cfg(feature = "mmap")]
@@ -86,7 +87,10 @@ pub use io::gzip::{GzipReader, GzipWriter};
 pub use io::bzip2::{Bzip2Reader, Bzip2Writer};
 
 /// FEI extended header metadata types and parsers.
-pub use fei::{Fei1Metadata, Fei2Metadata, parse_fei1_records, parse_fei2_records, FEI1_RECORD_SIZE, FEI2_RECORD_SIZE};
+pub use fei::{
+    FEI1_RECORD_SIZE, FEI2_RECORD_SIZE, Fei1Metadata, Fei2Metadata, parse_fei1_records,
+    parse_fei2_records,
+};
 
 /// MRC reader, compression detection, and compression type enum.
 pub use io::reader::{CompressionType, MrcReader, detect_compression};

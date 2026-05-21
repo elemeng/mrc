@@ -244,7 +244,7 @@ let bytes = reader.data_bytes()?;  // &[u8] backed by mmap
 | `Float16` | 12 | `f16`[^1] | 2 | 16-bit float | Memory efficiency |
 | `Packed4Bit` | 101 | [`Packed4Bit`] | 0.5 | Packed 4-bit | Compression |
 
-[^1]: Requires `f16` feature and nightly Rust compiler.
+[^1]: Requires `f16` feature.
 
 ## ⚡ Performance Features
 

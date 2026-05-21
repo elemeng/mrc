@@ -368,6 +368,7 @@ dependencies = [
  "bzip2",
  "criterion",
  "flate2",
+ "half",
  "memmap2",
  "rayon",
  "tempfile",

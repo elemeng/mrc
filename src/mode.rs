@@ -49,7 +49,7 @@ pub enum Mode {
     Float32Complex = 4,
     /// Unsigned 16-bit integer (Mode 6).
     Uint16 = 6,
-    /// 16-bit floating point (Mode 12, requires the `f16` feature).
+    /// 16-bit floating point (Mode 12).
     Float16 = 12,
     /// 4-bit data packed two values per byte (mode 101)
     Packed4Bit = 101,
@@ -122,12 +122,14 @@ impl Mode {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
+#[repr(C)]
 pub struct Int16Complex {
     pub real: i16,
     pub imag: i16,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[repr(C)]
 pub struct Float32Complex {
     pub real: f32,
     pub imag: f32,
@@ -192,7 +194,9 @@ impl Packed4Bit {
 /// without runtime mode dispatch.
 ///
 /// Note: `BYTE_SIZE` is inherited from the `EndianCodec` supertrait.
-pub trait Voxel: crate::engine::codec::EndianCodec + Copy + Send + Sync + Default + 'static {
+pub trait Voxel:
+    crate::engine::codec::EndianCodec + Copy + Send + Sync + Default + 'static
+{
     /// The MRC mode constant for this voxel type
     const MODE: Mode;
 }
@@ -222,7 +226,7 @@ impl Voxel for u16 {
 }
 
 #[cfg(feature = "f16")]
-impl Voxel for f16 {
+impl Voxel for crate::f16 {
     const MODE: Mode = Mode::Float16;
 }
 
