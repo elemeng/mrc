@@ -5,6 +5,7 @@ use crate::engine::codec::{EndianCodec, decode_slice};
 use crate::engine::endian::FileEndian;
 use crate::mode::Voxel;
 use crate::{Error, Mode};
+use std::borrow::Cow;
 
 mod private {
     /// Sealed trait marker — prevents external implementations of [`VoxelSource`].
@@ -16,7 +17,7 @@ mod private {
 /// This trait is sealed: it can only be implemented by types inside this crate.
 #[doc(hidden)]
 pub trait VoxelSource: private::Sealed {
-    fn vs_read_block_bytes(&self, offset: [usize; 3], shape: [usize; 3]) -> Result<Vec<u8>, Error>;
+    fn vs_read_block_bytes<'a>(&'a self, offset: [usize; 3], shape: [usize; 3]) -> Result<Cow<'a, [u8]>, Error>;
     fn vs_decode_block<T: Voxel>(&self, bytes: &[u8]) -> Result<Vec<T>, Error>;
 }
 
@@ -79,6 +80,12 @@ pub fn decode_block<T: Voxel>(
 }
 
 /// Native-endian decode: memcpy bytes directly to Vec<T>.
+///
+/// # Safety
+/// This function uses `unsafe` to copy raw bytes into a typed Vec. The caller
+/// must ensure that `bytes.len()` is an exact multiple of `T::BYTE_SIZE` and
+/// that the byte pattern is valid for `T`. For MRC data this always holds
+/// because the byte count is derived from `mode.byte_size() * count`.
 pub fn decode_native_endian<T: EndianCodec + Copy>(bytes: &[u8]) -> Result<Vec<T>, Error> {
     let n = bytes.len() / T::BYTE_SIZE;
     let mut result = Vec::with_capacity(n);
@@ -98,7 +105,7 @@ pub fn slices_f32<'a>(
     shape: VolumeShape,
     mode: Mode,
     endian: FileEndian,
-    mut read_bytes: impl FnMut([usize; 3], [usize; 3]) -> Result<Vec<u8>, Error> + 'a,
+    mut read_bytes: impl FnMut([usize; 3], [usize; 3]) -> Result<Cow<'a, [u8]>, Error> + 'a,
 ) -> Result<crate::SliceIterF32<'a>, Error> {
     let nx = shape.nx;
     let ny = shape.ny;
@@ -136,7 +143,7 @@ pub fn slabs_f32<'a>(
     mode: Mode,
     endian: FileEndian,
     k: usize,
-    mut read_bytes: impl FnMut([usize; 3], [usize; 3]) -> Result<Vec<u8>, Error> + 'a,
+    mut read_bytes: impl FnMut([usize; 3], [usize; 3]) -> Result<Cow<'a, [u8]>, Error> + 'a,
 ) -> Result<crate::SliceIterF32<'a>, Error> {
     let nx = shape.nx;
     let ny = shape.ny;
@@ -173,8 +180,8 @@ pub fn slabs_f32<'a>(
 
 impl private::Sealed for crate::Reader {}
 impl VoxelSource for crate::Reader {
-    fn vs_read_block_bytes(&self, offset: [usize; 3], shape: [usize; 3]) -> Result<Vec<u8>, Error> {
-        self.read_block_bytes(offset, shape)
+    fn vs_read_block_bytes<'a>(&'a self, offset: [usize; 3], shape: [usize; 3]) -> Result<Cow<'a, [u8]>, Error> {
+        self.read_block_bytes(offset, shape).map(Cow::Owned)
     }
     fn vs_decode_block<T: Voxel>(&self, bytes: &[u8]) -> Result<Vec<T>, Error> {
         self.decode_block(bytes)
@@ -185,8 +192,8 @@ impl VoxelSource for crate::Reader {
 impl private::Sealed for crate::GzipReader {}
 #[cfg(feature = "gzip")]
 impl VoxelSource for crate::GzipReader {
-    fn vs_read_block_bytes(&self, offset: [usize; 3], shape: [usize; 3]) -> Result<Vec<u8>, Error> {
-        self.read_block_bytes(offset, shape)
+    fn vs_read_block_bytes<'a>(&'a self, offset: [usize; 3], shape: [usize; 3]) -> Result<Cow<'a, [u8]>, Error> {
+        self.read_block_bytes(offset, shape).map(Cow::Owned)
     }
     fn vs_decode_block<T: Voxel>(&self, bytes: &[u8]) -> Result<Vec<T>, Error> {
         self.decode_block(bytes)
@@ -197,8 +204,8 @@ impl VoxelSource for crate::GzipReader {
 impl private::Sealed for crate::Bzip2Reader {}
 #[cfg(feature = "bzip2")]
 impl VoxelSource for crate::Bzip2Reader {
-    fn vs_read_block_bytes(&self, offset: [usize; 3], shape: [usize; 3]) -> Result<Vec<u8>, Error> {
-        self.read_block_bytes(offset, shape)
+    fn vs_read_block_bytes<'a>(&'a self, offset: [usize; 3], shape: [usize; 3]) -> Result<Cow<'a, [u8]>, Error> {
+        self.read_block_bytes(offset, shape).map(Cow::Owned)
     }
     fn vs_decode_block<T: Voxel>(&self, bytes: &[u8]) -> Result<Vec<T>, Error> {
         self.decode_block(bytes)
@@ -209,8 +216,8 @@ impl VoxelSource for crate::Bzip2Reader {
 impl private::Sealed for crate::MmapReader {}
 #[cfg(feature = "mmap")]
 impl VoxelSource for crate::MmapReader {
-    fn vs_read_block_bytes(&self, offset: [usize; 3], shape: [usize; 3]) -> Result<Vec<u8>, Error> {
-        self.read_block_bytes(offset, shape).map(|b| b.to_vec())
+    fn vs_read_block_bytes<'a>(&'a self, offset: [usize; 3], shape: [usize; 3]) -> Result<Cow<'a, [u8]>, Error> {
+        self.read_block_bytes(offset, shape).map(Cow::Borrowed)
     }
     fn vs_decode_block<T: Voxel>(&self, bytes: &[u8]) -> Result<Vec<T>, Error> {
         self.decode_block(bytes)
@@ -219,8 +226,8 @@ impl VoxelSource for crate::MmapReader {
 
 impl private::Sealed for crate::any_reader::MrcReader {}
 impl VoxelSource for crate::any_reader::MrcReader {
-    fn vs_read_block_bytes(&self, offset: [usize; 3], shape: [usize; 3]) -> Result<Vec<u8>, Error> {
-        self.read_block_bytes(offset, shape)
+    fn vs_read_block_bytes<'a>(&'a self, offset: [usize; 3], shape: [usize; 3]) -> Result<Cow<'a, [u8]>, Error> {
+        self.read_block_bytes(offset, shape).map(Cow::Owned)
     }
     fn vs_decode_block<T: Voxel>(&self, bytes: &[u8]) -> Result<Vec<T>, Error> {
         self.decode_block(bytes)
