@@ -224,8 +224,8 @@ impl VoxelSource for crate::MmapReader {
     }
 }
 
-impl private::Sealed for crate::any_reader::MrcReader {}
-impl VoxelSource for crate::any_reader::MrcReader {
+impl private::Sealed for crate::MrcReader {}
+impl VoxelSource for crate::MrcReader {
     fn vs_read_block_bytes<'a>(&'a self, offset: [usize; 3], shape: [usize; 3]) -> Result<Cow<'a, [u8]>, Error> {
         self.read_block_bytes(offset, shape).map(Cow::Owned)
     }

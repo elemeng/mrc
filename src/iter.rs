@@ -3,7 +3,7 @@
 use crate::Error;
 use crate::engine::block::{VolumeShape, VoxelBlock};
 use crate::mode::Voxel;
-use crate::reader_common::VoxelSource;
+use crate::io::reader_common::VoxelSource;
 
 /// Helper to read and decode a voxel block from a VoxelSource.
 #[inline]

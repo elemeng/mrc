@@ -39,27 +39,13 @@
 #![cfg_attr(feature = "f16", feature(f16))]
 #![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
 
-mod any_reader;
+mod engine;
 mod error;
+mod fei;
 mod header;
+mod io;
 mod iter;
 mod mode;
-mod reader;
-mod reader_common;
-mod writer;
-
-#[cfg(feature = "mmap")]
-mod mmap_reader;
-
-#[cfg(feature = "gzip")]
-mod gzip;
-
-#[cfg(feature = "bzip2")]
-mod bzip2;
-
-mod fei;
-
-mod engine;
 
 // Re-export core types
 pub use engine::block::{VolumeShape, VoxelBlock};
@@ -75,25 +61,25 @@ pub use header::{Header, HeaderBuilder};
 pub use mode::{
     ComplexToRealStrategy, Float32Complex, Int16Complex, M0Interpretation, Mode, Packed4Bit, Voxel,
 };
-pub use reader::Reader;
+pub use io::buffered::Reader;
 pub use iter::{BlockIter, SliceIter, SlabIter};
-pub use writer::{Writer, WriterBuilder};
+pub use io::writer::{Writer, WriterBuilder};
 
 #[cfg(feature = "mmap")]
-pub use writer::{MmapWriter, MmapWriterBuilder};
+pub use io::writer::{MmapWriter, MmapWriterBuilder};
 
 #[cfg(feature = "mmap")]
-pub use mmap_reader::MmapReader;
+pub use io::mmap_reader::MmapReader;
 
 #[cfg(feature = "gzip")]
-pub use gzip::{GzipReader, GzipWriter};
+pub use io::gzip::{GzipReader, GzipWriter};
 
 #[cfg(feature = "bzip2")]
-pub use bzip2::{Bzip2Reader, Bzip2Writer};
+pub use io::bzip2::{Bzip2Reader, Bzip2Writer};
 
 pub use fei::{Fei1Metadata, Fei2Metadata, parse_fei1_records, parse_fei2_records, FEI1_RECORD_SIZE, FEI2_RECORD_SIZE};
 
-pub use any_reader::{CompressionType, MrcReader, detect_compression};
+pub use io::reader::{CompressionType, MrcReader, detect_compression};
 
 /// Iterator over slices yielding `f32` voxel blocks.
 pub type SliceIterF32<'a> =

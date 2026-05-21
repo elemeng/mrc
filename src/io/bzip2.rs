@@ -1,7 +1,7 @@
-//! Gzip-compressed MRC file reader and writer.
+//! Bzip2-compressed MRC file reader and writer.
 //!
-//! Because gzip does not support random access, the writer buffers the entire
-//! file in memory and compresses on [`GzipWriter::finalize`]. This matches the
+//! Because bzip2 does not support random access, the writer buffers the entire
+//! file in memory and compresses on [`Bzip2Writer::finalize`]. This matches the
 //! behaviour of the reference Python `mrcfile` library.
 
 use crate::engine::block::VolumeShape;
@@ -12,52 +12,52 @@ use std::io::Read;
 use std::path::Path;
 use std::vec::Vec;
 
-/// Gzip-compressed MRC file reader.
+/// Bzip2-compressed MRC file reader.
 ///
 /// This is a thin newtype wrapper around [`Reader`](crate::Reader). All
 /// [`Reader`] methods are available via [`Deref`].
 #[derive(Debug)]
-pub struct GzipReader(pub crate::Reader);
+pub struct Bzip2Reader(pub crate::Reader);
 
-impl std::ops::Deref for GzipReader {
+impl std::ops::Deref for Bzip2Reader {
     type Target = crate::Reader;
     fn deref(&self) -> &Self::Target {
         &self.0
     }
 }
 
-impl std::ops::DerefMut for GzipReader {
+impl std::ops::DerefMut for Bzip2Reader {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0
     }
 }
 
-impl GzipReader {
-    /// Open a gzip-compressed MRC file.
+impl Bzip2Reader {
+    /// Open a bzip2-compressed MRC file.
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self, Error> {
-        crate::Reader::open_gzip(path).map(Self)
+        crate::Reader::open_bzip2(path).map(Self)
     }
 
-    /// Open a gzip-compressed MRC file in **permissive** mode.
+    /// Open a bzip2-compressed MRC file in **permissive** mode.
     pub fn open_permissive<P: AsRef<Path>>(path: P) -> Result<(Self, Vec<String>), Error> {
-        crate::Reader::open_gzip_permissive(path).map(|(r, w)| (Self(r), w))
+        crate::Reader::open_bzip2_permissive(path).map(|(r, w)| (Self(r), w))
     }
 }
 
 impl crate::Reader {
-    /// Open a gzip-compressed MRC file.
-    pub fn open_gzip<P: AsRef<Path>>(path: P) -> Result<Self, Error> {
-        Self::_open_gzip(path, false).map(|(r, _)| r)
+    /// Open a bzip2-compressed MRC file.
+    pub fn open_bzip2<P: AsRef<Path>>(path: P) -> Result<Self, Error> {
+        Self::_open_bzip2(path, false).map(|(r, _)| r)
     }
 
-    /// Open a gzip-compressed MRC file in **permissive** mode.
-    pub fn open_gzip_permissive<P: AsRef<Path>>(path: P) -> Result<(Self, Vec<String>), Error> {
-        Self::_open_gzip(path, true)
+    /// Open a bzip2-compressed MRC file in **permissive** mode.
+    pub fn open_bzip2_permissive<P: AsRef<Path>>(path: P) -> Result<(Self, Vec<String>), Error> {
+        Self::_open_bzip2(path, true)
     }
 
-    fn _open_gzip<P: AsRef<Path>>(path: P, permissive: bool) -> Result<(Self, Vec<String>), Error> {
+    fn _open_bzip2<P: AsRef<Path>>(path: P, permissive: bool) -> Result<(Self, Vec<String>), Error> {
         let file = File::open(path)?;
-        let mut decoder = flate2::read::GzDecoder::new(file);
+        let mut decoder = bzip2::read::BzDecoder::new(file);
         let mut buf = Vec::new();
         decoder.read_to_end(&mut buf)?;
 
@@ -114,21 +114,21 @@ impl crate::Reader {
     }
 }
 
-/// Gzip compressor backend for [`CompressedWriter`](crate::writer::CompressedWriter).
+/// Bzip2 compressor backend for [`CompressedWriter`](crate::io::writer::CompressedWriter).
 #[derive(Debug)]
-pub struct GzipCompressor;
+pub struct Bzip2Compressor;
 
-impl crate::writer::Compressor for GzipCompressor {
+impl crate::io::writer::Compressor for Bzip2Compressor {
     fn compress(data: &[u8]) -> Result<Vec<u8>, Error> {
-        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        let mut encoder = bzip2::write::BzEncoder::new(Vec::new(), bzip2::Compression::default());
         std::io::Write::write_all(&mut encoder, data)?;
         Ok(encoder.finish()?)
     }
 }
 
-/// Gzip-compressed MRC file writer.
+/// Bzip2-compressed MRC file writer.
 ///
-/// Because gzip does not support random access, the entire file is buffered
-/// in memory and compressed only on [`finalize`](crate::writer::CompressedWriter::finalize).
+/// Because bzip2 does not support random access, the entire file is buffered
+/// in memory and compressed only on [`finalize`](crate::io::writer::CompressedWriter::finalize).
 /// For large volumes consider using [`Writer`](crate::Writer) instead.
-pub type GzipWriter = crate::writer::CompressedWriter<GzipCompressor>;
+pub type Bzip2Writer = crate::io::writer::CompressedWriter<Bzip2Compressor>;

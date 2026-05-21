@@ -140,7 +140,7 @@ impl Reader {
         offset: [usize; 3],
         shape: [usize; 3],
     ) -> Result<Vec<u8>, Error> {
-        let (start, end) = crate::reader_common::validate_block_read(
+        let (start, end) = crate::io::reader_common::validate_block_read(
             self.shape, self.mode(), self.data.len(), offset, shape,
         )?;
         Ok(self.data[start..end].to_vec())
@@ -164,14 +164,14 @@ impl Reader {
     /// # Errors
     /// Returns `Error::ModeMismatch` if `T` does not match the file mode.
     pub(crate) fn decode_block<T: Voxel>(&self, bytes: &[u8]) -> Result<Vec<T>, Error> {
-        crate::reader_common::decode_block(bytes, self.mode(), self.endian)
+        crate::io::reader_common::decode_block(bytes, self.mode(), self.endian)
     }
 
     /// Iterate over slices, automatically converting common types to `f32`.
     ///
     /// Supported source modes: `Float32`, `Int16`, `Uint16`, `Int8`.
     pub fn slices_f32(&self) -> Result<crate::SliceIterF32<'_>, Error> {
-        crate::reader_common::slices_f32(
+        crate::io::reader_common::slices_f32(
             self.shape,
             self.mode(),
             self.endian,
@@ -183,7 +183,7 @@ impl Reader {
     ///
     /// Supported source modes: `Float32`, `Int16`, `Uint16`, `Int8`.
     pub fn slabs_f32(&self, k: usize) -> Result<crate::SliceIterF32<'_>, Error> {
-        crate::reader_common::slabs_f32(
+        crate::io::reader_common::slabs_f32(
             self.shape,
             self.mode(),
             self.endian,
