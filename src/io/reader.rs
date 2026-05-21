@@ -7,7 +7,7 @@
 
 use crate::engine::block::{VolumeShape, VoxelBlock};
 use crate::engine::endian::FileEndian;
-use crate::mode::{M0Interpretation, Voxel};
+use crate::mode::Voxel;
 use crate::{Error, Header, Mode};
 use std::path::Path;
 
@@ -196,52 +196,6 @@ impl MrcReader {
         }
     }
 
-    /// Iterate over slices, converting common types to `f32`.
-    pub fn slices_f32(&self) -> Result<crate::SliceIterF32<'_>, Error> {
-        match self {
-            MrcReader::Plain(r) => r.slices_f32(),
-            #[cfg(feature = "gzip")]
-            MrcReader::Gzip(r) => r.slices_f32(),
-            #[cfg(feature = "bzip2")]
-            MrcReader::Bzip2(r) => r.slices_f32(),
-        }
-    }
-
-    /// Iterate over slabs, converting common types to `f32`.
-    pub fn slabs_f32(&self, k: usize) -> Result<crate::SliceIterF32<'_>, Error> {
-        match self {
-            MrcReader::Plain(r) => r.slabs_f32(k),
-            #[cfg(feature = "gzip")]
-            MrcReader::Gzip(r) => r.slabs_f32(k),
-            #[cfg(feature = "bzip2")]
-            MrcReader::Bzip2(r) => r.slabs_f32(k),
-        }
-    }
-
-    /// Iterate over slices, automatically converting Mode 6 (`Uint16`) to `u8`.
-    ///
-    /// Returns an error if the file is not Mode 6 or if any value exceeds 255.
-    pub fn slices_u8(&self) -> Result<crate::SliceIterU8<'_>, Error> {
-        match self {
-            MrcReader::Plain(r) => r.slices_u8(),
-            #[cfg(feature = "gzip")]
-            MrcReader::Gzip(r) => r.slices_u8(),
-            #[cfg(feature = "bzip2")]
-            MrcReader::Bzip2(r) => r.slices_u8(),
-        }
-    }
-
-    /// Iterate over slices for Mode 0 with explicit signed/unsigned choice.
-    pub fn slices_mode0(&self, interp: M0Interpretation) -> Result<crate::SliceIterF32<'_>, Error> {
-        match self {
-            MrcReader::Plain(r) => Ok(r.slices_mode0(interp)),
-            #[cfg(feature = "gzip")]
-            MrcReader::Gzip(r) => Ok(r.slices_mode0(interp)),
-            #[cfg(feature = "bzip2")]
-            MrcReader::Bzip2(r) => Ok(r.slices_mode0(interp)),
-        }
-    }
-
     /// Cross-check header statistics against actual data.
     pub fn validate_header_stats(&self) -> Result<(), Error> {
         match self {
@@ -278,21 +232,6 @@ impl MrcReader {
     // -------------------------------------------------------------------------
     // Type introspection
     // -------------------------------------------------------------------------
-
-    /// Iterate over slices of the requested voxel type.
-    pub fn slices<T: Voxel>(&self) -> crate::iter::SliceIter<'_, T, Self> {
-        crate::iter::SliceIter::new(self, self.shape())
-    }
-
-    /// Iterate over slabs (k slices at a time) of the requested voxel type.
-    pub fn slabs<T: Voxel>(&self, k: usize) -> crate::iter::SlabIter<'_, T, Self> {
-        crate::iter::SlabIter::new(self, self.shape(), k)
-    }
-
-    /// Iterate over arbitrary blocks of the requested voxel type.
-    pub fn blocks<T: Voxel>(&self, chunk_shape: [usize; 3]) -> crate::iter::BlockIter<'_, T, Self> {
-        crate::iter::BlockIter::new(self, self.shape(), chunk_shape)
-    }
 
     /// Returns `true` if this is an uncompressed (plain) MRC file.
     pub fn is_plain(&self) -> bool {
@@ -342,6 +281,7 @@ impl MrcReader {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::io::reader_common::ReaderExt;
 
     #[test]
     fn test_detect_compression_plain() {

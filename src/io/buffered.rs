@@ -6,7 +6,6 @@
 
 use crate::engine::block::VolumeShape;
 use crate::engine::endian::FileEndian;
-use crate::iter::{BlockIter, SlabIter, SliceIter};
 use crate::mode::Voxel;
 use crate::{Error, Header, Mode};
 
@@ -23,7 +22,7 @@ use std::vec::Vec;
 /// # Example
 ///
 /// ```no_run
-/// use mrc::Reader;
+/// use mrc::{Reader, ReaderExt};
 ///
 /// fn main() -> Result<(), Box<dyn std::error::Error>> {
 ///     let reader = Reader::open("protein.mrc")?;
@@ -121,18 +120,6 @@ impl Reader {
         &self.header
     }
 
-    pub fn slices<T: Voxel>(&self) -> SliceIter<'_, T, Self> {
-        SliceIter::new(self, self.shape)
-    }
-
-    pub fn slabs<T: Voxel>(&self, k: usize) -> SlabIter<'_, T, Self> {
-        SlabIter::new(self, self.shape, k)
-    }
-
-    pub fn blocks<T: Voxel>(&self, chunk_shape: [usize; 3]) -> BlockIter<'_, T, Self> {
-        BlockIter::new(self, self.shape, chunk_shape)
-    }
-
     /// Read a block of raw voxel bytes from the file.
     ///
     /// Supports arbitrary sub-blocks; non-contiguous regions are gathered
@@ -183,81 +170,6 @@ impl Reader {
         crate::io::reader_common::decode_block(bytes, self.mode(), self.endian)
     }
 
-    /// Iterate over slices, automatically converting common types to `f32`.
-    ///
-    /// Supported source modes: `Float32`, `Int16`, `Uint16`, `Int8`.
-    pub fn slices_f32(&self) -> Result<crate::SliceIterF32<'_>, Error> {
-        crate::io::reader_common::slices_f32(
-            self.shape,
-            self.mode(),
-            self.endian,
-            |offset, shape| {
-                self.read_block_bytes(offset, shape)
-                    .map(std::borrow::Cow::Owned)
-            },
-        )
-    }
-
-    /// Iterate over slabs, automatically converting common types to `f32`.
-    ///
-    /// Supported source modes: `Float32`, `Int16`, `Uint16`, `Int8`.
-    pub fn slabs_f32(&self, k: usize) -> Result<crate::SliceIterF32<'_>, Error> {
-        crate::io::reader_common::slabs_f32(
-            self.shape,
-            self.mode(),
-            self.endian,
-            k,
-            |offset, shape| {
-                self.read_block_bytes(offset, shape)
-                    .map(std::borrow::Cow::Owned)
-            },
-        )
-    }
-
-    /// Iterate over slices for Mode 0 (8-bit) files with signed/unsigned interpretation.
-    ///
-    /// Mode 0 files are ambiguous: some software writes signed bytes, others unsigned.
-    /// This method lets you explicitly choose the interpretation and returns `f32` values.
-    pub fn slices_mode0(
-        &self,
-        interp: crate::mode::M0Interpretation,
-    ) -> Box<dyn Iterator<Item = Result<crate::engine::block::VoxelBlock<f32>, Error>> + '_> {
-        crate::io::reader_common::slices_mode0(self.shape, self.mode(), interp, |offset, shape| {
-            self.read_block_bytes(offset, shape)
-        })
-    }
-
-    /// Iterate over slices, automatically converting Mode 6 (`Uint16`) to `u8`.
-    ///
-    /// Returns an error if the file is not Mode 6 or if any value exceeds 255.
-    pub fn slices_u8(
-        &self,
-    ) -> Result<
-        Box<dyn Iterator<Item = Result<crate::engine::block::VoxelBlock<u8>, Error>> + '_>,
-        Error,
-    > {
-        crate::io::reader_common::slices_u8(
-            self.shape,
-            self.mode(),
-            |offset, shape| self.read_block_bytes(offset, shape),
-            |bytes| self.decode_block::<u16>(bytes),
-        )
-    }
-
-    /// Iterate over slabs for Mode 0 (8-bit) files with signed/unsigned interpretation.
-    pub fn slabs_mode0(
-        &self,
-        k: usize,
-        interp: crate::mode::M0Interpretation,
-    ) -> Box<dyn Iterator<Item = Result<crate::engine::block::VoxelBlock<f32>, Error>> + '_> {
-        crate::io::reader_common::slabs_mode0(
-            self.shape,
-            self.mode(),
-            k,
-            interp,
-            |offset, shape| self.read_block_bytes(offset, shape),
-        )
-    }
 }
 
 impl Reader {

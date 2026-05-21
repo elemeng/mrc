@@ -11,7 +11,7 @@
 //! # Quick Example
 //!
 //! ```no_run
-//! use mrc::{open, create, VoxelBlock};
+//! use mrc::{open, create, ReaderExt, VoxelBlock};
 //!
 //! fn main() -> Result<(), Box<dyn std::error::Error>> {
 //!     // Reading (auto-detects gzip/bzip2)
@@ -68,7 +68,11 @@ pub use io::buffered::Reader;
 /// MRC file writer and its builder.
 pub use io::writer::{Writer, WriterBuilder};
 /// Lazy iterators over MRC voxel blocks.
-pub use iter::{BlockIter, SlabIter, SliceIter};
+pub use iter::{BlockIter, RegionIter, SlabIter, SliceIter};
+/// Stepping strategies for [`RegionIter`].
+pub use iter::{SliceStepper, SlabStepper, TileStepper};
+/// Core reader traits providing unified iterator and access methods.
+pub use io::reader_common::{ReaderCore, ReaderExt};
 
 /// Memory-mapped MRC writer and builder (requires `mmap` feature).
 #[cfg(feature = "mmap")]
