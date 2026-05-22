@@ -5,10 +5,8 @@
 //! the behaviour of the reference Python `mrcfile` library.
 
 use crate::Error;
-use crate::engine::block::VolumeShape;
 
 use std::fs::File;
-use std::io::Read;
 use std::path::Path;
 use std::vec::Vec;
 
@@ -60,50 +58,17 @@ impl crate::Reader {
         permissive: bool,
     ) -> Result<(Self, Vec<String>), Error> {
         let file = File::open(path)?;
-        let mut decoder = bzip2::read::BzDecoder::new(file);
-        let mut buf = Vec::new();
-        decoder.read_to_end(&mut buf)?;
-
-        if buf.len() < 1024 {
-            return Err(Error::InvalidHeader);
-        }
-
-        let mut header_bytes = [0u8; 1024];
-        header_bytes.copy_from_slice(&buf[..1024]);
-        let (header, mut warnings, endian, data_size) =
-            crate::io::reader_common::parse_header(&header_bytes, permissive)?;
-
-        let ext_size = header.nsymbt as usize;
-
-        if !permissive {
-            if buf.len() != 1024 + ext_size + data_size {
-                return Err(Error::FileSizeMismatch {
-                    expected: 1024 + ext_size + data_size,
-                    actual: buf.len(),
-                });
-            }
-        } else if buf.len() != 1024 + ext_size + data_size {
-            warnings.push(format!(
-                "File size mismatch: expected {} bytes, got {}",
-                1024 + ext_size + data_size,
-                buf.len()
-            ));
-        }
-
-        let ext_header = buf[1024..1024 + ext_size].to_vec();
-        let data = buf[1024 + ext_size..].to_vec();
-
-        let shape = VolumeShape::new(header.nx as usize, header.ny as usize, header.nz as usize);
-
+        let decoder = bzip2::read::BzDecoder::new(file);
+        let d = crate::io::reader_common::open_compressed(decoder, permissive)?;
         Ok((
             Self {
-                header,
-                ext_header,
-                data,
-                endian,
-                shape,
+                header: d.header,
+                ext_header: d.ext_header,
+                data: d.data,
+                endian: d.endian,
+                shape: d.shape,
             },
-            warnings,
+            d.warnings,
         ))
     }
 }

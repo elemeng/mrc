@@ -1,5 +1,43 @@
 //! MRC file writer with block-based API
 
+macro_rules! write_u8_block_body {
+    ($self:ident, $block:ident) => {{
+        if $self.mode() != Mode::Uint16 {
+            return Err(Error::ModeMismatch {
+                file_mode: $self.mode(),
+                requested_mode: Mode::Uint16,
+            });
+        }
+        let widened = crate::engine::convert::convert_u8_slice_to_u16(&$block.data);
+        $self.write_block(&VoxelBlock {
+            offset: $block.offset,
+            shape: $block.shape,
+            data: widened,
+        })
+    }};
+}
+
+macro_rules! write_f16_from_f32_body {
+    ($self:ident, $block:ident) => {{
+        if $self.mode() != Mode::Float16 {
+            return Err(Error::ModeMismatch {
+                file_mode: $self.mode(),
+                requested_mode: Mode::Float16,
+            });
+        }
+        let data: Vec<crate::f16> = $block
+            .data
+            .iter()
+            .map(|&v| crate::f16::from_f32(v))
+            .collect();
+        $self.write_block::<crate::f16>(&VoxelBlock {
+            offset: $block.offset,
+            shape: $block.shape,
+            data,
+        })
+    }};
+}
+
 use crate::engine::block::{VolumeShape, VoxelBlock};
 #[cfg(feature = "parallel")]
 use crate::engine::codec::encode_block_parallel;
@@ -10,6 +48,61 @@ use crate::{Error, Header, Mode};
 
 use std::path::PathBuf;
 use std::vec::Vec;
+
+macro_rules! builder_setters {
+    () => {
+        /// Set the volume dimensions.
+        ///
+        /// Also synchronises `mx`, `my`, `mz` to match `nx`, `ny`, `nz`.
+        pub fn shape(mut self, shape: [usize; 3]) -> Self {
+            self.header.nx = shape[0] as i32;
+            self.header.ny = shape[1] as i32;
+            self.header.nz = shape[2] as i32;
+            self.header.mx = self.header.nx;
+            self.header.my = self.header.ny;
+            self.header.mz = self.header.nz;
+            self
+        }
+
+        /// Set the voxel data mode.
+        pub fn mode<T: Voxel>(mut self) -> Self {
+            self.header.mode = T::MODE.as_i32();
+            self
+        }
+
+        /// Set the cell dimensions in Angstroms.
+        pub fn cell_lengths(mut self, xlen: f32, ylen: f32, zlen: f32) -> Self {
+            self.header.xlen = xlen;
+            self.header.ylen = ylen;
+            self.header.zlen = zlen;
+            self
+        }
+
+        /// Set the space group number.
+        pub fn ispg(mut self, ispg: i32) -> Self {
+            self.header.ispg = ispg;
+            self
+        }
+
+        /// Set the extended header type (4-byte ASCII identifier).
+        pub fn exttyp(mut self, exttyp: [u8; 4]) -> Self {
+            self.header.set_exttyp(exttyp);
+            self
+        }
+
+        /// Set the extended header size in bytes.
+        pub fn nsymbt(mut self, nsymbt: i32) -> Self {
+            self.header.nsymbt = nsymbt;
+            self
+        }
+
+        /// Set the origin coordinates.
+        pub fn origin(mut self, origin: [f32; 3]) -> Self {
+            self.header.origin = origin;
+            self
+        }
+    };
+}
 
 /// Builder for configuring and creating a new MRC file writer.
 ///
@@ -47,52 +140,7 @@ impl WriterBuilder {
         }
     }
 
-    pub fn shape(mut self, shape: [usize; 3]) -> Self {
-        self.header.nx = shape[0] as i32;
-        self.header.ny = shape[1] as i32;
-        self.header.nz = shape[2] as i32;
-        self.header.mx = self.header.nx;
-        self.header.my = self.header.ny;
-        self.header.mz = self.header.nz;
-        self
-    }
-
-    pub fn mode<T: Voxel>(mut self) -> Self {
-        self.header.mode = T::MODE.as_i32();
-        self
-    }
-
-    /// Set the cell dimensions in Angstroms.
-    pub fn cell_lengths(mut self, xlen: f32, ylen: f32, zlen: f32) -> Self {
-        self.header.xlen = xlen;
-        self.header.ylen = ylen;
-        self.header.zlen = zlen;
-        self
-    }
-
-    /// Set the space group number.
-    pub fn ispg(mut self, ispg: i32) -> Self {
-        self.header.ispg = ispg;
-        self
-    }
-
-    /// Set the extended header type (4-byte ASCII identifier).
-    pub fn exttyp(mut self, exttyp: [u8; 4]) -> Self {
-        self.header.set_exttyp(exttyp);
-        self
-    }
-
-    /// Set the extended header size in bytes.
-    pub fn nsymbt(mut self, nsymbt: i32) -> Self {
-        self.header.nsymbt = nsymbt;
-        self
-    }
-
-    /// Set the origin coordinates.
-    pub fn origin(mut self, origin: [f32; 3]) -> Self {
-        self.header.origin = origin;
-        self
-    }
+    builder_setters!();
 
     pub fn finish(self) -> Result<Writer, Error> {
         Writer::create(self.path, self.header)
@@ -250,18 +298,7 @@ impl Writer {
     /// # Errors
     /// Returns [`Error::ModeMismatch`] if the file mode is not `Uint16`.
     pub fn write_u8_block(&mut self, block: &VoxelBlock<u8>) -> Result<(), Error> {
-        if self.mode() != Mode::Uint16 {
-            return Err(Error::ModeMismatch {
-                file_mode: self.mode(),
-                requested_mode: Mode::Uint16,
-            });
-        }
-        let widened = crate::engine::convert::convert_u8_slice_to_u16(&block.data);
-        self.write_block(&VoxelBlock {
-            offset: block.offset,
-            shape: block.shape,
-            data: widened,
-        })
+        write_u8_block_body!(self, block)
     }
 
     /// Write a block with parallel encoding and sequential file I/O.
@@ -320,22 +357,7 @@ impl Writer {
     /// to a half-precision MRC file.
     #[cfg(feature = "f16")]
     pub fn write_f16_from_f32(&mut self, block: &VoxelBlock<f32>) -> Result<(), Error> {
-        if self.mode() != Mode::Float16 {
-            return Err(Error::ModeMismatch {
-                file_mode: self.mode(),
-                requested_mode: Mode::Float16,
-            });
-        }
-        let data: Vec<crate::f16> = block
-            .data
-            .iter()
-            .map(|&v| crate::f16::from_f32(v))
-            .collect();
-        self.write_block::<crate::f16>(&VoxelBlock {
-            offset: block.offset,
-            shape: block.shape,
-            data,
-        })
+        write_f16_from_f32_body!(self, block)
     }
 
     pub fn finalize(&mut self) -> Result<(), Error> {
@@ -427,55 +449,7 @@ impl MmapWriterBuilder {
         }
     }
 
-    /// Set the volume dimensions.
-    ///
-    /// Also synchronises `mx`, `my`, `mz` to match `nx`, `ny`, `nz`.
-    pub fn shape(mut self, shape: [usize; 3]) -> Self {
-        self.header.nx = shape[0] as i32;
-        self.header.ny = shape[1] as i32;
-        self.header.nz = shape[2] as i32;
-        self.header.mx = self.header.nx;
-        self.header.my = self.header.ny;
-        self.header.mz = self.header.nz;
-        self
-    }
-
-    pub fn mode<T: Voxel>(mut self) -> Self {
-        self.header.mode = T::MODE.as_i32();
-        self
-    }
-
-    /// Set the cell dimensions in Angstroms.
-    pub fn cell_lengths(mut self, xlen: f32, ylen: f32, zlen: f32) -> Self {
-        self.header.xlen = xlen;
-        self.header.ylen = ylen;
-        self.header.zlen = zlen;
-        self
-    }
-
-    /// Set the space group number.
-    pub fn ispg(mut self, ispg: i32) -> Self {
-        self.header.ispg = ispg;
-        self
-    }
-
-    /// Set the extended header type (4-byte ASCII identifier).
-    pub fn exttyp(mut self, exttyp: [u8; 4]) -> Self {
-        self.header.set_exttyp(exttyp);
-        self
-    }
-
-    /// Set the extended header size in bytes.
-    pub fn nsymbt(mut self, nsymbt: i32) -> Self {
-        self.header.nsymbt = nsymbt;
-        self
-    }
-
-    /// Set the origin coordinates.
-    pub fn origin(mut self, origin: [f32; 3]) -> Self {
-        self.header.origin = origin;
-        self
-    }
+    builder_setters!();
 
     pub fn finish(self) -> Result<MmapWriter, Error> {
         MmapWriter::create(self.path, self.header)
@@ -587,18 +561,7 @@ impl MmapWriter {
     /// # Errors
     /// Returns [`Error::ModeMismatch`] if the file mode is not `Uint16`.
     pub fn write_u8_block(&mut self, block: &VoxelBlock<u8>) -> Result<(), Error> {
-        if self.mode() != Mode::Uint16 {
-            return Err(Error::ModeMismatch {
-                file_mode: self.mode(),
-                requested_mode: Mode::Uint16,
-            });
-        }
-        let widened = crate::engine::convert::convert_u8_slice_to_u16(&block.data);
-        self.write_block(&VoxelBlock {
-            offset: block.offset,
-            shape: block.shape,
-            data: widened,
-        })
+        write_u8_block_body!(self, block)
     }
 
     /// Write a block of voxels to the memory-mapped file.
@@ -736,22 +699,7 @@ impl MmapWriter {
     /// Write an `f32` block to a Float16 file.
     #[cfg(feature = "f16")]
     pub fn write_f16_from_f32(&mut self, block: &VoxelBlock<f32>) -> Result<(), Error> {
-        if self.mode() != Mode::Float16 {
-            return Err(Error::ModeMismatch {
-                file_mode: self.mode(),
-                requested_mode: Mode::Float16,
-            });
-        }
-        let data: Vec<crate::f16> = block
-            .data
-            .iter()
-            .map(|&v| crate::f16::from_f32(v))
-            .collect();
-        self.write_block::<crate::f16>(&VoxelBlock {
-            offset: block.offset,
-            shape: block.shape,
-            data,
-        })
+        write_f16_from_f32_body!(self, block)
     }
 
     /// Scan the written data block and update header statistics.
@@ -922,18 +870,7 @@ impl<C: Compressor> CompressedWriter<C> {
     /// is widened to `u16` before writing, matching Python `mrcfile`'s
     /// auto-conversion behaviour for `np.uint8` data.
     pub fn write_u8_block(&mut self, block: &VoxelBlock<u8>) -> Result<(), Error> {
-        if self.mode() != Mode::Uint16 {
-            return Err(Error::ModeMismatch {
-                file_mode: self.mode(),
-                requested_mode: Mode::Uint16,
-            });
-        }
-        let widened = crate::engine::convert::convert_u8_slice_to_u16(&block.data);
-        self.write_block(&VoxelBlock {
-            offset: block.offset,
-            shape: block.shape,
-            data: widened,
-        })
+        write_u8_block_body!(self, block)
     }
 
     pub fn finalize(self) -> Result<(), Error> {

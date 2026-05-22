@@ -161,7 +161,11 @@ where
             Ok(d) => d,
             Err(e) => return Some(Err(e)),
         };
-        Some(Ok(VoxelBlock { offset, shape, data }))
+        Some(Ok(VoxelBlock {
+            offset,
+            shape,
+            data,
+        }))
     }
 }
 
@@ -172,5 +176,3 @@ where
     T: Voxel,
 {
 }
-
-

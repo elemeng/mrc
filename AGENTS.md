@@ -174,4 +174,3 @@ Agents should read `review.md` before making large refactors to I/O or header co
 
 - **MRC-2014 Spec**: `mrcfile-official.md` (local copy) or https://www.ccpem.ac.uk/mrc-format/mrc2014/
 - **Python Reference**: `mrcfile/` directory (CCP-EM's `mrcfile` Python package)
-- **Review Document**: `review.md` — detailed correctness, performance, and maintainability audit

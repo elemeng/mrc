@@ -169,7 +169,6 @@ impl Reader {
     pub(crate) fn decode_block<T: Voxel>(&self, bytes: &[u8]) -> Result<Vec<T>, Error> {
         crate::io::reader_common::decode_block(bytes, self.mode(), self.endian)
     }
-
 }
 
 impl Reader {

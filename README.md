@@ -8,10 +8,11 @@ A high-performance, memory-efficient library for reading and writing MRC (Medica
 
 ## ✨ Why mrc?
 
-- **🚀 Iterator-centric**: Stream slices, slabs, or blocks on demand
+- **🚀 Iterator-centric**: Stream slices, slabs, or tiles on demand
 - **⚡ SIMD-accelerated**: AVX2/NEON for the common i16→f32 path
 - **🔒 Type-safe I/O**: Compile-time mode matching prevents silent data corruption
 - **🗺️ Memory-mapped I/O**: `MmapReader` / `MmapWriter` for files larger than RAM
+- **📦 Compression**: Auto-detect and read gzip / bzip2 MRC files
 
 **Note: This crate is currently under active development. While most features are functional, occasional bugs and API changes are possible. Contributions are welcome—please report issues and share your ideas!**
 
@@ -22,7 +23,7 @@ A high-performance, memory-efficient library for reading and writing MRC (Medica
 mrc = "0.2"
 
 # For all features (defaults are usually sufficient)
-mrc = { version = "0.2", features = ["mmap", "f16", "simd", "parallel"] }
+mrc = { version = "0.2", features = ["mmap", "f16", "simd", "parallel", "gzip"] }
 ```
 
 ## 🚀 Quick Start
@@ -32,13 +33,14 @@ mrc = { version = "0.2", features = ["mmap", "f16", "simd", "parallel"] }
 ```
 ┌─────────────────┐     ┌──────────────────┐     ┌────────────────┐
 │   File System   │────▶│  Header Parsing  │────▶│  Iterator API  │
-│   (.mrc file)   │     │   (1024 bytes)   │     │  (Zero-copy)   │
+│ (.mrc/.mrc.gz)  │     │   (1024 bytes)   │     │  (Zero-copy)   │
 └─────────────────┘     └──────────────────┘     └────────────────┘
          │                       │                       │
    ┌─────────────┐          ┌────────┐              ┌─────────┐
-   │ Reader      │          │ Header │              │ VoxelBlock
-   │ MmapReader  │          │        │              │         │
-   │ Writer      │          └────────┘              └─────────┘
+   │ MrcReader   │          │ Header │              │ VoxelBlock
+   │ Reader      │          │        │              │         │
+   │ MmapReader  │          └────────┘              └─────────┘
+   │ Writer      │
    │ MmapWriter  │
    └─────────────┘
 ```
@@ -53,11 +55,11 @@ mrc = { version = "0.2", features = ["mmap", "f16", "simd", "parallel"] }
 ### 📖 Reading MRC Files
 
 ```rust
-use mrc::Reader;
+use mrc::{open, ReaderExt};
 
 fn main() -> Result<(), mrc::Error> {
-    // Open an MRC file - header is parsed automatically
-    let reader = Reader::open("protein.mrc")?;
+    // Open an MRC file - auto-detects plain, gzip, or bzip2
+    let reader = open("protein.mrc")?;
 
     // Get volume dimensions
     let shape = reader.shape();
@@ -115,7 +117,7 @@ v0.2 is a complete architectural redesign. Key API changes:
 
 | v0.1 | v0.2 |
 |------|------|
-| `MrcView::new(data)` | `Reader::open(path)` |
+| `MrcView::new(data)` | `Reader::open(path)` / `open(path)` |
 | `MrcFile::create(path, header)` | `create(path).shape(dims).mode::<T>().finish()` |
 | `MrcView::view::<f32>()` | `reader.slices::<f32>()` |
 | `MrcViewMut` | `Writer` + `VoxelBlock<T>` |
@@ -130,14 +132,14 @@ let view = MrcView::new(data)?;
 let floats = view.view::<f32>()?;
 
 // v0.2: Stream with iterators
-let reader = Reader::open("file.mrc")?;
+let reader = open("file.mrc")?;
 for slice in reader.slices::<f32>() {
     let block = slice?;
     // process block.data
 }
 ```
 
-**New in v0.2:** SIMD acceleration, parallel encoding, type conversion iterators, `MmapReader`.
+**New in v0.2:** SIMD acceleration, parallel encoding, type conversion iterators, `MmapReader`, compression support, unified `ReaderExt` trait.
 
 ## 🗺️ API Overview
 
@@ -145,7 +147,8 @@ for slice in reader.slices::<f32>() {
 
 | Type | Purpose | Example |
 |------|---------|---------|
-| [`Reader`] | Read MRC files | `Reader::open("file.mrc")?` |
+| [`MrcReader`] | Auto-detect compression | `open("file.mrc")?` |
+| [`Reader`] | Read plain MRC files | `Reader::open("file.mrc")?` |
 | [`MmapReader`] | Memory-mapped reading | `MmapReader::open("large.mrc")?` |
 | [`Writer`] | Write MRC files | `create("out.mrc").shape([64,64,64]).mode::<f32>().finish()?` |
 | [`MmapWriter`] | Memory-mapped writing | `MmapWriter::create("out.mrc", header)?` |
@@ -157,9 +160,11 @@ for slice in reader.slices::<f32>() {
 
 ### Iterator API
 
-The library provides an iterator-centric API for efficient processing:
+All reader types implement [`ReaderExt`], providing a unified iterator API:
 
 ```rust
+use mrc::ReaderExt;
+
 // Iterate over individual slices (Z axis)
 for slice in reader.slices::<f32>() {
     let block = slice?;
@@ -172,11 +177,16 @@ for slab in reader.slabs::<f32>(10) {  // 10 slices per slab
     // Process slab
 }
 
-// Iterate over arbitrary chunks
-for chunk in reader.blocks::<f32>([64, 64, 64]) {
-    let block = chunk?;
-    // Process 64³ chunk
+// Iterate over arbitrary 3D tiles
+for tile in reader.tiles::<f32>([64, 64, 64]) {
+    let block = tile?;
+    // Process 64³ tile
 }
+
+// Semantic aliases
+for image in reader.images::<f32>() { /* same as slices() */ }
+for plane in reader.planes::<f32>() { /* same as slices() */ }
+for vol in reader.volumes::<f32>()? { /* full volumes from a stack */ }
 ```
 
 ### Type Conversion
@@ -186,6 +196,8 @@ the caller's responsibility. Only two overwhelmingly common cryo-EM workflows
 are supported as conveniences:
 
 ```rust
+use mrc::ReaderExt;
+
 // Read an Int16/Uint16/Int8/Float32 file as f32
 for slice in reader.slices_f32()? {
     let block = slice?;
@@ -204,7 +216,28 @@ writer.write_f16_from_f32(&f32_data)?;
 
 **Safety note:** `reader.slices::<f32>()` on an Int16 file returns
 `Error::ModeMismatch` instead of silently decoding 2-byte voxels as 4-byte
-floats.
+floats. Use `slices_f32()` for automatic conversion.
+
+### Compression
+
+`MrcReader` (and the convenience `open()`) automatically detects gzip and bzip2
+compression from the file magic bytes:
+
+```rust
+use mrc::open;
+
+// Works for plain .mrc, .mrc.gz, and .mrc.bz2
+let reader = open("protein.mrc")?;
+println!("Compression: {:?}", reader.compression_type());
+```
+
+You can also open compressed files directly:
+
+```rust
+use mrc::GzipReader;
+
+let reader = GzipReader::open("protein.mrc.gz")?;
+```
 
 ### Memory-Mapped I/O
 
@@ -223,12 +256,12 @@ for slice in reader.slices::<f32>() {
 }
 
 // Direct byte access (zero-copy)
-let bytes = reader.data_bytes()?;  // &[u8] backed by mmap
+let bytes = reader.data_bytes();  // &[u8] backed by mmap
 ```
 
 | Use | When |
 |-----|------|
-| `Reader` | Small files, simple sequential access |
+| `Reader` / `MrcReader` | Small files, simple sequential access |
 | `MmapReader` | Large files, memory-constrained environments, random access |
 
 ## 📊 Data Type Support
@@ -244,7 +277,7 @@ let bytes = reader.data_bytes()?;  // &[u8] backed by mmap
 | `Float16` | 12 | `f16`[^1] | 2 | 16-bit float | Memory efficiency |
 | `Packed4Bit` | 101 | [`Packed4Bit`] | 0.5 | Packed 4-bit | Compression |
 
-[^1]: Requires `f16` feature.
+[^1]: Requires `f16` feature. Uses the [`half`](https://docs.rs/half) crate; no nightly Rust required.
 
 ## ⚡ Performance Features
 
@@ -257,25 +290,16 @@ to accelerate the common i16→f32 and u16→f32 paths inside `slices_f32()` and
 ### Zero-Copy Reading
 
 `Reader` loads the entire file into memory (as raw bytes) and decodes slices
-on demand. For true zero-copy access, use `MmapReader` or `MmapWriter`:
+on demand. For true zero-copy access, use `MmapReader`:
 
 ```rust
-use mrc::{MmapReader, MmapWriter, SliceAccess};
+use mrc::MmapReader;
 
 // Memory-mapped reading
 let reader = MmapReader::open("data.mrc")?;
 for slice in reader.slices::<f32>() {
     // Decodes on demand; raw bytes are backed by the OS page cache
 }
-
-// Memory-mapped writing with direct slice mutation
-let mut writer = mrc::create("out.mrc")
-    .shape([512, 512, 256])
-    .mode::<f32>()
-    .mmap()
-    .finish()?;
-let slice = writer.slice_mut::<f32>(0)?;
-slice[0] = 1.0;
 ```
 
 ### Parallel Writing
@@ -298,9 +322,11 @@ writer.finalize()?;
 | Feature | Description | Default |
 |---------|-------------|---------|
 | `mmap` | Memory-mapped I/O | ✅ |
-| `f16` | Half-precision support | ✅ |
+| `f16` | Half-precision support (via `half` crate) | ✅ |
 | `simd` | SIMD acceleration | ✅ |
 | `parallel` | Parallel encoding | ✅ |
+| `gzip` | Gzip-compressed MRC files | ✅ |
+| `bzip2` | Bzip2-compressed MRC files | ❌ |
 
 ## 🔧 Header Structure
 
@@ -353,13 +379,15 @@ header.set_exttyp(*b"FEI1");
 ### ✅ **Current Release (v0.2.x): Core + SIMD**
 
 - [x] Complete MRC-2014 format support
-- [x] Iterator-centric API (slices, slabs, blocks)
+- [x] Iterator-centric API (slices, slabs, tiles)
 - [x] Type-safe I/O with compile-time mode checking
 - [x] SIMD acceleration (AVX2, NEON)
 - [x] Zero-copy fast paths
 - [x] Parallel encoding
 - [x] Memory-mapped I/O (`MmapReader`, `MmapWriter`)
 - [x] All data types (modes 0-4, 6, 12, 101)
+- [x] Compression support (gzip, bzip2)
+- [x] Unified reader traits (`ReaderCore`, `ReaderExt`)
 
 ### 🚧 **Next Release (v0.3.x): Extended Features**
 
@@ -372,7 +400,6 @@ header.set_exttyp(*b"FEI1");
 
 - [ ] Python bindings via PyO3
 - [ ] GPU acceleration
-- [ ] Compression support (gzip, zstd)
 - [ ] Cloud storage integration
 
 ## 🧪 Testing
@@ -383,7 +410,6 @@ cargo test --all-features
 
 # Run benchmarks
 cargo bench --all-features
-
 ```
 
 ## 🤝 Contributing
@@ -413,7 +439,7 @@ cargo test --all-features
 cargo fmt --check
 
 # Run clippy
-cargo clippy --all-features
+cargo clippy --all-features --all-targets
 ```
 
 ## 📄 MIT License

@@ -76,6 +76,30 @@ pub enum MrcReader {
     Bzip2(crate::Bzip2Reader),
 }
 
+macro_rules! delegate_to_reader {
+    (
+        $(
+            $(#[$meta:meta])*
+            $vis:vis fn $name:ident $(< $($gen:ident $(: $gen_bound:path)?),+ >)?
+            (&self $(, $arg:ident: $ty:ty)*) $(-> $ret:ty)?;
+        )+
+    ) => {
+        $(
+            $(#[$meta])*
+            $vis fn $name $(< $($gen $(: $gen_bound)?),+ >)?
+            (&self $(, $arg: $ty)*) $(-> $ret)? {
+                match self {
+                    MrcReader::Plain(r) => r.$name($($arg),*),
+                    #[cfg(feature = "gzip")]
+                    MrcReader::Gzip(r) => r.$name($($arg),*),
+                    #[cfg(feature = "bzip2")]
+                    MrcReader::Bzip2(r) => r.$name($($arg),*),
+                }
+            }
+        )+
+    };
+}
+
 impl MrcReader {
     /// Open an MRC file, automatically detecting gzip or bzip2 compression.
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self, Error> {
@@ -111,122 +135,33 @@ impl MrcReader {
         }
     }
 
-    /// Volume dimensions.
-    pub fn shape(&self) -> VolumeShape {
-        match self {
-            MrcReader::Plain(r) => r.shape(),
-            #[cfg(feature = "gzip")]
-            MrcReader::Gzip(r) => r.shape(),
-            #[cfg(feature = "bzip2")]
-            MrcReader::Bzip2(r) => r.shape(),
-        }
-    }
+    delegate_to_reader! {
+        /// Volume dimensions.
+        pub fn shape(&self) -> VolumeShape;
 
-    /// Voxel data mode.
-    pub fn mode(&self) -> Mode {
-        match self {
-            MrcReader::Plain(r) => r.mode(),
-            #[cfg(feature = "gzip")]
-            MrcReader::Gzip(r) => r.mode(),
-            #[cfg(feature = "bzip2")]
-            MrcReader::Bzip2(r) => r.mode(),
-        }
-    }
+        /// Voxel data mode.
+        pub fn mode(&self) -> Mode;
 
-    /// Reference to the parsed header.
-    pub fn header(&self) -> &Header {
-        match self {
-            MrcReader::Plain(r) => r.header(),
-            #[cfg(feature = "gzip")]
-            MrcReader::Gzip(r) => r.header(),
-            #[cfg(feature = "bzip2")]
-            MrcReader::Bzip2(r) => r.header(),
-        }
-    }
+        /// Reference to the parsed header.
+        pub fn header(&self) -> &Header;
 
-    /// Raw extended header bytes.
-    pub fn ext_header_bytes(&self) -> &[u8] {
-        match self {
-            MrcReader::Plain(r) => r.ext_header_bytes(),
-            #[cfg(feature = "gzip")]
-            MrcReader::Gzip(r) => r.ext_header_bytes(),
-            #[cfg(feature = "bzip2")]
-            MrcReader::Bzip2(r) => r.ext_header_bytes(),
-        }
-    }
+        /// Raw extended header bytes.
+        pub fn ext_header_bytes(&self) -> &[u8];
 
-    /// Read a block of raw bytes.
-    pub fn read_block_bytes(
-        &self,
-        offset: [usize; 3],
-        shape: [usize; 3],
-    ) -> Result<Vec<u8>, Error> {
-        match self {
-            MrcReader::Plain(r) => r.read_block_bytes(offset, shape),
-            #[cfg(feature = "gzip")]
-            MrcReader::Gzip(r) => r.read_block_bytes(offset, shape),
-            #[cfg(feature = "bzip2")]
-            MrcReader::Bzip2(r) => r.read_block_bytes(offset, shape),
-        }
-    }
+        /// Read a block of raw bytes.
+        pub fn read_block_bytes(&self, offset: [usize; 3], shape: [usize; 3]) -> Result<Vec<u8>, Error>;
 
-    /// Decode a block of bytes to the requested voxel type.
-    pub(crate) fn decode_block<T: Voxel>(&self, bytes: &[u8]) -> Result<Vec<T>, Error> {
-        match self {
-            MrcReader::Plain(r) => r.decode_block(bytes),
-            #[cfg(feature = "gzip")]
-            MrcReader::Gzip(r) => r.decode_block(bytes),
-            #[cfg(feature = "bzip2")]
-            MrcReader::Bzip2(r) => r.decode_block(bytes),
-        }
-    }
+        /// Read and decode a voxel block.
+        pub fn read_block<T: Voxel>(&self, offset: [usize; 3], shape: [usize; 3]) -> Result<VoxelBlock<T>, Error>;
 
-    /// Read and decode a voxel block.
-    pub fn read_block<T: Voxel>(
-        &self,
-        offset: [usize; 3],
-        shape: [usize; 3],
-    ) -> Result<VoxelBlock<T>, Error> {
-        match self {
-            MrcReader::Plain(r) => r.read_block(offset, shape),
-            #[cfg(feature = "gzip")]
-            MrcReader::Gzip(r) => r.read_block(offset, shape),
-            #[cfg(feature = "bzip2")]
-            MrcReader::Bzip2(r) => r.read_block(offset, shape),
-        }
-    }
+        /// Cross-check header statistics against actual data.
+        pub fn validate_header_stats(&self) -> Result<(), Error>;
 
-    /// Cross-check header statistics against actual data.
-    pub fn validate_header_stats(&self) -> Result<(), Error> {
-        match self {
-            MrcReader::Plain(r) => r.validate_header_stats(),
-            #[cfg(feature = "gzip")]
-            MrcReader::Gzip(r) => r.validate_header_stats(),
-            #[cfg(feature = "bzip2")]
-            MrcReader::Bzip2(r) => r.validate_header_stats(),
-        }
-    }
+        /// Raw data bytes (after header and extended header).
+        pub fn data_bytes(&self) -> &[u8];
 
-    /// Raw data bytes (after header and extended header).
-    pub fn data_bytes(&self) -> &[u8] {
-        match self {
-            MrcReader::Plain(r) => r.data_bytes(),
-            #[cfg(feature = "gzip")]
-            MrcReader::Gzip(r) => r.data_bytes(),
-            #[cfg(feature = "bzip2")]
-            MrcReader::Bzip2(r) => r.data_bytes(),
-        }
-    }
-
-    /// Detected file endianness.
-    pub fn endian(&self) -> FileEndian {
-        match self {
-            MrcReader::Plain(r) => r.endian(),
-            #[cfg(feature = "gzip")]
-            MrcReader::Gzip(r) => r.endian(),
-            #[cfg(feature = "bzip2")]
-            MrcReader::Bzip2(r) => r.endian(),
-        }
+        /// Detected file endianness.
+        pub fn endian(&self) -> FileEndian;
     }
 
     // -------------------------------------------------------------------------

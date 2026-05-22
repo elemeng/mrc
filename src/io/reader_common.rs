@@ -9,7 +9,7 @@
 use crate::engine::block::{VolumeShape, VoxelBlock};
 use crate::engine::codec::{EndianCodec, decode_slice};
 use crate::engine::endian::FileEndian;
-use crate::iter::{RegionIter, SliceStepper, SlabStepper, TileStepper};
+use crate::iter::{RegionIter, SlabStepper, SliceStepper, TileStepper};
 use crate::mode::{M0Interpretation, Voxel};
 use crate::{Error, Header, Mode};
 use std::borrow::Cow;
@@ -122,9 +122,7 @@ pub trait ReaderExt: ReaderCore + Sized {
     ///
     /// Each item covers `[nx, ny, mz]` voxels. The header must indicate a volume
     /// stack (`ispg` in 401–630) and `mz` must be positive.
-    fn volumes<T: Voxel>(
-        &self,
-    ) -> Result<RegionIter<'_, T, Self, SlabStepper>, Error> {
+    fn volumes<T: Voxel>(&self) -> Result<RegionIter<'_, T, Self, SlabStepper>, Error> {
         let mz = self.header().mz.max(0) as usize;
         if !self.header().is_volume_stack() || mz == 0 {
             return Err(Error::ModeMismatch {
@@ -147,7 +145,11 @@ pub trait ReaderExt: ReaderCore + Sized {
     ) -> Result<VoxelBlock<T>, Error> {
         let bytes = self.vs_read_block_bytes(offset, shape)?;
         let data = self.vs_decode_block::<T>(&bytes)?;
-        Ok(VoxelBlock { offset, shape, data })
+        Ok(VoxelBlock {
+            offset,
+            shape,
+            data,
+        })
     }
 
     // -------------------------------------------------------------------------
@@ -158,36 +160,12 @@ pub trait ReaderExt: ReaderCore + Sized {
     fn slices_f32(
         &self,
     ) -> Result<Box<dyn Iterator<Item = Result<VoxelBlock<f32>, Error>> + '_>, Error> {
-        Ok(match self.mode() {
-            Mode::Float32 => {
-                Box::new(self.slices::<f32>()) as Box<dyn Iterator<Item = _>>
-            }
-            Mode::Int16 => Box::new(self.slices::<i16>().map(|b| {
-                let b = b?;
-                Ok(VoxelBlock {
-                    offset: b.offset,
-                    shape: b.shape,
-                    data: crate::engine::convert::convert_i16_slice_to_f32(&b.data),
-                })
-            })),
-            Mode::Uint16 => Box::new(self.slices::<u16>().map(|b| {
-                let b = b?;
-                Ok(VoxelBlock {
-                    offset: b.offset,
-                    shape: b.shape,
-                    data: crate::engine::convert::convert_u16_slice_to_f32(&b.data),
-                })
-            })),
-            Mode::Int8 => Box::new(self.slices::<i8>().map(|b| {
-                let b = b?;
-                Ok(VoxelBlock {
-                    offset: b.offset,
-                    shape: b.shape,
-                    data: crate::engine::convert::convert_i8_slice_to_f32(&b.data),
-                })
-            })),
-            _ => return Err(Error::UnsupportedMode),
-        })
+        Ok(self._iter_f32(
+            self.slices::<f32>(),
+            self.slices::<i16>(),
+            self.slices::<u16>(),
+            self.slices::<i8>(),
+        ))
     }
 
     /// Iterate over slabs, automatically converting common modes to `f32`.
@@ -195,36 +173,60 @@ pub trait ReaderExt: ReaderCore + Sized {
         &self,
         k: usize,
     ) -> Result<Box<dyn Iterator<Item = Result<VoxelBlock<f32>, Error>> + '_>, Error> {
-        Ok(match self.mode() {
-            Mode::Float32 => {
-                Box::new(self.slabs::<f32>(k)) as Box<dyn Iterator<Item = _>>
-            }
-            Mode::Int16 => Box::new(self.slabs::<i16>(k).map(|b| {
-                let b = b?;
+        Ok(self._iter_f32(
+            self.slabs::<f32>(k),
+            self.slabs::<i16>(k),
+            self.slabs::<u16>(k),
+            self.slabs::<i8>(k),
+        ))
+    }
+
+    /// Shared helper for `slices_f32` / `slabs_f32` — selects the correct
+    /// conversion based on file mode.
+    fn _iter_f32<'a, I, I16, I16E, U16, U16E, I8, I8E>(
+        &'a self,
+        iter_f32: I,
+        iter_i16: I16,
+        iter_u16: U16,
+        iter_i8: I8,
+    ) -> Box<dyn Iterator<Item = Result<VoxelBlock<f32>, Error>> + 'a>
+    where
+        I: Iterator<Item = Result<VoxelBlock<f32>, Error>> + 'a,
+        I16: Iterator<Item = Result<VoxelBlock<i16>, I16E>> + 'a,
+        I16E: Into<Error>,
+        U16: Iterator<Item = Result<VoxelBlock<u16>, U16E>> + 'a,
+        U16E: Into<Error>,
+        I8: Iterator<Item = Result<VoxelBlock<i8>, I8E>> + 'a,
+        I8E: Into<Error>,
+    {
+        match self.mode() {
+            Mode::Float32 => Box::new(iter_f32) as Box<dyn Iterator<Item = _>>,
+            Mode::Int16 => Box::new(iter_i16.map(|b| {
+                let b = b.map_err(Into::into)?;
                 Ok(VoxelBlock {
                     offset: b.offset,
                     shape: b.shape,
                     data: crate::engine::convert::convert_i16_slice_to_f32(&b.data),
                 })
             })),
-            Mode::Uint16 => Box::new(self.slabs::<u16>(k).map(|b| {
-                let b = b?;
+            Mode::Uint16 => Box::new(iter_u16.map(|b| {
+                let b = b.map_err(Into::into)?;
                 Ok(VoxelBlock {
                     offset: b.offset,
                     shape: b.shape,
                     data: crate::engine::convert::convert_u16_slice_to_f32(&b.data),
                 })
             })),
-            Mode::Int8 => Box::new(self.slabs::<i8>(k).map(|b| {
-                let b = b?;
+            Mode::Int8 => Box::new(iter_i8.map(|b| {
+                let b = b.map_err(Into::into)?;
                 Ok(VoxelBlock {
                     offset: b.offset,
                     shape: b.shape,
                     data: crate::engine::convert::convert_i8_slice_to_f32(&b.data),
                 })
             })),
-            _ => return Err(Error::UnsupportedMode),
-        })
+            _ => Box::new(std::iter::once(Err(Error::UnsupportedMode))),
+        }
     }
 
     /// Iterate over slices, automatically converting Mode 6 (`Uint16`) to `u8`.
@@ -260,7 +262,8 @@ pub trait ReaderExt: ReaderCore + Sized {
         }
         let volume_shape = self.shape();
         Box::new((0..volume_shape.nz).map(move |z| {
-            let bytes = self.vs_read_block_bytes([0, 0, z], [volume_shape.nx, volume_shape.ny, 1])?;
+            let bytes =
+                self.vs_read_block_bytes([0, 0, z], [volume_shape.nx, volume_shape.ny, 1])?;
             let data = crate::engine::convert::reinterpret_m0(&bytes, interp);
             Ok(VoxelBlock {
                 offset: [0, 0, z],
@@ -292,7 +295,9 @@ pub trait ReaderExt: ReaderCore + Sized {
             let start = z;
             let sz = k.min(volume_shape.nz - z);
             z += sz;
-            let bytes = match self.vs_read_block_bytes([0, 0, start], [volume_shape.nx, volume_shape.ny, sz]) {
+            let bytes = match self
+                .vs_read_block_bytes([0, 0, start], [volume_shape.nx, volume_shape.ny, sz])
+            {
                 Ok(b) => b,
                 Err(e) => return Some(Err(e)),
             };
@@ -469,6 +474,72 @@ pub fn parse_header(
     Ok((header, warnings, endian, data_size))
 }
 
+/// Components of a decompressed MRC file, returned by [`open_compressed`].
+pub struct DecompressedMrc {
+    /// Parsed MRC header.
+    pub header: crate::Header,
+    /// Extended header bytes.
+    pub ext_header: Vec<u8>,
+    /// Voxel data bytes.
+    pub data: Vec<u8>,
+    /// Non-fatal warnings (empty unless `permissive` was `true`).
+    pub warnings: Vec<String>,
+    /// Detected file endianness.
+    pub endian: crate::FileEndian,
+    /// Volume dimensions.
+    pub shape: VolumeShape,
+}
+
+/// Open a compressed MRC file (gzip or bzip2) from a decoder.
+///
+/// Reads the entire decompressed stream into memory, parses the header,
+/// validates size, and returns the components needed to construct a [`Reader`].
+pub fn open_compressed<D: std::io::Read>(
+    mut decoder: D,
+    permissive: bool,
+) -> Result<DecompressedMrc, crate::Error> {
+    let mut buf = Vec::new();
+    decoder.read_to_end(&mut buf)?;
+
+    if buf.len() < 1024 {
+        return Err(crate::Error::InvalidHeader);
+    }
+
+    let mut header_bytes = [0u8; 1024];
+    header_bytes.copy_from_slice(&buf[..1024]);
+    let (header, mut warnings, endian, data_size) = parse_header(&header_bytes, permissive)?;
+
+    let ext_size = header.nsymbt as usize;
+
+    if !permissive {
+        if buf.len() != 1024 + ext_size + data_size {
+            return Err(crate::Error::FileSizeMismatch {
+                expected: 1024 + ext_size + data_size,
+                actual: buf.len(),
+            });
+        }
+    } else if buf.len() != 1024 + ext_size + data_size {
+        warnings.push(format!(
+            "File size mismatch: expected {} bytes, got {}",
+            1024 + ext_size + data_size,
+            buf.len()
+        ));
+    }
+
+    let ext_header = buf[1024..1024 + ext_size].to_vec();
+    let data = buf[1024 + ext_size..].to_vec();
+    let shape = VolumeShape::new(header.nx as usize, header.ny as usize, header.nz as usize);
+
+    Ok(DecompressedMrc {
+        header,
+        ext_header,
+        data,
+        warnings,
+        endian,
+        shape,
+    })
+}
+
 // ============================================================================
 // ReaderCore implementations
 // ============================================================================
@@ -487,10 +558,18 @@ impl VoxelSource for crate::Reader {
     }
 }
 impl ReaderCore for crate::Reader {
-    fn shape(&self) -> VolumeShape { self.shape() }
-    fn mode(&self) -> Mode { self.mode() }
-    fn endian(&self) -> FileEndian { self.endian }
-    fn header(&self) -> &Header { &self.header }
+    fn shape(&self) -> VolumeShape {
+        self.shape()
+    }
+    fn mode(&self) -> Mode {
+        self.mode()
+    }
+    fn endian(&self) -> FileEndian {
+        self.endian
+    }
+    fn header(&self) -> &Header {
+        &self.header
+    }
 }
 impl ReaderExt for crate::Reader {}
 
@@ -511,10 +590,18 @@ impl VoxelSource for crate::GzipReader {
 }
 #[cfg(feature = "gzip")]
 impl ReaderCore for crate::GzipReader {
-    fn shape(&self) -> VolumeShape { self.0.shape() }
-    fn mode(&self) -> Mode { self.0.mode() }
-    fn endian(&self) -> FileEndian { self.0.endian }
-    fn header(&self) -> &Header { &self.0.header }
+    fn shape(&self) -> VolumeShape {
+        self.0.shape()
+    }
+    fn mode(&self) -> Mode {
+        self.0.mode()
+    }
+    fn endian(&self) -> FileEndian {
+        self.0.endian
+    }
+    fn header(&self) -> &Header {
+        &self.0.header
+    }
 }
 #[cfg(feature = "gzip")]
 impl ReaderExt for crate::GzipReader {}
@@ -536,10 +623,18 @@ impl VoxelSource for crate::Bzip2Reader {
 }
 #[cfg(feature = "bzip2")]
 impl ReaderCore for crate::Bzip2Reader {
-    fn shape(&self) -> VolumeShape { self.0.shape() }
-    fn mode(&self) -> Mode { self.0.mode() }
-    fn endian(&self) -> FileEndian { self.0.endian }
-    fn header(&self) -> &Header { &self.0.header }
+    fn shape(&self) -> VolumeShape {
+        self.0.shape()
+    }
+    fn mode(&self) -> Mode {
+        self.0.mode()
+    }
+    fn endian(&self) -> FileEndian {
+        self.0.endian
+    }
+    fn header(&self) -> &Header {
+        &self.0.header
+    }
 }
 #[cfg(feature = "bzip2")]
 impl ReaderExt for crate::Bzip2Reader {}
@@ -561,13 +656,33 @@ impl VoxelSource for crate::MmapReader {
 }
 #[cfg(feature = "mmap")]
 impl ReaderCore for crate::MmapReader {
-    fn shape(&self) -> VolumeShape { self.shape() }
-    fn mode(&self) -> Mode { self.mode() }
-    fn endian(&self) -> FileEndian { self.endian() }
-    fn header(&self) -> &Header { self.header() }
+    fn shape(&self) -> VolumeShape {
+        self.shape()
+    }
+    fn mode(&self) -> Mode {
+        self.mode()
+    }
+    fn endian(&self) -> FileEndian {
+        self.endian()
+    }
+    fn header(&self) -> &Header {
+        self.header()
+    }
 }
 #[cfg(feature = "mmap")]
 impl ReaderExt for crate::MmapReader {}
+
+macro_rules! mrc_dispatch {
+    ($self:ident . $method:ident ( $($arg:expr),* )) => {
+        match $self {
+            crate::MrcReader::Plain(r) => r.$method($($arg),*),
+            #[cfg(feature = "gzip")]
+            crate::MrcReader::Gzip(r) => r.$method($($arg),*),
+            #[cfg(feature = "bzip2")]
+            crate::MrcReader::Bzip2(r) => r.$method($($arg),*),
+        }
+    };
+}
 
 impl private::Sealed for crate::MrcReader {}
 impl VoxelSource for crate::MrcReader {
@@ -576,48 +691,24 @@ impl VoxelSource for crate::MrcReader {
         offset: [usize; 3],
         shape: [usize; 3],
     ) -> Result<Cow<'a, [u8]>, Error> {
-        self.read_block_bytes(offset, shape).map(Cow::Owned)
+        mrc_dispatch!(self.read_block_bytes(offset, shape)).map(Cow::Owned)
     }
     fn vs_decode_block<T: Voxel>(&self, bytes: &[u8]) -> Result<Vec<T>, Error> {
-        self.decode_block(bytes)
+        mrc_dispatch!(self.decode_block(bytes))
     }
 }
 impl ReaderCore for crate::MrcReader {
     fn shape(&self) -> VolumeShape {
-        match self {
-            crate::MrcReader::Plain(r) => r.shape(),
-            #[cfg(feature = "gzip")]
-            crate::MrcReader::Gzip(r) => r.shape(),
-            #[cfg(feature = "bzip2")]
-            crate::MrcReader::Bzip2(r) => r.shape(),
-        }
+        mrc_dispatch!(self.shape())
     }
     fn mode(&self) -> Mode {
-        match self {
-            crate::MrcReader::Plain(r) => r.mode(),
-            #[cfg(feature = "gzip")]
-            crate::MrcReader::Gzip(r) => r.mode(),
-            #[cfg(feature = "bzip2")]
-            crate::MrcReader::Bzip2(r) => r.mode(),
-        }
+        mrc_dispatch!(self.mode())
     }
     fn endian(&self) -> FileEndian {
-        match self {
-            crate::MrcReader::Plain(r) => r.endian(),
-            #[cfg(feature = "gzip")]
-            crate::MrcReader::Gzip(r) => r.endian(),
-            #[cfg(feature = "bzip2")]
-            crate::MrcReader::Bzip2(r) => r.endian(),
-        }
+        mrc_dispatch!(self.endian())
     }
     fn header(&self) -> &Header {
-        match self {
-            crate::MrcReader::Plain(r) => r.header(),
-            #[cfg(feature = "gzip")]
-            crate::MrcReader::Gzip(r) => r.header(),
-            #[cfg(feature = "bzip2")]
-            crate::MrcReader::Bzip2(r) => r.header(),
-        }
+        mrc_dispatch!(self.header())
     }
 }
 impl ReaderExt for crate::MrcReader {}

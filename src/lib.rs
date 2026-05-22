@@ -65,14 +65,14 @@ pub use mode::{
 pub use half::f16;
 /// Buffered MRC reader with lazy slice/slab iterators.
 pub use io::buffered::Reader;
+/// Core reader traits providing unified iterator and access methods.
+pub use io::reader_common::{ReaderCore, ReaderExt};
 /// MRC file writer and its builder.
 pub use io::writer::{Writer, WriterBuilder};
 /// Lazy iterator over MRC voxel blocks.
 pub use iter::RegionIter;
 /// Stepping strategies for [`RegionIter`].
-pub use iter::{SliceStepper, SlabStepper, TileStepper};
-/// Core reader traits providing unified iterator and access methods.
-pub use io::reader_common::{ReaderCore, ReaderExt};
+pub use iter::{SlabStepper, SliceStepper, TileStepper};
 
 /// Memory-mapped MRC writer and builder (requires `mmap` feature).
 #[cfg(feature = "mmap")]
