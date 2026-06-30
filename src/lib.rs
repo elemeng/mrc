@@ -65,8 +65,7 @@ pub use mode::{
 pub use half::f16;
 /// Buffered MRC reader with lazy slice/slab iterators.
 pub use io::buffered::Reader;
-#[doc(hidden)]
-pub use io::reader_common::ReaderExt;
+
 /// MRC file writer and its builder.
 pub use io::writer::{Writer, WriterBuilder};
 /// Lazy iterator over MRC voxel blocks.
