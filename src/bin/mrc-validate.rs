@@ -121,19 +121,28 @@ fn main() {
     // Stats cross-check
     let stats_ok = match reader.validate_header_stats() {
         Ok(()) => true,
-        Err(Error::StatsMismatch { .. }) => {
+        Err(Error::StatsMismatch {
+            claimed_dmin,
+            claimed_dmax,
+            claimed_dmean,
+            claimed_rms,
+            actual_dmin,
+            actual_dmax,
+            actual_dmean,
+            actual_rms,
+        }) => {
             print_result(
                 path,
                 compression_label,
                 &Error::StatsMismatch {
-                    claimed_dmin: header.dmin,
-                    claimed_dmax: header.dmax,
-                    claimed_dmean: header.dmean,
-                    claimed_rms: header.rms,
-                    actual_dmin: 0.0,
-                    actual_dmax: 0.0,
-                    actual_dmean: 0.0,
-                    actual_rms: 0.0,
+                    claimed_dmin,
+                    claimed_dmax,
+                    claimed_dmean,
+                    claimed_rms,
+                    actual_dmin,
+                    actual_dmax,
+                    actual_dmean,
+                    actual_rms,
                 },
                 &warnings,
                 false,

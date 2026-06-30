@@ -44,12 +44,14 @@ impl Bzip2Reader {
 
 impl crate::Reader {
     /// Open a bzip2-compressed MRC file.
-    pub fn open_bzip2<P: AsRef<Path>>(path: P) -> Result<Self, Error> {
+    pub(crate) fn open_bzip2<P: AsRef<Path>>(path: P) -> Result<Self, Error> {
         Self::_open_bzip2(path, false).map(|(r, _)| r)
     }
 
     /// Open a bzip2-compressed MRC file in **permissive** mode.
-    pub fn open_bzip2_permissive<P: AsRef<Path>>(path: P) -> Result<(Self, Vec<String>), Error> {
+    pub(crate) fn open_bzip2_permissive<P: AsRef<Path>>(
+        path: P,
+    ) -> Result<(Self, Vec<String>), Error> {
         Self::_open_bzip2(path, true)
     }
 

@@ -14,8 +14,22 @@ use std::vec::Vec;
 
 /// Memory-mapped MRC file reader.
 ///
-/// Provides zero-copy access to MRC files by memory-mapping them into the process address space.
-/// This is ideal for reading large files that don't fit in RAM, as the OS handles paging.
+/// Maps the file into the process address space rather than loading it
+/// into a heap-allocated buffer. The OS pages data in and out on demand,
+/// making this ideal for very large files or when only a small subset of
+/// slices needs to be accessed.
+///
+/// # Zero-copy access
+///
+/// [`slab_as`](Self::slab_as) returns `&[T]` directly into the memory map
+/// with no allocation — this is true zero-copy.  It requires the file
+/// endianness to match the host and `T` to match the voxel mode.
+///
+/// [`data_bytes`](Self::data_bytes) returns a `&[u8]` view of the raw
+/// voxel data, also zero-copy.
+///
+/// For non-native-endian files or type-mismatched reads, use
+/// [`read_block`](Self::read_block) which always allocates.
 ///
 /// # Example
 /// ```no_run
@@ -25,7 +39,11 @@ use std::vec::Vec;
 ///     let reader = MmapReader::open("large_file.mrc")?;
 ///     println!("Dimensions: {:?}", reader.shape());
 ///
-///     // Iterate over slices with zero-copy when file type matches
+///     // Zero-copy typed access (native endian, mode-matching type)
+///     let slice: &[f32] = reader.slab_as::<f32>(0, 1)?;
+///     println!("First slice has {} voxels", slice.len());
+///
+///     // Generic typed iteration (always allocates per block)
 ///     for slice in reader.slices::<f32>() {
 ///         let block = slice?;
 ///         // process block.data
@@ -163,6 +181,66 @@ impl MmapReader {
         &self.mmap[self.data_offset..end]
     }
 
+    /// Zero-copy read of a contiguous Z-slab as `&[T]`.
+    ///
+    /// Returns a slice pointing directly into the memory map, avoiding
+    /// any allocation or copying. This is the most efficient way to access
+    /// voxel data when the file endianness matches the host.
+    ///
+    /// # Requirements
+    ///
+    /// * `T::MODE` must match the file's voxel mode
+    /// * File endianness must be native (host byte order)
+    /// * `k > 0` and `z + k <= nz`
+    ///
+    /// For non-native-endian files or type mismatches, use
+    /// [`read_block`](Self::read_block) instead.
+    pub fn slab_as<T: Voxel>(&self, z: usize, k: usize) -> Result<&[T], Error> {
+        if T::MODE != self.mode() {
+            return Err(Error::ModeMismatch {
+                file_mode: self.mode(),
+                requested_mode: T::MODE,
+            });
+        }
+        if !self.endian.is_native() {
+            return Err(Error::TypeMismatch {
+                expected: T::BYTE_SIZE,
+                actual: T::BYTE_SIZE,
+            });
+        }
+
+        let b = T::BYTE_SIZE;
+        let [nx, ny, nz] = [self.shape.nx, self.shape.ny, self.shape.nz];
+
+        if k == 0 || z + k > nz {
+            return Err(Error::BoundsError);
+        }
+
+        let linear_start = z * nx * ny;
+        let byte_start = self.data_offset + linear_start * b;
+        let count = nx * ny * k;
+        let byte_end = byte_start + count * b;
+
+        if byte_end > self.mmap.len() {
+            return Err(Error::BoundsError);
+        }
+
+        // SAFETY:
+        // • T::MODE matches the file mode (checked above), so the on-disk
+        //   byte layout is exactly `T`.
+        // • Native endian (checked above), so byte order matches the host.
+        // • `data_offset` (= 1024 + nsymbt) is 4-byte aligned for any
+        //   valid `nsymbt`.  All MRC voxel types have sizes 1, 2, 4, or 8,
+        //   so their alignment is always satisfied by a 4-byte-aligned base.
+        // • Bounds are checked above, so the byte range falls within the mmap.
+        // • `T: Copy` (from the `Voxel` bound) makes it safe to read the
+        //   same bytes from multiple references without aliasing concerns.
+        unsafe {
+            let ptr = self.mmap.as_ptr().add(byte_start) as *const T;
+            Ok(core::slice::from_raw_parts(ptr, count))
+        }
+    }
+
     /// Cross-check header statistics against actual data.
     ///
     /// Computes `dmin`, `dmax`, `dmean` and `rms` from the memory-mapped data
@@ -184,6 +262,22 @@ impl MmapReader {
         offset: [usize; 3],
         shape: [usize; 3],
     ) -> Result<Vec<u8>, Error> {
+        self.read_block_bytes_cow(offset, shape)
+            .map(|c| c.into_owned())
+    }
+
+    /// Like [`read_block_bytes`](Self::read_block_bytes) but returns
+    /// `Cow::Borrowed` for contiguous XY slabs (zero-copy fast path).
+    pub(crate) fn read_block_bytes_cow<'a>(
+        &'a self,
+        offset: [usize; 3],
+        shape: [usize; 3],
+    ) -> Result<std::borrow::Cow<'a, [u8]>, Error> {
+        let [nx, ny, _nz] = [self.shape.nx, self.shape.ny, self.shape.nz];
+        let [ox, oy, oz] = offset;
+        let [sx, sy, sz] = shape;
+        let b = self.mode().byte_size();
+
         let data_len = self.mmap.len().saturating_sub(self.data_offset);
         crate::io::reader_common::validate_block_bounds(
             self.shape,
@@ -192,12 +286,26 @@ impl MmapReader {
             offset,
             shape,
         )?;
-        Ok(crate::io::reader_common::gather_block_bytes(
-            &self.mmap[self.data_offset..],
-            self.shape,
-            self.mode(),
-            offset,
-            shape,
+
+        // Fast path: full XY slab is contiguous — borrow directly from the mmap.
+        if ox == 0 && sx == nx && oy == 0 && sy == ny {
+            let linear = oz * nx * ny;
+            let start = self.data_offset + linear * b;
+            let byte_len = sx * sy * sz * b;
+            return Ok(std::borrow::Cow::Borrowed(
+                &self.mmap[start..start + byte_len],
+            ));
+        }
+
+        // Non-contiguous block: gather into owned Vec.
+        Ok(std::borrow::Cow::Owned(
+            crate::io::reader_common::gather_block_bytes(
+                &self.mmap[self.data_offset..],
+                self.shape,
+                self.mode(),
+                offset,
+                shape,
+            ),
         ))
     }
 

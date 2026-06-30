@@ -54,6 +54,9 @@ pub enum Error {
     /// The file size does not match the header's declared data size.
     #[error("File size mismatch: expected {expected} bytes, got {actual} bytes")]
     FileSizeMismatch { expected: usize, actual: usize },
+    /// A volume-stack operation was requested on a file that is not a volume stack.
+    #[error("Not a volume stack: ispg={ispg}, mz={mz} (expected ispg in 401-630 with mz > 0)")]
+    NotAVolumeStack { ispg: i32, mz: i32 },
 }
 
 /// Errors that can occur during detailed header validation.

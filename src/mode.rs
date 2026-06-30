@@ -128,6 +128,23 @@ pub struct Int16Complex {
     pub imag: i16,
 }
 
+impl Int16Complex {
+    /// Convert this complex number to a real value using the given strategy.
+    #[inline]
+    pub fn to_real(&self, strategy: ComplexToRealStrategy) -> f32 {
+        match strategy {
+            ComplexToRealStrategy::RealPart => self.real as f32,
+            ComplexToRealStrategy::ImaginaryPart => self.imag as f32,
+            ComplexToRealStrategy::Magnitude => {
+                let r = self.real as f32;
+                let i = self.imag as f32;
+                (r * r + i * i).sqrt()
+            }
+            ComplexToRealStrategy::Phase => (self.imag as f32).atan2(self.real as f32),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[repr(C)]
 pub struct Float32Complex {

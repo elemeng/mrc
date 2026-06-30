@@ -129,6 +129,7 @@ macro_rules! builder_setters {
 pub struct WriterBuilder {
     path: PathBuf,
     header: Header,
+    ext_header: Vec<u8>,
 }
 
 impl WriterBuilder {
@@ -137,13 +138,25 @@ impl WriterBuilder {
         Self {
             path: path.as_ref().to_path_buf(),
             header: Header::new(),
+            ext_header: Vec::new(),
         }
     }
 
     builder_setters!();
 
+    /// Set the extended header bytes.
+    ///
+    /// When provided, `nsymbt` is automatically updated to match the byte
+    /// length. Pass an empty `Vec` (or omit) to write zeros for the extended
+    /// header region.
+    pub fn ext_header_bytes(mut self, bytes: Vec<u8>) -> Self {
+        self.header.nsymbt = bytes.len() as i32;
+        self.ext_header = bytes;
+        self
+    }
+
     pub fn finish(self) -> Result<Writer, Error> {
-        Writer::create(self.path, self.header)
+        Writer::create(self.path, self.header, &self.ext_header)
     }
 
     /// Switch to building a memory-mapped writer.
@@ -152,6 +165,7 @@ impl WriterBuilder {
         MmapWriterBuilder {
             path: self.path,
             header: self.header,
+            ext_header: self.ext_header,
         }
     }
 }
@@ -177,8 +191,13 @@ impl Writer {
     /// Create a new MRC file from a pre-built header.
     ///
     /// The header's endianness is forced to little-endian per crate policy.
+    /// Provide extended header bytes via `ext_header` (pass `&[]` if none).
     /// For most use cases, prefer [`WriterBuilder`](crate::WriterBuilder).
-    pub fn create<P: AsRef<std::path::Path>>(path: P, mut header: Header) -> Result<Self, Error> {
+    pub fn create<P: AsRef<std::path::Path>>(
+        path: P,
+        mut header: Header,
+        ext_header: &[u8],
+    ) -> Result<Self, Error> {
         use std::io::Write;
 
         // New files are always little-endian per crate policy
@@ -199,8 +218,15 @@ impl Writer {
 
         let ext_size = header.nsymbt as usize;
         if ext_size > 0 {
-            let zeros = vec![0u8; ext_size];
-            file.write_all(&zeros)?;
+            if ext_header.len() >= ext_size {
+                file.write_all(&ext_header[..ext_size])?;
+            } else {
+                // Pad with zeros if provided bytes are shorter than nsymbt
+                file.write_all(ext_header)?;
+                let remaining = ext_size - ext_header.len();
+                let zeros = vec![0u8; remaining];
+                file.write_all(&zeros)?;
+            }
         }
 
         let data_offset = header.data_offset() as u64;
@@ -232,6 +258,14 @@ impl Writer {
 
     pub fn mode(&self) -> Mode {
         Mode::from_i32(self.header.mode).unwrap_or(Mode::Float32)
+    }
+
+    /// Reference to the current header.
+    ///
+    /// Modify header fields before calling [`finalize`](Self::finalize) to
+    /// change what gets written to disk.
+    pub fn header(&self) -> &Header {
+        &self.header
     }
 
     /// Write a block of voxels to the file.
@@ -273,6 +307,8 @@ impl Writer {
         }
 
         // Scatter path: write row by row.
+        // Pre-allocate a single row buffer to avoid per-row allocation churn.
+        let mut row_bytes = vec![0u8; sx * b];
         use std::io::{Seek, SeekFrom, Write};
         for z in 0..sz {
             for y in 0..sy {
@@ -280,7 +316,6 @@ impl Writer {
                 let file_offset = self.data_offset + (file_linear as u64) * (b as u64);
                 let block_idx = y * sx + z * sx * sy;
                 let row_values = &block.data[block_idx..block_idx + sx];
-                let mut row_bytes = vec![0u8; sx * b];
                 encode_slice(row_values, &mut row_bytes, file_endian);
                 self.file.seek(SeekFrom::Start(file_offset))?;
                 self.file.write_all(&row_bytes)?;
@@ -437,6 +472,7 @@ fn update_header_stats_from_bytes(header: &mut Header, bytes: &[u8]) -> Result<(
 pub struct MmapWriterBuilder {
     path: PathBuf,
     header: Header,
+    ext_header: Vec<u8>,
 }
 
 #[cfg(feature = "mmap")]
@@ -446,13 +482,24 @@ impl MmapWriterBuilder {
         Self {
             path: path.as_ref().to_path_buf(),
             header: Header::new(),
+            ext_header: Vec::new(),
         }
     }
 
     builder_setters!();
 
+    /// Set the extended header bytes.
+    ///
+    /// When provided, `nsymbt` is automatically updated to match the byte
+    /// length.
+    pub fn ext_header_bytes(mut self, bytes: Vec<u8>) -> Self {
+        self.header.nsymbt = bytes.len() as i32;
+        self.ext_header = bytes;
+        self
+    }
+
     pub fn finish(self) -> Result<MmapWriter, Error> {
-        MmapWriter::create(self.path, self.header)
+        MmapWriter::create(self.path, self.header, &self.ext_header)
     }
 }
 
@@ -479,8 +526,13 @@ impl MmapWriter {
     /// Create a new memory-mapped MRC file from a pre-built header.
     ///
     /// The header's endianness is forced to little-endian per crate policy.
+    /// Provide extended header bytes via `ext_header` (pass `&[]` if none).
     /// For most use cases, prefer [`MmapWriterBuilder`](crate::MmapWriterBuilder).
-    pub fn create<P: AsRef<std::path::Path>>(path: P, mut header: Header) -> Result<Self, Error> {
+    pub fn create<P: AsRef<std::path::Path>>(
+        path: P,
+        mut header: Header,
+        ext_header: &[u8],
+    ) -> Result<Self, Error> {
         use std::fs::OpenOptions;
         use std::io::Write;
 
@@ -506,13 +558,17 @@ impl MmapWriter {
         header.encode_to_bytes(&mut header_bytes);
         file.write_all(&header_bytes)?;
 
-        // Explicitly zero the extended header region so the mmap does not see
-        // uninitialised bytes (the data region is implicitly zero because the
-        // file was truncated before set_len).
+        // Write extended header (provided bytes or zeros).
         let ext_size = header.nsymbt as usize;
         if ext_size > 0 {
-            let zeros = vec![0u8; ext_size];
-            file.write_all(&zeros)?;
+            if ext_header.len() >= ext_size {
+                file.write_all(&ext_header[..ext_size])?;
+            } else {
+                file.write_all(ext_header)?;
+                let remaining = ext_size - ext_header.len();
+                let zeros = vec![0u8; remaining];
+                file.write_all(&zeros)?;
+            }
         }
 
         let mmap = unsafe {
@@ -550,6 +606,14 @@ impl MmapWriter {
 
     pub fn mode(&self) -> Mode {
         Mode::from_i32(self.header.mode).unwrap_or(Mode::Float32)
+    }
+
+    /// Reference to the current header.
+    ///
+    /// Modify header fields before calling [`finalize`](Self::finalize) to
+    /// change what gets written to disk.
+    pub fn header(&self) -> &Header {
+        &self.header
     }
 
     /// Write a block of `u8` data by automatically widening to `u16` (Mode 6).
@@ -767,8 +831,8 @@ pub trait Compressor {
 pub struct CompressedWriter<C: Compressor> {
     header: Header,
     data: Vec<u8>,
+    ext_header: Vec<u8>,
     path: std::path::PathBuf,
-    data_offset: usize,
     bytes_per_voxel: usize,
     shape: VolumeShape,
     _marker: std::marker::PhantomData<C>,
@@ -776,10 +840,30 @@ pub struct CompressedWriter<C: Compressor> {
 
 impl<C: Compressor> CompressedWriter<C> {
     /// Create a new compressed MRC file.
-    pub fn create<P: AsRef<std::path::Path>>(path: P, header: Header) -> Result<Self, Error> {
+    ///
+    /// Provide extended header bytes via `ext_header` (pass `&[]` if none).
+    pub fn create<P: AsRef<std::path::Path>>(
+        path: P,
+        header: Header,
+        ext_header: &[u8],
+    ) -> Result<Self, Error> {
         let mut header = header;
         header.set_file_endian(FileEndian::LittleEndian);
+
+        // Sync nsymbt with provided ext_header if non-empty.
+        if !ext_header.is_empty() {
+            header.nsymbt = ext_header.len() as i32;
+        }
         header.validate_detailed()?;
+
+        let ext_size = header.nsymbt as usize;
+        let ext_header_stored = if ext_header.len() >= ext_size {
+            ext_header[..ext_size].to_vec()
+        } else {
+            let mut v = ext_header.to_vec();
+            v.resize(ext_size, 0);
+            v
+        };
 
         let data_size = header.data_size().ok_or(Error::InvalidHeader)?;
         let data = vec![0u8; data_size];
@@ -794,8 +878,8 @@ impl<C: Compressor> CompressedWriter<C> {
         Ok(Self {
             header,
             data,
+            ext_header: ext_header_stored,
             path: path.as_ref().to_path_buf(),
-            data_offset: header.data_offset(),
             bytes_per_voxel,
             shape,
             _marker: std::marker::PhantomData,
@@ -837,9 +921,11 @@ impl<C: Compressor> CompressedWriter<C> {
         let file_endian = self.header.detect_endian();
 
         // Fast path: full XY slab is contiguous in the buffer.
+        // NOTE: self.data contains only the voxel data (not the header),
+        // so we index from 0, unlike Writer/MmapWriter which use file offsets.
         if ox == 0 && sx == nx && oy == 0 && sy == ny {
             let linear = oz * nx * ny;
-            let start_byte = self.data_offset + linear * b;
+            let start_byte = linear * b;
             let byte_len = sx * sy * sz * b;
             let dst = &mut self.data[start_byte..start_byte + byte_len];
             crate::engine::codec::encode_slice(&block.data, dst, file_endian);
@@ -850,7 +936,7 @@ impl<C: Compressor> CompressedWriter<C> {
         for z in 0..sz {
             for y in 0..sy {
                 let file_linear = ox + (oy + y) * nx + (oz + z) * nx * ny;
-                let file_start = self.data_offset + file_linear * b;
+                let file_start = file_linear * b;
                 let block_idx = y * sx + z * sx * sy;
                 let row_values = &block.data[block_idx..block_idx + sx];
                 let row_end = file_start + sx * b;
@@ -873,6 +959,15 @@ impl<C: Compressor> CompressedWriter<C> {
         write_u8_block_body!(self, block)
     }
 
+    /// Write an `f32` block to a Float16 file.
+    ///
+    /// This is a convenience method for the common case of writing f32 data
+    /// to a half-precision MRC file.
+    #[cfg(feature = "f16")]
+    pub fn write_f16_from_f32(&mut self, block: &VoxelBlock<f32>) -> Result<(), Error> {
+        write_f16_from_f32_body!(self, block)
+    }
+
     pub fn finalize(self) -> Result<(), Error> {
         let mut header_bytes = [0u8; 1024];
         self.header.encode_to_bytes(&mut header_bytes);
@@ -881,7 +976,7 @@ impl<C: Compressor> CompressedWriter<C> {
         let mut file_bytes = Vec::with_capacity(1024 + ext_size + self.data.len());
         file_bytes.extend_from_slice(&header_bytes);
         if ext_size > 0 {
-            file_bytes.resize(file_bytes.len() + ext_size, 0);
+            file_bytes.extend_from_slice(&self.ext_header);
         }
         file_bytes.extend_from_slice(&self.data);
 

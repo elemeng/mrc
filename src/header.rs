@@ -608,6 +608,15 @@ impl Header {
         self.mz = self.nz;
     }
 
+    /// Configure the header as a volume stack.
+    ///
+    /// Sets `ispg = 401` and `mz` to the given sub-volume size.
+    /// `nz` must be divisible by `mz` for the header to validate.
+    pub fn set_volume_stack(&mut self, mz: i32) {
+        self.ispg = 401;
+        self.mz = mz;
+    }
+
     // -------------------------------------------------------------------------
     // Computed convenience properties
     // -------------------------------------------------------------------------
@@ -641,6 +650,20 @@ impl Header {
     /// Returns `[nxstart, nystart, nzstart]`.
     pub fn nstart(&self) -> [i32; 3] {
         [self.nxstart, self.nystart, self.nzstart]
+    }
+
+    /// Cell dimensions (unit cell edge lengths) in ångströms.
+    ///
+    /// Returns `[xlen, ylen, zlen]`.
+    pub fn cell_lengths(&self) -> [f32; 3] {
+        [self.xlen, self.ylen, self.zlen]
+    }
+
+    /// Cell angles in degrees.
+    ///
+    /// Returns `[alpha, beta, gamma]`.
+    pub fn cell_angles(&self) -> [f32; 3] {
+        [self.alpha, self.beta, self.gamma]
     }
 
     /// Logical data shape following Python `mrcfile` conventions.
@@ -888,6 +911,14 @@ impl HeaderBuilder {
         self.header.xlen = xlen;
         self.header.ylen = ylen;
         self.header.zlen = zlen;
+        self
+    }
+
+    /// Set the cell angles in degrees (alpha, beta, gamma).
+    pub fn cell_angles(mut self, alpha: f32, beta: f32, gamma: f32) -> Self {
+        self.header.alpha = alpha;
+        self.header.beta = beta;
+        self.header.gamma = gamma;
         self
     }
 

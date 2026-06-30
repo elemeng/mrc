@@ -44,12 +44,14 @@ impl GzipReader {
 
 impl crate::Reader {
     /// Open a gzip-compressed MRC file.
-    pub fn open_gzip<P: AsRef<Path>>(path: P) -> Result<Self, Error> {
+    pub(crate) fn open_gzip<P: AsRef<Path>>(path: P) -> Result<Self, Error> {
         Self::_open_gzip(path, false).map(|(r, _)| r)
     }
 
     /// Open a gzip-compressed MRC file in **permissive** mode.
-    pub fn open_gzip_permissive<P: AsRef<Path>>(path: P) -> Result<(Self, Vec<String>), Error> {
+    pub(crate) fn open_gzip_permissive<P: AsRef<Path>>(
+        path: P,
+    ) -> Result<(Self, Vec<String>), Error> {
         Self::_open_gzip(path, true)
     }
 

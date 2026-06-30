@@ -20,6 +20,15 @@ impl VolumeShape {
         Self { nx, ny, nz }
     }
 
+    /// Create a volume shape from an MRC header.
+    pub fn from_header(header: &crate::Header) -> Self {
+        Self {
+            nx: header.nx as usize,
+            ny: header.ny as usize,
+            nz: header.nz as usize,
+        }
+    }
+
     /// Total number of voxels, or `None` if the calculation overflows.
     pub fn total_voxels(&self) -> Option<usize> {
         self.nx.checked_mul(self.ny)?.checked_mul(self.nz)

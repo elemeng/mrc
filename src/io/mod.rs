@@ -6,7 +6,7 @@
 //! |------|--------|-------------|
 //! | [`MrcReader`] | [`reader`] | Unified entry point that auto-detects compression (plain, gzip, bzip2) and dispatches to the correct backend. This is what [`crate::open`] returns. |
 //! | [`Reader`] | [`buffered`] | In-memory buffered reader. Reads the **entire file into RAM** on open, enabling fast random access to any slice. |
-//! | [`MmapReader`] | [`mmap_reader`] | Zero-copy memory-mapped reader. Lets the OS page data on demand; ideal for files too large to fit in RAM (requires the `mmap` feature). |
+//! | [`MmapReader`] | [`mmap_reader`] | Memory-mapped reader. Lets the OS page data on demand; ideal for files too large to fit in RAM (requires the `mmap` feature). |
 //! | [`Writer`] | [`writer`] | Direct file I/O writer. Writes blocks straight to disk and rewrites the header on [`Writer::finalize`]. |
 //! | [`CompressedWriter`] | [`writer`] | Generic compressed writer that buffers the entire file in memory and compresses on finalize. Used via type aliases [`GzipWriter`](crate::GzipWriter) and [`Bzip2Writer`](crate::Bzip2Writer). |
 //!

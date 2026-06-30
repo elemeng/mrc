@@ -158,13 +158,16 @@ pub(crate) fn validate_header_stats(
         crate::Mode::Float32Complex | crate::Mode::Int16Complex
     );
 
-    // Sentinel values indicating stats have not been calculated.
-    let min_unset = header.dmin == 0.0 && header.dmax == -1.0 && header.dmean == -2.0;
-    let rms_unset = header.rms == -1.0;
+    // Per MRC-2014 convention, dmin > dmax indicates stats have not been
+    // well-determined (the header builder sets dmin=0, dmax=-1 for this).
+    // Using this relational check is robust — it avoids conflating legitimate
+    // data values (e.g. actual dmin == 0.0) with the unset sentinel.
+    let stats_unset = header.dmin > header.dmax;
+    let rms_unset = header.rms < 0.0;
 
-    let min_ok = complex || min_unset || is_close(header.dmin, actual_dmin, rtol);
-    let max_ok = complex || min_unset || is_close(header.dmax, actual_dmax, rtol);
-    let mean_ok = complex || min_unset || is_close(header.dmean, actual_dmean, rtol);
+    let min_ok = complex || stats_unset || is_close(header.dmin, actual_dmin, rtol);
+    let max_ok = complex || stats_unset || is_close(header.dmax, actual_dmax, rtol);
+    let mean_ok = complex || stats_unset || is_close(header.dmean, actual_dmean, rtol);
     let rms_ok = rms_unset || is_close(header.rms, actual_rms, rtol);
 
     if !min_ok || !max_ok || !mean_ok || !rms_ok {

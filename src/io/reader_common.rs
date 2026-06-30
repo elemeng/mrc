@@ -10,7 +10,7 @@ use crate::engine::block::{VolumeShape, VoxelBlock};
 use crate::engine::codec::{EndianCodec, decode_slice};
 use crate::engine::endian::FileEndian;
 use crate::iter::{RegionIter, SlabStepper, SliceStepper, TileStepper};
-use crate::mode::{M0Interpretation, Voxel};
+use crate::mode::{Float32Complex, Int16Complex, M0Interpretation, Voxel};
 use crate::{Error, Header, Mode};
 use std::borrow::Cow;
 
@@ -59,6 +59,9 @@ pub trait ReaderCore: VoxelSource {
 
     /// Reference to the parsed header.
     fn header(&self) -> &Header;
+
+    /// Extended header bytes (empty slice if no extended header).
+    fn ext_header_bytes(&self) -> &[u8];
 }
 
 /// Extension trait providing all semantic iterator and direct-access methods.
@@ -125,9 +128,9 @@ pub trait ReaderExt: ReaderCore + Sized {
     fn volumes<T: Voxel>(&self) -> Result<RegionIter<'_, T, Self, SlabStepper>, Error> {
         let mz = self.header().mz.max(0) as usize;
         if !self.header().is_volume_stack() || mz == 0 {
-            return Err(Error::ModeMismatch {
-                file_mode: self.mode(),
-                requested_mode: Mode::Float32,
+            return Err(Error::NotAVolumeStack {
+                ispg: self.header().ispg,
+                mz: self.header().mz,
             });
         }
         Ok(self.slabs(mz))
@@ -157,32 +160,30 @@ pub trait ReaderExt: ReaderCore + Sized {
     // -------------------------------------------------------------------------
 
     /// Iterate over slices, automatically converting common modes to `f32`.
-    fn slices_f32(
-        &self,
-    ) -> Result<Box<dyn Iterator<Item = Result<VoxelBlock<f32>, Error>> + '_>, Error> {
-        Ok(self._iter_f32(
+    fn slices_f32(&self) -> Box<dyn Iterator<Item = Result<VoxelBlock<f32>, Error>> + '_> {
+        self._iter_f32(
             self.slices::<f32>(),
             self.slices::<i16>(),
             self.slices::<u16>(),
             self.slices::<i8>(),
-        ))
+        )
     }
 
     /// Iterate over slabs, automatically converting common modes to `f32`.
-    fn slabs_f32(
-        &self,
-        k: usize,
-    ) -> Result<Box<dyn Iterator<Item = Result<VoxelBlock<f32>, Error>> + '_>, Error> {
-        Ok(self._iter_f32(
+    fn slabs_f32(&self, k: usize) -> Box<dyn Iterator<Item = Result<VoxelBlock<f32>, Error>> + '_> {
+        self._iter_f32(
             self.slabs::<f32>(k),
             self.slabs::<i16>(k),
             self.slabs::<u16>(k),
             self.slabs::<i8>(k),
-        ))
+        )
     }
 
     /// Shared helper for `slices_f32` / `slabs_f32` — selects the correct
     /// conversion based on file mode.
+    ///
+    /// Supports all real-valued modes plus Float16, and converts complex modes
+    /// via magnitude (most common default for real-valued visualisation).
     fn _iter_f32<'a, I, I16, I16E, U16, U16E, I8, I8E>(
         &'a self,
         iter_f32: I,
@@ -223,6 +224,48 @@ pub trait ReaderExt: ReaderCore + Sized {
                     offset: b.offset,
                     shape: b.shape,
                     data: crate::engine::convert::convert_i8_slice_to_f32(&b.data),
+                })
+            })),
+            Mode::Float16 => {
+                #[cfg(feature = "f16")]
+                {
+                    Box::new(self.slices::<crate::f16>().map(|b| {
+                        let b = b?;
+                        Ok(VoxelBlock {
+                            offset: b.offset,
+                            shape: b.shape,
+                            data: b.data.iter().map(|&v| f32::from(v)).collect(),
+                        })
+                    }))
+                }
+                #[cfg(not(feature = "f16"))]
+                {
+                    let _ = (iter_f32, iter_i16, iter_u16, iter_i8);
+                    Box::new(std::iter::once(Err(Error::UnsupportedMode)))
+                }
+            }
+            Mode::Float32Complex => Box::new(self.slices::<Float32Complex>().map(|b| {
+                let b = b?;
+                Ok(VoxelBlock {
+                    offset: b.offset,
+                    shape: b.shape,
+                    data: b
+                        .data
+                        .iter()
+                        .map(|c| c.to_real(crate::mode::ComplexToRealStrategy::Magnitude))
+                        .collect(),
+                })
+            })),
+            Mode::Int16Complex => Box::new(self.slices::<Int16Complex>().map(|b| {
+                let b = b?;
+                Ok(VoxelBlock {
+                    offset: b.offset,
+                    shape: b.shape,
+                    data: b
+                        .data
+                        .iter()
+                        .map(|c| c.to_real(crate::mode::ComplexToRealStrategy::Magnitude))
+                        .collect(),
                 })
             })),
             _ => Box::new(std::iter::once(Err(Error::UnsupportedMode))),
@@ -570,6 +613,9 @@ impl ReaderCore for crate::Reader {
     fn header(&self) -> &Header {
         &self.header
     }
+    fn ext_header_bytes(&self) -> &[u8] {
+        &self.ext_header
+    }
 }
 impl ReaderExt for crate::Reader {}
 
@@ -601,6 +647,9 @@ impl ReaderCore for crate::GzipReader {
     }
     fn header(&self) -> &Header {
         &self.0.header
+    }
+    fn ext_header_bytes(&self) -> &[u8] {
+        &self.0.ext_header
     }
 }
 #[cfg(feature = "gzip")]
@@ -635,6 +684,9 @@ impl ReaderCore for crate::Bzip2Reader {
     fn header(&self) -> &Header {
         &self.0.header
     }
+    fn ext_header_bytes(&self) -> &[u8] {
+        &self.0.ext_header
+    }
 }
 #[cfg(feature = "bzip2")]
 impl ReaderExt for crate::Bzip2Reader {}
@@ -648,7 +700,8 @@ impl VoxelSource for crate::MmapReader {
         offset: [usize; 3],
         shape: [usize; 3],
     ) -> Result<Cow<'a, [u8]>, Error> {
-        self.read_block_bytes(offset, shape).map(Cow::Owned)
+        // MmapReader has a zero-copy fast path for contiguous XY slabs.
+        self.read_block_bytes_cow(offset, shape)
     }
     fn vs_decode_block<T: Voxel>(&self, bytes: &[u8]) -> Result<Vec<T>, Error> {
         self.decode_block(bytes)
@@ -667,6 +720,9 @@ impl ReaderCore for crate::MmapReader {
     }
     fn header(&self) -> &Header {
         self.header()
+    }
+    fn ext_header_bytes(&self) -> &[u8] {
+        self.ext_header_bytes()
     }
 }
 #[cfg(feature = "mmap")]
@@ -709,6 +765,9 @@ impl ReaderCore for crate::MrcReader {
     }
     fn header(&self) -> &Header {
         mrc_dispatch!(self.header())
+    }
+    fn ext_header_bytes(&self) -> &[u8] {
+        mrc_dispatch!(self.ext_header_bytes())
     }
 }
 impl ReaderExt for crate::MrcReader {}

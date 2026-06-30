@@ -13,6 +13,7 @@ A high-performance, memory-efficient library for reading and writing MRC (Medica
 - **🔒 Type-safe I/O**: Compile-time mode matching prevents silent data corruption
 - **🗺️ Memory-mapped I/O**: `MmapReader` / `MmapWriter` for files larger than RAM
 - **📦 Compression**: Auto-detect and read gzip / bzip2 MRC files
+- **🏷️ FEI metadata**: Structured parsing of FEI1/FEI2 extended headers
 
 **Note: This crate is currently under active development. While most features are functional, occasional bugs and API changes are possible. Contributions are welcome—please report issues and share your ideas!**
 
@@ -42,6 +43,8 @@ mrc = { version = "0.2", features = ["mmap", "f16", "simd", "parallel", "gzip"] 
    │ MmapReader  │          └────────┘              └─────────┘
    │ Writer      │
    │ MmapWriter  │
+   │ GzipWriter  │
+   │ Bzip2Writer │
    └─────────────┘
 ```
 
@@ -106,6 +109,7 @@ fn main() -> Result<(), mrc::Error> {
 
     // Finalize rewrites the header to disk.
     // Note: dmin/dmax/dmean/rms are NOT updated automatically.
+    // Call writer.update_header_stats() if needed.
     writer.finalize()?;
     Ok(())
 }
@@ -139,7 +143,7 @@ for slice in reader.slices::<f32>() {
 }
 ```
 
-**New in v0.2:** SIMD acceleration, parallel encoding, type conversion iterators, `MmapReader`, compression support, unified `ReaderExt` trait.
+**New in v0.2:** SIMD acceleration, parallel encoding, type conversion iterators, `MmapReader`, `MmapWriter`, compression support, unified `ReaderExt` trait, FEI extended header parsing.
 
 ## 🗺️ API Overview
 
@@ -151,12 +155,17 @@ for slice in reader.slices::<f32>() {
 | [`Reader`] | Read plain MRC files | `Reader::open("file.mrc")?` |
 | [`MmapReader`] | Memory-mapped reading | `MmapReader::open("large.mrc")?` |
 | [`Writer`] | Write MRC files | `create("out.mrc").shape([64,64,64]).mode::<f32>().finish()?` |
-| [`MmapWriter`] | Memory-mapped writing | `MmapWriter::create("out.mrc", header)?` |
+| [`MmapWriter`] | Memory-mapped writing | `create("out.mrc").shape(...).mmap().finish()?` |
 | [`WriterBuilder`] | Configure new files | `create(path).shape(dims).mode::<T>()` |
 | [`Header`] | 1024-byte MRC header | `Header::new()` |
+| [`HeaderBuilder`] | Fluent header construction | `HeaderBuilder::new().shape([64,64,64]).mode::<f32>().build()?` |
 | [`Mode`] | Data type enumeration | `Mode::Float32` |
 | [`VoxelBlock<T>`] | Chunk of voxel data | `VoxelBlock::new(offset, shape, data)` |
 | [`VolumeShape`] | Volume dimensions | `VolumeShape::new(nx, ny, nz)` |
+| [`GzipWriter`] | Gzip-compressed writer | `GzipWriter::create("out.mrc.gz", header, &[])` |
+| [`Bzip2Writer`] | Bzip2-compressed writer | `Bzip2Writer::create("out.mrc.bz2", header, &[])` |
+| [`Fei1Metadata`] | FEI1 extended metadata | `Fei1Metadata::from_bytes(bytes)` |
+| [`Fei2Metadata`] | FEI2 extended metadata | `Fei2Metadata::from_bytes(bytes)` |
 
 ### Iterator API
 
@@ -186,21 +195,55 @@ for tile in reader.tiles::<f32>([64, 64, 64]) {
 // Semantic aliases
 for image in reader.images::<f32>() { /* same as slices() */ }
 for plane in reader.planes::<f32>() { /* same as slices() */ }
+for stack in reader.image_stack::<f32>(10) { /* same as slabs(10) */ }
+for stack in reader.plane_stack::<f32>(10) { /* same as slabs(10) */ }
 for vol in reader.volumes::<f32>()? { /* full volumes from a stack */ }
+```
+
+### Direct Access
+
+```rust
+use mrc::ReaderExt;
+
+// Read a specific subregion directly
+let block = reader.subregion::<f32>([0, 0, 0], [64, 64, 64])?;
 ```
 
 ### Type Conversion
 
 The crate intentionally does **not** provide generic type conversion — that is
-the caller's responsibility. Only two overwhelmingly common cryo-EM workflows
+the caller's responsibility. Only the overwhelmingly common cryo-EM workflows
 are supported as conveniences:
 
 ```rust
 use mrc::ReaderExt;
 
-// Read an Int16/Uint16/Int8/Float32 file as f32
+// Read an Int16/Uint16/Int8/Float32/Float16 file as f32
 for slice in reader.slices_f32()? {
     let block = slice?;
+    // block.data is Vec<f32>
+}
+
+// Iterate over slabs with f32 conversion
+for slab in reader.slabs_f32(10)? {
+    let block = slab?;
+    // block.data is Vec<f32>
+}
+
+// Convert Mode 6 (Uint16) voxels to u8
+for slice in reader.slices_u8()? {
+    let block = slice?;
+    // block.data is Vec<u8>
+}
+
+// Mode 0 (8-bit) with signed/unsigned interpretation
+use mrc::M0Interpretation;
+for slice in reader.slices_mode0(M0Interpretation::Signed) {
+    let block = slice?;
+    // block.data is Vec<f32>
+}
+for slab in reader.slabs_mode0(10, M0Interpretation::Unsigned) {
+    let block = slab?;
     // block.data is Vec<f32>
 }
 
@@ -212,6 +255,15 @@ let mut writer = create("output.mrc")
 
 let f32_data: VoxelBlock<f32> = /* ... */;
 writer.write_f16_from_f32(&f32_data)?;
+
+// Write u8 data to a Uint16 (Mode 6) file (auto-widened)
+let mut writer = create("seg.mrc")
+    .shape([256, 256, 128])
+    .mode::<u16>()
+    .finish()?;
+writer.write_u8_block(&VoxelBlock::new(
+    [0, 0, 0], [256, 256, 1], vec![255u8; 256*256],
+))?;
 ```
 
 **Safety note:** `reader.slices::<f32>()` on an Int16 file returns
@@ -234,9 +286,27 @@ println!("Compression: {:?}", reader.compression_type());
 You can also open compressed files directly:
 
 ```rust
-use mrc::GzipReader;
+use mrc::{GzipReader, Bzip2Reader};
 
 let reader = GzipReader::open("protein.mrc.gz")?;
+let reader = Bzip2Reader::open("protein.mrc.bz2")?;
+```
+
+And write compressed files:
+
+```rust
+use mrc::{GzipWriter, Bzip2Writer, Header, VoxelBlock};
+
+let header = HeaderBuilder::new()
+    .shape([256, 256, 128])
+    .mode::<f32>()
+    .build()?;
+
+let mut writer = GzipWriter::create("output.mrc.gz", header, &[])?;
+writer.write_block(&VoxelBlock::new(
+    [0, 0, 0], [256, 256, 1], vec![0.0f32; 256*256],
+))?;
+writer.finalize()?;
 ```
 
 ### Memory-Mapped I/O
@@ -245,9 +315,11 @@ For large files that don't fit in RAM, memory-mapped I/O lets the OS handle
 paging:
 
 ```rust
-use mrc::MmapReader;
+use mrc::{MmapReader, open_mmap};
 
 let reader = MmapReader::open("large_volume.mrc")?;
+// or using the convenience function:
+let reader = open_mmap("large_volume.mrc")?;
 
 // Same iterator API as Reader
 for slice in reader.slices::<f32>() {
@@ -259,78 +331,67 @@ for slice in reader.slices::<f32>() {
 let bytes = reader.data_bytes();  // &[u8] backed by mmap
 ```
 
+Memory-mapped writes are also supported:
+
+```rust
+use mrc::create;
+
+let mut writer = create("output.mrc")
+    .shape([1024, 1024, 512])
+    .mode::<f32>()
+    .mmap()  // switch to MmapWriter
+    .finish()?;
+
+writer.write_block(&block)?;
+writer.finalize()?;
+```
+
 | Use | When |
 |-----|------|
 | `Reader` / `MrcReader` | Small files, simple sequential access |
 | `MmapReader` | Large files, memory-constrained environments, random access |
 
-## 📊 Data Type Support
+### Permissive Mode
 
-| [`Mode`] | Value | Rust Type | Bytes | Description | Use Case |
-|----------|-------|-----------|-------|-------------|----------|
-| `Int8` | 0 | `i8` | 1 | Signed 8-bit integer | Binary masks |
-| `Int16` | 1 | `i16` | 2 | Signed 16-bit integer | Cryo-EM density |
-| `Float32` | 2 | `f32` | 4 | 32-bit float | Standard density |
-| `Int16Complex` | 3 | [`Int16Complex`] | 4 | Complex 16-bit | Phase data |
-| `Float32Complex` | 4 | [`Float32Complex`] | 8 | Complex 32-bit | Fourier transforms |
-| `Uint16` | 6 | `u16` | 2 | Unsigned 16-bit | Segmentation |
-| `Float16` | 12 | `f16`[^1] | 2 | 16-bit float | Memory efficiency |
-| `Packed4Bit` | 101 | [`Packed4Bit`] | 0.5 | Packed 4-bit | Compression |
-
-[^1]: Requires `f16` feature. Uses the [`half`](https://docs.rs/half) crate; no nightly Rust required.
-
-## ⚡ Performance Features
-
-### SIMD Acceleration
-
-The `simd` feature (enabled by default) uses AVX2 (x86_64) or NEON (AArch64)
-to accelerate the common i16→f32 and u16→f32 paths inside `slices_f32()` and
-`slabs_f32()`. No explicit SIMD code is required in user code.
-
-### Zero-Copy Reading
-
-`Reader` loads the entire file into memory (as raw bytes) and decodes slices
-on demand. For true zero-copy access, use `MmapReader`:
+Readers support a *permissive* open mode that collects non-fatal issues as
+warnings instead of hard errors:
 
 ```rust
-use mrc::MmapReader;
+use mrc::MrcReader;
 
-// Memory-mapped reading
-let reader = MmapReader::open("data.mrc")?;
-for slice in reader.slices::<f32>() {
-    // Decodes on demand; raw bytes are backed by the OS page cache
+let (reader, warnings) = MrcReader::open_permissive("file.mrc")?;
+for w in &warnings {
+    eprintln!("Warning: {}", w);
 }
 ```
 
-### Parallel Writing
+This is useful for reading files from less strict sources (e.g., legacy
+instruments) where the data is valid but the header has minor issues.
 
-With the `parallel` feature, large writes use Rayon for parallel encoding:
+### Convenience Functions
 
 ```rust
-let mut writer = create("large.mrc")
-    .shape([2048, 2048, 512])
+use mrc::{open, open_mmap, create, create_mmap};
+
+// Reading
+let reader = open("file.mrc")?;       // auto-detect compression
+let mmap_reader = open_mmap("file.mrc")?;  // memory-mapped (requires mmap)
+
+// Writing
+let writer = create("out.mrc")        // standard file I/O
+    .shape([64, 64, 64])
     .mode::<f32>()
     .finish()?;
 
-// This uses parallel encoding internally
-writer.write_block_parallel(&large_block)?;
-writer.finalize()?;
+let mmap_writer = create_mmap("out.mrc")  // memory-mapped (requires mmap)
+    .shape([64, 64, 64])
+    .mode::<f32>()
+    .finish()?;
 ```
 
-## 🎯 Feature Flags
+## 🔧 Header Construction
 
-| Feature | Description | Default |
-|---------|-------------|---------|
-| `mmap` | Memory-mapped I/O | ✅ |
-| `f16` | Half-precision support (via `half` crate) | ✅ |
-| `simd` | SIMD acceleration | ✅ |
-| `parallel` | Parallel encoding | ✅ |
-| `gzip` | Gzip-compressed MRC files | ✅ |
-| `bzip2` | Bzip2-compressed MRC files | ❌ |
-
-## 🔧 Header Structure
-
-The MRC header contains 56 fields (1024 bytes total):
+### Direct Header Manipulation
 
 ```rust
 use mrc::Header;
@@ -359,6 +420,21 @@ header.gamma = 90.0;
 header.set_exttyp(*b"FEI1");
 ```
 
+### Fluent Builder
+
+```rust
+use mrc::HeaderBuilder;
+
+let header = HeaderBuilder::new()
+    .shape([2048, 2048, 512])
+    .mode::<f32>()
+    .cell_lengths(204.8, 204.8, 102.4)
+    .cell_angles(90.0, 90.0, 90.0)
+    .ispg(1)
+    .exttyp(*b"FEI1")
+    .build()?;
+```
+
 ### Key Header Fields
 
 | Field | Type | Description |
@@ -373,10 +449,189 @@ header.set_exttyp(*b"FEI1");
 | `nsymbt` | `i32` | Extended header size |
 | `origin` | `[f32; 3]` | Origin coordinates |
 | `exttyp` | `[u8; 4]` | Extended header type |
+| `rms` | `f32` | RMS deviation from mean |
+| `nlabl` | `i32` | Number of labels (0–10) |
+
+### Volume Type Introspection
+
+The `Header` provides convenience methods following Python `mrcfile` conventions:
+
+```rust
+let h = header;
+
+// Volume type checks
+h.is_single_image();   // nz == 1
+h.is_image_stack();    // ispg == 0
+h.is_volume();         // 3D volume (ispg != 0 and not a stack)
+h.is_volume_stack();   // ispg in 401–630
+
+// Computed properties
+h.voxel_size();        // [xlen/mx, ylen/my, zlen/mz] in Å/pixel
+h.logical_shape();     // 4D shape following mrcfile conventions
+h.get_labels();        // Vec<String> of non-empty labels
+```
+
+## 📊 Data Type Support
+
+| [`Mode`] | Value | Rust Type | Bytes | Description | Use Case |
+|----------|-------|-----------|-------|-------------|----------|
+| `Int8` | 0 | `i8` | 1 | Signed 8-bit integer | Binary masks |
+| `Int16` | 1 | `i16` | 2 | Signed 16-bit integer | Cryo-EM density |
+| `Float32` | 2 | `f32` | 4 | 32-bit float | Standard density |
+| `Int16Complex` | 3 | [`Int16Complex`] | 4 | Complex 16-bit | Phase data |
+| `Float32Complex` | 4 | [`Float32Complex`] | 8 | Complex 32-bit | Fourier transforms |
+| `Uint16` | 6 | `u16` | 2 | Unsigned 16-bit | Segmentation |
+| `Float16` | 12 | `f16`[^1] | 2 | 16-bit float | Memory efficiency |
+| `Packed4Bit` | 101 | [`Packed4Bit`] | 0.5 | Packed 4-bit[^2] | Compression |
+
+[^1]: Requires `f16` feature. Uses the [`half`](https://docs.rs/half) crate; no nightly Rust required.
+[^2]: Packed4Bit is provided for manual nibble unpacking via `first()`/`second()`. Full read/write support for Mode 101 is not yet implemented.
+
+Complex numbers can be converted to real values via [`ComplexToRealStrategy`]:
+
+| Strategy | Description |
+|----------|-------------|
+| `RealPart` | Extract the real component |
+| `ImaginaryPart` | Extract the imaginary component |
+| `Magnitude` | Compute `sqrt(real² + imag²)` |
+| `Phase` | Compute `atan2(imag, real)` |
+
+## 🏷️ FEI Extended Headers
+
+This crate provides structured parsing of FEI1 and FEI2 extended headers
+commonly found in cryo-EM data collected on Thermo Fisher/FEI microscopes.
+
+```rust
+use mrc::{Fei1Metadata, Fei2Metadata, parse_fei1_records, parse_fei2_records};
+
+// After opening a file with FEI extended headers
+let reader = open("tilt_series.mrc")?;
+let ext_bytes = reader.ext_header_bytes();
+
+// Parse FEI1 records (768 bytes each)
+if let Some(records) = parse_fei1_records(ext_bytes) {
+    for record in &records {
+        println!("Dose: {} e/Å²", record.dose);
+        println!("Defocus: {} µm", record.defocus);
+        println!("Tilt angle: {}°", record.alpha_tilt);
+    }
+}
+
+// Or parse a single record directly
+if let Some(meta) = Fei1Metadata::from_bytes(ext_bytes) {
+    println!("Microscope: {:?}", meta.microscope_type);
+}
+
+// FEI2 extends FEI1 with additional v2 fields (888 bytes each)
+if let Some(records) = parse_fei2_records(ext_bytes) {
+    for record in &records {
+        println!("Scan rotation: {}", record.scan_rotation);
+    }
+}
+```
+
+## ⚡ Performance Features
+
+### SIMD Acceleration
+
+The `simd` feature (enabled by default) uses AVX2 (x86_64) or NEON (AArch64)
+to accelerate the common i16→f32, u16→f32, and i8→f32 paths inside
+`slices_f32()` and `slabs_f32()`. No explicit SIMD code is required in user
+code.
+
+### Zero-Copy Reading
+
+`Reader` loads the entire file into memory (as raw bytes) and decodes slices
+on demand. For memory-mapped access, use `MmapReader`:
+
+```rust
+use mrc::MmapReader;
+
+// Memory-mapped reading — zero-copy raw byte access
+let reader = MmapReader::open("data.mrc")?;
+
+// True zero-copy typed access (native-endian files only):
+let slice: &[f32] = reader.slab_as::<f32>(0, 1)?;
+
+// Generic typed iteration (always allocates per block):
+for slice in reader.slices::<f32>() {
+    let block = slice?;
+    // process block.data
+}
+```
+
+### Parallel Writing
+
+With the `parallel` feature, large writes use Rayon for parallel encoding:
+
+```rust
+let mut writer = create("large.mrc")
+    .shape([2048, 2048, 512])
+    .mode::<f32>()
+    .finish()?;
+
+// This uses parallel encoding internally
+writer.write_block_parallel(&large_block)?;
+writer.finalize()?;
+```
+
+### Header Statistics
+
+The writer can compute and update header statistics after writing data:
+
+```rust
+let mut writer = create("output.mrc")
+    .shape([256, 256, 128])
+    .mode::<f32>()
+    .finish()?;
+
+// Write all data ...
+writer.update_header_stats()?;  // updates dmin, dmax, dmean, rms
+writer.finalize()?;
+```
+
+The reader can cross-check header statistics against actual data:
+
+```rust
+let reader = open("file.mrc")?;
+reader.validate_header_stats()?;  // Returns Ok or StatsMismatch error
+```
+
+## 🎯 Feature Flags
+
+| Feature | Description | Default |
+|---------|-------------|---------|
+| `mmap` | Memory-mapped I/O | ✅ |
+| `f16` | Half-precision support (via `half` crate) | ✅ |
+| `simd` | SIMD acceleration | ✅ |
+| `parallel` | Parallel encoding | ✅ |
+| `gzip` | Gzip-compressed MRC files | ✅ |
+| `bzip2` | Bzip2-compressed MRC files | ❌ |
+
+## 🛠️ CLI Tool: `mrc-validate`
+
+The crate ships a standalone validation binary:
+
+```bash
+# Build
+cargo build --release --bin mrc-validate
+
+# Basic validation
+./mrc-validate protein.mrc
+
+# Permissive mode (warns instead of erroring on non-critical issues)
+./mrc-validate --permissive legacy.mrc
+
+# Stats cross-check only
+./mrc-validate --stats-only protein.mrc
+```
+
+Output includes compression type, header validity, data statistics
+cross-check, dimensions, mode, endianness, voxel size, and labels.
 
 ## 🛣️ Development Roadmap
 
-### ✅ **Current Release (v0.2.x): Core + SIMD**
+### ✅ **Current Release (v0.2.x): Core + SIMD + FEI**
 
 - [x] Complete MRC-2014 format support
 - [x] Iterator-centric API (slices, slabs, tiles)
@@ -385,16 +640,21 @@ header.set_exttyp(*b"FEI1");
 - [x] Zero-copy fast paths
 - [x] Parallel encoding
 - [x] Memory-mapped I/O (`MmapReader`, `MmapWriter`)
-- [x] All data types (modes 0-4, 6, 12, 101)
+- [x] All data types (modes 0–4, 6, 12, 101)
 - [x] Compression support (gzip, bzip2)
 - [x] Unified reader traits (`ReaderCore`, `ReaderExt`)
+- [x] FEI1/FEI2 extended header parsing
+- [x] Type conversion conveniences (`slices_f32`, `slices_u8`, `slices_mode0`)
+- [x] Header statistics computation and validation
+- [x] `mrc-validate` CLI tool
+- [x] Permissive mode for reading non-standard files
+- [x] Volume stack support
 
 ### 🚧 **Next Release (v0.3.x): Extended Features**
 
-- [ ] Extended header parsing (CCP4, FEI1, FEI2, etc.)
-- [ ] Statistics functions (histogram, moments)
-- [ ] Validation utilities
-- [ ] Streaming API for very large datasets
+- [ ] Extended header parsing for CCP4, MRCO, SERI, AGAR formats
+- [ ] Streaming decompression (avoid loading entire compressed files into RAM)
+- [ ] Dedicated benchmark suite (`criterion` in dev-deps but no `benches/` dir)
 
 ### 🚀 **Future Releases (v1.x)**
 
@@ -487,6 +747,6 @@ SOFTWARE.
 
 **Made with ❤️ by the cryo-EM community for the scientific computing world**
 
-*[Zero-copy • SIMD-accelerated • 100% safe Rust]*
+*[SIMD-accelerated • Memory-mapped • 100% safe Rust]*
 
 </div>

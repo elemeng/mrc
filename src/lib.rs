@@ -16,7 +16,7 @@
 //! fn main() -> Result<(), Box<dyn std::error::Error>> {
 //!     // Reading (auto-detects gzip/bzip2)
 //!     let reader = open("protein.mrc")?;
-//!     for slice in reader.slices_f32()? {
+//!     for slice in reader.slices_f32() {
 //!         let block = slice?;
 //!         // block.data is Vec<f32>
 //!     }
@@ -98,14 +98,6 @@ pub use fei::{
 
 /// MRC reader, compression detection, and compression type enum.
 pub use io::reader::{CompressionType, MrcReader, detect_compression};
-
-/// Iterator over slices yielding `f32` voxel blocks.
-pub type SliceIterF32<'a> =
-    Box<dyn Iterator<Item = Result<crate::engine::block::VoxelBlock<f32>, Error>> + 'a>;
-
-/// Iterator over slices yielding `u8` voxel blocks.
-pub type SliceIterU8<'a> =
-    Box<dyn Iterator<Item = Result<crate::engine::block::VoxelBlock<u8>, Error>> + 'a>;
 
 /// Open an MRC file for reading, auto-detecting gzip or bzip2 compression.
 pub fn open<P: AsRef<std::path::Path>>(path: P) -> Result<MrcReader, Error> {

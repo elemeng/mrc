@@ -14,8 +14,9 @@ impl FileEndian {
     ///
     /// Recognises the standard stamps (`0x44 0x44` for little-endian,
     /// `0x11 0x11` for big-endian) as well as the CCP4 variant
-    /// `0x44 0x41`. Any unknown stamp falls back to little-endian with
-    /// a warning printed to stderr.
+    /// `0x44 0x41`. Any unknown stamp falls back to little-endian.
+    /// Use [`from_machst_with_info`](Self::from_machst_with_info) to
+    /// inspect whether the stamp was non-standard.
     pub fn from_machst(machst: &[u8; 4]) -> Self {
         Self::from_machst_with_info(machst).endian
     }
@@ -41,10 +42,6 @@ impl FileEndian {
                 description: "0x11 0x11 (big-endian)",
             }
         } else {
-            eprintln!(
-                "Warning: Non-standard MACHST: {:02X} {:02X} {:02X} {:02X} — falling back to little-endian",
-                machst[0], machst[1], machst[2], machst[3]
-            );
             MachstInfo {
                 endian: FileEndian::LittleEndian,
                 is_standard: false,

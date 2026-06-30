@@ -1,9 +1,9 @@
 [package]
 name = "mrc"
-version = "0.2.3"
+version = "0.2.4"
 edition = "2024"
 rust-version = "1.85"
-description = "Zero-copy, zero-allocation MRC-2014 file format reader/writer for Rust"
+description = "MRC-2014 file format reader/writer for cryo-EM — SIMD-accelerated, mmap-enabled"
 license = "MIT"
 repository = "https://github.com/elemeng/mrc"
 homepage = "https://github.com/elemeng/mrc"
