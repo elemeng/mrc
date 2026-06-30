@@ -14,7 +14,9 @@ fn usage() {
     eprintln!("Usage: mrc-header [--permissive] <file.mrc>");
     eprintln!();
     eprintln!("Options:");
-    eprintln!("  --permissive   Open in permissive mode (warn instead of error on non-critical issues)");
+    eprintln!(
+        "  --permissive   Open in permissive mode (warn instead of error on non-critical issues)"
+    );
 }
 
 fn main() {
@@ -81,16 +83,26 @@ fn main() {
     // ── File Identity ──
     println!("── File Identity ──");
     print_map_field("MAP identifier", &header.map);
-    println!("  Format version:     MRC-2014 (NVERSION {})", header.nversion());
-    println!("  File size:          ~{} bytes", 1024
-        + header.nsymbt.max(0) as usize
-        + data_size);
+    println!(
+        "  Format version:     MRC-2014 (NVERSION {})",
+        header.nversion()
+    );
+    println!(
+        "  File size:          ~{} bytes",
+        1024 + header.nsymbt.max(0) as usize + data_size
+    );
     println!();
 
     // ── Volume Dimensions ──
     println!("── Volume Dimensions ──");
-    println!("  Grid size:          {} × {} × {} voxels", header.nx, header.ny, header.nz);
-    println!("  Total voxels:       {}", shape.total_voxels().unwrap_or(0));
+    println!(
+        "  Grid size:          {} × {} × {} voxels",
+        header.nx, header.ny, header.nz
+    );
+    println!(
+        "  Total voxels:       {}",
+        shape.total_voxels().unwrap_or(0)
+    );
     let vol_type = if header.is_single_image() {
         "Single 2D image"
     } else if header.is_image_stack() {
@@ -102,7 +114,11 @@ fn main() {
     };
     println!("  Volume type:        {}", vol_type);
     if header.is_volume_stack() {
-        let nvol = if header.mz > 0 { header.nz / header.mz } else { 0 };
+        let nvol = if header.mz > 0 {
+            header.nz / header.mz
+        } else {
+            0
+        };
         println!("  Sub-volumes:        {} × {} slices each", nvol, header.mz);
     }
     println!();
@@ -128,32 +144,40 @@ fn main() {
     // ── Endianness ──
     println!("── Endianness ──");
     let (endian_label, endian_note) = match endian {
-        mrc::FileEndian::LittleEndian => {
-            ("Little-endian", "matches most modern systems")
-        }
-        mrc::FileEndian::BigEndian => {
-            ("Big-endian", "non-native on x86_64 / ARM")
-        }
+        mrc::FileEndian::LittleEndian => ("Little-endian", "matches most modern systems"),
+        mrc::FileEndian::BigEndian => ("Big-endian", "non-native on x86_64 / ARM"),
     };
-    let machine_stamp = format!("{:02X} {:02X} {:02X} {:02X}",
-        header.machst[0], header.machst[1],
-        header.machst[2], header.machst[3]);
+    let machine_stamp = format!(
+        "{:02X} {:02X} {:02X} {:02X}",
+        header.machst[0], header.machst[1], header.machst[2], header.machst[3]
+    );
     println!("  MACHST stamp:       {}", machine_stamp);
     println!("  Byte order:         {} ({})", endian_label, endian_note);
     println!();
 
     // ── Cell Geometry ──
     println!("── Cell Geometry ──");
-    println!("  Cell lengths (Å):   x={:.3}, y={:.3}, z={:.3}",
-        header.xlen, header.ylen, header.zlen);
-    println!("  Cell angles (°):    α={:.1}, β={:.1}, γ={:.1}",
-        header.alpha, header.beta, header.gamma);
+    println!(
+        "  Cell lengths (Å):   x={:.3}, y={:.3}, z={:.3}",
+        header.xlen, header.ylen, header.zlen
+    );
+    println!(
+        "  Cell angles (°):    α={:.1}, β={:.1}, γ={:.1}",
+        header.alpha, header.beta, header.gamma
+    );
     let vs = header.voxel_size();
-    println!("  Voxel size (Å/px):  x={:.4}, y={:.4}, z={:.4}",
-        vs[0], vs[1], vs[2]);
-    println!("  Sampling (mx/my/mz): {} × {} × {}", header.mx, header.my, header.mz);
-    println!("  Origin (nx/y/zstart): {} {} {}",
-        header.nxstart, header.nystart, header.nzstart);
+    println!(
+        "  Voxel size (Å/px):  x={:.4}, y={:.4}, z={:.4}",
+        vs[0], vs[1], vs[2]
+    );
+    println!(
+        "  Sampling (mx/my/mz): {} × {} × {}",
+        header.mx, header.my, header.mz
+    );
+    println!(
+        "  Origin (nx/y/zstart): {} {} {}",
+        header.nxstart, header.nystart, header.nzstart
+    );
     println!();
 
     // ── Axis Mapping ──
@@ -164,9 +188,21 @@ fn main() {
         3 => "Z",
         _ => "?",
     };
-    println!("  Column (fast) axis:  MAPC={} ({})", header.mapc, axis_name(header.mapc));
-    println!("  Row (medium) axis:   MAPR={} ({})", header.mapr, axis_name(header.mapr));
-    println!("  Section (slow) axis: MAPS={} ({})", header.maps, axis_name(header.maps));
+    println!(
+        "  Column (fast) axis:  MAPC={} ({})",
+        header.mapc,
+        axis_name(header.mapc)
+    );
+    println!(
+        "  Row (medium) axis:   MAPR={} ({})",
+        header.mapr,
+        axis_name(header.mapr)
+    );
+    println!(
+        "  Section (slow) axis: MAPS={} ({})",
+        header.maps,
+        axis_name(header.maps)
+    );
     println!();
 
     // ── Space Group ──
@@ -178,7 +214,10 @@ fn main() {
     } else if (401..=630).contains(&header.ispg) {
         let real_ispg = header.ispg - 400;
         if (1..=230).contains(&real_ispg) {
-            format!("Volume stack (ISPG = {} + 400, space group {})", real_ispg, real_ispg)
+            format!(
+                "Volume stack (ISPG = {} + 400, space group {})",
+                real_ispg, real_ispg
+            )
         } else {
             format!("Volume stack (ISPG = {})", header.ispg)
         }
@@ -245,8 +284,10 @@ fn main() {
 
     // ── Origin ──
     println!("── Origin ──");
-    println!("  Origin (x, y, z):   {:.1}, {:.1}, {:.1}",
-        header.origin[0], header.origin[1], header.origin[2]);
+    println!(
+        "  Origin (x, y, z):   {:.1}, {:.1}, {:.1}",
+        header.origin[0], header.origin[1], header.origin[2]
+    );
     println!();
 
     // ── Validation ──
@@ -272,6 +313,9 @@ fn main() {
 /// Pretty-print a 4-byte MAP field.
 fn print_map_field(label: &str, map: &[u8; 4]) {
     let ascii = String::from_utf8_lossy(map);
-    let hex = format!("{:02X} {:02X} {:02X} {:02X}", map[0], map[1], map[2], map[3]);
+    let hex = format!(
+        "{:02X} {:02X} {:02X} {:02X}",
+        map[0], map[1], map[2], map[3]
+    );
     println!("  {:<18} {} ({})", label, ascii, hex);
 }

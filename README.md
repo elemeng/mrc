@@ -626,6 +626,18 @@ Prints every header field with semantic interpretation: volume type
 space group description, extended header type, sentinel-aware
 statistics display, and validation summary.
 
+### `mrc-invert` — contrast inversion
+
+```bash
+cargo build --release --bin mrc-invert
+
+./mrc-invert input.mrc output.mrc
+```
+
+Negates every voxel value (v → −v) to flip black-on-white to
+white-on-black and vice versa.  Reads any mode (auto-detects
+compression), writes Float32 output with updated header statistics.
+
 ## 🛣️ Development Roadmap
 
 ### ✅ **Current Release (v0.2.x): Core + SIMD + FEI**

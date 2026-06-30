@@ -44,6 +44,7 @@ cargo clippy --all-features
 # Build release binaries
 cargo build --release --bin mrc-validate
 cargo build --release --bin mrc-header
+cargo build --release --bin mrc-invert
 ```
 
 There are **no integration test directories** (`tests/` or `benches/`). All tests are inline `#[cfg(test)]` modules inside source files.
@@ -90,7 +91,8 @@ src/
 │   └── bzip2.rs        # `Bzip2Writer`, `Bzip2Compressor` (requires `bzip2`)
 └── bin/
     ├── mrc-validate.rs # CLI validation tool (`cargo run --bin mrc-validate`)
-    └── mrc-header.rs   # CLI header inspector (`cargo run --bin mrc-header`)
+    ├── mrc-header.rs   # CLI header inspector (`cargo run --bin mrc-header`)
+    └── mrc-invert.rs   # CLI contrast inverter (`cargo run --bin mrc-invert`)
 ```
 
 ### Module Philosophy
