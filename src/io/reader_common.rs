@@ -55,6 +55,9 @@ pub trait VoxelSource: private::Sealed {
 /// default implementations, eliminating the need to copy-paste convenience
 /// methods across [`Reader`](crate::Reader), [`MmapReader`](crate::MmapReader),
 /// and [`MrcReader`](crate::MrcReader).
+///
+/// This trait is `#[doc(hidden)]` — users interact with [`ReaderExt`] instead.
+#[doc(hidden)]
 pub trait ReaderCore: VoxelSource {
     /// Volume dimensions in voxels.
     fn shape(&self) -> VolumeShape;
@@ -372,7 +375,7 @@ pub trait ReaderExt: ReaderCore + Sized {
 ///
 /// * [`Error::BoundsError`] if the block exceeds volume bounds or the data length.
 /// * [`Error::UnsupportedMode`] if the mode is [`Mode::Packed4Bit`].
-pub fn validate_block_bounds(
+pub(crate) fn validate_block_bounds(
     volume_shape: VolumeShape,
     mode: Mode,
     data_len: usize,
@@ -421,7 +424,7 @@ pub fn validate_block_bounds(
 ///
 /// The source `data` is treated as a C-ordered `[nx, ny, nz]` array where X is the
 /// fastest axis. The returned Vec contains the sub-block in C-order.
-pub fn gather_block_bytes(
+pub(crate) fn gather_block_bytes(
     data: &[u8],
     volume_shape: VolumeShape,
     mode: Mode,
@@ -510,7 +513,7 @@ pub(crate) fn encode_block_to_buf<T: EndianCodec + Sync>(
 ///
 /// Performs endian conversion if the file endianness differs from the host.
 /// Returns [`Error::ModeMismatch`] if `T` does not match `file_mode`.
-pub fn decode_block<T: Voxel>(
+pub(crate) fn decode_block<T: Voxel>(
     bytes: &[u8],
     file_mode: Mode,
     endian: FileEndian,
@@ -539,7 +542,7 @@ pub fn decode_block<T: Voxel>(
 /// must ensure that `bytes.len()` is an exact multiple of `T::BYTE_SIZE` and
 /// that the byte pattern is valid for `T`. For MRC data this always holds
 /// because the byte count is derived from `mode.byte_size() * count`.
-pub fn decode_native_endian<T: EndianCodec + Copy>(bytes: &[u8]) -> Result<Vec<T>, Error> {
+pub(crate) fn decode_native_endian<T: EndianCodec + Copy>(bytes: &[u8]) -> Result<Vec<T>, Error> {
     let n = bytes.len() / T::BYTE_SIZE;
     let mut result = Vec::with_capacity(n);
     unsafe {
@@ -553,7 +556,7 @@ pub fn decode_native_endian<T: EndianCodec + Copy>(bytes: &[u8]) -> Result<Vec<T
 ///
 /// Returns the decoded header, any warning messages, the detected endianness,
 /// and the expected data size in bytes.
-pub fn parse_header(
+pub(crate) fn parse_header(
     header_bytes: &[u8; 1024],
     permissive: bool,
 ) -> Result<(crate::Header, Vec<String>, crate::FileEndian, usize), crate::Error> {
@@ -577,7 +580,7 @@ pub fn parse_header(
 }
 
 /// Components of a decompressed MRC file, returned by [`open_compressed`].
-pub struct DecompressedMrc {
+pub(crate) struct DecompressedMrc {
     /// Parsed MRC header.
     pub header: crate::Header,
     /// Extended header bytes.
@@ -596,7 +599,7 @@ pub struct DecompressedMrc {
 ///
 /// Reads the entire decompressed stream into memory, parses the header,
 /// validates size, and returns the components needed to construct a [`Reader`].
-pub fn open_compressed<D: std::io::Read>(
+pub(crate) fn open_compressed<D: std::io::Read>(
     mut decoder: D,
     permissive: bool,
 ) -> Result<DecompressedMrc, crate::Error> {

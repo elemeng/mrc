@@ -13,6 +13,10 @@ use crate::mode::Voxel;
 // ============================================================================
 
 /// Strategy for stepping through a volume as a sequence of blocks.
+///
+/// This trait is `#[doc(hidden)]` — users interact with the concrete
+/// [`SliceStepper`], [`SlabStepper`], and [`TileStepper`] types instead.
+#[doc(hidden)]
 pub trait Stepper {
     /// Returns the next `(offset, shape)` pair, or `None` when exhausted.
     fn next(&mut self, volume_shape: VolumeShape) -> Option<([usize; 3], [usize; 3])>;

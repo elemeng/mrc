@@ -15,6 +15,10 @@ use std::vec::Vec;
 
 /// Bidirectional codec for endian-normalized byte conversion.
 ///
+/// This trait is `#[doc(hidden)]` — it is an internal plumbing trait
+/// consumed by the [`Voxel`](crate::Voxel) trait.
+#[doc(hidden)]
+///
 /// Provides symmetric encode/decode operations with guaranteed consistency.
 ///
 /// # Example

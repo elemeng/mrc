@@ -765,6 +765,10 @@ impl MmapWriter {
 ///
 /// The trait has a single method so that [`CompressedWriter`] can remain
 /// generic without carrying runtime state for the compressor.
+///
+/// This trait is `#[doc(hidden)]` — users should use the concrete type
+/// aliases [`GzipWriter`](crate::GzipWriter) and [`Bzip2Writer`](crate::Bzip2Writer).
+#[doc(hidden)]
 pub trait Compressor {
     /// Compress `data` and return the compressed bytes.
     fn compress(data: &[u8]) -> Result<Vec<u8>, Error>;

@@ -65,8 +65,8 @@ pub use mode::{
 pub use half::f16;
 /// Buffered MRC reader with lazy slice/slab iterators.
 pub use io::buffered::Reader;
-/// Core reader traits providing unified iterator and access methods.
-pub use io::reader_common::{ReaderCore, ReaderExt};
+/// Extension trait providing iterator and convenience methods for all readers.
+pub use io::reader_common::ReaderExt;
 /// MRC file writer and its builder.
 pub use io::writer::{Writer, WriterBuilder};
 /// Lazy iterator over MRC voxel blocks.
@@ -96,8 +96,11 @@ pub use fei::{
     parse_fei2_records,
 };
 
-/// MRC reader, compression detection, and compression type enum.
-pub use io::reader::{CompressionType, MrcReader, detect_compression};
+/// MRC reader with automatic compression detection.
+pub use io::reader::MrcReader;
+
+#[doc(hidden)]
+pub use io::reader::{CompressionType, detect_compression};
 
 /// Open an MRC file for reading, auto-detecting gzip or bzip2 compression.
 pub fn open<P: AsRef<std::path::Path>>(path: P) -> Result<MrcReader, Error> {
@@ -109,14 +112,4 @@ pub fn create<P: AsRef<std::path::Path>>(path: P) -> WriterBuilder {
     WriterBuilder::new(path)
 }
 
-/// Open an MRC file via memory mapping (requires the `mmap` feature).
-#[cfg(feature = "mmap")]
-pub fn open_mmap<P: AsRef<std::path::Path>>(path: P) -> Result<MmapReader, Error> {
-    MmapReader::open(path)
-}
 
-/// Create a new memory-mapped MRC file for writing (requires the `mmap` feature).
-#[cfg(feature = "mmap")]
-pub fn create_mmap<P: AsRef<std::path::Path>>(path: P) -> MmapWriterBuilder {
-    MmapWriterBuilder::new(path)
-}

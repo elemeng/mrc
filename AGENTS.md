@@ -98,6 +98,18 @@ src/
 - `iter/` provides lazy iterators that work over any `VoxelSource` implementor.
 - The crate uses **sealed traits** (`VoxelSource`) to keep internal abstractions internal.
 
+### API Surface Discipline
+
+The top-level `lib.rs` is the *only* public entry point. Internal modules (`engine/`,
+`io/`, `iter/`, `fei/`) are marked `mod` (private) or, when their items must be
+re-exported, are `pub mod` but with `#[doc(hidden)]` on internal plumbing:
+
+| Visibility | Items |
+|------------|-------|
+| **Public (in lib.rs)** | `open`, `create`, `MrcReader`, `ReaderExt`, `WriterBuilder`, `Writer`, `Header`, `HeaderBuilder`, `Mode`, `Voxel`, `VoxelBlock`, `VolumeShape`, `RegionIter`, `FileEndian`, `Error`, `Reader`, `MmapReader`, `MmapWriter`, `GzipWriter`, `Bzip2Writer`, FEI types |
+| **`#[doc(hidden)]`** | `VoxelSource`, `ReaderCore`, `EndianCodec`, `Stepper`, `Compressor`, `MachstInfo`, `CompressionType`, `detect_compression`, `GzipCompressor`, `Bzip2Compressor` |
+| **`pub(crate)` only** | `validate_block_bounds`, `gather_block_bytes`, `decode_block`, `decode_native_endian`, `parse_header`, `DecompressedMrc`, `open_compressed`, `encode_block_to_buf` |
+
 ## Development Conventions
 
 ### Code Style

@@ -15,7 +15,7 @@ use std::vec::Vec;
 /// This is a thin newtype wrapper around [`Reader`](crate::Reader). All
 /// [`Reader`](crate::Reader) methods are available via [`Deref`](std::ops::Deref).
 #[derive(Debug)]
-pub struct GzipReader(pub crate::Reader);
+pub struct GzipReader(pub(crate) crate::Reader);
 
 impl std::ops::Deref for GzipReader {
     type Target = crate::Reader;
@@ -73,6 +73,9 @@ impl crate::Reader {
 }
 
 /// Gzip compressor backend for [`CompressedWriter`](crate::io::writer::CompressedWriter).
+///
+/// This type is `#[doc(hidden)]` — use the [`GzipWriter`](crate::GzipWriter) type alias.
+#[doc(hidden)]
 #[derive(Debug)]
 pub struct GzipCompressor;
 

@@ -87,6 +87,7 @@ impl FileEndian {
 }
 
 /// Metadata about a MACHST machine stamp.
+#[doc(hidden)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MachstInfo {
     pub endian: FileEndian,
