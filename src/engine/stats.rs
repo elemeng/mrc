@@ -2,42 +2,50 @@
 
 use crate::engine::codec::decode_slice;
 use crate::engine::endian::FileEndian;
+use crate::Error;
 use crate::mode::{Float32Complex, Int16Complex, Mode};
 
 /// Compute (dmin, dmax, dmean, rms) from raw data bytes.
 ///
 /// Returns sentinel values `(0.0, -1.0, -2.0, -1.0)` for empty data.
-pub(crate) fn compute_stats(bytes: &[u8], mode: Mode, endian: FileEndian) -> (f32, f32, f32, f32) {
-    match mode {
+///
+/// # Errors
+/// Returns `Error::TypeMismatch` if the byte slice cannot be decoded for the given mode.
+pub(crate) fn compute_stats(
+    bytes: &[u8],
+    mode: Mode,
+    endian: FileEndian,
+) -> Result<(f32, f32, f32, f32), Error> {
+    Ok(match mode {
         Mode::Float32 => {
-            let data = decode_slice::<f32>(bytes, endian);
+            let data = decode_slice::<f32>(bytes, endian)?;
             stats_real(&data)
         }
         Mode::Int16 => {
-            let data = decode_slice::<i16>(bytes, endian);
+            let data = decode_slice::<i16>(bytes, endian)?;
             stats_real(&data)
         }
         Mode::Uint16 => {
-            let data = decode_slice::<u16>(bytes, endian);
+            let data = decode_slice::<u16>(bytes, endian)?;
             stats_real(&data)
         }
         Mode::Int8 => {
-            let data = decode_slice::<i8>(bytes, endian);
+            let data = decode_slice::<i8>(bytes, endian)?;
             stats_real(&data)
         }
         Mode::Float32Complex => {
-            let data = decode_slice::<Float32Complex>(bytes, endian);
+            let data = decode_slice::<Float32Complex>(bytes, endian)?;
             let rms = rms_complex_f32(&data);
             (0.0, -1.0, -2.0, rms)
         }
         Mode::Int16Complex => {
-            let data = decode_slice::<Int16Complex>(bytes, endian);
+            let data = decode_slice::<Int16Complex>(bytes, endian)?;
             let rms = rms_complex_i16(&data);
             (0.0, -1.0, -2.0, rms)
         }
         #[cfg(feature = "f16")]
         Mode::Float16 => {
-            let data = decode_slice::<crate::f16>(bytes, endian);
+            let data = decode_slice::<crate::f16>(bytes, endian)?;
             let data_f32: Vec<f32> = data.iter().map(|&v| f32::from(v)).collect();
             stats_real(&data_f32)
         }
@@ -49,7 +57,7 @@ pub(crate) fn compute_stats(bytes: &[u8], mode: Mode, endian: FileEndian) -> (f3
             let unpacked = crate::engine::convert::unpack_u4_bytes_to_u16(bytes, num_values);
             stats_real(&unpacked)
         }
-    }
+    })
 }
 
 fn stats_real<T>(data: &[T]) -> (f32, f32, f32, f32)
@@ -148,7 +156,7 @@ pub(crate) fn validate_header_stats(
     let endian = header.detect_endian();
     let mode = crate::Mode::from_i32(header.mode).unwrap_or(crate::Mode::Float32);
     let (actual_dmin, actual_dmax, actual_dmean, actual_rms) =
-        compute_stats(data_bytes, mode, endian);
+        compute_stats(data_bytes, mode, endian)?;
 
     let rtol = 0.01f32;
 
@@ -228,7 +236,7 @@ mod tests {
             .iter()
             .flat_map(|&v| v.to_le_bytes())
             .collect();
-        let (min, max, mean, _rms) = compute_stats(&bytes, Mode::Float32, FileEndian::LittleEndian);
+        let (min, max, mean, _rms) = compute_stats(&bytes, Mode::Float32, FileEndian::LittleEndian).unwrap();
         assert_eq!(min, 1.0);
         assert_eq!(max, 4.0);
         assert_eq!(mean, 2.5);

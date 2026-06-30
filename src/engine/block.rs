@@ -69,21 +69,17 @@ pub struct VoxelBlock<T> {
 }
 
 impl<T> VoxelBlock<T> {
-    /// Create a new voxel block, panicking if `data.len()` does not match `shape`.
-    pub fn new(offset: [usize; 3], shape: [usize; 3], data: Vec<T>) -> Self {
-        let expected = match shape[0]
-            .checked_mul(shape[1])
-            .and_then(|v| v.checked_mul(shape[2]))
-        {
-            Some(v) => v,
-            None => panic!("Block shape dimensions overflow usize"),
-        };
-        assert_eq!(data.len(), expected, "Data length must match block shape");
-        Self {
-            offset,
-            shape,
-            data,
-        }
+    /// Create a new voxel block, returning an error if `data.len()` does not match `shape`.
+    ///
+    /// # Errors
+    /// Returns [`Error::BoundsError`] if `shape` dimensions overflow `usize`.
+    /// Returns [`Error::BlockShapeMismatch`] if `data.len()` does not match `shape`.
+    pub fn new(
+        offset: [usize; 3],
+        shape: [usize; 3],
+        data: Vec<T>,
+    ) -> Result<Self, crate::Error> {
+        Self::try_new(offset, shape, data)
     }
 
     /// Create a new VoxelBlock, returning an error if the data length does not match the shape.

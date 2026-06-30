@@ -241,16 +241,18 @@ impl EndianCodec for crate::f16 {
 ///
 /// Uses 1MB chunks for optimal cache behaviour when the `parallel` feature is enabled.
 /// For native-endian files, this is a plain `memcpy`.
+///
+/// # Errors
+/// Returns `Error::TypeMismatch` if `bytes.len()` is not a multiple of `T::BYTE_SIZE`.
 pub(crate) fn decode_slice<T: EndianCodec + Send + Copy>(
     bytes: &[u8],
     endian: FileEndian,
-) -> Vec<T> {
+) -> Result<Vec<T>, crate::Error> {
     if bytes.len() % T::BYTE_SIZE != 0 {
-        panic!(
-            "decode_slice: byte length {} is not a multiple of {}",
-            bytes.len(),
-            T::BYTE_SIZE
-        );
+        return Err(crate::Error::TypeMismatch {
+            expected: 0,
+            actual: bytes.len(),
+        });
     }
     let n = bytes.len() / T::BYTE_SIZE;
     let mut result = Vec::with_capacity(n);
@@ -267,7 +269,7 @@ pub(crate) fn decode_slice<T: EndianCodec + Send + Copy>(
             );
             result.set_len(n);
         }
-        return result;
+        return Ok(result);
     }
 
     // SAFETY: result has capacity n; every element is initialized below.
@@ -298,7 +300,7 @@ pub(crate) fn decode_slice<T: EndianCodec + Send + Copy>(
     unsafe {
         result.set_len(n);
     }
-    result
+    Ok(result)
 }
 
 // ============================================================================
@@ -309,12 +311,20 @@ pub(crate) fn decode_slice<T: EndianCodec + Send + Copy>(
 ///
 /// Uses 1MB chunks for optimal cache behaviour when the `parallel` feature is enabled.
 /// For native-endian files, this is a plain `memcpy`.
+///
+/// # Errors
+/// Returns `Error::TypeMismatch` if `bytes.len()` does not match `values.len() * T::BYTE_SIZE`.
 pub(crate) fn encode_slice<T: EndianCodec + Sync>(
     values: &[T],
     bytes: &mut [u8],
     endian: FileEndian,
-) {
-    assert_eq!(values.len() * T::BYTE_SIZE, bytes.len());
+) -> Result<(), crate::Error> {
+    if values.len().checked_mul(T::BYTE_SIZE) != Some(bytes.len()) {
+        return Err(crate::Error::TypeMismatch {
+            expected: values.len() * T::BYTE_SIZE,
+            actual: bytes.len(),
+        });
+    }
 
     // Fast path: native endian is a simple memcpy.
     if endian == FileEndian::native() {
@@ -325,7 +335,7 @@ pub(crate) fn encode_slice<T: EndianCodec + Sync>(
                 bytes.len(),
             );
         }
-        return;
+        return Ok(());
     }
 
     #[cfg(feature = "parallel")]
@@ -348,6 +358,7 @@ pub(crate) fn encode_slice<T: EndianCodec + Sync>(
             val.to_bytes(bytes, i * T::BYTE_SIZE, endian);
         }
     }
+    Ok(())
 }
 
 // ============================================================================

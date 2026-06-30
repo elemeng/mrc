@@ -120,7 +120,7 @@ macro_rules! builder_setters {
 ///     writer.write_block(&VoxelBlock::new(
 ///         [0, 0, 0], [512, 512, 1],
 ///         vec![0.0f32; 512 * 512],
-///     ))?;
+///     )?)?;
 ///     writer.finalize()?;
 ///     Ok(())
 /// }
@@ -298,7 +298,7 @@ impl Writer {
             let byte_len = (sx as u64) * (sy as u64) * (sz as u64) * (b as u64);
             let byte_len_usize = byte_len.try_into().map_err(|_| Error::BoundsError)?;
             let mut buffer = vec![0u8; byte_len_usize];
-            encode_slice(&block.data, &mut buffer, file_endian);
+            encode_slice(&block.data, &mut buffer, file_endian)?;
 
             use std::io::{Seek, SeekFrom, Write};
             self.file.seek(SeekFrom::Start(start_offset))?;
@@ -316,7 +316,7 @@ impl Writer {
                 let file_offset = self.data_offset + (file_linear as u64) * (b as u64);
                 let block_idx = y * sx + z * sx * sy;
                 let row_values = &block.data[block_idx..block_idx + sx];
-                encode_slice(row_values, &mut row_bytes, file_endian);
+                encode_slice(row_values, &mut row_bytes, file_endian)?;
                 self.file.seek(SeekFrom::Start(file_offset))?;
                 self.file.write_all(&row_bytes)?;
             }
@@ -431,7 +431,7 @@ impl Writer {
 fn update_header_stats_from_bytes(header: &mut Header, bytes: &[u8]) -> Result<(), Error> {
     let endian = header.detect_endian();
     let mode = Mode::from_i32(header.mode).ok_or(Error::UnsupportedMode)?;
-    let (dmin, dmax, dmean, rms) = crate::engine::stats::compute_stats(bytes, mode, endian);
+    let (dmin, dmax, dmean, rms) = crate::engine::stats::compute_stats(bytes, mode, endian)?;
     header.dmin = dmin;
     header.dmax = dmax;
     header.dmean = dmean;
@@ -463,7 +463,7 @@ fn update_header_stats_from_bytes(header: &mut Header, bytes: &[u8]) -> Result<(
 ///     writer.write_block(&VoxelBlock::new(
 ///         [0, 0, 0], [512, 512, 1],
 ///         vec![0.0f32; 512 * 512],
-///     ))?;
+///     )?)?;
 ///     Ok(())
 /// }
 /// ```
@@ -644,56 +644,15 @@ impl MmapWriter {
             return Err(Error::BoundsError);
         }
 
-        let [nx, ny, _nz] = [self.shape.nx, self.shape.ny, self.shape.nz];
-        let [ox, oy, oz] = block.offset;
-        let [sx, sy, sz] = block.shape;
-        let b = self.bytes_per_voxel;
         let file_endian = self.header.detect_endian();
-
-        // Fast path: full XY slab is contiguous in the file.
-        if ox == 0 && sx == nx && oy == 0 && sy == ny {
-            let linear = self
-                .shape
-                .checked_linear_index(block.offset)
-                .ok_or(Error::BoundsError)?;
-            let start_offset = self
-                .data_offset
-                .checked_add(linear.checked_mul(b).ok_or(Error::BoundsError)?)
-                .ok_or(Error::BoundsError)?;
-            let count = sx
-                .checked_mul(sy)
-                .and_then(|v| v.checked_mul(sz))
-                .ok_or(Error::BoundsError)?;
-            let byte_len = count.checked_mul(b).ok_or(Error::BoundsError)?;
-            let end_offset = start_offset
-                .checked_add(byte_len)
-                .ok_or(Error::BoundsError)?;
-            if end_offset > self.mmap.len() {
-                return Err(Error::BoundsError);
-            }
-            encode_slice(
-                &block.data,
-                &mut self.mmap[start_offset..end_offset],
-                file_endian,
-            );
-            return Ok(());
-        }
-
-        // Scatter path: write row by row directly into the mmap.
-        for z in 0..sz {
-            for y in 0..sy {
-                let file_linear = ox + (oy + y) * nx + (oz + z) * nx * ny;
-                let file_start = self.data_offset + file_linear * b;
-                let row_end = file_start + sx * b;
-                if row_end > self.mmap.len() {
-                    return Err(Error::BoundsError);
-                }
-                let block_idx = y * sx + z * sx * sy;
-                let row_values = &block.data[block_idx..block_idx + sx];
-                encode_slice(row_values, &mut self.mmap[file_start..row_end], file_endian);
-            }
-        }
-        Ok(())
+        crate::io::reader_common::encode_block_to_buf(
+            block,
+            self.shape,
+            self.bytes_per_voxel,
+            file_endian,
+            self.data_offset,
+            &mut self.mmap,
+        )
     }
 
     /// Write a block with parallel encoding to memory-mapped region.
@@ -747,15 +706,15 @@ impl MmapWriter {
             .data
             .par_chunks(chunk_size)
             .enumerate()
-            .for_each(|(chunk_idx, chunk)| {
+            .try_for_each(|(chunk_idx, chunk)| {
                 let start_offset = base_offset + chunk_idx * chunk_size * self.bytes_per_voxel;
                 let ptr = (mmap_ptr + start_offset) as *mut u8;
                 let dst = unsafe {
                     core::slice::from_raw_parts_mut(ptr, chunk.len() * self.bytes_per_voxel)
                 };
 
-                encode_slice(chunk, dst, file_endian);
-            });
+                encode_slice(chunk, dst, file_endian)
+            })?;
 
         Ok(())
     }
@@ -914,40 +873,17 @@ impl<C: Compressor> CompressedWriter<C> {
             return Err(Error::BoundsError);
         }
 
-        let [nx, ny, _nz] = [self.shape.nx, self.shape.ny, self.shape.nz];
-        let [ox, oy, oz] = block.offset;
-        let [sx, sy, sz] = block.shape;
-        let b = self.bytes_per_voxel;
         let file_endian = self.header.detect_endian();
-
-        // Fast path: full XY slab is contiguous in the buffer.
         // NOTE: self.data contains only the voxel data (not the header),
-        // so we index from 0, unlike Writer/MmapWriter which use file offsets.
-        if ox == 0 && sx == nx && oy == 0 && sy == ny {
-            let linear = oz * nx * ny;
-            let start_byte = linear * b;
-            let byte_len = sx * sy * sz * b;
-            let dst = &mut self.data[start_byte..start_byte + byte_len];
-            crate::engine::codec::encode_slice(&block.data, dst, file_endian);
-            return Ok(());
-        }
-
-        // Scatter path: write row by row directly into self.data.
-        for z in 0..sz {
-            for y in 0..sy {
-                let file_linear = ox + (oy + y) * nx + (oz + z) * nx * ny;
-                let file_start = file_linear * b;
-                let block_idx = y * sx + z * sx * sy;
-                let row_values = &block.data[block_idx..block_idx + sx];
-                let row_end = file_start + sx * b;
-                crate::engine::codec::encode_slice(
-                    row_values,
-                    &mut self.data[file_start..row_end],
-                    file_endian,
-                );
-            }
-        }
-        Ok(())
+        // so data_offset is 0.
+        crate::io::reader_common::encode_block_to_buf(
+            block,
+            self.shape,
+            self.bytes_per_voxel,
+            file_endian,
+            0,
+            &mut self.data,
+        )
     }
 
     /// Write a block of `u8` data by automatically widening to `u16` (Mode 6).

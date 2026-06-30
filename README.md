@@ -103,7 +103,7 @@ fn main() -> Result<(), mrc::Error> {
             [0, 0, z],
             [512, 512, 1],
             vec![0.0f32; 512 * 512],
-        );
+        )?;
         writer.write_block(&block)?;
     }
 
@@ -231,7 +231,7 @@ for slab in reader.slabs_f32(10)? {
 }
 
 // Convert Mode 6 (Uint16) voxels to u8
-for slice in reader.slices_u8()? {
+for slice in reader.slices_u8() {
     let block = slice?;
     // block.data is Vec<u8>
 }
@@ -263,7 +263,7 @@ let mut writer = create("seg.mrc")
     .finish()?;
 writer.write_u8_block(&VoxelBlock::new(
     [0, 0, 0], [256, 256, 1], vec![255u8; 256*256],
-))?;
+)?)?;
 ```
 
 **Safety note:** `reader.slices::<f32>()` on an Int16 file returns
@@ -305,7 +305,7 @@ let header = HeaderBuilder::new()
 let mut writer = GzipWriter::create("output.mrc.gz", header, &[])?;
 writer.write_block(&VoxelBlock::new(
     [0, 0, 0], [256, 256, 1], vec![0.0f32; 256*256],
-))?;
+)?)?;
 writer.finalize()?;
 ```
 
@@ -747,6 +747,6 @@ SOFTWARE.
 
 **Made with ❤️ by the cryo-EM community for the scientific computing world**
 
-*[SIMD-accelerated • Memory-mapped • 100% safe Rust]*
+*[SIMD-accelerated • Memory-mapped]*
 
 </div>

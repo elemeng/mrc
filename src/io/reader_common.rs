@@ -7,7 +7,7 @@
 //! decoding, and the `slices_f32` / `slabs_f32` convenience iterators.
 
 use crate::engine::block::{VolumeShape, VoxelBlock};
-use crate::engine::codec::{EndianCodec, decode_slice};
+use crate::engine::codec::{EndianCodec, decode_slice, encode_slice};
 use crate::engine::endian::FileEndian;
 use crate::iter::{RegionIter, SlabStepper, SliceStepper, TileStepper};
 use crate::mode::{Float32Complex, Int16Complex, M0Interpretation, Voxel};
@@ -283,21 +283,21 @@ pub trait ReaderExt: ReaderCore + Sized {
     /// Iterate over slices, automatically converting Mode 6 (`Uint16`) to `u8`.
     fn slices_u8(
         &self,
-    ) -> Result<VoxelIter<'_, u8>, Error> {
+    ) -> VoxelIter<'_, u8> {
         if self.mode() != Mode::Uint16 {
-            return Err(Error::ModeMismatch {
+            return Box::new(std::iter::once(Err(Error::ModeMismatch {
                 file_mode: self.mode(),
                 requested_mode: Mode::Uint16,
-            });
+            })));
         }
-        Ok(Box::new(self.slices::<u16>().map(|b| {
+        Box::new(self.slices::<u16>().map(|b| {
             let b = b?;
             Ok(VoxelBlock {
                 offset: b.offset,
                 shape: b.shape,
                 data: crate::engine::convert::convert_u16_slice_to_u8(&b.data)?,
             })
-        })))
+        }))
     }
 
     /// Iterate over slices for Mode 0 (8-bit) files with signed/unsigned interpretation.
@@ -455,6 +455,57 @@ pub fn gather_block_bytes(
     dst
 }
 
+/// Encode a typed voxel block into a mutable byte buffer (the full data region).
+///
+/// Handles both contiguous (full XY slab) and scattered (row-by-row) write paths.
+/// This is the complementary write-side operation to [`gather_block_bytes`].
+///
+/// # Errors
+/// Returns `Error::BoundsError` if the block exceeds the buffer boundaries.
+/// Returns `Error::TypeMismatch` if the byte count is misaligned.
+pub(crate) fn encode_block_to_buf<T: EndianCodec + Sync>(
+    block: &VoxelBlock<T>,
+    volume_shape: VolumeShape,
+    bytes_per_voxel: usize,
+    file_endian: FileEndian,
+    data_offset: usize,
+    buf: &mut [u8],
+) -> Result<(), Error> {
+    let [nx, ny, _nz] = [volume_shape.nx, volume_shape.ny, volume_shape.nz];
+    let [ox, oy, oz] = block.offset;
+    let [sx, sy, sz] = block.shape;
+    let b = bytes_per_voxel;
+
+    // Fast path: full XY slab is contiguous in the buffer.
+    if ox == 0 && sx == nx && oy == 0 && sy == ny {
+        let linear = oz * nx * ny;
+        let start_byte = data_offset + linear * b;
+        let byte_len = sx * sy * sz * b;
+        let end_byte = start_byte + byte_len;
+        if end_byte > buf.len() {
+            return Err(Error::BoundsError);
+        }
+        encode_slice(&block.data, &mut buf[start_byte..end_byte], file_endian)?;
+        return Ok(());
+    }
+
+    // Scatter path: write row by row.
+    for z in 0..sz {
+        for y in 0..sy {
+            let file_linear = ox + (oy + y) * nx + (oz + z) * nx * ny;
+            let file_start = data_offset + file_linear * b;
+            let block_idx = y * sx + z * sx * sy;
+            let row_values = &block.data[block_idx..block_idx + sx];
+            let row_end = file_start + sx * b;
+            if row_end > buf.len() {
+                return Err(Error::BoundsError);
+            }
+            encode_slice(row_values, &mut buf[file_start..row_end], file_endian)?;
+        }
+    }
+    Ok(())
+}
+
 /// Decode a raw byte block to the requested voxel type.
 ///
 /// Performs endian conversion if the file endianness differs from the host.
@@ -474,7 +525,7 @@ pub fn decode_block<T: Voxel>(
     if endian == FileEndian::native() {
         decode_native_endian(bytes)
     } else {
-        Ok(decode_slice(bytes, endian))
+        decode_slice(bytes, endian)
     }
 }
 

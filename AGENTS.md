@@ -147,11 +147,11 @@ The crate contains a small amount of `unsafe` Rust, all justified by performance
 A detailed code review exists in `review.md` at the repository root. Items agents should be aware of:
 
 1. **`gather_block_bytes` fast-path assumes contiguous XY slabs**: For full-row slabs (`ox == 0 && sx == nx && oy == 0 && sy == ny`) a contiguous copy is used. Sub-XY blocks correctly use row-by-row scatter/gather.
-2. **`decode_slice` panics on misaligned byte count** (Medium): If `bytes.len()` is not a multiple of `T::BYTE_SIZE`, `decode_slice` panics rather than returning a `Result`.
-3. **`encode_slice` asserts length match** (Medium): Same as above — `assert_eq!` is used instead of returning a `Result`.
-4. **Duplicated writer logic**: The scatter-path write loop (`write_block` for sub-XY blocks) is copy-pasted across `Writer`, `MmapWriter`, and `CompressedWriter`. Refactoring into a shared helper would reduce maintenance.
-5. ~~**`slices_u8` return type triggers clippy `type_complexity`**: The `Result<Box<dyn Iterator<...>>>` return type could be simplified with a type alias, though the `Result` wrapper is actually necessary here (mode check can fail).~~ **Fixed**: Added a `VoxelIter<'a, T>` type alias.
-6. **`VoxelBlock::new` panics on shape mismatch** (Medium): The primary public constructor panics on mismatched data length; `try_new` is the `Result`-based alternative.
+2. ~~**`decode_slice` panics on misaligned byte count** (Medium): If `bytes.len()` is not a multiple of `T::BYTE_SIZE`, `decode_slice` panics rather than returning a `Result`.~~ **Fixed**: Now returns `Result<Vec<T>, Error>`, propagating the error through `compute_stats` and `decode_block`.
+3. ~~**`encode_slice` asserts length match** (Medium): `assert_eq!` previously used instead of returning a `Result`.~~ **Fixed**: Now returns `Result<(), Error>`.
+4. ~~**Duplicated writer logic**: The scatter-path write loop (`write_block` for sub-XY blocks) was copy-pasted across `Writer`, `MmapWriter`, and `CompressedWriter`.~~ **Fixed**: Extracted shared `encode_block_to_buf` helper in `reader_common.rs`. MmapWriter and CompressedWriter now delegate to it.
+5. ~~**`slices_u8` return type triggers clippy `type_complexity`**: The `Result<Box<dyn Iterator<...>>>` return type...~~ **Fixed**: `slices_u8` now returns `VoxelIter<'_, u8>` directly (matching `slices_f32`), with the mode check baked into the returned iterator.
+6. ~~**`VoxelBlock::new` panics on shape mismatch** (Medium): The primary public constructor panicked on mismatched data length; `try_new` was the `Result`-based alternative.~~ **Fixed**: `new` now delegates to `try_new` and returns `Result<VoxelBlock<T>, Error>`. All call sites updated with `?` or `.unwrap()`.
 7. **`TileStepper` edge-case confidence**: The tile-stepping logic is hard to visually verify for exact boundary conditions.
 8. **`MmapReader::data_bytes()` silently truncates on undersized files in permissive mode**: When the file is smaller than the header claims, the method returns whatever bytes are available instead of signalling an error. In strict mode the file size is validated on open.
 

@@ -269,7 +269,7 @@ mod tests {
         for z in 0..2 {
             let data = vec![1.0f32; 8 * 8];
             writer
-                .write_block(&VoxelBlock::new([0, 0, z], [8, 8, 1], data))
+                .write_block(&VoxelBlock::new([0, 0, z], [8, 8, 1], data).unwrap())
                 .unwrap();
         }
         writer.finalize().unwrap();
@@ -292,7 +292,7 @@ mod tests {
         for z in 0..2 {
             let data = vec![1.0f32; 8 * 8];
             writer
-                .write_block(&VoxelBlock::new([0, 0, z], [8, 8, 1], data))
+                .write_block(&VoxelBlock::new([0, 0, z], [8, 8, 1], data).unwrap())
                 .unwrap();
         }
         writer.finalize().unwrap();
@@ -313,7 +313,7 @@ mod tests {
             .finish()
             .unwrap();
         writer
-            .write_block(&VoxelBlock::new([0, 0, 0], [4, 4, 1], vec![0.0f32; 16]))
+            .write_block(&VoxelBlock::new([0, 0, 0], [4, 4, 1], vec![0.0f32; 16]).unwrap())
             .unwrap();
         writer.finalize().unwrap();
 
@@ -341,7 +341,7 @@ mod tests {
             .finish()
             .unwrap();
         writer
-            .write_block(&VoxelBlock::new([0, 0, 0], [4, 4, 1], vec![1.0f32; 16]))
+            .write_block(&VoxelBlock::new([0, 0, 0], [4, 4, 1], vec![1.0f32; 16]).unwrap())
             .unwrap();
         writer.update_header_stats().unwrap();
         writer.finalize().unwrap();
@@ -362,7 +362,7 @@ mod tests {
             .unwrap();
         let data: Vec<f32> = vec![1.0, 2.0, 3.0, 4.0];
         writer
-            .write_block(&VoxelBlock::new([0, 0, 0], [2, 2, 1], data.clone()))
+            .write_block(&VoxelBlock::new([0, 0, 0], [2, 2, 1], data.clone()).unwrap())
             .unwrap();
         writer.finalize().unwrap();
 
@@ -389,12 +389,12 @@ mod tests {
                 [0, 0, 0],
                 [2, 2, 1],
                 vec![10u8, 20, 30, 40],
-            ))
+            ).unwrap())
             .unwrap();
         writer.finalize().unwrap();
 
         let reader = MrcReader::open(tmp.path()).unwrap();
-        let mut slices = reader.slices_u8().unwrap();
+        let mut slices = reader.slices_u8();
         let block = slices.next().unwrap().unwrap();
         assert_eq!(block.data, vec![10u8, 20, 30, 40]);
     }
