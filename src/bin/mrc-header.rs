@@ -11,12 +11,27 @@ use std::env;
 use std::process;
 
 fn usage() {
-    eprintln!("Usage: mrc-header [--permissive] <file.mrc>");
+    eprintln!("mrc-header v{} — MRC header inspector", env!("CARGO_PKG_VERSION"));
     eprintln!();
-    eprintln!("Options:");
-    eprintln!(
-        "  --permissive   Open in permissive mode (warn instead of error on non-critical issues)"
-    );
+    eprintln!("Reads an MRC file and prints every header field with human-readable");
+    eprintln!("interpretation: volume type, axis order, space group, extended header");
+    eprintln!("format, sentinel-aware statistics, and more.");
+    eprintln!("Auto-detects gzip/bzip2 compression.");
+    eprintln!();
+    eprintln!("USAGE:");
+    eprintln!("  mrc-header [OPTIONS] <file>");
+    eprintln!();
+    eprintln!("ARGS:");
+    eprintln!("  <file>         Path to an MRC file (.mrc, .mrc.gz, .mrc.bz2)");
+    eprintln!();
+    eprintln!("OPTIONS:");
+    eprintln!("  -p, --permissive   Open in permissive mode (report non-critical issues");
+    eprintln!("                     as warnings instead of hard errors)");
+    eprintln!("  -h, --help         Print this help message");
+    eprintln!();
+    eprintln!("EXAMPLES:");
+    eprintln!("  mrc-header protein.mrc");
+    eprintln!("  mrc-header --permissive legacy.mrc");
 }
 
 fn main() {
@@ -31,7 +46,7 @@ fn main() {
 
     for arg in &args {
         match arg.as_str() {
-            "--permissive" => permissive = true,
+            "--permissive" | "-p" => permissive = true,
             _ if arg.starts_with('-') => {
                 eprintln!("Unknown option: {}", arg);
                 usage();

@@ -12,11 +12,33 @@ use std::env;
 use std::process;
 
 fn usage() {
-    eprintln!("Usage: mrc-validate [--permissive] [--stats-only] <file.mrc>");
+    eprintln!("mrc-validate v{} — MRC file validation tool", env!("CARGO_PKG_VERSION"));
     eprintln!();
-    eprintln!("Options:");
-    eprintln!("  --permissive   Collect non-fatal issues as warnings instead of hard errors");
-    eprintln!("  --stats-only   Only perform the stats cross-check (skip header validation)");
+    eprintln!("Validates an MRC file by checking header structure and cross-referencing");
+    eprintln!("data statistics (dmin, dmax, dmean, rms) against actual voxel values.");
+    eprintln!("Auto-detects gzip/bzip2 compression.");
+    eprintln!();
+    eprintln!("USAGE:");
+    eprintln!("  mrc-validate [OPTIONS] <file>");
+    eprintln!();
+    eprintln!("ARGS:");
+    eprintln!("  <file>         Path to an MRC file (.mrc, .mrc.gz, .mrc.bz2)");
+    eprintln!();
+    eprintln!("OPTIONS:");
+    eprintln!("  -p, --permissive   Report non-critical header issues as warnings");
+    eprintln!("                     instead of hard errors");
+    eprintln!("  -s, --stats-only   Skip header validation, only cross-check statistics");
+    eprintln!("  -h, --help         Print this help message");
+    eprintln!();
+    eprintln!("EXIT CODES:");
+    eprintln!("  0    File is valid (or warnings only in permissive mode)");
+    eprintln!("  1    Validation failed (header invalid or stats mismatch)");
+    eprintln!("  2    Usage error or file could not be opened");
+    eprintln!();
+    eprintln!("EXAMPLES:");
+    eprintln!("  mrc-validate protein.mrc");
+    eprintln!("  mrc-validate --permissive legacy.mrc");
+    eprintln!("  mrc-validate --stats-only large_volume.mrc");
 }
 
 fn main() {
@@ -32,8 +54,8 @@ fn main() {
 
     for arg in &args {
         match arg.as_str() {
-            "--permissive" => permissive = true,
-            "--stats-only" => stats_only = true,
+            "--permissive" | "-p" => permissive = true,
+            "--stats-only" | "-s" => stats_only = true,
             _ if arg.starts_with('-') => {
                 eprintln!("Unknown option: {}", arg);
                 usage();

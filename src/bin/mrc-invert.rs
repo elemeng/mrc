@@ -14,7 +14,25 @@ use std::env;
 use std::process;
 
 fn usage() {
-    eprintln!("Usage: mrc-invert <input.mrc> <output.mrc>");
+    eprintln!("mrc-invert v{} — MRC contrast inverter", env!("CARGO_PKG_VERSION"));
+    eprintln!();
+    eprintln!("Negates every voxel value (v → −v) to flip black-on-white to");
+    eprintln!("white-on-black and vice versa.  Reads any mode, writes Float32.");
+    eprintln!("Auto-detects gzip/bzip2 compression on input.");
+    eprintln!();
+    eprintln!("USAGE:");
+    eprintln!("  mrc-invert <input> <output>");
+    eprintln!();
+    eprintln!("ARGS:");
+    eprintln!("  <input>        Path to input MRC file");
+    eprintln!("  <output>       Path for the inverted output (uncompressed Float32)");
+    eprintln!();
+    eprintln!("OPTIONS:");
+    eprintln!("  -h, --help     Print this help message");
+    eprintln!();
+    eprintln!("EXAMPLES:");
+    eprintln!("  mrc-invert protein.mrc protein_inverted.mrc");
+    eprintln!("  mrc-invert density.mrc.gz inverted.mrc");
 }
 
 fn main() {
