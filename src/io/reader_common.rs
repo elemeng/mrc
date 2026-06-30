@@ -14,6 +14,14 @@ use crate::mode::{Float32Complex, Int16Complex, M0Interpretation, Voxel};
 use crate::{Error, Header, Mode};
 use std::borrow::Cow;
 
+/// Internal helper: boxed iterator over [`VoxelBlock`] results.
+///
+/// The most common pattern for conversion iterators that mix heterogeneous
+/// inner iterator types (e.g. `slices_f32` branching on mode). Defining it
+/// as a type alias avoids clippy's `type_complexity` lint while keeping the
+/// concrete type visible.
+type VoxelIter<'a, T> = Box<dyn Iterator<Item = Result<VoxelBlock<T>, Error>> + 'a>;
+
 mod private {
     /// Sealed trait marker — prevents external implementations of [`VoxelSource`].
     pub trait Sealed {}
@@ -160,7 +168,7 @@ pub trait ReaderExt: ReaderCore + Sized {
     // -------------------------------------------------------------------------
 
     /// Iterate over slices, automatically converting common modes to `f32`.
-    fn slices_f32(&self) -> Box<dyn Iterator<Item = Result<VoxelBlock<f32>, Error>> + '_> {
+    fn slices_f32(&self) -> VoxelIter<'_, f32> {
         self._iter_f32(
             self.slices::<f32>(),
             self.slices::<i16>(),
@@ -170,7 +178,7 @@ pub trait ReaderExt: ReaderCore + Sized {
     }
 
     /// Iterate over slabs, automatically converting common modes to `f32`.
-    fn slabs_f32(&self, k: usize) -> Box<dyn Iterator<Item = Result<VoxelBlock<f32>, Error>> + '_> {
+    fn slabs_f32(&self, k: usize) -> VoxelIter<'_, f32> {
         self._iter_f32(
             self.slabs::<f32>(k),
             self.slabs::<i16>(k),
@@ -190,7 +198,7 @@ pub trait ReaderExt: ReaderCore + Sized {
         iter_i16: I16,
         iter_u16: U16,
         iter_i8: I8,
-    ) -> Box<dyn Iterator<Item = Result<VoxelBlock<f32>, Error>> + 'a>
+    ) -> VoxelIter<'a, f32>
     where
         I: Iterator<Item = Result<VoxelBlock<f32>, Error>> + 'a,
         I16: Iterator<Item = Result<VoxelBlock<i16>, I16E>> + 'a,
@@ -275,7 +283,7 @@ pub trait ReaderExt: ReaderCore + Sized {
     /// Iterate over slices, automatically converting Mode 6 (`Uint16`) to `u8`.
     fn slices_u8(
         &self,
-    ) -> Result<Box<dyn Iterator<Item = Result<VoxelBlock<u8>, Error>> + '_>, Error> {
+    ) -> Result<VoxelIter<'_, u8>, Error> {
         if self.mode() != Mode::Uint16 {
             return Err(Error::ModeMismatch {
                 file_mode: self.mode(),
@@ -296,7 +304,7 @@ pub trait ReaderExt: ReaderCore + Sized {
     fn slices_mode0(
         &self,
         interp: M0Interpretation,
-    ) -> Box<dyn Iterator<Item = Result<VoxelBlock<f32>, Error>> + '_> {
+    ) -> VoxelIter<'_, f32> {
         if self.mode() != Mode::Int8 {
             return Box::new(std::iter::once(Err(Error::ModeMismatch {
                 file_mode: self.mode(),
@@ -321,7 +329,7 @@ pub trait ReaderExt: ReaderCore + Sized {
         &self,
         k: usize,
         interp: M0Interpretation,
-    ) -> Box<dyn Iterator<Item = Result<VoxelBlock<f32>, Error>> + '_> {
+    ) -> VoxelIter<'_, f32> {
         if self.mode() != Mode::Int8 {
             return Box::new(std::iter::once(Err(Error::ModeMismatch {
                 file_mode: self.mode(),

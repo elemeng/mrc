@@ -150,7 +150,7 @@ A detailed code review exists in `review.md` at the repository root. Items agent
 2. **`decode_slice` panics on misaligned byte count** (Medium): If `bytes.len()` is not a multiple of `T::BYTE_SIZE`, `decode_slice` panics rather than returning a `Result`.
 3. **`encode_slice` asserts length match** (Medium): Same as above — `assert_eq!` is used instead of returning a `Result`.
 4. **Duplicated writer logic**: The scatter-path write loop (`write_block` for sub-XY blocks) is copy-pasted across `Writer`, `MmapWriter`, and `CompressedWriter`. Refactoring into a shared helper would reduce maintenance.
-5. **`slices_u8` return type triggers clippy `type_complexity`**: The `Result<Box<dyn Iterator<...>>>` return type could be simplified with a type alias, though the `Result` wrapper is actually necessary here (mode check can fail).
+5. ~~**`slices_u8` return type triggers clippy `type_complexity`**: The `Result<Box<dyn Iterator<...>>>` return type could be simplified with a type alias, though the `Result` wrapper is actually necessary here (mode check can fail).~~ **Fixed**: Added a `VoxelIter<'a, T>` type alias.
 6. **`VoxelBlock::new` panics on shape mismatch** (Medium): The primary public constructor panics on mismatched data length; `try_new` is the `Result`-based alternative.
 7. **`TileStepper` edge-case confidence**: The tile-stepping logic is hard to visually verify for exact boundary conditions.
 8. **`MmapReader::data_bytes()` silently truncates on undersized files in permissive mode**: When the file is smaller than the header claims, the method returns whatever bytes are available instead of signalling an error. In strict mode the file size is validated on open.
