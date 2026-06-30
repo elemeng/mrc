@@ -22,7 +22,7 @@ use std::vec::Vec;
 /// # Example
 ///
 /// ```no_run
-/// use mrc::{Reader, ReaderExt};
+/// use mrc::Reader;
 ///
 /// fn main() -> Result<(), Box<dyn std::error::Error>> {
 ///     let reader = Reader::open("protein.mrc")?;

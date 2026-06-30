@@ -57,7 +57,7 @@ mrc = { version = "0.2", features = ["mmap", "f16", "simd", "parallel", "gzip"] 
 ### 📖 Reading MRC Files
 
 ```rust
-use mrc::{open, ReaderExt};
+use mrc::open;
 
 fn main() -> Result<(), mrc::Error> {
     // Open an MRC file - auto-detects plain, gzip, or bzip2
@@ -142,7 +142,7 @@ for slice in reader.slices::<f32>() {
 }
 ```
 
-**New in v0.2:** SIMD acceleration, parallel encoding, type conversion iterators, `MmapReader`, `MmapWriter`, compression support, unified `ReaderExt` trait, FEI extended header parsing.
+**New in v0.2:** SIMD acceleration, parallel encoding, type conversion iterators, `MmapReader`, `MmapWriter`, compression support, unified reader API, FEI extended header parsing.
 
 ## 🗺️ API Overview
 
@@ -168,10 +168,9 @@ for slice in reader.slices::<f32>() {
 
 ### Iterator API
 
-All reader types implement [`ReaderExt`], providing a unified iterator API:
+All reader types provide a unified iterator API directly:
 
 ```rust
-use mrc::ReaderExt;
 
 // Iterate over individual slices (Z axis)
 for slice in reader.slices::<f32>() {
@@ -202,8 +201,6 @@ for vol in reader.volumes::<f32>()? { /* full volumes from a stack */ }
 ### Direct Access
 
 ```rust
-use mrc::ReaderExt;
-
 // Read a specific subregion directly
 let block = reader.subregion::<f32>([0, 0, 0], [64, 64, 64])?;
 ```
@@ -215,8 +212,6 @@ the caller's responsibility. Only the overwhelmingly common cryo-EM workflows
 are supported as conveniences:
 
 ```rust
-use mrc::ReaderExt;
-
 // Read an Int16/Uint16/Int8/Float32/Float16 file as f32
 for slice in reader.slices_f32()? {
     let block = slice?;
@@ -634,7 +629,7 @@ cross-check, dimensions, mode, endianness, voxel size, and labels.
 - [x] Memory-mapped I/O (`MmapReader`, `MmapWriter`)
 - [x] All data types (modes 0–4, 6, 12, 101)
 - [x] Compression support (gzip, bzip2)
-- [x] Unified reader trait (`ReaderExt`)
+- [x] Unified reader API (inherent methods on Reader / MmapReader)
 - [x] FEI1/FEI2 extended header parsing
 - [x] Type conversion conveniences (`slices_f32`, `slices_u8`, `slices_mode0`)
 - [x] Header statistics computation and validation

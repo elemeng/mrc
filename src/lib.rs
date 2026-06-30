@@ -11,7 +11,7 @@
 //! # Quick Example
 //!
 //! ```no_run
-//! use mrc::{open, create, ReaderExt, VoxelBlock};
+//! use mrc::{open, create, VoxelBlock};
 //!
 //! fn main() -> Result<(), Box<dyn std::error::Error>> {
 //!     // Reading (auto-detects gzip/bzip2)
@@ -65,7 +65,7 @@ pub use mode::{
 pub use half::f16;
 /// Buffered MRC reader with lazy slice/slab iterators.
 pub use io::buffered::Reader;
-/// Extension trait providing iterator and convenience methods for all readers.
+#[doc(hidden)]
 pub use io::reader_common::ReaderExt;
 /// MRC file writer and its builder.
 pub use io::writer::{Writer, WriterBuilder};

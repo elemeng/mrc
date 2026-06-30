@@ -715,4 +715,70 @@ impl ReaderCore for crate::MmapReader {
 #[cfg(feature = "mmap")]
 impl ReaderExt for crate::MmapReader {}
 
+/// Generates inherent methods on reader types that delegate to [`ReaderExt`],
+/// so users never need to import the trait explicitly.
+macro_rules! impl_inherent_reader_methods {
+    ($ty:ty) => {
+        impl $ty {
+            pub fn slices<T: Voxel>(&self) -> RegionIter<'_, T, $ty, SliceStepper> {
+                ReaderExt::slices(self)
+            }
+            pub fn slabs<T: Voxel>(&self, k: usize) -> RegionIter<'_, T, $ty, SlabStepper> {
+                ReaderExt::slabs(self, k)
+            }
+            pub fn tiles<T: Voxel>(
+                &self,
+                tile_shape: [usize; 3],
+            ) -> RegionIter<'_, T, $ty, TileStepper> {
+                ReaderExt::tiles(self, tile_shape)
+            }
+            pub fn images<T: Voxel>(&self) -> RegionIter<'_, T, $ty, SliceStepper> {
+                ReaderExt::images(self)
+            }
+            pub fn image_stack<T: Voxel>(&self, k: usize) -> RegionIter<'_, T, $ty, SlabStepper> {
+                ReaderExt::image_stack(self, k)
+            }
+            pub fn planes<T: Voxel>(&self) -> RegionIter<'_, T, $ty, SliceStepper> {
+                ReaderExt::planes(self)
+            }
+            pub fn plane_stack<T: Voxel>(&self, k: usize) -> RegionIter<'_, T, $ty, SlabStepper> {
+                ReaderExt::plane_stack(self, k)
+            }
+            pub fn volumes<T: Voxel>(
+                &self,
+            ) -> Result<RegionIter<'_, T, $ty, SlabStepper>, Error> {
+                ReaderExt::volumes(self)
+            }
+            pub fn subregion<T: Voxel>(
+                &self,
+                offset: [usize; 3],
+                shape: [usize; 3],
+            ) -> Result<VoxelBlock<T>, Error> {
+                ReaderExt::subregion(self, offset, shape)
+            }
+            pub fn slices_f32(&self) -> VoxelIter<'_, f32> {
+                ReaderExt::slices_f32(self)
+            }
+            pub fn slabs_f32(&self, k: usize) -> VoxelIter<'_, f32> {
+                ReaderExt::slabs_f32(self, k)
+            }
+            pub fn slices_u8(&self) -> VoxelIter<'_, u8> {
+                ReaderExt::slices_u8(self)
+            }
+            pub fn slices_mode0(&self, interp: M0Interpretation) -> VoxelIter<'_, f32> {
+                ReaderExt::slices_mode0(self, interp)
+            }
+            pub fn slabs_mode0(
+                &self,
+                k: usize,
+                interp: M0Interpretation,
+            ) -> VoxelIter<'_, f32> {
+                ReaderExt::slabs_mode0(self, k, interp)
+            }
+        }
+    };
+}
 
+impl_inherent_reader_methods!(crate::Reader);
+#[cfg(feature = "mmap")]
+impl_inherent_reader_methods!(crate::MmapReader);

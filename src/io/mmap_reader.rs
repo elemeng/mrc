@@ -33,7 +33,7 @@ use std::vec::Vec;
 ///
 /// # Example
 /// ```no_run
-/// use mrc::{MmapReader, ReaderExt};
+/// use mrc::MmapReader;
 ///
 /// fn main() -> Result<(), Box<dyn std::error::Error>> {
 ///     let reader = MmapReader::open("large_file.mrc")?;
