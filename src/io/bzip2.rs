@@ -8,48 +8,17 @@ use crate::Error;
 
 use std::fs::File;
 use std::path::Path;
-use std::vec::Vec;
-
-/// Bzip2-compressed MRC file reader.
-///
-/// This is a thin newtype wrapper around [`Reader`](crate::Reader). All
-/// [`Reader`](crate::Reader) methods are available via [`Deref`](std::ops::Deref).
-#[derive(Debug)]
-pub struct Bzip2Reader(pub(crate) crate::Reader);
-
-impl std::ops::Deref for Bzip2Reader {
-    type Target = crate::Reader;
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl std::ops::DerefMut for Bzip2Reader {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
-    }
-}
-
-impl Bzip2Reader {
-    /// Open a bzip2-compressed MRC file.
-    pub fn open<P: AsRef<Path>>(path: P) -> Result<Self, Error> {
-        crate::Reader::open_bzip2(path).map(Self)
-    }
-
-    /// Open a bzip2-compressed MRC file in **permissive** mode.
-    pub fn open_permissive<P: AsRef<Path>>(path: P) -> Result<(Self, Vec<String>), Error> {
-        crate::Reader::open_bzip2_permissive(path).map(|(r, w)| (Self(r), w))
-    }
-}
 
 impl crate::Reader {
     /// Open a bzip2-compressed MRC file.
-    pub(crate) fn open_bzip2<P: AsRef<Path>>(path: P) -> Result<Self, Error> {
+    ///
+    /// The entire file is decompressed into memory on open.
+    pub fn open_bzip2<P: AsRef<Path>>(path: P) -> Result<Self, Error> {
         Self::_open_bzip2(path, false).map(|(r, _)| r)
     }
 
     /// Open a bzip2-compressed MRC file in **permissive** mode.
-    pub(crate) fn open_bzip2_permissive<P: AsRef<Path>>(
+    pub fn open_bzip2_permissive<P: AsRef<Path>>(
         path: P,
     ) -> Result<(Self, Vec<String>), Error> {
         Self::_open_bzip2(path, true)

@@ -1,8 +1,7 @@
 //! Shared helpers for all MRC reader implementations.
 //!
 //! This module contains the [`VoxelSource`] trait and helper functions that are
-//! used by [`Reader`](crate::Reader), [`MmapReader`](crate::MmapReader),
-//! [`GzipReader`](crate::GzipReader), [`Bzip2Reader`](crate::Bzip2Reader), and
+//! used by [`Reader`](crate::Reader), [`MmapReader`](crate::MmapReader), and
 //! [`MrcReader`](crate::MrcReader) to implement block validation, endian
 //! decoding, and the `slices_f32` / `slabs_f32` convenience iterators.
 
@@ -680,78 +679,6 @@ impl ReaderCore for crate::Reader {
     }
 }
 impl ReaderExt for crate::Reader {}
-
-#[cfg(feature = "gzip")]
-impl private::Sealed for crate::GzipReader {}
-#[cfg(feature = "gzip")]
-impl VoxelSource for crate::GzipReader {
-    fn vs_read_block_bytes<'a>(
-        &'a self,
-        offset: [usize; 3],
-        shape: [usize; 3],
-    ) -> Result<Cow<'a, [u8]>, Error> {
-        self.0.read_block_bytes(offset, shape).map(Cow::Owned)
-    }
-    fn vs_decode_block<T: Voxel>(&self, bytes: &[u8]) -> Result<Vec<T>, Error> {
-        self.0.decode_block(bytes)
-    }
-}
-#[cfg(feature = "gzip")]
-impl ReaderCore for crate::GzipReader {
-    fn shape(&self) -> VolumeShape {
-        self.0.shape()
-    }
-    fn mode(&self) -> Mode {
-        self.0.mode()
-    }
-    fn endian(&self) -> FileEndian {
-        self.0.endian
-    }
-    fn header(&self) -> &Header {
-        &self.0.header
-    }
-    fn ext_header_bytes(&self) -> &[u8] {
-        &self.0.ext_header
-    }
-}
-#[cfg(feature = "gzip")]
-impl ReaderExt for crate::GzipReader {}
-
-#[cfg(feature = "bzip2")]
-impl private::Sealed for crate::Bzip2Reader {}
-#[cfg(feature = "bzip2")]
-impl VoxelSource for crate::Bzip2Reader {
-    fn vs_read_block_bytes<'a>(
-        &'a self,
-        offset: [usize; 3],
-        shape: [usize; 3],
-    ) -> Result<Cow<'a, [u8]>, Error> {
-        self.0.read_block_bytes(offset, shape).map(Cow::Owned)
-    }
-    fn vs_decode_block<T: Voxel>(&self, bytes: &[u8]) -> Result<Vec<T>, Error> {
-        self.0.decode_block(bytes)
-    }
-}
-#[cfg(feature = "bzip2")]
-impl ReaderCore for crate::Bzip2Reader {
-    fn shape(&self) -> VolumeShape {
-        self.0.shape()
-    }
-    fn mode(&self) -> Mode {
-        self.0.mode()
-    }
-    fn endian(&self) -> FileEndian {
-        self.0.endian
-    }
-    fn header(&self) -> &Header {
-        &self.0.header
-    }
-    fn ext_header_bytes(&self) -> &[u8] {
-        &self.0.ext_header
-    }
-}
-#[cfg(feature = "bzip2")]
-impl ReaderExt for crate::Bzip2Reader {}
 
 #[cfg(feature = "mmap")]
 impl private::Sealed for crate::MmapReader {}

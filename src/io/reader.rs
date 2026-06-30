@@ -1,9 +1,8 @@
 //! Unified MRC reader with automatic compression detection.
 //!
-//! This module provides [`MrcReader`], an enum that wraps the concrete reader
-//! types ([`Reader`](crate::Reader), [`GzipReader`](crate::GzipReader),
-//! [`Bzip2Reader`](crate::Bzip2Reader)) and dispatches to the correct one
-//! based on file magic bytes.
+//! This module provides [`MrcReader`], an enum that wraps a [`Reader`](crate::Reader)
+//! and dispatches to the correct open method based on file magic bytes.
+//! Also provides the [`CompressionType`] enum and [`detect_compression`] helper.
 
 use crate::engine::block::{VolumeShape, VoxelBlock};
 use crate::engine::endian::FileEndian;
@@ -63,17 +62,16 @@ pub fn detect_compression<P: AsRef<Path>>(path: P) -> Result<CompressionType, Er
 /// This enum is the recommended entry point for reading MRC files when you do
 /// not know in advance whether the file is plain, gzip-compressed, or
 /// bzip2-compressed. It peeks at the first two bytes to decide, then delegates
-/// to the appropriate concrete reader ([`Reader`](crate::Reader),
-/// [`GzipReader`](crate::GzipReader), or [`Bzip2Reader`](crate::Bzip2Reader)).
+/// to the appropriate open method.
 ///
 /// Created via [`open`](crate::open) or [`MrcReader::open`].
 #[derive(Debug)]
 pub enum MrcReader {
     Plain(crate::Reader),
     #[cfg(feature = "gzip")]
-    Gzip(crate::GzipReader),
+    Gzip(crate::Reader),
     #[cfg(feature = "bzip2")]
-    Bzip2(crate::Bzip2Reader),
+    Bzip2(crate::Reader),
 }
 
 macro_rules! delegate_to_reader {
@@ -106,9 +104,9 @@ impl MrcReader {
         match detect_compression(&path)? {
             CompressionType::Plain => Ok(MrcReader::Plain(crate::Reader::open(path)?)),
             #[cfg(feature = "gzip")]
-            CompressionType::Gzip => Ok(MrcReader::Gzip(crate::GzipReader::open(path)?)),
+            CompressionType::Gzip => Ok(MrcReader::Gzip(crate::Reader::open_gzip(path)?)),
             #[cfg(feature = "bzip2")]
-            CompressionType::Bzip2 => Ok(MrcReader::Bzip2(crate::Bzip2Reader::open(path)?)),
+            CompressionType::Bzip2 => Ok(MrcReader::Bzip2(crate::Reader::open_bzip2(path)?)),
         }
     }
 
@@ -124,12 +122,12 @@ impl MrcReader {
             }
             #[cfg(feature = "gzip")]
             CompressionType::Gzip => {
-                let (r, w) = crate::GzipReader::open_permissive(path)?;
+                let (r, w) = crate::Reader::open_gzip_permissive(path)?;
                 Ok((MrcReader::Gzip(r), w))
             }
             #[cfg(feature = "bzip2")]
             CompressionType::Bzip2 => {
-                let (r, w) = crate::Bzip2Reader::open_permissive(path)?;
+                let (r, w) = crate::Reader::open_bzip2_permissive(path)?;
                 Ok((MrcReader::Bzip2(r), w))
             }
         }
@@ -185,27 +183,33 @@ impl MrcReader {
         matches!(self, MrcReader::Bzip2(_))
     }
 
-    /// Access the underlying plain [`Reader`](crate::Reader), if any.
+    /// Access the underlying [`Reader`](crate::Reader).
     #[allow(unreachable_patterns)]
     pub fn as_reader(&self) -> Option<&crate::Reader> {
         match self {
             MrcReader::Plain(r) => Some(r),
+            #[cfg(feature = "gzip")]
+            MrcReader::Gzip(r) => Some(r),
+            #[cfg(feature = "bzip2")]
+            MrcReader::Bzip2(r) => Some(r),
             _ => None,
         }
     }
 
-    /// Access the underlying [`GzipReader`](crate::GzipReader), if any.
+    /// Access the underlying [`Reader`](crate::Reader) if this is a gzip-compressed file.
     #[cfg(feature = "gzip")]
-    pub fn as_gzip_reader(&self) -> Option<&crate::GzipReader> {
+    #[deprecated(note = "all variants now wrap Reader directly; use as_reader() instead")]
+    pub fn as_gzip_reader(&self) -> Option<&crate::Reader> {
         match self {
             MrcReader::Gzip(r) => Some(r),
             _ => None,
         }
     }
 
-    /// Access the underlying [`Bzip2Reader`](crate::Bzip2Reader), if any.
+    /// Access the underlying [`Reader`](crate::Reader) if this is a bzip2-compressed file.
     #[cfg(feature = "bzip2")]
-    pub fn as_bzip2_reader(&self) -> Option<&crate::Bzip2Reader> {
+    #[deprecated(note = "all variants now wrap Reader directly; use as_reader() instead")]
+    pub fn as_bzip2_reader(&self) -> Option<&crate::Reader> {
         match self {
             MrcReader::Bzip2(r) => Some(r),
             _ => None,
@@ -324,10 +328,6 @@ mod tests {
         #[cfg(feature = "bzip2")]
         assert!(!reader.is_bzip2());
         assert!(reader.as_reader().is_some());
-        #[cfg(feature = "gzip")]
-        assert!(reader.as_gzip_reader().is_none());
-        #[cfg(feature = "bzip2")]
-        assert!(reader.as_bzip2_reader().is_none());
     }
 
     #[test]

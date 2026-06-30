@@ -74,21 +74,21 @@ pub use iter::RegionIter;
 /// Stepping strategies for [`RegionIter`].
 pub use iter::{SlabStepper, SliceStepper, TileStepper};
 
-/// Memory-mapped MRC writer and builder (requires `mmap` feature).
+/// Memory-mapped MRC writer (requires `mmap` feature).
 #[cfg(feature = "mmap")]
-pub use io::writer::{MmapWriter, MmapWriterBuilder};
+pub use io::writer::MmapWriter;
 
 /// Memory-mapped MRC reader (requires `mmap` feature).
 #[cfg(feature = "mmap")]
 pub use io::mmap_reader::MmapReader;
 
-/// Gzip-compressed MRC reader and writer (requires `gzip` feature).
+/// Gzip-compressed MRC writer (requires `gzip` feature).
 #[cfg(feature = "gzip")]
-pub use io::gzip::{GzipReader, GzipWriter};
+pub use io::gzip::GzipWriter;
 
-/// Bzip2-compressed MRC reader and writer (requires `bzip2` feature).
+/// Bzip2-compressed MRC writer (requires `bzip2` feature).
 #[cfg(feature = "bzip2")]
-pub use io::bzip2::{Bzip2Reader, Bzip2Writer};
+pub use io::bzip2::Bzip2Writer;
 
 /// FEI extended header metadata types and parsers.
 pub use fei::{

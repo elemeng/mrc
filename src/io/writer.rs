@@ -159,14 +159,13 @@ impl WriterBuilder {
         Writer::create(self.path, self.header, &self.ext_header)
     }
 
-    /// Switch to building a memory-mapped writer.
+    /// Build a memory-mapped writer.
+    ///
+    /// Equivalent to [`finish`](Self::finish) but creates an [`MmapWriter`]
+    /// instead of a [`Writer`].
     #[cfg(feature = "mmap")]
-    pub fn mmap(self) -> MmapWriterBuilder {
-        MmapWriterBuilder {
-            path: self.path,
-            header: self.header,
-            ext_header: self.ext_header,
-        }
+    pub fn finish_mmap(self) -> Result<MmapWriter, Error> {
+        MmapWriter::create(self.path, self.header, &self.ext_header)
     }
 }
 
@@ -443,10 +442,11 @@ fn update_header_stats_from_bytes(header: &mut Header, bytes: &[u8]) -> Result<(
 // MmapWriter
 // ============================================================================
 
-/// Builder for configuring and creating a memory-mapped MRC file writer.
+/// Memory-mapped MRC file writer.
 ///
-/// Memory-mapped writers are useful when you need to modify specific regions
-/// of an existing file without rewriting the entire dataset.
+/// Writes data directly into a memory-mapped region, letting the OS handle
+/// paging and flushing. This is efficient for large files and random-access
+/// modifications, but requires the `mmap` feature.
 ///
 /// # Example
 ///
@@ -457,8 +457,7 @@ fn update_header_stats_from_bytes(header: &mut Header, bytes: &[u8]) -> Result<(
 ///     let mut writer = create("output.mrc")
 ///         .shape([512, 512, 256])
 ///         .mode::<f32>()
-///         .mmap()
-///         .finish()?;
+///         .finish_mmap()?;
 ///
 ///     writer.write_block(&VoxelBlock::new(
 ///         [0, 0, 0], [512, 512, 1],
@@ -467,50 +466,8 @@ fn update_header_stats_from_bytes(header: &mut Header, bytes: &[u8]) -> Result<(
 ///     Ok(())
 /// }
 /// ```
-#[cfg(feature = "mmap")]
-#[derive(Debug)]
-pub struct MmapWriterBuilder {
-    path: PathBuf,
-    header: Header,
-    ext_header: Vec<u8>,
-}
-
-#[cfg(feature = "mmap")]
-impl MmapWriterBuilder {
-    /// Create a new builder with default header values.
-    pub fn new<P: AsRef<std::path::Path>>(path: P) -> Self {
-        Self {
-            path: path.as_ref().to_path_buf(),
-            header: Header::new(),
-            ext_header: Vec::new(),
-        }
-    }
-
-    builder_setters!();
-
-    /// Set the extended header bytes.
-    ///
-    /// When provided, `nsymbt` is automatically updated to match the byte
-    /// length.
-    pub fn ext_header_bytes(mut self, bytes: Vec<u8>) -> Self {
-        self.header.nsymbt = bytes.len() as i32;
-        self.ext_header = bytes;
-        self
-    }
-
-    pub fn finish(self) -> Result<MmapWriter, Error> {
-        MmapWriter::create(self.path, self.header, &self.ext_header)
-    }
-}
-
-/// Memory-mapped MRC file writer.
 ///
-/// Writes data directly into a memory-mapped region, letting the OS handle
-/// paging and flushing. This is efficient for large files and random-access
-/// modifications, but requires the `mmap` feature.
-///
-/// For most use cases, prefer creating via [`MmapWriterBuilder`](crate::MmapWriterBuilder)
-/// or chaining [`WriterBuilder::mmap`](crate::WriterBuilder::mmap).
+/// For most use cases, prefer creating via [`WriterBuilder::finish_mmap`](crate::WriterBuilder::finish_mmap).
 #[cfg(feature = "mmap")]
 #[derive(Debug)]
 pub struct MmapWriter {
@@ -527,7 +484,7 @@ impl MmapWriter {
     ///
     /// The header's endianness is forced to little-endian per crate policy.
     /// Provide extended header bytes via `ext_header` (pass `&[]` if none).
-    /// For most use cases, prefer [`MmapWriterBuilder`](crate::MmapWriterBuilder).
+    /// For most use cases, prefer [`WriterBuilder::finish_mmap`](crate::WriterBuilder::finish_mmap).
     pub fn create<P: AsRef<std::path::Path>>(
         path: P,
         mut header: Header,

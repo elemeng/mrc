@@ -8,48 +8,17 @@ use crate::Error;
 
 use std::fs::File;
 use std::path::Path;
-use std::vec::Vec;
-
-/// Gzip-compressed MRC file reader.
-///
-/// This is a thin newtype wrapper around [`Reader`](crate::Reader). All
-/// [`Reader`](crate::Reader) methods are available via [`Deref`](std::ops::Deref).
-#[derive(Debug)]
-pub struct GzipReader(pub(crate) crate::Reader);
-
-impl std::ops::Deref for GzipReader {
-    type Target = crate::Reader;
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl std::ops::DerefMut for GzipReader {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
-    }
-}
-
-impl GzipReader {
-    /// Open a gzip-compressed MRC file.
-    pub fn open<P: AsRef<Path>>(path: P) -> Result<Self, Error> {
-        crate::Reader::open_gzip(path).map(Self)
-    }
-
-    /// Open a gzip-compressed MRC file in **permissive** mode.
-    pub fn open_permissive<P: AsRef<Path>>(path: P) -> Result<(Self, Vec<String>), Error> {
-        crate::Reader::open_gzip_permissive(path).map(|(r, w)| (Self(r), w))
-    }
-}
 
 impl crate::Reader {
     /// Open a gzip-compressed MRC file.
-    pub(crate) fn open_gzip<P: AsRef<Path>>(path: P) -> Result<Self, Error> {
+    ///
+    /// The entire file is decompressed into memory on open.
+    pub fn open_gzip<P: AsRef<Path>>(path: P) -> Result<Self, Error> {
         Self::_open_gzip(path, false).map(|(r, _)| r)
     }
 
     /// Open a gzip-compressed MRC file in **permissive** mode.
-    pub(crate) fn open_gzip_permissive<P: AsRef<Path>>(
+    pub fn open_gzip_permissive<P: AsRef<Path>>(
         path: P,
     ) -> Result<(Self, Vec<String>), Error> {
         Self::_open_gzip(path, true)
