@@ -595,26 +595,36 @@ reader.validate_header_stats()?;  // Returns Ok or StatsMismatch error
 | `gzip` | Gzip-compressed MRC files | ✅ |
 | `bzip2` | Bzip2-compressed MRC files | ❌ |
 
-## 🛠️ CLI Tool: `mrc-validate`
+## 🛠️ CLI Tools
 
-The crate ships a standalone validation binary:
+The crate ships two standalone binaries:
+
+### `mrc-validate` — validation
 
 ```bash
-# Build
 cargo build --release --bin mrc-validate
 
-# Basic validation
 ./mrc-validate protein.mrc
-
-# Permissive mode (warns instead of erroring on non-critical issues)
 ./mrc-validate --permissive legacy.mrc
-
-# Stats cross-check only
 ./mrc-validate --stats-only protein.mrc
 ```
 
 Output includes compression type, header validity, data statistics
 cross-check, dimensions, mode, endianness, voxel size, and labels.
+
+### `mrc-header` — header inspection
+
+```bash
+cargo build --release --bin mrc-header
+
+./mrc-header protein.mrc
+./mrc-header --permissive legacy.mrc
+```
+
+Prints every header field with semantic interpretation: volume type
+(single image / stack / volume / volume stack), axis names (X/Y/Z),
+space group description, extended header type, sentinel-aware
+statistics display, and validation summary.
 
 ## 🛣️ Development Roadmap
 
