@@ -61,4 +61,6 @@ impl crate::io::writer::Compressor for GzipCompressor {
 /// Because gzip does not support random access, the entire file is buffered
 /// in memory and compressed only on finalize.
 /// For large volumes consider using [`Writer`](crate::Writer) instead.
+///
+/// Construct via [`WriterBuilder::finish_gzip`](crate::WriterBuilder::finish_gzip)
 pub type GzipWriter = crate::io::writer::CompressedWriter<GzipCompressor>;

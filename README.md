@@ -161,8 +161,8 @@ for slice in reader.slices::<f32>() {
 | [`Mode`] | Data type enumeration | `Mode::Float32` |
 | [`VoxelBlock<T>`] | Chunk of voxel data | `VoxelBlock::new(offset, shape, data)` |
 | [`VolumeShape`] | Volume dimensions | `VolumeShape::new(nx, ny, nz)` |
-| [`GzipWriter`] | Gzip-compressed writer | `GzipWriter::create("out.mrc.gz", header, &[])` |
-| [`Bzip2Writer`] | Bzip2-compressed writer | `Bzip2Writer::create("out.mrc.bz2", header, &[])` |
+| [`GzipWriter`] | Gzip-compressed writer | `create("out.mrc.gz").shape(dims).mode::<T>().finish_gzip()?` |
+| [`Bzip2Writer`] | Bzip2-compressed writer | `create("out.mrc.bz2").shape(dims).mode::<T>().finish_bzip2()?` |
 | [`Fei1Metadata`] | FEI1 extended metadata | `Fei1Metadata::from_bytes(bytes)` |
 | [`Fei2Metadata`] | FEI2 extended metadata | `Fei2Metadata::from_bytes(bytes)` |
 
@@ -294,14 +294,12 @@ let reader = Bzip2Reader::open("protein.mrc.bz2")?;
 And write compressed files:
 
 ```rust
-use mrc::{GzipWriter, Bzip2Writer, Header, VoxelBlock};
+use mrc::{create, VoxelBlock};
 
-let header = HeaderBuilder::new()
+let mut writer = create("output.mrc.gz")
     .shape([256, 256, 128])
     .mode::<f32>()
-    .build()?;
-
-let mut writer = GzipWriter::create("output.mrc.gz", header, &[])?;
+    .finish_gzip()?;
 writer.write_block(&VoxelBlock::new(
     [0, 0, 0], [256, 256, 1], vec![0.0f32; 256*256],
 )?)?;

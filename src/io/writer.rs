@@ -167,6 +167,26 @@ impl WriterBuilder {
     pub fn finish_mmap(self) -> Result<MmapWriter, Error> {
         MmapWriter::create(self.path, self.header, &self.ext_header)
     }
+
+    /// Build a gzip-compressed writer.
+    ///
+    /// Because gzip does not support random access, the entire file is buffered
+    /// in memory and compressed only on finalize.
+    /// For large volumes consider using [`finish`](Self::finish) instead.
+    #[cfg(feature = "gzip")]
+    pub fn finish_gzip(self) -> Result<crate::GzipWriter, Error> {
+        CompressedWriter::create(self.path, self.header, &self.ext_header)
+    }
+
+    /// Build a bzip2-compressed writer.
+    ///
+    /// Because bzip2 does not support random access, the entire file is buffered
+    /// in memory and compressed only on finalize.
+    /// For large volumes consider using [`finish`](Self::finish) instead.
+    #[cfg(feature = "bzip2")]
+    pub fn finish_bzip2(self) -> Result<crate::Bzip2Writer, Error> {
+        CompressedWriter::create(self.path, self.header, &self.ext_header)
+    }
 }
 
 /// MRC file writer using standard file I/O.
@@ -187,12 +207,7 @@ pub struct Writer {
 }
 
 impl Writer {
-    /// Create a new MRC file from a pre-built header.
-    ///
-    /// The header's endianness is forced to little-endian per crate policy.
-    /// Provide extended header bytes via `ext_header` (pass `&[]` if none).
-    /// For most use cases, prefer [`WriterBuilder`](crate::WriterBuilder).
-    pub fn create<P: AsRef<std::path::Path>>(
+    pub(crate) fn create<P: AsRef<std::path::Path>>(
         path: P,
         mut header: Header,
         ext_header: &[u8],
@@ -480,12 +495,7 @@ pub struct MmapWriter {
 
 #[cfg(feature = "mmap")]
 impl MmapWriter {
-    /// Create a new memory-mapped MRC file from a pre-built header.
-    ///
-    /// The header's endianness is forced to little-endian per crate policy.
-    /// Provide extended header bytes via `ext_header` (pass `&[]` if none).
-    /// For most use cases, prefer [`WriterBuilder::finish_mmap`](crate::WriterBuilder::finish_mmap).
-    pub fn create<P: AsRef<std::path::Path>>(
+    pub(crate) fn create<P: AsRef<std::path::Path>>(
         path: P,
         mut header: Header,
         ext_header: &[u8],
@@ -759,10 +769,7 @@ pub struct CompressedWriter<C: Compressor> {
 }
 
 impl<C: Compressor> CompressedWriter<C> {
-    /// Create a new compressed MRC file.
-    ///
-    /// Provide extended header bytes via `ext_header` (pass `&[]` if none).
-    pub fn create<P: AsRef<std::path::Path>>(
+    pub(crate) fn create<P: AsRef<std::path::Path>>(
         path: P,
         header: Header,
         ext_header: &[u8],

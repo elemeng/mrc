@@ -64,4 +64,6 @@ impl crate::io::writer::Compressor for Bzip2Compressor {
 /// Because bzip2 does not support random access, the entire file is buffered
 /// in memory and compressed only on finalize.
 /// For large volumes consider using [`Writer`](crate::Writer) instead.
+///
+/// Construct via [`WriterBuilder::finish_bzip2`](crate::WriterBuilder::finish_bzip2)
 pub type Bzip2Writer = crate::io::writer::CompressedWriter<Bzip2Compressor>;
