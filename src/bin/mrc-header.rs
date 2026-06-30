@@ -1,11 +1,11 @@
-//! MRC header inspection CLI with semantic interpretation.
+//! MRC header inspector with key:value output and optional validation.
 //!
 //! Usage:
 //! ```text
-//! mrc-header <file.mrc>
-//! mrc-header --permissive <file.mrc>
+//! mrc-header [--permissive] [--force] <file.mrc>
 //! ```
 
+use mrc::validate::{Severity, validate_full};
 use mrc::{Mode, Reader};
 use std::env;
 use std::process;
@@ -13,10 +13,8 @@ use std::process;
 fn usage() {
     eprintln!("mrc-header v{} — MRC header inspector", env!("CARGO_PKG_VERSION"));
     eprintln!();
-    eprintln!("Reads an MRC file and prints every header field with human-readable");
-    eprintln!("interpretation: volume type, axis order, space group, extended header");
-    eprintln!("format, sentinel-aware statistics, and more.");
-    eprintln!("Auto-detects gzip/bzip2 compression.");
+    eprintln!("Reads an MRC file and prints header fields in key: value format.");
+    eprintln!("By default validates each field inline. Use --force to skip validation.");
     eprintln!();
     eprintln!("USAGE:");
     eprintln!("  mrc-header [OPTIONS] <file>");
@@ -25,13 +23,13 @@ fn usage() {
     eprintln!("  <file>         Path to an MRC file (.mrc, .mrc.gz, .mrc.bz2)");
     eprintln!();
     eprintln!("OPTIONS:");
-    eprintln!("  -p, --permissive   Open in permissive mode (report non-critical issues");
-    eprintln!("                     as warnings instead of hard errors)");
+    eprintln!("  -p, --permissive   Open in permissive mode");
+    eprintln!("  -f, --force        Skip validation, show raw values only");
     eprintln!("  -h, --help         Print this help message");
     eprintln!();
     eprintln!("EXAMPLES:");
     eprintln!("  mrc-header protein.mrc");
-    eprintln!("  mrc-header --permissive legacy.mrc");
+    eprintln!("  mrc-header --force protein.mrc");
 }
 
 fn main() {
@@ -42,11 +40,13 @@ fn main() {
     }
 
     let mut permissive = false;
+    let mut force = false;
     let mut path: Option<&str> = None;
 
     for arg in &args {
         match arg.as_str() {
             "--permissive" | "-p" => permissive = true,
+            "--force" | "-f" => force = true,
             _ if arg.starts_with('-') => {
                 eprintln!("Unknown option: {}", arg);
                 usage();
@@ -84,253 +84,187 @@ fn main() {
         }
     };
 
+    // Run validation (unless --force)
+    let report = if force {
+        None
+    } else {
+        match validate_full(path, permissive) {
+            Ok(r) => {
+                let has_errors = !r.is_valid();
+                Some((r.issues, has_errors))
+            }
+            Err(_) => None,
+        }
+    };
+
+    let issues_map: std::collections::HashMap<&str, &mrc::validate::ValidationIssue> = report.as_ref().map(|(issues, _)| {
+        issues.iter().filter(|i| i.severity == Severity::Error).map(|i| (i.category, i)).collect()
+    }).unwrap_or_default();
+
+    let has_errors = report.as_ref().map(|(_, e)| *e).unwrap_or(false);
+
     let header = reader.header();
     let mode = reader.mode();
-    let shape = reader.shape();
     let endian = reader.endian();
     let data_size = header.data_size().unwrap_or(0);
 
-    println!("╔══════════════════════════════════════════════════════════════╗");
-    println!("║              MRC Header Summary                             ║");
-    println!("╚══════════════════════════════════════════════════════════════╝");
-    println!();
+    // ── Identity ──
+    println!("## Identity");
+    print_map("map", &header.map);
+    let header_err = if issues_map.contains_key("Header") { " ❌" } else { "" };
+    println!("nversion:      {}{}", header.nversion(), header_err);
+    println!("compression:   auto-detected");
 
-    // ── File Identity ──
-    println!("── File Identity ──");
-    print_map_field("MAP identifier", &header.map);
-    println!(
-        "  Format version:     MRC-2014 (NVERSION {})",
-        header.nversion()
-    );
-    println!(
-        "  File size:          ~{} bytes",
-        1024 + header.nsymbt.max(0) as usize + data_size
-    );
-    println!();
+    // ── Dimensions ──
+    println!("\n## Dimensions");
+    println!("nx:            {}", header.nx);
+    println!("ny:            {}", header.ny);
+    println!("nz:            {}", header.nz);
+    let vol_type = if header.is_single_image() { "single image"
+        } else if header.is_image_stack() { "image stack"
+        } else if header.is_volume_stack() {
+            let nvol = if header.mz > 0 { header.nz / header.mz } else { 0 };
+            println!("sub-volumes:   {} × {} slices", nvol, header.mz);
+            "volume stack"
+        } else { "3D volume" };
+    let vol_err = if issues_map.contains_key("Volume") { " ❌" } else { "" };
+    println!("volume-type:   {}{}", vol_type, vol_err);
 
-    // ── Volume Dimensions ──
-    println!("── Volume Dimensions ──");
-    println!(
-        "  Grid size:          {} × {} × {} voxels",
-        header.nx, header.ny, header.nz
-    );
-    println!(
-        "  Total voxels:       {}",
-        shape.total_voxels().unwrap_or(0)
-    );
-    let vol_type = if header.is_single_image() {
-        "Single 2D image"
-    } else if header.is_image_stack() {
-        "Image stack"
-    } else if header.is_volume_stack() {
-        "Volume stack"
-    } else {
-        "3D volume"
-    };
-    println!("  Volume type:        {}", vol_type);
-    if header.is_volume_stack() {
-        let nvol = if header.mz > 0 {
-            header.nz / header.mz
-        } else {
-            0
-        };
-        println!("  Sub-volumes:        {} × {} slices each", nvol, header.mz);
-    }
-    println!();
-
-    // ── Data Type ──
-    println!("── Data Type ──");
+    // ── Data type ──
+    println!("\n## Data type");
     let mode_label = match mode {
-        Mode::Int8 => "Signed 8-bit integer",
-        Mode::Int16 => "Signed 16-bit integer",
-        Mode::Float32 => "32-bit float",
-        Mode::Int16Complex => "Complex 16-bit integer (real + imag i16)",
-        Mode::Float32Complex => "Complex 32-bit float (real + imag f32)",
-        Mode::Uint16 => "Unsigned 16-bit integer",
-        Mode::Float16 => "16-bit float (half-precision)",
-        Mode::Packed4Bit => "4-bit packed (2 values per byte)",
-        _ => "Unknown mode",
+        Mode::Int8 => "int8", Mode::Int16 => "int16", Mode::Float32 => "float32",
+        Mode::Int16Complex => "complex-int16", Mode::Float32Complex => "complex-float32",
+        Mode::Uint16 => "uint16", Mode::Float16 => "float16",
+        Mode::Packed4Bit => "packed-4bit", _ => "unknown",
     };
-    println!("  Mode:               {} ({})", mode_label, mode.as_i32());
-    println!("  Bytes per voxel:    {}", mode.byte_size());
-    println!("  Total data size:    {} bytes", data_size);
-    println!();
+    println!("mode:          {} ({}){}", mode_label, mode.as_i32(), header_err);
+    println!("bytes/voxel:   {}", mode.byte_size());
+    println!("data-bytes:    {}", data_size);
 
     // ── Endianness ──
-    println!("── Endianness ──");
+    println!("\n## Endianness");
     let (endian_label, endian_note) = match endian {
-        mrc::FileEndian::LittleEndian => ("Little-endian", "matches most modern systems"),
-        mrc::FileEndian::BigEndian => ("Big-endian", "non-native on x86_64 / ARM"),
+        mrc::FileEndian::LittleEndian => ("little-endian", "native"),
+        mrc::FileEndian::BigEndian => ("big-endian", "non-native"),
     };
-    let machine_stamp = format!(
-        "{:02X} {:02X} {:02X} {:02X}",
-        header.machst[0], header.machst[1], header.machst[2], header.machst[3]
-    );
-    println!("  MACHST stamp:       {}", machine_stamp);
-    println!("  Byte order:         {} ({})", endian_label, endian_note);
-    println!();
+    let machst = format!("{:02X} {:02X} {:02X} {:02X}",
+        header.machst[0], header.machst[1], header.machst[2], header.machst[3]);
+    let endian_err = if issues_map.contains_key("Endianness") { " ❌" } else { "" };
+    println!("machst:        {}{}", machst, endian_err);
+    println!("byte-order:    {} ({})", endian_label, endian_note);
 
-    // ── Cell Geometry ──
-    println!("── Cell Geometry ──");
-    println!(
-        "  Cell lengths (Å):   x={:.3}, y={:.3}, z={:.3}",
-        header.xlen, header.ylen, header.zlen
-    );
-    println!(
-        "  Cell angles (°):    α={:.1}, β={:.1}, γ={:.1}",
-        header.alpha, header.beta, header.gamma
-    );
+    // ── Cell geometry ──
+    println!("\n## Cell geometry");
+    println!("cell-lengths:  {:.3} {:.3} {:.3} Å", header.xlen, header.ylen, header.zlen);
+    println!("cell-angles:   {:.1} {:.1} {:.1}°", header.alpha, header.beta, header.gamma);
     let vs = header.voxel_size();
-    println!(
-        "  Voxel size (Å/px):  x={:.4}, y={:.4}, z={:.4}",
-        vs[0], vs[1], vs[2]
-    );
-    println!(
-        "  Sampling (mx/my/mz): {} × {} × {}",
-        header.mx, header.my, header.mz
-    );
-    println!(
-        "  Origin (nx/y/zstart): {} {} {}",
-        header.nxstart, header.nystart, header.nzstart
-    );
-    println!();
+    println!("voxel-size:    {:.4} {:.4} {:.4} Å/px", vs[0], vs[1], vs[2]);
+    println!("sampling:      {} {} {}", header.mx, header.my, header.mz);
+    println!("nstart:        {} {} {}", header.nxstart, header.nystart, header.nzstart);
 
-    // ── Axis Mapping ──
-    println!("── Axis Order ──");
-    let axis_name = |a: i32| match a {
-        1 => "X",
-        2 => "Y",
-        3 => "Z",
-        _ => "?",
-    };
-    println!(
-        "  Column (fast) axis:  MAPC={} ({})",
-        header.mapc,
-        axis_name(header.mapc)
-    );
-    println!(
-        "  Row (medium) axis:   MAPR={} ({})",
-        header.mapr,
-        axis_name(header.mapr)
-    );
-    println!(
-        "  Section (slow) axis: MAPS={} ({})",
-        header.maps,
-        axis_name(header.maps)
-    );
-    println!();
+    // ── Axis order ──
+    println!("\n## Axis order");
+    let axis = |a: i32| match a { 1 => "X", 2 => "Y", 3 => "Z", _ => "?" };
+    println!("mapc:          {} ({})", header.mapc, axis(header.mapc));
+    println!("mapr:          {} ({})", header.mapr, axis(header.mapr));
+    println!("maps:          {} ({})", header.maps, axis(header.maps));
 
-    // ── Space Group ──
-    println!("── Space Group (ISPG) ──");
-    let ispg_desc: String = if header.ispg == 0 {
-        "Image or image stack (no crystallographic symmetry)".into()
-    } else if (1..=230).contains(&header.ispg) {
-        "Crystallographic space group".into()
-    } else if (401..=630).contains(&header.ispg) {
-        let real_ispg = header.ispg - 400;
-        if (1..=230).contains(&real_ispg) {
-            format!(
-                "Volume stack (ISPG = {} + 400, space group {})",
-                real_ispg, real_ispg
-            )
-        } else {
-            format!("Volume stack (ISPG = {})", header.ispg)
-        }
-    } else {
-        format!("Non-standard ({})", header.ispg)
-    };
-    println!("  ISPG:               {} — {}", header.ispg, ispg_desc);
-    println!();
+    // ── Space group ──
+    println!("\n## Space group");
+    let ispg_desc = if header.ispg == 0 { "image stack"
+        } else if (1..=230).contains(&header.ispg) { "crystallographic"
+        } else if (401..=630).contains(&header.ispg) {
+            let r = header.ispg - 400;
+            if (1..=230).contains(&r) { "volume stack (space group)" } else { "volume stack" }
+        } else { "non-standard" };
+    println!("ispg:          {} ({}){}", header.ispg, ispg_desc, header_err);
 
-    // ── Data Statistics ──
-    println!("── Data Statistics ──");
-    let stat_undetermined = header.dmin > header.dmax;
-    let fmt_stat = |v: f32, label: &str| {
+    // ── Statistics ──
+    println!("\n## Statistics");
+    let stat_unset = header.dmin > header.dmax;
+    let fmt = |v: f32, label: &str| {
         let undetermined = match label {
-            "dmin" | "dmax" => stat_undetermined,
-            "dmean" => stat_undetermined || header.dmean < header.dmin.min(header.dmax),
+            "dmin" | "dmax" => stat_unset,
+            "dmean" => stat_unset || header.dmean < header.dmin.min(header.dmax),
             "rms" => header.rms < 0.0,
             _ => false,
         };
-        if undetermined {
-            format!("{:.6} (not well-determined)", v)
-        } else {
-            format!("{:.6}", v)
-        }
+        if undetermined { format!("{:.6} (unset)", v) } else { format!("{:.6}", v) }
     };
-    println!("  dmin:               {}", fmt_stat(header.dmin, "dmin"));
-    println!("  dmax:               {}", fmt_stat(header.dmax, "dmax"));
-    println!("  dmean:              {}", fmt_stat(header.dmean, "dmean"));
-    println!("  rms:                {}", fmt_stat(header.rms, "rms"));
-    println!();
+    println!("dmin:          {}", fmt(header.dmin, "dmin"));
+    println!("dmax:          {}", fmt(header.dmax, "dmax"));
+    println!("dmean:         {}", fmt(header.dmean, "dmean"));
+    println!("rms:           {}", fmt(header.rms, "rms"));
 
-    // ── Extended Header ──
-    println!("── Extended Header ──");
+    // Check for stats validation issues
+    let stats_issue = issues_map.get("Statistics");
+    if let Some(issue) = stats_issue {
+        println!("stats-check:   FAIL ❌ {}", issue.message);
+    } else if !force {
+        println!("stats-check:   OK");
+    }
+
+    // ── Extended header ──
+    println!("\n## Extended header");
     let ext_size = header.nsymbt.max(0) as usize;
-    println!("  NSYMBT:             {} bytes", ext_size);
+    println!("nsymbt:        {} bytes", ext_size);
     if let Ok(exttyp) = header.exttyp_str() {
-        let exttyp_clean = exttyp.trim_end_matches('\0');
-        if !exttyp_clean.is_empty() {
-            println!("  EXTTYP:             {}", exttyp_clean);
-            let ext_desc = match exttyp_clean {
-                "CCP4" => "CCP4 symmetry records",
-                "MRCO" => "MRC extended header (IMOD)",
-                "SERI" => "SerialEM extended header",
-                "AGAR" => "FEI/Applied Microscopy extended header",
-                "FEI1" => "FEI Titan extended header (768 bytes/record)",
-                "FEI2" => "FEI Titan extended header v2 (888 bytes/record)",
-                "HDF5" => "HDF5 dataset (external)",
-                _ => "Proprietary or unknown format",
+        let clean = exttyp.trim_end_matches('\0');
+        if !clean.is_empty() {
+            let desc = match clean {
+                "CCP4" => "CCP4 symmetry", "MRCO" => "IMOD", "SERI" => "SerialEM",
+                "AGAR" => "FEI/AMI", "FEI1" => "FEI Titan v1",
+                "FEI2" => "FEI Titan v2", "HDF5" => "HDF5",
+                _ => "proprietary",
             };
-            println!("           {}", ext_desc);
+            println!("exttyp:        {} ({})", clean, desc);
         }
     }
-    println!();
 
     // ── Labels ──
     let labels = header.get_labels();
     if !labels.is_empty() {
-        println!("── Labels ({}) ──", labels.len());
+        println!("\n## Labels ({})", labels.len());
         for (i, label) in labels.iter().enumerate() {
-            println!("  [{}] {}", i, label);
+            println!("label[{}]:      {}", i, label);
         }
-        println!();
     }
 
     // ── Origin ──
-    println!("── Origin ──");
-    println!(
-        "  Origin (x, y, z):   {:.1}, {:.1}, {:.1}",
-        header.origin[0], header.origin[1], header.origin[2]
-    );
-    println!();
+    println!("\n## Origin");
+    println!("origin:        {:.1} {:.1} {:.1}", header.origin[0], header.origin[1], header.origin[2]);
 
-    // ── Validation ──
-    println!("── Validation ──");
-    match header.validate_detailed() {
-        Ok(()) => println!("  Header structure:   ✅ Valid"),
-        Err(e) => println!("  Header structure:   ❌ {}", e),
-    }
-    match reader.validate_header_stats() {
-        Ok(()) => println!("  Data statistics:    ✅ Match header"),
-        Err(_) => println!("  Data statistics:    ⚠️  Mismatch (run mrc-validate for details)"),
+    // ── Validation summary ──
+    if !force {
+        println!("\n## Validation");
+        if has_errors {
+            println!("status:        FAIL");
+            // Print all error messages
+            if let Some((issues, _)) = report.as_ref() {
+                for issue in issues.iter().filter(|i| i.severity == Severity::Error) {
+                    println!("  ❌ [{}] {}", issue.category, issue.message);
+                }
+                for issue in issues.iter().filter(|i| i.severity == Severity::Warning) {
+                    println!("  ⚠️  [{}] {}", issue.category, issue.message);
+                }
+            }
+        } else {
+            println!("status:        OK");
+        }
     }
 
+    // ── Warnings (permissive mode) ──
     if !warnings.is_empty() {
-        println!();
-        println!("── Warnings ──");
+        println!("\n## Warnings");
         for w in &warnings {
             println!("  ⚠️  {}", w);
         }
     }
 }
 
-/// Pretty-print a 4-byte MAP field.
-fn print_map_field(label: &str, map: &[u8; 4]) {
+fn print_map(label: &str, map: &[u8; 4]) {
     let ascii = String::from_utf8_lossy(map);
-    let hex = format!(
-        "{:02X} {:02X} {:02X} {:02X}",
-        map[0], map[1], map[2], map[3]
-    );
-    println!("  {:<18} {} ({})", label, ascii, hex);
+    let hex = format!("{:02X} {:02X} {:02X} {:02X}", map[0], map[1], map[2], map[3]);
+    println!("{}: {} ({})", label, ascii, hex);
 }
