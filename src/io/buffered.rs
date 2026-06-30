@@ -33,6 +33,13 @@ use std::vec::Vec;
 ///     Ok(())
 /// }
 /// ```
+///
+/// ## Opening compressed files
+///
+/// [`Reader::open`] auto-detects gzip and bzip2 compression from magic bytes.
+/// Use [`open_plain`](Self::open_plain) to force plain (uncompressed) reading,
+/// [`open_gzip`](Self::open_gzip) for gzip-only, or
+/// [`open_bzip2`](Self::open_bzip2) for bzip2-only.
 #[derive(Debug)]
 pub struct Reader {
     pub(crate) header: Header,
@@ -43,11 +50,27 @@ pub struct Reader {
 }
 
 impl Reader {
+    /// Open an MRC file, auto-detecting gzip/bzip2 compression from magic bytes.
+    ///
+    /// For plain files this is equivalent to [`open_plain`](Self::open_plain).
+    /// For gzip files it delegates to [`open_gzip`](Self::open_gzip); for bzip2
+    /// files to [`open_bzip2`](Self::open_bzip2).
     pub fn open<P: AsRef<std::path::Path>>(path: P) -> Result<Self, Error> {
-        Self::_open(path, false).map(|(r, _)| r)
+        match crate::io::reader::detect_compression(&path)? {
+            crate::io::reader::CompressionType::Plain => Self::open_plain(path),
+            #[cfg(feature = "gzip")]
+            crate::io::reader::CompressionType::Gzip => Self::open_gzip(path),
+            #[cfg(feature = "bzip2")]
+            crate::io::reader::CompressionType::Bzip2 => Self::open_bzip2(path),
+        }
     }
 
-    /// Open an MRC file in **permissive** mode.
+    /// Open a plain (uncompressed) MRC file.
+    pub fn open_plain<P: AsRef<std::path::Path>>(path: P) -> Result<Self, Error> {
+        Self::_open_plain(path, false).map(|(r, _)| r)
+    }
+
+    /// Open in **permissive** mode, auto-detecting compression.
     ///
     /// Non-fatal header issues (unusual MAP field, unexpected `nversion`,
     /// non-standard axis mapping, etc.) are collected as warning strings
@@ -56,10 +79,16 @@ impl Reader {
     pub fn open_permissive<P: AsRef<std::path::Path>>(
         path: P,
     ) -> Result<(Self, Vec<String>), Error> {
-        Self::_open(path, true)
+        match crate::io::reader::detect_compression(&path)? {
+            crate::io::reader::CompressionType::Plain => Self::_open_plain(path, true),
+            #[cfg(feature = "gzip")]
+            crate::io::reader::CompressionType::Gzip => Self::open_gzip_permissive(path),
+            #[cfg(feature = "bzip2")]
+            crate::io::reader::CompressionType::Bzip2 => Self::open_bzip2_permissive(path),
+        }
     }
 
-    fn _open<P: AsRef<std::path::Path>>(
+    fn _open_plain<P: AsRef<std::path::Path>>(
         path: P,
         permissive: bool,
     ) -> Result<(Self, Vec<String>), Error> {

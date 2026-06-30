@@ -80,7 +80,7 @@ src/
 │   └── stats.rs        # Statistics computation for header validation
 ├── io/
 │   ├── mod.rs
-│   ├── reader.rs       # `MrcReader` enum (auto-detects compression), `CompressionType`
+│   ├── reader.rs       # `CompressionType` and `detect_compression` helpers
 │   ├── reader_common.rs# Shared `VoxelSource` trait and helper functions
 │   ├── buffered.rs     # In-memory `Reader`
 │   ├── mmap_reader.rs  # `MmapReader` (zero-copy, requires `mmap`)
@@ -106,7 +106,7 @@ re-exported, are `pub mod` but with `#[doc(hidden)]` on internal plumbing:
 
 | Visibility | Items |
 |------------|-------|
-| **Public (in lib.rs)** | `open`, `create`, `MrcReader`, `ReaderExt`, `WriterBuilder`, `Writer`, `Header`, `HeaderBuilder`, `Mode`, `Voxel`, `VoxelBlock`, `VolumeShape`, `RegionIter`, `FileEndian`, `Error`, `Reader`, `MmapReader`, `MmapWriter`, `GzipWriter`, `Bzip2Writer`, FEI types |
+| **Public (in lib.rs)** | `open`, `create`, `Reader`, `ReaderExt`, `WriterBuilder`, `Writer`, `Header`, `HeaderBuilder`, `Mode`, `Voxel`, `VoxelBlock`, `VolumeShape`, `RegionIter`, `FileEndian`, `Error`, `MmapReader`, `MmapWriter`, `GzipWriter`, `Bzip2Writer`, FEI types |
 | **`#[doc(hidden)]`** | `VoxelSource`, `ReaderCore`, `EndianCodec`, `Stepper`, `Compressor`, `MachstInfo`, `CompressionType`, `detect_compression`, `GzipCompressor`, `Bzip2Compressor` |
 | **`pub(crate)` only** | `validate_block_bounds`, `gather_block_bytes`, `decode_block`, `decode_native_endian`, `parse_header`, `DecompressedMrc`, `open_compressed`, `encode_block_to_buf` |
 

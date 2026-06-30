@@ -38,10 +38,9 @@ mrc = { version = "0.2", features = ["mmap", "f16", "simd", "parallel", "gzip"] 
 └─────────────────┘     └──────────────────┘     └────────────────┘
          │                       │                       │
    ┌─────────────┐          ┌────────┐              ┌─────────┐
-   │ MrcReader   │          │ Header │              │ VoxelBlock
-   │ Reader      │          │        │              │         │
-   │ MmapReader  │          └────────┘              └─────────┘
-   │ Writer      │
+   │ Reader      │          │ Header │              │ VoxelBlock
+   │ MmapReader  │          │        │              │         │
+   │ Writer      │          └────────┘              └─────────┘
    │ MmapWriter  │
    │ GzipWriter  │
    │ Bzip2Writer │
@@ -151,7 +150,7 @@ for slice in reader.slices::<f32>() {
 
 | Type | Purpose | Example |
 |------|---------|---------|
-| [`MrcReader`] | Auto-detect compression | `open("file.mrc")?` |
+| [`Reader`] | Auto-detect compression | [`Reader::open`] / [`open()`] |
 | [`Reader`] | Read plain MRC files | `Reader::open("file.mrc")?` |
 | [`MmapReader`] | Memory-mapped reading | `MmapReader::open("large.mrc")?` |
 | [`Writer`] | Write MRC files | `create("out.mrc").shape([64,64,64]).mode::<f32>().finish()?` |
@@ -272,7 +271,7 @@ floats. Use `slices_f32()` for automatic conversion.
 
 ### Compression
 
-`MrcReader` (and the convenience `open()`) automatically detects gzip and bzip2
+[`Reader::open`] (and the convenience [`open()`]) automatically detects gzip and bzip2
 compression from the file magic bytes:
 
 ```rust
@@ -348,7 +347,7 @@ writer.finalize()?;
 
 | Use | When |
 |-----|------|
-| `Reader` / `MrcReader` | Small files, simple sequential access |
+| `Reader` | Small files, simple sequential access |
 | `MmapReader` | Large files, memory-constrained environments, random access |
 
 ### Permissive Mode
@@ -357,9 +356,9 @@ Readers support a *permissive* open mode that collects non-fatal issues as
 warnings instead of hard errors:
 
 ```rust
-use mrc::MrcReader;
+use mrc::Reader;
 
-let (reader, warnings) = MrcReader::open_permissive("file.mrc")?;
+let (reader, warnings) = Reader::open_permissive("file.mrc")?;
 for w in &warnings {
     eprintln!("Warning: {}", w);
 }

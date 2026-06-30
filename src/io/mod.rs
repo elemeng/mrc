@@ -4,8 +4,7 @@
 //!
 //! | Type | Module | Description |
 //! |------|--------|-------------|
-//! | [`MrcReader`] | [`reader`] | Unified entry point that auto-detects compression (plain, gzip, bzip2) and dispatches to the correct backend. This is what [`crate::open`] returns. |
-//! | [`Reader`] | [`buffered`] | In-memory buffered reader. Also provides [`Reader::open_gzip`] and [`Reader::open_bzip2`] for direct compressed reads. |
+//! | [`Reader`] | [`buffered`] | In-memory buffered reader. Opens plain, gzip, or bzip2 files. |
 //! | [`MmapReader`] | [`mmap_reader`] | Memory-mapped reader. Lets the OS page data on demand; ideal for files too large to fit in RAM (requires the `mmap` feature). |
 //! | [`Writer`] | [`writer`] | Direct file I/O writer. Writes blocks straight to disk and rewrites the header on [`Writer::finalize`]. Use [`WriterBuilder`] to construct. |
 //! | [`MmapWriter`] | [`writer`] | Memory-mapped writer, built via [`WriterBuilder::finish_mmap`]. |
@@ -13,11 +12,10 @@
 //!
 //! ## Choosing a reader
 //!
-//! * Use [`MrcReader`] / [`crate::open`] when you simply want to read a file and don't know
-//!   whether it is compressed.
-//! * Use [`Reader`] / [`Reader::open`] for plain files, or [`Reader::open_gzip`] /
-//!   [`Reader::open_bzip2`] when you know the compression format.
-//! * Use [`MmapReader`] when the file is very large or you only need to touch a small
+//! * Use [`Reader::open`] / [`crate::open`] — auto-detects compression (recommended).
+//! * Use [`Reader::open_plain`], [`Reader::open_gzip`], or [`Reader::open_bzip2`]
+//!   when you know the format.
+//! * Use [`MmapReader`] for very large files or when you only need a small
 //!   subset of the data.
 //!
 //! ## Choosing a writer

@@ -1,8 +1,7 @@
 //! Shared helpers for all MRC reader implementations.
 //!
 //! This module contains the [`VoxelSource`] trait and helper functions that are
-//! used by [`Reader`](crate::Reader), [`MmapReader`](crate::MmapReader), and
-//! [`MrcReader`](crate::MrcReader) to implement block validation, endian
+//! used by [`Reader`](crate::Reader) and [`MmapReader`](crate::MmapReader) to implement block validation, endian
 //! decoding, and the `slices_f32` / `slabs_f32` convenience iterators.
 
 use crate::engine::block::{VolumeShape, VoxelBlock};
@@ -52,8 +51,7 @@ pub trait VoxelSource: private::Sealed {
 ///
 /// This trait is used by [`ReaderExt`] to provide iterator methods with
 /// default implementations, eliminating the need to copy-paste convenience
-/// methods across [`Reader`](crate::Reader), [`MmapReader`](crate::MmapReader),
-/// and [`MrcReader`](crate::MrcReader).
+/// methods across [`Reader`](crate::Reader) and [`MmapReader`](crate::MmapReader).
 ///
 /// This trait is `#[doc(hidden)]` — users interact with [`ReaderExt`] instead.
 #[doc(hidden)]
@@ -717,46 +715,4 @@ impl ReaderCore for crate::MmapReader {
 #[cfg(feature = "mmap")]
 impl ReaderExt for crate::MmapReader {}
 
-macro_rules! mrc_dispatch {
-    ($self:ident . $method:ident ( $($arg:expr),* )) => {
-        match $self {
-            crate::MrcReader::Plain(r) => r.$method($($arg),*),
-            #[cfg(feature = "gzip")]
-            crate::MrcReader::Gzip(r) => r.$method($($arg),*),
-            #[cfg(feature = "bzip2")]
-            crate::MrcReader::Bzip2(r) => r.$method($($arg),*),
-        }
-    };
-}
 
-impl private::Sealed for crate::MrcReader {}
-impl VoxelSource for crate::MrcReader {
-    fn vs_read_block_bytes<'a>(
-        &'a self,
-        offset: [usize; 3],
-        shape: [usize; 3],
-    ) -> Result<Cow<'a, [u8]>, Error> {
-        mrc_dispatch!(self.read_block_bytes(offset, shape)).map(Cow::Owned)
-    }
-    fn vs_decode_block<T: Voxel>(&self, bytes: &[u8]) -> Result<Vec<T>, Error> {
-        mrc_dispatch!(self.decode_block(bytes))
-    }
-}
-impl ReaderCore for crate::MrcReader {
-    fn shape(&self) -> VolumeShape {
-        mrc_dispatch!(self.shape())
-    }
-    fn mode(&self) -> Mode {
-        mrc_dispatch!(self.mode())
-    }
-    fn endian(&self) -> FileEndian {
-        mrc_dispatch!(self.endian())
-    }
-    fn header(&self) -> &Header {
-        mrc_dispatch!(self.header())
-    }
-    fn ext_header_bytes(&self) -> &[u8] {
-        mrc_dispatch!(self.ext_header_bytes())
-    }
-}
-impl ReaderExt for crate::MrcReader {}

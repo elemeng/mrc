@@ -96,15 +96,12 @@ pub use fei::{
     parse_fei2_records,
 };
 
-/// MRC reader with automatic compression detection.
-pub use io::reader::MrcReader;
-
 #[doc(hidden)]
 pub use io::reader::{CompressionType, detect_compression};
 
 /// Open an MRC file for reading, auto-detecting gzip or bzip2 compression.
-pub fn open<P: AsRef<std::path::Path>>(path: P) -> Result<MrcReader, Error> {
-    MrcReader::open(path)
+pub fn open<P: AsRef<std::path::Path>>(path: P) -> Result<Reader, Error> {
+    Reader::open(path)
 }
 
 /// Create a new MRC file for writing.

@@ -7,7 +7,7 @@
 //! mrc-validate --stats-only <file.mrc>
 //! ```
 
-use mrc::{CompressionType, Error, MrcReader, detect_compression};
+use mrc::{CompressionType, Error, Reader, detect_compression};
 use std::env;
 use std::process;
 
@@ -78,7 +78,7 @@ fn main() {
 
     // Open the file
     let (reader, warnings) = if permissive {
-        match MrcReader::open_permissive(path) {
+        match Reader::open_permissive(path) {
             Ok(rw) => rw,
             Err(e) => {
                 print_result(path, compression_label, &e, &[], false);
@@ -86,7 +86,7 @@ fn main() {
             }
         }
     } else {
-        match MrcReader::open(path) {
+        match Reader::open(path) {
             Ok(r) => (r, Vec::new()),
             Err(e) => {
                 print_result(path, compression_label, &e, &[], false);
