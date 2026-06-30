@@ -67,14 +67,14 @@ fn main() -> Result<(), mrc::Error> {
     let shape = reader.shape();
     println!("Volume: {}×{}×{} voxels", shape.nx, shape.ny, shape.nz);
 
-    // Iterate over slices - zero-copy when file type matches
+    // Iterate over slices
     for slice in reader.slices::<f32>() {
         let block = slice?;  // VoxelBlock<f32>
         println!("Slice {}: {} voxels", block.offset[2], block.len());
     }
 
     // Or read with automatic conversion to f32 (common cryo-EM workflow)
-    for slice in reader.slices_f32()? {
+    for slice in reader.slices_f32() {
         let block = slice?;
         let sum: f32 = block.data.iter().sum();
         println!("Slice sum: {}", sum);
@@ -154,7 +154,7 @@ for slice in reader.slices::<f32>() {
 | [`Reader`] | Read plain MRC files | `Reader::open("file.mrc")?` |
 | [`MmapReader`] | Memory-mapped reading | `MmapReader::open("large.mrc")?` |
 | [`Writer`] | Write MRC files | `create("out.mrc").shape([64,64,64]).mode::<f32>().finish()?` |
-| [`MmapWriter`] | Memory-mapped writing | `create("out.mrc").shape(...).mmap().finish()?` |
+| [`MmapWriter`] | Memory-mapped writing | `create("out.mrc").shape(...).finish_mmap()?` |
 | [`WriterBuilder`] | Configure new files | `create(path).shape(dims).mode::<T>()` |
 | [`Header`] | 1024-byte MRC header | `Header::new()` |
 | [`HeaderBuilder`] | Fluent header construction | `HeaderBuilder::new().shape([64,64,64]).mode::<f32>().build()?` |
@@ -279,16 +279,15 @@ use mrc::open;
 
 // Works for plain .mrc, .mrc.gz, and .mrc.bz2
 let reader = open("protein.mrc")?;
-println!("Compression: {:?}", reader.compression_type());
 ```
 
 You can also open compressed files directly:
 
 ```rust
-use mrc::{GzipReader, Bzip2Reader};
+use mrc::Reader;
 
-let reader = GzipReader::open("protein.mrc.gz")?;
-let reader = Bzip2Reader::open("protein.mrc.bz2")?;
+let reader = Reader::open_gzip("protein.mrc.gz")?;
+let reader = Reader::open_bzip2("protein.mrc.bz2")?;
 ```
 
 And write compressed files:
@@ -312,11 +311,9 @@ For large files that don't fit in RAM, memory-mapped I/O lets the OS handle
 paging:
 
 ```rust
-use mrc::{MmapReader, open_mmap};
+use mrc::MmapReader;
 
 let reader = MmapReader::open("large_volume.mrc")?;
-// or using the convenience function:
-let reader = open_mmap("large_volume.mrc")?;
 
 // Same iterator API as Reader
 for slice in reader.slices::<f32>() {
@@ -336,8 +333,7 @@ use mrc::create;
 let mut writer = create("output.mrc")
     .shape([1024, 1024, 512])
     .mode::<f32>()
-    .mmap()  // switch to MmapWriter
-    .finish()?;
+    .finish_mmap()?;
 
 writer.write_block(&block)?;
 writer.finalize()?;
@@ -368,11 +364,10 @@ instruments) where the data is valid but the header has minor issues.
 ### Convenience Functions
 
 ```rust
-use mrc::{open, open_mmap, create, create_mmap};
+use mrc::{open, create};
 
 // Reading
-let reader = open("file.mrc")?;       // auto-detect compression
-let mmap_reader = open_mmap("file.mrc")?;  // memory-mapped (requires mmap)
+let reader = open("file.mrc")?;       // auto-detect compression (plain/gzip/bzip2)
 
 // Writing
 let writer = create("out.mrc")        // standard file I/O
@@ -380,10 +375,10 @@ let writer = create("out.mrc")        // standard file I/O
     .mode::<f32>()
     .finish()?;
 
-let mmap_writer = create_mmap("out.mrc")  // memory-mapped (requires mmap)
+let mmap_writer = create("out.mrc")   // memory-mapped (requires mmap)
     .shape([64, 64, 64])
     .mode::<f32>()
-    .finish()?;
+    .finish_mmap()?;
 ```
 
 ## 🔧 Header Construction
@@ -639,7 +634,7 @@ cross-check, dimensions, mode, endianness, voxel size, and labels.
 - [x] Memory-mapped I/O (`MmapReader`, `MmapWriter`)
 - [x] All data types (modes 0–4, 6, 12, 101)
 - [x] Compression support (gzip, bzip2)
-- [x] Unified reader traits (`ReaderCore`, `ReaderExt`)
+- [x] Unified reader trait (`ReaderExt`)
 - [x] FEI1/FEI2 extended header parsing
 - [x] Type conversion conveniences (`slices_f32`, `slices_u8`, `slices_mode0`)
 - [x] Header statistics computation and validation

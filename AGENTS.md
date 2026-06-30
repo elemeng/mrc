@@ -69,7 +69,7 @@ src/
 ├── mode.rs             # `Mode` enum, `Voxel` trait, complex types, Packed4Bit
 ├── header.rs           # `Header` struct (1024-byte MRC-2014 header), `HeaderBuilder`
 ├── fei.rs              # FEI1/FEI2 extended header parsers
-├── iter.rs             # `SliceIter`, `SlabIter`, `BlockIter` — lazy voxel block iterators
+├── iter.rs             # `RegionIter`, steppers (`SliceStepper`, `SlabStepper`, `TileStepper`)
 ├── engine/
 │   ├── mod.rs
 │   ├── block.rs        # `VolumeShape`, `VoxelBlock<T>`
@@ -85,8 +85,8 @@ src/
 │   ├── buffered.rs     # In-memory `Reader`
 │   ├── mmap_reader.rs  # `MmapReader` (zero-copy, requires `mmap`)
 │   ├── writer.rs       # `Writer`, `WriterBuilder`, `MmapWriter`, compressed writers
-│   ├── gzip.rs         # `GzipReader`, `GzipWriter` (requires `gzip`)
-│   └── bzip2.rs        # `Bzip2Reader`, `Bzip2Writer` (requires `bzip2`)
+│   ├── gzip.rs         # `GzipWriter`, `GzipCompressor` (requires `gzip`)
+│   └── bzip2.rs        # `Bzip2Writer`, `Bzip2Compressor` (requires `bzip2`)
 └── bin/
     └── mrc-validate.rs # CLI validation tool (`cargo run --bin mrc-validate`)
 ```
