@@ -71,7 +71,7 @@ src/
 ├── mode.rs             # `Mode` enum, `Voxel` trait, complex types, Packed4Bit
 ├── header.rs           # `Header` struct (1024-byte MRC-2014 header), `HeaderBuilder`
 ├── fei.rs              # FEI1/FEI2 extended header parsers
-├── iter.rs             # `RegionIter`, steppers (`SliceStepper`, `SlabStepper`, `TileStepper`)
+├── validate.rs          # `ValidationReport`, `validate_full()`
 ├── engine/
 │   ├── mod.rs
 │   ├── block.rs        # `VolumeShape`, `VoxelBlock<T>`

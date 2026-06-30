@@ -606,11 +606,11 @@ cargo build --release --bin mrc-validate
 
 ./mrc-validate protein.mrc
 ./mrc-validate --permissive legacy.mrc
-./mrc-validate --stats-only protein.mrc
 ```
 
-Output includes compression type, header validity, data statistics
-cross-check, dimensions, mode, endianness, voxel size, and labels.
+Runs comprehensive checks: header structure, file size, endianness,
+data statistics cross-check (1 % tolerance), NaN/Inf scan in float
+modes, and volume type classification.
 
 ### `mrc-header` — header inspection
 

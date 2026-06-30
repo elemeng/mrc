@@ -45,6 +45,7 @@ mod header;
 mod io;
 mod iter;
 mod mode;
+pub mod validate;
 
 // Re-export core types
 pub use engine::block::{VolumeShape, VoxelBlock};
