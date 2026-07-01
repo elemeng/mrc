@@ -53,9 +53,8 @@ pub(crate) fn unpack_u4_bytes_to_u8(src: &[u8], nx: usize, ny: usize) -> Vec<u8>
 ///
 /// `ny` is the total number of rows (i.e. `ny * nz` for a 3D volume).
 ///
-/// # Panics
-/// Panics if any value in `src` exceeds 15 in debug mode; release builds
-/// silently mask to 4 bits (`val & 0x0F`).
+/// Values exceeding 15 are silently masked to 4 bits (`val & 0x0F`).
+/// The caller should validate values beforehand (e.g. in `write_u4_block`).
 pub(crate) fn pack_u8_to_u4_bytes(src: &[u8], nx: usize, ny: usize) -> Vec<u8> {
     let row_bytes = nx.div_ceil(2);
     let mut dst = vec![0u8; row_bytes * ny];

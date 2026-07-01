@@ -743,9 +743,9 @@ pub(crate) fn validate_block_bounds(
         .checked_mul(sy)
         .and_then(|v| v.checked_mul(sz))
         .ok_or(Error::BoundsError)?;
+    let block_row_bytes = sx.div_ceil(2);
     let byte_len = if mode == Mode::Packed4Bit {
-        let row_bytes = sx.div_ceil(2);
-        row_bytes
+        block_row_bytes
             .checked_mul(sy)
             .and_then(|v| v.checked_mul(sz))
             .ok_or(Error::BoundsError)?
@@ -759,18 +759,17 @@ pub(crate) fn validate_block_bounds(
 
     // Verify the data region is large enough for the last row of the block.
     if mode == Mode::Packed4Bit {
+        // Only byte-aligned X-offsets are supported (ox even) to avoid
+        // nibble-level read-modify-write in gather/write paths.
+        if ox % 2 != 0 {
+            return Err(Error::BoundsError);
+        }
         let vol_row_bytes = nx.div_ceil(2);
+        let start_byte_in_row = ox / 2;
         let last_vol_row = (oz + sz - 1) * ny + (oy + sy - 1);
         let last_byte = last_vol_row
             .checked_mul(vol_row_bytes)
-            .and_then(|b| {
-                let block_row_bytes = sx.div_ceil(2);
-                b.checked_add(if ox == 0 {
-                    block_row_bytes
-                } else {
-                    block_row_bytes + 1
-                })
-            })
+            .and_then(|b| b.checked_add(start_byte_in_row + block_row_bytes))
             .ok_or(Error::BoundsError)?;
         if last_byte > data_len {
             return Err(Error::BoundsError);
@@ -809,19 +808,16 @@ pub(crate) fn gather_block_bytes(
     let [ox, oy, oz] = offset;
     let [sx, sy, sz] = block_shape;
 
-    let voxel_count = sx * sy * sz;
-    let byte_len = mode.byte_size_for_count(voxel_count);
-    let mut dst = vec![0u8; byte_len];
-
     if mode == Mode::Packed4Bit {
-        // Each byte holds two voxels.  Compute source byte offset by dividing
-        // the voxel linear index by 2, and read row_bytes bytes per row.
-        let row_bytes = nx.div_ceil(2);
+        // Each byte holds two voxels.  Each row has sx.div_ceil(2) packed bytes.
+        let vol_row_bytes = nx.div_ceil(2);
         let block_row_bytes = sx.div_ceil(2);
+        let byte_len = block_row_bytes * sy * sz;
+        let mut dst = vec![0u8; byte_len];
 
         // Fast path: full XY slab is contiguous in the file.
         if ox == 0 && sx == nx && oy == 0 && sy == ny {
-            let slice_bytes = ny * row_bytes;
+            let slice_bytes = ny * vol_row_bytes;
             let start = oz * slice_bytes;
             let byte_len = sz * slice_bytes;
             return data[start..start + byte_len].to_vec();
@@ -830,11 +826,9 @@ pub(crate) fn gather_block_bytes(
         for z in 0..sz {
             for y in 0..sy {
                 let vol_row = (oz + z) * ny + (oy + y);
-                let src_start = vol_row * row_bytes + ox / 2;
-                let _dst_start = (y * sx / 2) + z * (sy * block_row_bytes);
-                // Use row-level addressing for correct odd-width handling
-                let actual_dst_start = (y + z * sy) * block_row_bytes;
-                dst[actual_dst_start..actual_dst_start + block_row_bytes]
+                let src_start = vol_row * vol_row_bytes + ox / 2;
+                let dst_start = (y + z * sy) * block_row_bytes;
+                dst[dst_start..dst_start + block_row_bytes]
                     .copy_from_slice(&data[src_start..src_start + block_row_bytes]);
             }
         }
@@ -842,6 +836,9 @@ pub(crate) fn gather_block_bytes(
     }
 
     let b = mode.byte_size();
+    let voxel_count = sx * sy * sz;
+    let byte_len = voxel_count * b;
+    let mut dst = vec![0u8; byte_len];
 
     // Fast path: full XY slab is contiguous in the file.
     if ox == 0 && sx == nx && oy == 0 && sy == ny {
