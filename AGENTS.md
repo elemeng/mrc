@@ -214,9 +214,7 @@ The crate contains a small amount of `unsafe` Rust, all justified by performance
 2. **`MmapReader::data_bytes()` silently truncates on undersized files in permissive mode**: When the file is smaller than the header claims, the method returns whatever bytes are available instead of signalling an error. In strict mode the file size is validated on open.
 3. **Compressed readers decompress entirely into RAM**: Gzip/Bzip2 readers decompress the entire file into memory on open. They do not stream. This makes them susceptible to decompression bombs.
 4. **No benchmark suite**: Criterion is in dev-dependencies but there is no `benches/` directory.
-5. **`gather_block_bytes` fast-path assumes contiguous XY slabs**: For full-row slabs (`ox == 0 && sx == nx && oy == 0 && sy == ny`) a contiguous copy is used. Sub-XY blocks correctly use row-by-row scatter/gather.
-6. **`MmapReader::data_bytes()` silently truncates on undersized files in permissive mode**: When the file is smaller than the header claims, the method returns whatever bytes are available instead of signalling an error. In strict mode the file size is validated on open.
-7. **Compressed readers decompress entirely into RAM**: Gzip/Bzip2 readers decompress the entire file into memory on open. They do not stream. This makes them susceptible to decompression bombs.
+5. **`Packed4Bit` sub-block reads require even X-offset**: `validate_block_bounds` rejects odd `ox` for Mode 101 to avoid nibble-level read-modify-write in `gather_block_bytes`. Full-frame and byte-aligned sub-block reads work correctly.
 
 ## CLI Tools
 
