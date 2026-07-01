@@ -183,8 +183,11 @@ impl Header {
 
     #[inline]
     /// Offset, in bytes, from file start to the first voxel value.
+    ///
+    /// Returns `1024` when `nsymbt` is negative (to avoid integer wrap-around
+    /// on malformed headers).
     pub const fn data_offset(&self) -> usize {
-        1024 + self.nsymbt as usize
+        if self.nsymbt < 0 { 1024 } else { 1024 + self.nsymbt as usize }
     }
 
     #[inline]
@@ -198,10 +201,9 @@ impl Header {
             .checked_mul(self.nz as usize)?;
         match Mode::from_i32(self.mode) {
             Some(mode) => {
-                let byte_size = mode.byte_size();
                 match mode {
-                    Mode::Packed4Bit => Some(n.div_ceil(2)), // two voxels per byte
-                    _ => n.checked_mul(byte_size),
+                    Mode::Packed4Bit => Some(n.div_ceil(2)),
+                    _ => n.checked_mul(mode.byte_size()),
                 }
             }
             None => None, // unknown/unsupported mode
@@ -531,12 +533,9 @@ impl Header {
             self.label[start..start + 80].fill(b' ');
             self.label[start..start + len].copy_from_slice(bytes);
         } else {
-            // Shift existing labels up (FIFO) and store in slot 9
-            for i in 1..10 {
-                let src = (i - 1) * 80;
-                let dst = i * 80;
-                self.label.copy_within(src..src + 80, dst);
-            }
+            // Shift existing labels up (FIFO) and store in slot 9.
+            // Drop slot 0 (oldest), shift slots 1..9 to 0..8.
+            self.label.copy_within(80..800, 0);
             let start = 9 * 80;
             self.label[start..start + 80].fill(b' ');
             self.label[start..start + len].copy_from_slice(bytes);

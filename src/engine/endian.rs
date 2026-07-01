@@ -36,7 +36,7 @@ impl FileEndian {
         } else if machst[0] == 0x44 && machst[1] == 0x41 {
             MachstInfo {
                 endian: FileEndian::LittleEndian,
-                is_standard: true,
+                is_standard: false,
                 description: "0x44 0x41 (little-endian, CCP4 variant)",
             }
         } else if machst[0] == 0x11 && machst[1] == 0x11 {
@@ -114,7 +114,7 @@ mod tests {
     fn test_machst_le_ccp4_variant() {
         let info = FileEndian::from_machst_with_info(&[0x44, 0x41, 0x00, 0x00]);
         assert_eq!(info.endian, FileEndian::LittleEndian);
-        assert!(info.is_standard);
+        assert!(!info.is_standard);
     }
 
     #[test]

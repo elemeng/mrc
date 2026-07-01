@@ -231,6 +231,7 @@ macro_rules! impl_inherent_reader_methods {
                     self.slices::<i16>(),
                     self.slices::<u16>(),
                     self.slices::<i8>(),
+                    #[cfg(feature = "f16")]
                     self.slices::<crate::f16>(),
                     self.slices::<Float32Complex>(),
                     self.slices::<Int16Complex>(),
@@ -246,6 +247,7 @@ macro_rules! impl_inherent_reader_methods {
                     self.slabs::<i16>(k),
                     self.slabs::<u16>(k),
                     self.slabs::<i8>(k),
+                    #[cfg(feature = "f16")]
                     self.slabs::<crate::f16>(k),
                     self.slabs::<Float32Complex>(k),
                     self.slabs::<Int16Complex>(k),
@@ -348,6 +350,7 @@ impl_inherent_reader_methods!(crate::MmapReader);
 ///
 /// Supports all real-valued modes plus Float16, and converts complex modes
 /// via magnitude (most common default for real-valued visualisation).
+#[cfg(feature = "f16")]
 #[allow(clippy::too_many_arguments)]
 fn iter_f32_helper<'a, I, I16, I16E, U16, U16E, I8, I8E, IF16, IF16E, IC32, IC32E, IC16, IC16E>(
     mode: Mode,
@@ -409,11 +412,87 @@ where
                 data: b.data.iter().map(|&v| f32::from(v)).collect(),
             })
         })),
-        #[cfg(not(feature = "f16"))]
-        Mode::Float16 => {
-            let _ = (iter_f32, iter_i16, iter_u16, iter_i8, iter_f16, iter_c32, iter_c16);
-            Box::new(std::iter::once(Err(Error::UnsupportedMode)))
-        }
+        Mode::Float32Complex => Box::new(iter_c32.map(|b| {
+            let b = b.map_err(Into::into)?;
+            Ok(VoxelBlock {
+                offset: b.offset,
+                shape: b.shape,
+                data: b
+                    .data
+                    .iter()
+                    .map(|c| c.to_real(crate::mode::ComplexToRealStrategy::Magnitude))
+                    .collect(),
+            })
+        })),
+        Mode::Int16Complex => Box::new(iter_c16.map(|b| {
+            let b = b.map_err(Into::into)?;
+            Ok(VoxelBlock {
+                offset: b.offset,
+                shape: b.shape,
+                data: b
+                    .data
+                    .iter()
+                    .map(|c| c.to_real(crate::mode::ComplexToRealStrategy::Magnitude))
+                    .collect(),
+            })
+        })),
+        _ => Box::new(std::iter::once(Err(Error::UnsupportedMode))),
+    }
+}
+
+/// Version of [`iter_f32_helper`] used when the `f16` feature is disabled.
+/// Omits the Float16 iterator parameter and returns `UnsupportedMode` for Float16 mode.
+#[cfg(not(feature = "f16"))]
+#[allow(clippy::too_many_arguments)]
+fn iter_f32_helper<'a, I, I16, I16E, U16, U16E, I8, I8E, IC32, IC32E, IC16, IC16E>(
+    mode: Mode,
+    iter_f32: I,
+    iter_i16: I16,
+    iter_u16: U16,
+    iter_i8: I8,
+    iter_c32: IC32,
+    iter_c16: IC16,
+) -> VoxelIter<'a, f32>
+where
+    I: Iterator<Item = Result<VoxelBlock<f32>, Error>> + 'a,
+    I16: Iterator<Item = Result<VoxelBlock<i16>, I16E>> + 'a,
+    I16E: Into<Error>,
+    U16: Iterator<Item = Result<VoxelBlock<u16>, U16E>> + 'a,
+    U16E: Into<Error>,
+    I8: Iterator<Item = Result<VoxelBlock<i8>, I8E>> + 'a,
+    I8E: Into<Error>,
+    IC32: Iterator<Item = Result<VoxelBlock<Float32Complex>, IC32E>> + 'a,
+    IC32E: Into<Error>,
+    IC16: Iterator<Item = Result<VoxelBlock<Int16Complex>, IC16E>> + 'a,
+    IC16E: Into<Error>,
+{
+    match mode {
+        Mode::Float32 => Box::new(iter_f32) as Box<dyn Iterator<Item = _>>,
+        Mode::Int16 => Box::new(iter_i16.map(|b| {
+            let b = b.map_err(Into::into)?;
+            Ok(VoxelBlock {
+                offset: b.offset,
+                shape: b.shape,
+                data: crate::engine::convert::convert_i16_slice_to_f32(&b.data),
+            })
+        })),
+        Mode::Uint16 => Box::new(iter_u16.map(|b| {
+            let b = b.map_err(Into::into)?;
+            Ok(VoxelBlock {
+                offset: b.offset,
+                shape: b.shape,
+                data: crate::engine::convert::convert_u16_slice_to_f32(&b.data),
+            })
+        })),
+        Mode::Int8 => Box::new(iter_i8.map(|b| {
+            let b = b.map_err(Into::into)?;
+            Ok(VoxelBlock {
+                offset: b.offset,
+                shape: b.shape,
+                data: crate::engine::convert::convert_i8_slice_to_f32(&b.data),
+            })
+        })),
+        Mode::Float16 => Box::new(std::iter::once(Err(Error::UnsupportedMode))),
         Mode::Float32Complex => Box::new(iter_c32.map(|b| {
             let b = b.map_err(Into::into)?;
             Ok(VoxelBlock {
@@ -463,7 +542,11 @@ pub(crate) fn validate_block_bounds(
     let [ox, oy, oz] = offset;
     let [sx, sy, sz] = block_shape;
 
-    if ox + sx > nx || oy + sy > ny || oz + sz > nz {
+    // Use checked arithmetic to avoid wrap-around on maliciously large offsets.
+    if ox.checked_add(sx).is_none_or(|end| end > nx)
+        || oy.checked_add(sy).is_none_or(|end| end > ny)
+        || oz.checked_add(sz).is_none_or(|end| end > nz)
+    {
         return Err(Error::BoundsError);
     }
 
@@ -575,6 +658,9 @@ pub(crate) fn encode_block_to_buf<T: EndianCodec + Sync>(
             let file_linear = ox + (oy + y) * nx + (oz + z) * nx * ny;
             let file_start = data_offset + file_linear * b;
             let block_idx = y * sx + z * sx * sy;
+            if block_idx + sx > block.data.len() {
+                return Err(Error::BoundsError);
+            }
             let row_values = &block.data[block_idx..block_idx + sx];
             let row_end = file_start + sx * b;
             if row_end > buf.len() {
@@ -621,6 +707,11 @@ pub(crate) fn decode_block<T: Voxel>(
 /// because the byte count is derived from `mode.byte_size() * count`.
 pub(crate) fn decode_native_endian<T: EndianCodec + Copy>(bytes: &[u8]) -> Result<Vec<T>, Error> {
     let n = bytes.len() / T::BYTE_SIZE;
+    debug_assert_eq!(
+        bytes.len() % T::BYTE_SIZE, 0,
+        "decode_native_endian: bytes.len() ({}) must be a multiple of T::BYTE_SIZE ({})",
+        bytes.len(), T::BYTE_SIZE
+    );
     let mut result = Vec::with_capacity(n);
     unsafe {
         core::ptr::copy_nonoverlapping(bytes.as_ptr(), result.as_mut_ptr() as *mut u8, bytes.len());
@@ -708,8 +799,11 @@ pub(crate) fn open_compressed<D: std::io::Read>(
         ));
     }
 
-    let ext_header = buf[1024..1024 + ext_size].to_vec();
-    let data = buf[1024 + ext_size..].to_vec();
+    // Clamp ext_header and data slices to available bytes (permissive mode
+    // may reach here with a mismatched file, and slices must not panic).
+    let ext_end = (1024 + ext_size).min(buf.len());
+    let ext_header = buf[1024..ext_end].to_vec();
+    let data = if ext_end < buf.len() { buf[ext_end..].to_vec() } else { Vec::new() };
     let shape = VolumeShape::new(header.nx as usize, header.ny as usize, header.nz as usize);
 
     Ok(DecompressedMrc {

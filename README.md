@@ -47,11 +47,12 @@ See **[docs.rs/mrc](https://docs.rs/mrc)** for the complete API reference, inclu
 - Reading files — `Reader`, `MmapReader`, compressed I/O, permissive mode
 - Writing files — `Writer`, `MmapWriter`, `GzipWriter`, `Bzip2Writer`
 - Iterators — slices, slabs, tiles, volumes, auto-conversion to `f32`
+- Full-volume reads — `read_volume::<T>()` and `read_volume_f32()`
 - Data modes — `Mode` enum and compile-time `Voxel` trait
 - Headers — `Header`, `HeaderBuilder`, validation, endianness
 - FEI extended headers — typed `Fei1Metadata` / `Fei2Metadata` parsing
 - Error handling — `Error` and `HeaderValidationError`
-- Validation — `validate_full` / `ValidationReport`
+- Validation — `validate_full` / `validate_reader` / `ValidationReport`
 
 ## CLI Tools
 

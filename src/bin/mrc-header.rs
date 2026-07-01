@@ -5,7 +5,7 @@
 //! mrc-header [--permissive] [--force] <file.mrc>
 //! ```
 
-use mrc::validate::{Severity, validate_full};
+use mrc::validate::{Severity, validate_reader};
 use mrc::{Mode, Reader};
 use std::env;
 use std::process;
@@ -84,11 +84,21 @@ fn main() {
         }
     };
 
-    // Run validation (unless --force)
+    // Determine compression for the report
+    let compression = match mrc::detect_compression(path) {
+        Ok(mrc::CompressionType::Plain) => "plain",
+        #[cfg(feature = "gzip")]
+        Ok(mrc::CompressionType::Gzip) => "gzip",
+        #[cfg(feature = "bzip2")]
+        Ok(mrc::CompressionType::Bzip2) => "bzip2",
+        _ => "unknown",
+    };
+
+    // Run validation (unless --force) — reuses the already-open reader
     let report = if force {
         None
     } else {
-        match validate_full(path, permissive) {
+        match validate_reader(&reader, path, compression, &warnings) {
             Ok(r) => {
                 let has_errors = !r.is_valid();
                 Some((r.issues, has_errors))

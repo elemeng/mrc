@@ -92,7 +92,6 @@ pub(crate) fn convert_u16_slice_to_f32(src: &[u16]) -> Vec<f32> {
 mod tests {
     use super::*;
     use crate::ComplexToRealStrategy;
-    use std::vec;
 
     // Test batch conversions
     #[test]

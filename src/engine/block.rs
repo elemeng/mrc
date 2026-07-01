@@ -26,6 +26,9 @@ impl VolumeShape {
     /// Create a volume shape from an MRC header.
     ///
     /// Maps from the header's `nx`, `ny`, `nz` fields (stored as `i32`).
+    /// **Panics if any dimension is negative** (the `as usize` cast would
+    /// produce a huge value on 64-bit systems). Only call this on validated
+    /// headers.
     pub fn from_header(header: &crate::Header) -> Self {
         Self {
             nx: header.nx as usize,
@@ -68,7 +71,7 @@ impl VolumeShape {
 /// A contiguous chunk of voxel data with a 3D offset and shape.
 ///
 /// Created by [`VoxelBlock::new`] or returned by reader methods such as
-/// [`Reader::slices`](crate::Reader::slices) and [`MmapReader::read_block`](crate::MmapReader::read_block).
+/// [`Reader::slices`](crate::Reader::slices) and [`Reader::subregion`](crate::Reader::subregion).
 #[derive(Debug, Clone)]
 pub struct VoxelBlock<T> {
     /// Corner of the block within the volume, in voxels `[x, y, z]`.

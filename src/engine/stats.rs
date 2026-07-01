@@ -50,7 +50,7 @@ pub(crate) fn compute_stats(
             stats_real(&data_f32)
         }
         #[cfg(not(feature = "f16"))]
-        Mode::Float16 => (0.0, -1.0, -2.0, -1.0),
+        Mode::Float16 => return Err(Error::UnsupportedMode),
         Mode::Packed4Bit => {
             // Packed4Bit: each byte holds 2 values (low nibble, high nibble)
             let num_values = bytes.len() * 2;
@@ -154,7 +154,10 @@ pub(crate) fn validate_header_stats(
     data_bytes: &[u8],
 ) -> Result<(), crate::Error> {
     let endian = header.detect_endian();
-    let mode = crate::Mode::from_i32(header.mode).unwrap_or(crate::Mode::Float32);
+    let mode = match crate::Mode::from_i32(header.mode) {
+        Some(m) => m,
+        None => return Err(crate::Error::UnsupportedMode),
+    };
     let (actual_dmin, actual_dmax, actual_dmean, actual_rms) =
         compute_stats(data_bytes, mode, endian)?;
 

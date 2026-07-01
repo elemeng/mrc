@@ -22,6 +22,7 @@ macro_rules! write_u8_block_body {
     }};
 }
 
+#[cfg_attr(not(feature = "f16"), allow(unused_macros))]
 macro_rules! write_f16_from_f32_body {
     ($self:ident, $block:ident) => {{
         if $self.mode() != Mode::Float16 {
@@ -286,6 +287,8 @@ impl Writer {
     }
 
     /// Voxel data mode for this writer.
+    ///
+    /// Falls back to [`Mode::Float32`] if the header mode value is not recognised.
     pub fn mode(&self) -> Mode {
         Mode::from_i32(self.header.mode).unwrap_or(Mode::Float32)
     }
@@ -345,6 +348,9 @@ impl Writer {
                 let file_linear = ox + (oy + y) * nx + (oz + z) * nx * ny;
                 let file_offset = self.data_offset + (file_linear as u64) * (b as u64);
                 let block_idx = y * sx + z * sx * sy;
+                if block_idx + sx > block.data.len() {
+                    return Err(Error::BoundsError);
+                }
                 let row_values = &block.data[block_idx..block_idx + sx];
                 encode_slice(row_values, &mut row_bytes, file_endian)?;
                 self.file.seek(SeekFrom::Start(file_offset))?;
@@ -387,7 +393,7 @@ impl Writer {
         }
 
         let [nx, ny, _nz] = [self.shape.nx, self.shape.ny, self.shape.nz];
-        let [ox, oy, _oz] = block.offset;
+        let [ox, oy, oz] = block.offset;
         let [sx, sy, _sz] = block.shape;
 
         // Parallel fast path only works for full XY slabs (contiguous in file).
@@ -397,7 +403,7 @@ impl Writer {
 
         let chunk_size = 1024 * 1024; // 1M voxels per chunk
         let linear =
-            (ox as u64) + (oy as u64) * (nx as u64) + (_oz as u64) * (nx as u64) * (ny as u64);
+            (ox as u64) + (oy as u64) * (nx as u64) + (oz as u64) * (nx as u64) * (ny as u64);
         let base_offset = self.data_offset + linear * (self.bytes_per_voxel as u64);
         let file_endian = self.header.detect_endian();
 
@@ -598,6 +604,8 @@ impl MmapWriter {
     }
 
     /// Voxel data mode for this writer.
+    ///
+    /// Falls back to [`Mode::Float32`] if the header mode value is not recognised.
     pub fn mode(&self) -> Mode {
         Mode::from_i32(self.header.mode).unwrap_or(Mode::Float32)
     }
@@ -729,9 +737,10 @@ impl MmapWriter {
             .data_offset
             .checked_add(data_size)
             .ok_or(Error::InvalidHeader)?;
-        if end <= self.mmap.len() {
-            update_header_stats_from_bytes(&mut self.header, &self.mmap[self.data_offset..end])?;
+        if end > self.mmap.len() {
+            return Err(Error::BoundsError);
         }
+        update_header_stats_from_bytes(&mut self.header, &self.mmap[self.data_offset..end])?;
         Ok(())
     }
 }
@@ -848,14 +857,22 @@ impl<C: Compressor> CompressedWriter<C> {
         })
     }
 
+    /// Volume dimensions for this writer.
     pub fn shape(&self) -> VolumeShape {
         self.shape
     }
 
+    /// Voxel data mode for this writer.
+    ///
+    /// Falls back to [`Mode::Float32`] if the header mode value is not recognised.
     pub fn mode(&self) -> Mode {
         Mode::from_i32(self.header.mode).unwrap_or(Mode::Float32)
     }
 
+    /// Reference to the current header.
+    ///
+    /// Modify header fields before calling [`finalize`](Self::finalize) to
+    /// change what gets written to disk.
     pub fn header(&self) -> &Header {
         &self.header
     }
@@ -905,6 +922,15 @@ impl<C: Compressor> CompressedWriter<C> {
     #[cfg(feature = "f16")]
     pub fn write_f16_from_f32(&mut self, block: &VoxelBlock<f32>) -> Result<(), Error> {
         write_f16_from_f32_body!(self, block)
+    }
+
+    /// Scan the written data block and update `dmin`, `dmax`, `dmean` and `rms`
+    /// in the header to match the actual file contents.
+    ///
+    /// Unlike [`Writer::update_header_stats`], this does not need to read from
+    /// disk because the data is already accessible in memory.
+    pub fn update_header_stats(&mut self) -> Result<(), Error> {
+        update_header_stats_from_bytes(&mut self.header, &self.data)
     }
 
     /// Finalize the compressed MRC file by assembling, compressing and writing to disk.

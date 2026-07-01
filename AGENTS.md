@@ -10,7 +10,7 @@ This file contains project-specific context for AI coding agents working on the 
 - **Crate**: https://crates.io/crates/mrc
 - **Docs**: https://docs.rs/mrc
 - **License**: MIT
-- **Version**: 0.2.3
+- **Version**: 0.2.4
 
 A reference Python implementation (`mrcfile/`) is vendored in the repo for specification comparison, but it is **not** part of the Rust build and is gitignored in releases.
 
@@ -110,9 +110,9 @@ re-exported, are `pub mod` but with `#[doc(hidden)]` on internal plumbing:
 
 | Visibility | Items |
 |------------|-------|
-| **Public (in lib.rs)** | `open`, `create`, `Reader`, `WriterBuilder`, `Writer`, `Header`, `HeaderBuilder`, `Mode`, `Voxel`, `VoxelBlock`, `VolumeShape`, `RegionIter`, `FileEndian`, `Error`, `MmapReader`, `MmapWriter`, `GzipWriter`, `Bzip2Writer`, FEI types |
+| **Public (in lib.rs)** | `open`, `create`, `Reader`, `WriterBuilder`, `Writer`, `Header`, `HeaderBuilder`, `Mode`, `Voxel`, `VoxelBlock`, `VolumeShape`, `RegionIter`, `FileEndian`, `Error`, `MmapReader`, `MmapWriter`, `GzipWriter`, `Bzip2Writer`, `validate_reader`, FEI types |
 | **`#[doc(hidden)]`** | `VoxelSource`, `ReaderCore`, `EndianCodec`, `Stepper`, `Compressor`, `MachstInfo`, `CompressionType`, `detect_compression`, `GzipCompressor`, `Bzip2Compressor` |
-| **`pub(crate)` only** | `validate_block_bounds`, `gather_block_bytes`, `decode_block`, `decode_native_endian`, `parse_header`, `DecompressedMrc`, `open_compressed`, `encode_block_to_buf` |
+| **`pub(crate)` only** | `validate_block_bounds`, `gather_block_bytes`, `decode_block`, `decode_native_endian`, `parse_header`, `DecompressedMrc`, `open_compressed`, `encode_block_to_buf`, `compute_stats`, `validate_header_stats` |
 
 ## Development Conventions
 
@@ -135,11 +135,11 @@ re-exported, are `pub mod` but with `#[doc(hidden)]` on internal plumbing:
 
 - The `Voxel` trait connects Rust types to MRC modes at compile time.
 - Generic read/write APIs require `T: Voxel`, preventing runtime mode mismatches.
-- Built-in conversion conveniences: `slices_f32()`, `slabs_f32()`, `slices_u8()`, `slices_mode0()`, `slabs_mode0()`, `write_u8_block()`, and `write_f16_from_f32()`. All other type conversion is the caller's responsibility.
+- Built-in conversion conveniences: `slices_f32()`, `slabs_f32()`, `slices_u8()`, `slices_mode0()`, `slabs_mode0()`, `read_volume::<T>()`, `read_volume_f32()`, `write_u8_block()`, and `write_f16_from_f32()`. All other type conversion is the caller's responsibility.
 
 ## Testing Strategy
 
-- **Unit Tests**: 50+ tests in inline `mod tests` blocks inside source files (`header.rs`, `engine/simd.rs`, `engine/convert.rs`, `engine/endian.rs`, `engine/stats.rs`, `io/reader.rs`).
+- **Unit Tests**: 51+ tests in inline `mod tests` blocks inside source files (`header.rs`, `engine/simd.rs`, `engine/convert.rs`, `engine/endian.rs`, `engine/stats.rs`, `io/reader.rs`, `lib.rs`).
 - **Doc Tests**: Multiple doc-tests in `lib.rs`, `io/buffered.rs`, `io/writer.rs`, `io/mmap_reader.rs`, `header.rs`.
 - **No External Fixtures**: Tests generate temporary MRC files programmatically (using `tempfile` in dev-dependencies) rather than checking large binary files into git.
 - **Coverage Gaps**: There is no dedicated benchmark suite (criterion is in dev-dependencies but no `benches/` directory exists).
@@ -168,8 +168,18 @@ A detailed code review exists in `review.md` at the repository root. Items agent
 4. ~~**Duplicated writer logic**: The scatter-path write loop (`write_block` for sub-XY blocks) was copy-pasted across `Writer`, `MmapWriter`, and `CompressedWriter`.~~ **Fixed**: Extracted shared `encode_block_to_buf` helper in `reader_common.rs`. MmapWriter and CompressedWriter now delegate to it.
 5. ~~**`slices_u8` return type triggers clippy `type_complexity`**: The `Result<Box<dyn Iterator<...>>>` return type...~~ **Fixed**: `slices_u8` now returns `VoxelIter<'_, u8>` directly (matching `slices_f32`), with the mode check baked into the returned iterator.
 6. ~~**`VoxelBlock::new` panics on shape mismatch** (Medium): The primary public constructor panicked on mismatched data length; `try_new` was the `Result`-based alternative.~~ **Fixed**: `new` now delegates to `try_new` and returns `Result<VoxelBlock<T>, Error>`. All call sites updated with `?` or `.unwrap()`.
-7. **`TileStepper` edge-case confidence**: The tile-stepping logic is hard to visually verify for exact boundary conditions.
+7. ~~**`TileStepper` edge-case confidence**: The tile-stepping logic is hard to visually verify for exact boundary conditions.~~ **Fixed**: Existing tests and integration tests now cover tile iteration via `subregion`.
 8. **`MmapReader::data_bytes()` silently truncates on undersized files in permissive mode**: When the file is smaller than the header claims, the method returns whatever bytes are available instead of signalling an error. In strict mode the file size is validated on open.
+9. ~~**`f16` feature missing from macro calls** (Compile failure): `slices_f32()` and `slabs_f32()` called `self.slices::<crate::f16>()` unconditionally.~~ **Fixed**: Split `iter_f32_helper` into f16-enabled and f16-disabled versions with proper cfg gates.
+10. ~~**`validate_full` type inference with `--no-default-features`** (Compile failure): `"plain".into()` couldn't infer `String` when only one match arm exists.~~ **Fixed**: Changed to `"plain".to_string()`.
+11. ~~**`add_label` FIFO shift corrupts labels** (Bug): The loop `copy_within(0..720, 80)` duplicated the oldest label into slot 1 and preserved slot 0 instead of dropping it.~~ **Fixed**: Reversed to `copy_within(80..800, 0)` which shifts slots 1-9 to 0-8.
+12. ~~**`slab_as` alignment UB** (Soundness): Assumed 4-byte-aligned `data_offset` but `nsymbt` can be arbitrary.~~ **Fixed**: Added runtime alignment check before the unsafe block, returns `Err` on misalignment.
+13. ~~**NEON functions lack runtime detection** (Soundness): AArch64 NEON functions called unconditionally.~~ **Fixed**: Added `is_aarch64_feature_detected!("neon")` guard.
+14. ~~**MmapWriter::update_header_stats silently skips** (Bug): Returned `Ok(())` when data extended beyond mmap.~~ **Fixed**: Returns `Err(BoundsError)`.
+15. ~~**Fei2Metadata::from_bytes missing length check** (Bug): No `FEI2_RECORD_SIZE` guard, could panic on 768-887 byte slices.~~ **Fixed**: Added explicit length check.
+16. ~~**Float16 validation false positive** (Bug): Without `f16` feature, `float_mode_issues` reported "All voxel values are finite" for Float16 files.~~ **Fixed**: Returns warning about missing `f16` feature.
+17. ~~**`data_offset` with negative `nsymbt`** (Bug): `as usize` cast produced huge values.~~ **Fixed**: Added `if nsymbt < 0 { 1024 }` guard.
+18. ~~**`decode_slice` TypeMismatch with `expected: 0`** (Code quality): Error showed "expected 0 bytes per voxel".~~ **Fixed**: Now uses `expected: T::BYTE_SIZE`.
 
 Agents should read `review.md` before making large refactors to I/O or header code.
 

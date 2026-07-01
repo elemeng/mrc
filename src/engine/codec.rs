@@ -255,7 +255,7 @@ pub(crate) fn decode_slice<T: EndianCodec + Send + Copy>(
 ) -> Result<Vec<T>, crate::Error> {
     if bytes.len() % T::BYTE_SIZE != 0 {
         return Err(crate::Error::TypeMismatch {
-            expected: 0,
+            expected: T::BYTE_SIZE,
             actual: bytes.len(),
         });
     }
@@ -369,9 +369,6 @@ pub(crate) fn encode_slice<T: EndianCodec + Sync>(
 // ============================================================================
 // Parallel Block Encoding
 // ============================================================================
-
-#[cfg(feature = "parallel")]
-use std::thread_local;
 
 #[cfg(feature = "parallel")]
 thread_local! {

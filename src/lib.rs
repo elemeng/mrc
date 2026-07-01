@@ -260,6 +260,10 @@
 //! tolerance), and NaN / Inf scanning. Returns a
 //! [`ValidationReport`](crate::validate::ValidationReport) with
 //! categorised issues.
+//!
+//! If you already have an open [`Reader`], use
+//! [`validate_reader`](crate::validate::validate_reader) to avoid
+//! re-opening the file.
 
 #![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
 
@@ -351,6 +355,194 @@ pub fn open<P: AsRef<std::path::Path>>(path: P) -> Result<Reader, Error> {
 /// ```
 pub fn create<P: AsRef<std::path::Path>>(path: P) -> WriterBuilder {
     WriterBuilder::new(path)
+}
+
+#[cfg(test)]
+mod integration_tests {
+    use crate::*;
+
+    /// Create a unique temp file path that is automatically deleted on drop.
+    struct TempMrc(std::path::PathBuf);
+
+    impl TempMrc {
+        fn new(suffix: &str) -> Self {
+            let mut p = std::env::temp_dir();
+            p.push(format!("mrc_test_{}_{}.mrc", std::process::id(), suffix));
+            // Remove any leftover from a previous run
+            let _ = std::fs::remove_file(&p);
+            Self(p)
+        }
+
+        fn path(&self) -> &std::path::Path {
+            &self.0
+        }
+    }
+
+    impl Drop for TempMrc {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.0);
+        }
+    }
+
+    /// Write Float32 volume, read it back byte-for-byte.
+    #[test]
+    fn roundtrip_f32() {
+        let f = TempMrc::new("f32");
+        let nx = 16;
+        let ny = 8;
+        let nz = 4;
+
+        let data: Vec<f32> = (0..nx * ny * nz).map(|i| i as f32).collect();
+        {
+            let mut w = create(f.path()).shape([nx, ny, nz]).mode::<f32>().finish().unwrap();
+            w.write_block(&VoxelBlock::new([0, 0, 0], [nx, ny, nz], data.clone()).unwrap()).unwrap();
+            w.finalize().unwrap();
+        }
+
+        let r = Reader::open(f.path()).unwrap();
+        let block = r.read_volume::<f32>().unwrap();
+        assert_eq!(block.data, data);
+        assert_eq!(&block.offset, &[0, 0, 0]);
+        assert_eq!(&block.shape, &[nx, ny, nz]);
+
+        // read_volume_f32 on Float32 should give the same result
+        let block2 = r.read_volume_f32().unwrap();
+        assert_eq!(block2.data, data);
+    }
+
+    /// Write Int16, read back via read_volume_f32 (auto-conversion).
+    #[test]
+    fn roundtrip_i16_to_f32() {
+        let f = TempMrc::new("i16");
+        let nx = 16;
+        let ny = 8;
+        let nz = 4;
+        let total = nx * ny * nz;
+
+        let src: Vec<i16> = (0..total).map(|i| (i as i16) - 100).collect();
+        let expected_f32: Vec<f32> = src.iter().map(|&v| v as f32).collect();
+        {
+            let mut w = create(f.path()).shape([nx, ny, nz]).mode::<i16>().finish().unwrap();
+            w.write_block(&VoxelBlock::new([0, 0, 0], [nx, ny, nz], src).unwrap()).unwrap();
+            w.finalize().unwrap();
+        }
+
+        let r = Reader::open(f.path()).unwrap();
+        // read_volume_f32 auto-converts Int16 → f32
+        let block = r.read_volume_f32().unwrap();
+        assert_eq!(block.data, expected_f32);
+
+        // slices_f32 should also match
+        let all: Vec<f32> = r.slices_f32().map(|s| s.unwrap().data).flatten().collect();
+        assert_eq!(all, expected_f32);
+    }
+
+    /// Write Uint16, read back via read_volume::<u16>().
+    #[test]
+    fn roundtrip_u16() {
+        let f = TempMrc::new("u16");
+        let nx = 8;
+        let ny = 8;
+        let nz = 2;
+
+        let src: Vec<u16> = (0..nx * ny * nz).map(|i| (i * 2) as u16).collect();
+        {
+            let mut w = create(f.path()).shape([nx, ny, nz]).mode::<u16>().finish().unwrap();
+            w.write_block(&VoxelBlock::new([0, 0, 0], [nx, ny, nz], src.clone()).unwrap()).unwrap();
+            w.finalize().unwrap();
+        }
+
+        let r = Reader::open(f.path()).unwrap();
+        let block = r.read_volume::<u16>().unwrap();
+        assert_eq!(block.data, src);
+    }
+
+    /// Write multiple slabs, read back with subregion.
+    #[test]
+    fn roundtrip_subregion() {
+        let f = TempMrc::new("subregion");
+        let nx = 32;
+        let ny = 32;
+        let nz = 8;
+
+        let mut w = create(f.path()).shape([nx, ny, nz]).mode::<f32>().finish().unwrap();
+        for z in 0..nz {
+            let slice = vec![(z * nx * ny) as f32; nx * ny];
+            w.write_block(&VoxelBlock::new([0, 0, z], [nx, ny, 1], slice).unwrap()).unwrap();
+        }
+        w.finalize().unwrap();
+
+        let r = Reader::open(f.path()).unwrap();
+        // Read a middle subregion
+        let block = r.subregion::<f32>([4, 4, 2], [8, 8, 3]).unwrap();
+        assert_eq!(block.offset, [4, 4, 2]);
+        assert_eq!(block.shape, [8, 8, 3]);
+        assert_eq!(block.data.len(), 8 * 8 * 3);
+    }
+
+    /// Read entire volume via read_volume matches collecting slices_f32.
+    #[test]
+    fn read_volume_via_slices_f32() {
+        let f = TempMrc::new("vol_vs_slices");
+        let nx = 10;
+        let ny = 10;
+        let nz = 5;
+
+        let data: Vec<f32> = (0..nx * ny * nz).map(|i| i as f32).collect();
+        {
+            let mut w = create(f.path()).shape([nx, ny, nz]).mode::<f32>().finish().unwrap();
+            w.write_block(&VoxelBlock::new([0, 0, 0], [nx, ny, nz], data.clone()).unwrap()).unwrap();
+            w.finalize().unwrap();
+        }
+
+        let r = Reader::open(f.path()).unwrap();
+        let vol = r.read_volume::<f32>().unwrap();
+        let collected: Vec<f32> = r.slices_f32().flat_map(|s| s.unwrap().data).collect();
+        assert_eq!(vol.data, collected);
+    }
+
+    /// Gzip compressed roundtrip.
+    #[cfg(feature = "gzip")]
+    #[test]
+    fn roundtrip_gzip() {
+        let f = TempMrc::new("gzip");
+        let nx = 8;
+        let ny = 8;
+        let nz = 4;
+
+        let data: Vec<f32> = (0..nx * ny * nz).map(|i| i as f32).collect();
+        {
+            let mut w = create(f.path()).shape([nx, ny, nz]).mode::<f32>().finish_gzip().unwrap();
+            w.write_block(&VoxelBlock::new([0, 0, 0], [nx, ny, nz], data.clone()).unwrap()).unwrap();
+            w.finalize().unwrap();
+        }
+
+        // Reader::open auto-detects gzip
+        let r = Reader::open(f.path()).unwrap();
+        let block = r.read_volume::<f32>().unwrap();
+        assert_eq!(block.data, data);
+    }
+
+    /// Header statistics roundtrip: write data, update stats, read back.
+    #[test]
+    fn update_header_stats_roundtrip() {
+        let f = TempMrc::new("stats");
+        let nx = 4;
+        let ny = 4;
+        let nz = 2;
+        let total = nx * ny * nz;
+
+        let data: Vec<f32> = (0..total).map(|i| i as f32).collect();
+        {
+            let mut w = create(f.path()).shape([nx, ny, nz]).mode::<f32>().finish().unwrap();
+            w.write_block(&VoxelBlock::new([0, 0, 0], [nx, ny, nz], data.clone()).unwrap()).unwrap();
+            w.update_header_stats().unwrap();
+            w.finalize().unwrap();
+        }
+
+        let r = Reader::open(f.path()).unwrap();
+        assert!(r.validate_header_stats().is_ok());
+    }
 }
 
 

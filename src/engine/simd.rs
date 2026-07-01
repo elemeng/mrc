@@ -33,8 +33,9 @@ pub(crate) fn convert_i8_to_f32_simd(src: &[i8]) -> Vec<f32> {
 
     #[cfg(target_arch = "aarch64")]
     {
-        // NEON is always available on AArch64
-        return unsafe { convert_i8_to_f32_neon(src) };
+        if core::arch::is_aarch64_feature_detected!("neon") {
+            return unsafe { convert_i8_to_f32_neon(src) };
+        }
     }
 
     // Fallback to scalar
@@ -54,7 +55,9 @@ pub(crate) fn convert_i16_to_f32_simd(src: &[i16]) -> Vec<f32> {
 
     #[cfg(target_arch = "aarch64")]
     {
-        return unsafe { convert_i16_to_f32_neon(src) };
+        if core::arch::is_aarch64_feature_detected!("neon") {
+            return unsafe { convert_i16_to_f32_neon(src) };
+        }
     }
 
     // Fallback to scalar
@@ -72,7 +75,9 @@ pub(crate) fn convert_u16_to_f32_simd(src: &[u16]) -> Vec<f32> {
 
     #[cfg(target_arch = "aarch64")]
     {
-        return unsafe { convert_u16_to_f32_neon(src) };
+        if core::arch::is_aarch64_feature_detected!("neon") {
+            return unsafe { convert_u16_to_f32_neon(src) };
+        }
     }
 
     // Fallback to scalar
@@ -85,6 +90,11 @@ pub(crate) fn convert_u16_to_f32_simd(src: &[u16]) -> Vec<f32> {
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
+/// SAFETY: Caller must ensure AVX2 is available at runtime. This function:
+/// - Allocates `Vec::with_capacity(src.len())` — enough for all elements
+/// - Fills elements via SIMD stores in the loop and the scalar tail loop
+/// - Calls `set_len` only after all elements are initialized
+/// - Uses unaligned load/store intrinsics which do not require aligned pointers
 unsafe fn convert_i8_to_f32_avx2(src: &[i8]) -> Vec<f32> {
     unsafe {
         use core::arch::x86_64::*;
@@ -119,10 +129,13 @@ unsafe fn convert_i8_to_f32_avx2(src: &[i8]) -> Vec<f32> {
             i += 32;
         }
 
-        dst.set_len(src.len());
+        // Tail elements: process remaining elements that don't fit a full vector
         for j in i..src.len() {
-            dst[j] = src[j] as f32;
+            *dst_ptr.add(j) = src[j] as f32;
         }
+
+        // SAFETY: all src.len() elements initialized above.
+        dst.set_len(src.len());
 
         dst
     }
@@ -130,6 +143,8 @@ unsafe fn convert_i8_to_f32_avx2(src: &[i8]) -> Vec<f32> {
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
+/// SAFETY: Caller must ensure AVX2 is available at runtime. All `src.len()`
+/// elements are initialized before `set_len` — SIMD loop + tail write loop.
 unsafe fn convert_i16_to_f32_avx2(src: &[i16]) -> Vec<f32> {
     unsafe {
         use core::arch::x86_64::*;
@@ -158,10 +173,13 @@ unsafe fn convert_i16_to_f32_avx2(src: &[i16]) -> Vec<f32> {
             i += 16;
         }
 
-        dst.set_len(src.len());
+        // Tail elements
         for j in i..src.len() {
-            dst[j] = src[j] as f32;
+            *dst_ptr.add(j) = src[j] as f32;
         }
+
+        // SAFETY: all src.len() elements initialized above.
+        dst.set_len(src.len());
 
         dst
     }
@@ -169,6 +187,8 @@ unsafe fn convert_i16_to_f32_avx2(src: &[i16]) -> Vec<f32> {
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
+/// SAFETY: Caller must ensure AVX2 is available at runtime. All `src.len()`
+/// elements are initialized before `set_len` — SIMD loop + tail write loop.
 unsafe fn convert_u16_to_f32_avx2(src: &[u16]) -> Vec<f32> {
     unsafe {
         use core::arch::x86_64::*;
@@ -197,10 +217,13 @@ unsafe fn convert_u16_to_f32_avx2(src: &[u16]) -> Vec<f32> {
             i += 16;
         }
 
-        dst.set_len(src.len());
+        // Tail elements
         for j in i..src.len() {
-            dst[j] = src[j] as f32;
+            *dst_ptr.add(j) = src[j] as f32;
         }
+
+        // SAFETY: all src.len() elements initialized above.
+        dst.set_len(src.len());
 
         dst
     }
@@ -212,6 +235,8 @@ unsafe fn convert_u16_to_f32_avx2(src: &[u16]) -> Vec<f32> {
 
 #[cfg(target_arch = "aarch64")]
 #[target_feature(enable = "neon")]
+/// SAFETY: Caller must ensure NEON is available at runtime. All `src.len()`
+/// elements are initialized before `set_len` — SIMD loop + tail write loop.
 unsafe fn convert_i8_to_f32_neon(src: &[i8]) -> Vec<f32> {
     use core::arch::aarch64::*;
 
@@ -243,16 +268,21 @@ unsafe fn convert_i8_to_f32_neon(src: &[i8]) -> Vec<f32> {
         i += 16;
     }
 
-    dst.set_len(src.len());
+    // Tail elements
     for j in i..src.len() {
-        dst[j] = src[j] as f32;
+        *dst_ptr.add(j) = src[j] as f32;
     }
+
+    // SAFETY: all src.len() elements initialized above.
+    dst.set_len(src.len());
 
     dst
 }
 
 #[cfg(target_arch = "aarch64")]
 #[target_feature(enable = "neon")]
+/// SAFETY: Caller must ensure NEON is available at runtime. All `src.len()`
+/// elements are initialized before `set_len` — SIMD loop + tail write loop.
 unsafe fn convert_i16_to_f32_neon(src: &[i16]) -> Vec<f32> {
     use core::arch::aarch64::*;
 
@@ -276,16 +306,21 @@ unsafe fn convert_i16_to_f32_neon(src: &[i16]) -> Vec<f32> {
         i += 8;
     }
 
-    dst.set_len(src.len());
+    // Tail elements
     for j in i..src.len() {
-        dst[j] = src[j] as f32;
+        *dst_ptr.add(j) = src[j] as f32;
     }
+
+    // SAFETY: all src.len() elements initialized above.
+    dst.set_len(src.len());
 
     dst
 }
 
 #[cfg(target_arch = "aarch64")]
 #[target_feature(enable = "neon")]
+/// SAFETY: Caller must ensure NEON is available at runtime. All `src.len()`
+/// elements are initialized before `set_len` — SIMD loop + tail write loop.
 unsafe fn convert_u16_to_f32_neon(src: &[u16]) -> Vec<f32> {
     use core::arch::aarch64::*;
 
@@ -309,10 +344,13 @@ unsafe fn convert_u16_to_f32_neon(src: &[u16]) -> Vec<f32> {
         i += 8;
     }
 
-    dst.set_len(src.len());
+    // Tail elements
     for j in i..src.len() {
-        dst[j] = src[j] as f32;
+        *dst_ptr.add(j) = src[j] as f32;
     }
+
+    // SAFETY: all src.len() elements initialized above.
+    dst.set_len(src.len());
 
     dst
 }

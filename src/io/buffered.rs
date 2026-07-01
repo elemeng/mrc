@@ -58,6 +58,11 @@ impl Reader {
     /// For plain files this is equivalent to [`open_plain`](Self::open_plain).
     /// For gzip files it delegates to [`open_gzip`](Self::open_gzip); for bzip2
     /// files to [`open_bzip2`](Self::open_bzip2).
+    ///
+    /// **Note:** gzip and bzip2 support require the `gzip` and `bzip2` feature
+    /// flags respectively. Both are enabled by default. If a compressed file is
+    /// opened without the corresponding feature, it will be misinterpreted as
+    /// plain and fail with [`InvalidHeader`](crate::Error::InvalidHeader).
     pub fn open<P: AsRef<std::path::Path>>(path: P) -> Result<Self, Error> {
         match crate::io::reader::detect_compression(&path)? {
             crate::io::reader::CompressionType::Plain => Self::open_plain(path),
@@ -146,6 +151,9 @@ impl Reader {
     }
 
     /// Voxel data mode of the opened file.
+    ///
+    /// Returns the mode stored in the header. If the mode value is not
+    /// recognised, falls back to [`Mode::Float32`] as a safe default.
     pub fn mode(&self) -> Mode {
         Mode::from_i32(self.header.mode).unwrap_or(Mode::Float32)
     }
@@ -183,18 +191,16 @@ impl Reader {
     /// Read and decode a block of voxels to the specified type.
     ///
     /// Returns an error if `T` does not match the file's voxel mode.
+    ///
+    /// Use [`subregion`](Self::subregion) instead — it is available on all
+    /// reader types and behaves identically.
+    #[deprecated(since = "0.2.4", note = "use `subregion` instead")]
     pub fn read_block<T: Voxel>(
         &self,
         offset: [usize; 3],
         shape: [usize; 3],
     ) -> Result<crate::engine::block::VoxelBlock<T>, Error> {
-        let bytes = self.read_block_bytes(offset, shape)?;
-        let data = self.decode_block::<T>(&bytes)?;
-        Ok(crate::engine::block::VoxelBlock {
-            offset,
-            shape,
-            data,
-        })
+        self.subregion(offset, shape)
     }
 
     /// Decode a block of voxels to the specified type.

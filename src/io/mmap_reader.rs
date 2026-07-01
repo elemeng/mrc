@@ -29,7 +29,7 @@ use std::vec::Vec;
 /// voxel data, also zero-copy.
 ///
 /// For non-native-endian files or type-mismatched reads, use
-/// [`read_block`](Self::read_block) which always allocates.
+/// [`subregion`](Self::subregion) which always allocates.
 ///
 /// # Example
 /// ```no_run
@@ -144,6 +144,8 @@ impl MmapReader {
     }
 
     /// Get the voxel mode (data type) of the file.
+    ///
+    /// Falls back to [`Mode::Float32`] if the header mode value is not recognised.
     pub fn mode(&self) -> Mode {
         Mode::from_i32(self.header.mode).unwrap_or(Mode::Float32)
     }
@@ -194,7 +196,7 @@ impl MmapReader {
     /// * `k > 0` and `z + k <= nz`
     ///
     /// For non-native-endian files or type mismatches, use
-    /// [`read_block`](Self::read_block) instead.
+    /// [`subregion`](Self::subregion) instead.
     pub fn slab_as<T: Voxel>(&self, z: usize, k: usize) -> Result<&[T], Error> {
         if T::MODE != self.mode() {
             return Err(Error::ModeMismatch {
@@ -205,7 +207,7 @@ impl MmapReader {
         if !self.endian.is_native() {
             return Err(Error::TypeMismatch {
                 expected: T::BYTE_SIZE,
-                actual: T::BYTE_SIZE,
+                actual: 0, // non-native endian, not a size mismatch
             });
         }
 
@@ -225,13 +227,21 @@ impl MmapReader {
             return Err(Error::BoundsError);
         }
 
+        // Verify that the data region is sufficiently aligned for `T`.
+        // `data_offset` = 1024 + nsymbt, which may not be a multiple of
+        // `align_of::<T>()` for arbitrary valid `nsymbt` values.
+        if byte_start % core::mem::align_of::<T>() != 0 {
+            return Err(Error::TypeMismatch {
+                expected: core::mem::align_of::<T>(),
+                actual: byte_start % core::mem::align_of::<T>(),
+            });
+        }
+
         // SAFETY:
         // • T::MODE matches the file mode (checked above), so the on-disk
         //   byte layout is exactly `T`.
         // • Native endian (checked above), so byte order matches the host.
-        // • `data_offset` (= 1024 + nsymbt) is 4-byte aligned for any
-        //   valid `nsymbt`.  All MRC voxel types have sizes 1, 2, 4, or 8,
-        //   so their alignment is always satisfied by a 4-byte-aligned base.
+        // • Alignment checked above.
         // • Bounds are checked above, so the byte range falls within the mmap.
         // • `T: Copy` (from the `Voxel` bound) makes it safe to read the
         //   same bytes from multiple references without aliasing concerns.
@@ -312,18 +322,16 @@ impl MmapReader {
     /// Read and decode a block of voxels to the specified type.
     ///
     /// Returns an error if `T` does not match the file's voxel mode.
+    ///
+    /// Use [`subregion`](Self::subregion) instead — it is available on all
+    /// reader types and behaves identically.
+    #[deprecated(since = "0.2.4", note = "use `subregion` instead")]
     pub fn read_block<T: Voxel>(
         &self,
         offset: [usize; 3],
         shape: [usize; 3],
     ) -> Result<VoxelBlock<T>, Error> {
-        let bytes = self.read_block_bytes(offset, shape)?;
-        let data = self.decode_block::<T>(&bytes)?;
-        Ok(VoxelBlock {
-            offset,
-            shape,
-            data,
-        })
+        self.subregion(offset, shape)
     }
 
     /// Decode a block of voxels to the specified type.

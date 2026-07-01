@@ -12,6 +12,7 @@ use std::path::Path;
 impl crate::Reader {
     /// Open a bzip2-compressed MRC file.
     ///
+    /// Requires the `bzip2` feature (disabled by default).
     /// The entire file is decompressed into memory on open.
     pub fn open_bzip2<P: AsRef<Path>>(path: P) -> Result<Self, Error> {
         Self::_open_bzip2(path, false).map(|(r, _)| r)

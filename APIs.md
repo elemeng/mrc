@@ -99,7 +99,10 @@ The standard buffered reader. Loads the **entire file** into a `Vec<u8>` on open
 | `reader.data_bytes()` | `&[u8]` | Raw voxel data bytes |
 | `reader.ext_header_bytes()` | `&[u8]` | Extended header bytes (empty if none) |
 | `reader.read_block_bytes(offset, shape)` | `Result<Vec<u8>>` | Read raw bytes for any sub-block |
-| `reader.read_block::<T>(offset, shape)` | `Result<VoxelBlock<T>>` | Read and decode typed sub-block |
+| `reader.read_block::<T>(offset, shape)` | `Result<VoxelBlock<T>>` | Deprecated, use `subregion` instead |
+| `reader.subregion::<T>(offset, shape)` | `Result<VoxelBlock<T>>` | Read and decode typed sub-block at any offset |
+| `reader.read_volume::<T>()` | `Result<VoxelBlock<T>>` | Read the entire volume as a single block |
+| `reader.read_volume_f32()` | `Result<VoxelBlock<f32>>` | Read entire volume, auto-convert any mode to `f32` |
 | `reader.validate_header_stats()` | `Result<()>` | Cross-check header stats vs actual data (1% tolerance) |
 
 **Iterator methods** (all return lazy `RegionIter` or boxed iterators, see [Iterators](#iterators)):
@@ -138,7 +141,9 @@ Requires the `mmap` feature.
 | `reader.ext_header_bytes()` | `&[u8]` | Extended header bytes |
 | `reader.slab_as::<T>(z, k)` | `Result<&[T]>` | **Zero-copy** typed access into the mmap (requires native endian + matching type) |
 | `reader.read_block_bytes(offset, shape)` | `Result<Vec<u8>>` | Read raw bytes for any sub-block |
-| `reader.read_block::<T>(offset, shape)` | `Result<VoxelBlock<T>>` | Read and decode typed sub-block |
+| `reader.read_block::<T>(offset, shape)` | `Result<VoxelBlock<T>>` | Deprecated, use `subregion` instead |
+| `reader.read_volume::<T>()` | `Result<VoxelBlock<T>>` | Read the entire volume as a single block |
+| `reader.read_volume_f32()` | `Result<VoxelBlock<f32>>` | Read entire volume, auto-convert any mode to `f32` |
 | `reader.validate_header_stats()` | `Result<()>` | Cross-check header stats |
 
 `MmapReader` also has all the same **iterator methods** as `Reader` (`slices`, `slabs`, `tiles`, `slices_f32`, `slabs_f32`, `slices_u8`, `slices_mode0`, `slabs_mode0`, `volumes`, `subregion`, etc.).
@@ -150,7 +155,7 @@ Requires the `mmap` feature.
 | File smaller than available RAM | ✅ | ✅ |
 | Very large file (> 4 GB) | ⚠️ load time + RAM | ✅ demand-paged |
 | True zero-copy typed access | ❌ | ✅ `slab_as` |
-| Auto-detects compression | ✅ | ❌ (uncompressed only) |
+| Auto-detects compression | ✅ | ❌ (uncompressed only — open via `Reader::open` for compressed) |
 | Available without `mmap` feature | ✅ | ❌ |
 
 ---
@@ -221,7 +226,8 @@ Created via `WriterBuilder::finish_gzip()` / `finish_bzip2()`.
 only on `finalize`. Not suitable for large volumes that exceed RAM.
 
 Full API: `shape()`, `mode()`, `header()`, `write_block()`, `write_u8_block()`,
-`write_f16_from_f32()`, `finalize()` (takes `self` by value).
+`write_f16_from_f32()`, `update_header_stats()` (reads from in-memory buffer),
+`finalize()` (takes `self` by value).
 
 ---
 
@@ -477,7 +483,8 @@ use mrc::validate::{validate_full, ValidationReport, ValidationIssue, Severity};
 
 | Function | Returns | Description |
 |---|---|---|
-| `validate_full(path, permissive)` | `Result<ValidationReport>` | Comprehensive file validation |
+| `validate_full(path, permissive)` | `Result<ValidationReport>` | Open file and validate (full I/O) |
+| `validate_reader(reader, path, compression, warnings)` | `Result<ValidationReport>` | Validate an already-open reader (no re-open) |
 
 ```rust
 pub struct ValidationReport {

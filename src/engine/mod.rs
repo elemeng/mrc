@@ -22,4 +22,5 @@ pub mod endian;
 pub mod stats;
 
 #[cfg(feature = "simd")]
+#[doc(hidden)]
 pub mod simd;

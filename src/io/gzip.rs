@@ -12,6 +12,7 @@ use std::path::Path;
 impl crate::Reader {
     /// Open a gzip-compressed MRC file.
     ///
+    /// Requires the `gzip` feature (enabled by default).
     /// The entire file is decompressed into memory on open.
     pub fn open_gzip<P: AsRef<Path>>(path: P) -> Result<Self, Error> {
         Self::_open_gzip(path, false).map(|(r, _)| r)

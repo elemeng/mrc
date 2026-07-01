@@ -82,6 +82,8 @@ impl Fei1Metadata {
         Some(Self {
             metadata_size: be_u32(bytes, 0),
             metadata_version: be_u32(bytes, 4),
+            // bitmask_1 at offset 8 is stored as little-endian in the FEI
+            // specification (unlike the rest of the record which is big-endian).
             bitmask_1: le_u32(bytes, 8),
             timestamp: be_f64(bytes, 12),
             microscope_type: read_bytes(bytes, 20),
@@ -161,6 +163,9 @@ impl Fei2Metadata {
     ///
     /// Returns `None` if `bytes` is shorter than [`FEI2_RECORD_SIZE`].
     pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
+        if bytes.len() < FEI2_RECORD_SIZE {
+            return None;
+        }
         let fei1 = Fei1Metadata::from_bytes(bytes)?;
         Some(Self {
             fei1,
@@ -185,8 +190,8 @@ impl Fei2Metadata {
 
 /// Parse a raw extended header byte slice as a vector of FEI1 records.
 ///
-/// Returns `None` if the byte length is not an exact multiple of
-/// [`FEI1_RECORD_SIZE`].
+/// Returns `None` if `bytes` is empty or if its length is not an exact
+/// multiple of [`FEI1_RECORD_SIZE`].
 pub fn parse_fei1_records(bytes: &[u8]) -> Option<Vec<Fei1Metadata>> {
     if bytes.is_empty() || bytes.len() % FEI1_RECORD_SIZE != 0 {
         return None;
@@ -204,8 +209,8 @@ pub fn parse_fei1_records(bytes: &[u8]) -> Option<Vec<Fei1Metadata>> {
 
 /// Parse a raw extended header byte slice as a vector of FEI2 records.
 ///
-/// Returns `None` if the byte length is not an exact multiple of
-/// [`FEI2_RECORD_SIZE`].
+/// Returns `None` if `bytes` is empty or if its length is not an exact
+/// multiple of [`FEI2_RECORD_SIZE`].
 pub fn parse_fei2_records(bytes: &[u8]) -> Option<Vec<Fei2Metadata>> {
     if bytes.is_empty() || bytes.len() % FEI2_RECORD_SIZE != 0 {
         return None;

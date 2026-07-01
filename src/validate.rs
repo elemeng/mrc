@@ -15,16 +15,22 @@ use std::path::Path;
 /// Severity of a validation issue.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Severity {
+    /// The file cannot be used as-is (corrupt header, data mismatch, etc.).
     Error,
+    /// The file is usable but has non-standard or suspicious properties.
     Warning,
+    /// Informational message about the file contents.
     Info,
 }
 
 /// A single validation issue found during file inspection.
 #[derive(Debug, Clone)]
 pub struct ValidationIssue {
+    /// How serious the issue is.
     pub severity: Severity,
+    /// Short category label, e.g. `"Header"`, `"Statistics"`, `"Endianness"`.
     pub category: &'static str,
+    /// Human-readable description of the issue.
     pub message: String,
 }
 
@@ -77,46 +83,33 @@ impl ValidationReport {
 }
 
 // ============================================================================
-// Full validation
+// Validation implementations
 // ============================================================================
 
-/// Run comprehensive validation on an MRC file.
+/// Run comprehensive validation on an already-opened [`Reader`].
 ///
-/// Opens the file, checks header structure, data statistics, and data
-/// integrity.  In permissive mode, non-critical header issues are reported
-/// as warnings rather than hard errors.
+/// Checks header structure, file size, endianness, data statistics cross-check
+/// (1 % tolerance), and NaN/Inf scanning. Avoids the redundant open that
+/// [`validate_full`] performs.
+///
+/// The `warnings` parameter accepts the permissive-mode warnings from
+/// [`Reader::open_permissive`]; pass an empty slice for strict-mode opens.
 ///
 /// # Errors
-/// Returns `Err` only when the file cannot be opened or read at all.
-pub fn validate_full<P: AsRef<Path>>(
-    path: P,
-    permissive: bool,
+/// Returns `Err` only when reading or computing statistics fails.
+pub fn validate_reader(
+    reader: &Reader,
+    path: &str,
+    compression: &str,
+    warnings: &[String],
 ) -> Result<ValidationReport, Error> {
-    let path_str = path.as_ref().to_string_lossy().into_owned();
-
-    // ── Detect compression ──
-    let compression = match crate::io::reader::detect_compression(&path)? {
-        crate::io::reader::CompressionType::Plain => "plain".into(),
-        #[cfg(feature = "gzip")]
-        crate::io::reader::CompressionType::Gzip => "gzip".into(),
-        #[cfg(feature = "bzip2")]
-        crate::io::reader::CompressionType::Bzip2 => "bzip2".into(),
-    };
-
-    // ── Open the file ──
-    let (reader, open_warnings) = if permissive {
-        Reader::open_permissive(&path)?
-    } else {
-        (Reader::open(&path)?, Vec::new())
-    };
-
     let mut issues: Vec<ValidationIssue> = Vec::new();
     let header = reader.header();
     let mode_val = header.mode;
     let endian = reader.endian();
 
     // ── Open warnings (permissive mode) ──
-    for w in &open_warnings {
+    for w in warnings {
         issues.push(ValidationIssue::warning("Open", w.clone()));
     }
 
@@ -200,8 +193,7 @@ pub fn validate_full<P: AsRef<Path>>(
                 || crate::engine::stats::is_close(header.rms, actual_rms, rtol);
 
             if !stats_unset || !rms_unset {
-                let mismatch_parts = Vec::new();
-                let mut mismatch_parts = mismatch_parts;
+                let mut mismatch_parts = Vec::new();
                 if !min_ok { mismatch_parts.push("dmin".to_string()); }
                 if !max_ok { mismatch_parts.push("dmax".to_string()); }
                 if !mean_ok { mismatch_parts.push("dmean".to_string()); }
@@ -282,14 +274,48 @@ pub fn validate_full<P: AsRef<Path>>(
             header.nx, header.ny, header.nz, vol_type)));
 
     Ok(ValidationReport {
-        path: path_str,
-        compression,
+        path: path.to_owned(),
+        compression: compression.to_owned(),
         nx: header.nx,
         ny: header.ny,
         nz: header.nz,
         mode: mode_val,
         issues,
     })
+}
+
+/// Run comprehensive validation on an MRC file.
+///
+/// Opens the file, checks header structure, data statistics, and data
+/// integrity. In permissive mode, non-critical header issues are reported
+/// as warnings rather than hard errors.
+///
+/// Prefer [`validate_reader`] when you already have an open [`Reader`] — it
+/// avoids the redundant file I/O.
+///
+/// # Errors
+/// Returns `Err` only when the file cannot be opened or read at all.
+pub fn validate_full<P: AsRef<Path>>(
+    path: P,
+    permissive: bool,
+) -> Result<ValidationReport, Error> {
+    let path_str = path.as_ref().to_string_lossy().into_owned();
+
+    let compression = match crate::io::reader::detect_compression(&path)? {
+        crate::io::reader::CompressionType::Plain => "plain".to_string(),
+        #[cfg(feature = "gzip")]
+        crate::io::reader::CompressionType::Gzip => "gzip".to_string(),
+        #[cfg(feature = "bzip2")]
+        crate::io::reader::CompressionType::Bzip2 => "bzip2".to_string(),
+    };
+
+    let (reader, warnings) = if permissive {
+        Reader::open_permissive(&path)?
+    } else {
+        (Reader::open(&path)?, Vec::new())
+    };
+
+    validate_reader(&reader, &path_str, &compression, &warnings)
 }
 
 // ── Float-mode data integrity helper ──
@@ -309,7 +335,7 @@ fn float_mode_issues(
                 f16_data.iter().map(|&v| f32::from(v)).collect()
             }
             #[cfg(not(feature = "f16"))]
-            return Ok(Vec::new());
+            return Ok(vec!["Float16 scanning unavailable (requires `f16` feature)".into()]);
         }
         _ => return Ok(Vec::new()),
     };
