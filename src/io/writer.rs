@@ -1,4 +1,9 @@
-//! MRC file writer with block-based API
+//! MRC file writer with block-based API.
+//!
+//! Provides [`Writer`] (standard file I/O), [`MmapWriter`](crate::MmapWriter)
+//! (memory-mapped, requires `mmap`), and [`CompressedWriter`] (gzip/bzip2 backend).
+//! Use [`WriterBuilder`] or the [`create`](crate::create) convenience function
+//! to construct a writer.
 
 macro_rules! write_u8_block_body {
     ($self:ident, $block:ident) => {{
@@ -155,6 +160,15 @@ impl WriterBuilder {
         self
     }
 
+    /// Consume the builder and create a standard file-backed [`Writer`].
+    ///
+    /// The file is created (or truncated) and the header + extended header
+    /// are written immediately. Voxel data can then be written with
+    /// [`write_block`](Writer::write_block).
+    ///
+    /// # Errors
+    /// Returns [`Error::InvalidHeaderDetailed`] if the header fails validation.
+    /// Returns [`Error::Io`] if the file cannot be created or written.
     pub fn finish(self) -> Result<Writer, Error> {
         Writer::create(self.path, self.header, &self.ext_header)
     }
@@ -266,10 +280,12 @@ impl Writer {
         })
     }
 
+    /// Volume dimensions for this writer.
     pub fn shape(&self) -> VolumeShape {
         self.shape
     }
 
+    /// Voxel data mode for this writer.
     pub fn mode(&self) -> Mode {
         Mode::from_i32(self.header.mode).unwrap_or(Mode::Float32)
     }
@@ -409,6 +425,15 @@ impl Writer {
         write_f16_from_f32_body!(self, block)
     }
 
+    /// Finalize the MRC file by rewriting the header at the beginning of the file.
+    ///
+    /// This must be called after all [`write_block`](Self::write_block) calls
+    /// are complete. It updates the on-disk header to reflect any changes made
+    /// via [`header`](Self::header) (such as updated `dmin`/`dmax`/`dmean`/`rms`
+    /// statistics after calling [`update_header_stats`](Self::update_header_stats)).
+    ///
+    /// # Errors
+    /// Returns [`Error::Io`] if seeking or writing fails.
     pub fn finalize(&mut self) -> Result<(), Error> {
         use std::io::{Seek, SeekFrom, Write};
 
@@ -567,10 +592,12 @@ impl MmapWriter {
         })
     }
 
+    /// Volume dimensions for this writer.
     pub fn shape(&self) -> VolumeShape {
         self.shape
     }
 
+    /// Voxel data mode for this writer.
     pub fn mode(&self) -> Mode {
         Mode::from_i32(self.header.mode).unwrap_or(Mode::Float32)
     }
@@ -711,6 +738,14 @@ impl MmapWriter {
 
 #[cfg(feature = "mmap")]
 impl MmapWriter {
+    /// Finalize the memory-mapped MRC file by writing the header.
+    ///
+    /// This updates the first 1024 bytes of the memory map with the current
+    /// header and flushes the mapping to disk. Must be called after all
+    /// [`write_block`](MmapWriter::write_block) calls.
+    ///
+    /// # Errors
+    /// Returns [`Error::Io`] if the flush fails.
     pub fn finalize(&mut self) -> Result<(), Error> {
         let mut header_bytes = [0u8; 1024];
         self.header.encode_to_bytes(&mut header_bytes);
@@ -825,7 +860,7 @@ impl<C: Compressor> CompressedWriter<C> {
         &self.header
     }
 
-    /// Write a block of voxels to the file.
+    /// Write a block of voxels to the in-memory buffer.
     ///
     /// The type `T` must match the file's voxel mode exactly.
     /// Supports arbitrary sub-blocks by scattering row-by-row when necessary.
@@ -872,6 +907,14 @@ impl<C: Compressor> CompressedWriter<C> {
         write_f16_from_f32_body!(self, block)
     }
 
+    /// Finalize the compressed MRC file by assembling, compressing and writing to disk.
+    ///
+    /// Assembles the full MRC file (header + extended header + voxel data),
+    /// compresses it via the backend compressor, and writes the result to the
+    /// output path. After this call the writer is consumed.
+    ///
+    /// # Errors
+    /// Returns [`Error::Io`] if the file cannot be written.
     pub fn finalize(self) -> Result<(), Error> {
         let mut header_bytes = [0u8; 1024];
         self.header.encode_to_bytes(&mut header_bytes);

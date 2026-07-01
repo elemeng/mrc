@@ -9,8 +9,11 @@ use std::vec::Vec;
 /// Volume geometry in voxels.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct VolumeShape {
+    /// Number of columns — the fastest-changing (X) axis.
     pub nx: usize,
+    /// Number of rows — the medium (Y) axis.
     pub ny: usize,
+    /// Number of sections — the slowest-changing (Z) axis.
     pub nz: usize,
 }
 
@@ -21,6 +24,8 @@ impl VolumeShape {
     }
 
     /// Create a volume shape from an MRC header.
+    ///
+    /// Maps from the header's `nx`, `ny`, `nz` fields (stored as `i32`).
     pub fn from_header(header: &crate::Header) -> Self {
         Self {
             nx: header.nx as usize,
@@ -61,10 +66,16 @@ impl VolumeShape {
 }
 
 /// A contiguous chunk of voxel data with a 3D offset and shape.
+///
+/// Created by [`VoxelBlock::new`] or returned by reader methods such as
+/// [`Reader::slices`](crate::Reader::slices) and [`MmapReader::read_block`](crate::MmapReader::read_block).
 #[derive(Debug, Clone)]
 pub struct VoxelBlock<T> {
+    /// Corner of the block within the volume, in voxels `[x, y, z]`.
     pub offset: [usize; 3],
+    /// Extent of the block along each axis `[sx, sy, sz]`.
     pub shape: [usize; 3],
+    /// Contiguous voxel values in C-order (X fastest, Z slowest).
     pub data: Vec<T>,
 }
 
@@ -72,8 +83,8 @@ impl<T> VoxelBlock<T> {
     /// Create a new voxel block, returning an error if `data.len()` does not match `shape`.
     ///
     /// # Errors
-    /// Returns [`Error::BoundsError`] if `shape` dimensions overflow `usize`.
-    /// Returns [`Error::BlockShapeMismatch`] if `data.len()` does not match `shape`.
+    /// Returns [`crate::Error::BoundsError`] if `shape` dimensions overflow `usize`.
+    /// Returns [`crate::Error::BlockShapeMismatch`] if `data.len()` does not match `shape`.
     pub fn new(
         offset: [usize; 3],
         shape: [usize; 3],

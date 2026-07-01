@@ -1,8 +1,9 @@
 //! Bidirectional endian codec for MRC voxel types.
 //!
-//! The `EndianCodec` trait provides symmetric encode/decode operations
+//! The [`EndianCodec`] trait provides symmetric encode/decode operations
 //! between raw bytes and typed values, handling both little-endian and
-//! big-endian MRC files.
+//! big-endian MRC files. Slice-level helpers (`decode_slice`, `encode_slice`)
+//! use SIMD and parallel processing when features are enabled.
 
 use super::endian::FileEndian;
 use crate::mode::{Float32Complex, Int16Complex};

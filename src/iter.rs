@@ -29,6 +29,7 @@ pub struct SliceStepper {
 }
 
 impl SliceStepper {
+    /// Create a new slice stepper that yields one Z-plane per step.
     pub fn new() -> Self {
         Self::default()
     }
@@ -53,6 +54,10 @@ pub struct SlabStepper {
 }
 
 impl SlabStepper {
+    /// Create a new slab stepper that yields `k` contiguous Z-planes per step.
+    ///
+    /// `k` is clamped to at least 1. The final slab may be shorter near the
+    /// end of the volume.
     pub fn new(k: usize) -> Self {
         Self { z: 0, k: k.max(1) }
     }
@@ -78,6 +83,11 @@ pub struct TileStepper {
 }
 
 impl TileStepper {
+    /// Create a new tile stepper that partitions the volume into tiles of the
+    /// given shape.
+    ///
+    /// # Panics
+    /// Panics if any dimension of `tile_shape` is zero.
     pub fn new(tile_shape: [usize; 3]) -> Self {
         assert!(
             tile_shape[0] > 0 && tile_shape[1] > 0 && tile_shape[2] > 0,
@@ -137,6 +147,10 @@ pub struct RegionIter<'a, T, R, S> {
 
 impl<'a, T, R, S> RegionIter<'a, T, R, S> {
     /// Create a new region iterator with an explicit stepper.
+    ///
+    /// Prefer using the convenience methods on [`Reader`](crate::Reader) and
+    /// [`MmapReader`](crate::MmapReader) (`slices`, `slabs`, `tiles`, etc.)
+    /// which construct the appropriate stepper automatically.
     pub fn with_stepper(reader: &'a R, volume_shape: VolumeShape, stepper: S) -> Self {
         Self {
             reader,

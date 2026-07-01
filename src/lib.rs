@@ -1,40 +1,265 @@
-//! MRC file format library for cryo-EM and tomography
+//! Read and write MRC-2014 files — the standard in cryo-EM and structural
+//! biology.
 //!
-//! Provides high-performance reading and writing of MRC-2014 files.
+//! This crate handles file I/O, byte-order detection, and type-safe data
+//! access so you can focus on your science. It's fast (SIMD, parallel
+//! encoding) and works with plain, gzip, and bzip2 files out of the box.
 //!
-//! # Design Philosophy
-//!
-//! This crate focuses on a single responsibility: **correctly reading and writing
-//! MRC files**. Type conversion is the caller's responsibility, with only a small
-//! set of MRC-specific conveniences (e.g. `slices_f32` for the common i16→f32 case).
-//!
-//! # Quick Example
+//! # Quick example
 //!
 //! ```no_run
 //! use mrc::{open, create, VoxelBlock};
 //!
 //! fn main() -> Result<(), Box<dyn std::error::Error>> {
-//!     // Reading (auto-detects gzip/bzip2)
-//!     let reader = open("protein.mrc")?;
-//!     for slice in reader.slices_f32() {
+//!     let reader = open("protein.mrc")?;          // auto-detects compression
+//!     for slice in reader.slices_f32() {           // converts to f32 for you
 //!         let block = slice?;
-//!         // block.data is Vec<f32>
 //!     }
 //!
-//!     // Writing
 //!     let mut writer = create("output.mrc")
 //!         .shape([512, 512, 256])
 //!         .mode::<f32>()
 //!         .finish()?;
 //!     writer.write_block(&VoxelBlock::new(
-//!         [0, 0, 0],
-//!         [512, 512, 1],
+//!         [0, 0, 0], [512, 512, 1],
 //!         vec![0.0f32; 512 * 512],
 //!     )?)?;
 //!     writer.finalize()?;
 //!     Ok(())
 //! }
 //! ```
+//!
+//! # Reading files
+//!
+//! Open any MRC file with [`open()`] or [`Reader::open`]. Compression is
+//! detected from the file's magic bytes — no need to tell it gzip or bzip2.
+//!
+//! ```no_run
+//! # fn main() -> Result<(), mrc::Error> {
+//! use mrc::Reader;
+//! let reader = Reader::open("tilt_series.mrc")?;
+//! println!("{}×{}×{} voxels, mode {:?}",
+//!     reader.shape().nx, reader.shape().ny, reader.shape().nz,
+//!     reader.mode());
+//! # Ok(()) }
+//! ```
+//!
+//! Then pick an iteration method:
+//!
+//! * [`slices`](Reader::slices) — one Z-plane at a time
+//! * [`slabs`](Reader::slabs) — batches of `k` Z-planes
+//! * [`tiles`](Reader::tiles) — arbitrary 3D blocks
+//! * [`subregion`](Reader::subregion) — a single block by coordinate
+//!
+//! Or grab the full volume in one call:
+//!
+//! * [`read_volume::<T>()`](Reader::read_volume) — full volume as any [`Voxel`] type
+//! * [`read_volume_f32()`](Reader::read_volume_f32) — full volume, any mode converted to `f32`
+//!
+//! Each yields [`VoxelBlock<T>`] — a data chunk with its `offset` and
+//! `shape`, so you always know where it belongs.
+//!
+//! For density maps stored as integers, use [`slices_f32`](Reader::slices_f32)
+//! or [`read_volume_f32()`](Reader::read_volume_f32) to get `f32` with
+//! automatic mode conversion (no need to match the file's storage type):
+//! It converts every MRC mode to `f32` (integer widening, complex→magnitude,
+//! the works):
+//!
+//! ```no_run
+//! # fn main() -> Result<(), mrc::Error> {
+//! # let reader = mrc::Reader::open("density.mrc")?;
+//! for slice in reader.slices_f32() {
+//!     let block = slice?;
+//!     println!("slice {} mean density: {:.2}",
+//!         block.offset[2],
+//!         block.data.iter().sum::<f32>() / block.data.len() as f32);
+//! }
+//! # Ok(()) }
+//! ```
+//!
+//! Or read the full volume at once with [`read_volume_f32()`](Reader::read_volume_f32)
+//! and wrap with `ndarray` for numpy-like slicing:
+//!
+//! ```text
+//! let block = reader.read_volume_f32()?;
+//! let array = ndarray::Array3::from_shape_vec(
+//!     [reader.shape().nz, reader.shape().ny, reader.shape().nx],
+//!     block.data,
+//! ).unwrap();
+//! ```
+//!
+//! ### Large files
+//!
+//! When the file does not fit in RAM, use [`MmapReader`] (requires the
+//! `mmap` feature). Same iterator API, zero-copy [`slab_as`](MmapReader::slab_as),
+//! OS-managed paging.
+//!
+//! ### Quirky files
+//!
+//! [`Reader::open_permissive`] opens files with minor header issues as
+//! warnings instead of hard errors — handy for data from older instruments.
+//!
+//! ```no_run
+//! # fn main() -> Result<(), mrc::Error> {
+//! # use mrc::Reader;
+//! let (reader, warnings) = Reader::open_permissive("legacy.mrc")?;
+//! for w in &warnings { eprintln!("note: {w}"); }
+//! # Ok(()) }
+//! ```
+//!
+//! # Writing files
+//!
+//! Use [`create()`] to get a [`WriterBuilder`], set the shape and voxel type,
+//! then call [`finish`](WriterBuilder::finish).
+//!
+//! ```no_run
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! use mrc::create;
+//! let mut writer = create("output.mrc")
+//!     .shape([256, 256, 128])
+//!     .mode::<f32>()
+//!     .finish()?;
+//! # Ok(()) }
+//! ```
+//!
+//! The lifecycle:
+//!
+//! 1. **Write** blocks with [`write_block`](Writer::write_block). The type
+//!    `T` matches the file's mode — a compile-time check that prevents
+//!    accidentally treating bytes as the wrong kind of number.
+//! 2. **Finalize** with [`finalize`](Writer::finalize) to rewrite the header.
+//! 3. Optionally call [`update_header_stats`](Writer::update_header_stats)
+//!    before finalize to fill in `dmin`/`dmax`/`dmean`/`rms`.
+//!
+//! Four backends through the same builder:
+//!
+//! | Backend | Builder method | Best for |
+//! |---|---|---|
+//! | [`Writer`] | [`finish()`](WriterBuilder::finish) | General use, writes straight to disk |
+//! | [`MmapWriter`] | [`finish_mmap()`](WriterBuilder::finish_mmap) | Very large files (`mmap` feature) |
+//! | [`GzipWriter`] | [`finish_gzip()`](WriterBuilder::finish_gzip) | Compressed output (`gzip` feature) |
+//! | [`Bzip2Writer`] | [`finish_bzip2()`](WriterBuilder::finish_bzip2) | Compressed output (`bzip2` feature) |
+//!
+//! # Data modes
+//!
+//! MRC files encode voxels in one of several numeric modes. [`Mode`]
+//! represents them at runtime; [`Voxel`] ties each Rust type to its mode
+//! at compile time, catching mismatches before any data is read or written.
+//!
+//! | Mode | Rust type | Typical use |
+//! |---|---|---|
+//! | [`Int8`](Mode::Int8) (0) | `i8` | Binary masks |
+//! | [`Int16`](Mode::Int16) (1) | `i16` | Raw cryo-EM density |
+//! | [`Float32`](Mode::Float32) (2) | `f32` | Processed / reconstructed density |
+//! | [`Uint16`](Mode::Uint16) (6) | `u16` | Segmentation labels |
+//! | [`Float16`](Mode::Float16) (12) | `f16` | Half-precision storage (feature `f16`) |
+//!
+//! Complex ([`Int16Complex`], [`Float32Complex`]) and packed 4-bit
+//! ([`Packed4Bit`]) modes are also available — see their individual docs.
+//!
+//! When you don't know the mode ahead of time, use [`slices_f32`](Reader::slices_f32)
+//! which converts any mode to `f32`.
+//!
+//! # Headers
+//!
+//! The [`Header`] struct mirrors the 1024-byte MRC-2014 fixed header.
+//! Every field is a typed public field — dimensions, cell parameters,
+//! axis mapping, density statistics, text labels, and more.
+//!
+//! ```
+//! use mrc::Header;
+//! let h = Header::new();
+//! assert_eq!(h.map, *b"MAP ");
+//! ```
+//!
+//! For fluent construction with validation, use [`HeaderBuilder`]:
+//!
+//! ```
+//! use mrc::HeaderBuilder;
+//! let header = HeaderBuilder::new()
+//!     .shape([512, 512, 256])
+//!     .mode::<f32>()
+//!     .build()?;
+//! # Ok::<_, mrc::HeaderValidationError>(())
+//! ```
+//!
+//! Three validation levels:
+//!
+//! * [`validate`](Header::validate) — quick yes / no
+//! * [`validate_detailed`](Header::validate_detailed) — tells you exactly
+//!   what is wrong via [`HeaderValidationError`]
+//! * [`validate_permissive`](Header::validate_permissive) — warnings for
+//!   non-critical issues
+//!
+//! # Philosophy
+//!
+//! This crate does **one thing** — read and write MRC files. It does not
+//! do array arithmetic, image processing, or type conversion beyond a few
+//! MRC-specific shortcuts (`slices_f32`, `slices_mode0`, `slices_u8`).
+//! Leave those to crates like `ndarray`, or your own code.
+//!
+//! # Feature flags
+//!
+//! | Feature | Description | Default |
+//! |---------|-------------|---------|
+//! | `mmap` | Memory-mapped readers and writers | ✅ |
+//! | `f16` | Half-precision float via the `half` crate | ✅ |
+//! | `simd` | AVX2 / NEON acceleration for integer→f32 | ✅ |
+//! | `parallel` | Parallel encoding via `rayon` | ✅ |
+//! | `gzip` | Gzip-compressed I/O | ✅ |
+//! | `bzip2` | Bzip2-compressed I/O | ❌ |
+//!
+//! # Advanced topics
+//!
+//! ## Error handling
+//!
+//! Fallible functions return `Result<T, Error>`. The errors you will
+//! actually hit in practice:
+//!
+//! * [`Io`](Error::Io) — the file could not be read or written
+//! * [`InvalidHeader`](Error::InvalidHeader) — not a valid MRC file
+//! * [`ModeMismatch`](Error::ModeMismatch) — calling `slices::<f32>()` on
+//!   an Int16 file; use `slices_f32()` instead
+//! * [`BoundsError`](Error::BoundsError) — read or write outside the volume
+//! * [`FileSizeMismatch`](Error::FileSizeMismatch) — file truncated or
+//!   has trailing garbage
+//!
+//! [`HeaderValidationError`] gives fine-grained diagnostics for header
+//! problems (bad dimensions, wrong MAP field, invalid NVERSION ...).
+//!
+//! ## Endianness
+//!
+//! MRC files encode byte order via a 4-byte MACHST stamp. [`FileEndian`]
+//! handles detection and conversion automatically. New files are always
+//! little-endian, matching modern hardware and the Python `mrcfile` library.
+//!
+//! ## FEI extended headers
+//!
+//! Data from Thermo Fisher / FEI microscopes often carries FEI1 or FEI2
+//! extended headers — one metadata record per image section.
+//! [`Fei1Metadata`] and [`Fei2Metadata`] parse these into named fields
+//! (dose, defocus, stage position, pixel size, magnification ...).
+//!
+//! ```no_run
+//! # fn main() -> Result<(), mrc::Error> {
+//! use mrc::parse_fei1_records;
+//! # let reader = mrc::Reader::open("tilt_series.mrc")?;
+//! let bytes = reader.ext_header_bytes();
+//! if let Some(records) = parse_fei1_records(bytes) {
+//!     for r in &records {
+//!         println!("tilt {:.1}°, defocus {:.1} µm", r.alpha_tilt, r.defocus);
+//!     }
+//! }
+//! # Ok(()) }
+//! ```
+//!
+//! ## File validation
+//!
+//! [`validate_full`](crate::validate::validate_full) runs comprehensive
+//! checks on a file — header, size, endianness, data statistics (1 %
+//! tolerance), and NaN / Inf scanning. Returns a
+//! [`ValidationReport`](crate::validate::ValidationReport) with
+//! categorised issues.
 
 #![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
 
@@ -100,11 +325,30 @@ pub use fei::{
 pub use io::reader::{CompressionType, detect_compression};
 
 /// Open an MRC file for reading, auto-detecting gzip or bzip2 compression.
+///
+/// This is a convenience wrapper around [`Reader::open`].
+/// For permissive mode or compressed-file-specific openers,
+/// use [`Reader::open_permissive`], [`Reader::open_gzip`], etc. directly.
 pub fn open<P: AsRef<std::path::Path>>(path: P) -> Result<Reader, Error> {
     Reader::open(path)
 }
 
 /// Create a new MRC file for writing.
+///
+/// Returns a [`WriterBuilder`] that must be configured with at least
+/// [`shape`](WriterBuilder::shape) and [`mode`](WriterBuilder::mode)
+/// before calling [`finish`](WriterBuilder::finish) to open the file.
+///
+/// # Example
+/// ```no_run
+/// use mrc::create;
+///
+/// let mut writer = create("output.mrc")
+///     .shape([256, 256, 128])
+///     .mode::<f32>()
+///     .finish()?;
+/// # Ok::<_, Box<dyn std::error::Error>>(())
+/// ```
 pub fn create<P: AsRef<std::path::Path>>(path: P) -> WriterBuilder {
     WriterBuilder::new(path)
 }

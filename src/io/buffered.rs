@@ -3,6 +3,9 @@
 //! Provides [`Reader`], which loads the entire file into a `Vec<u8>` on open.
 //! This enables fast random access to any slice or block, but requires enough
 //! RAM to hold the full dataset.
+//!
+//! For large files that do not fit in RAM, consider [`MmapReader`](crate::MmapReader)
+//! (requires the `mmap` feature).
 
 use crate::engine::block::VolumeShape;
 use crate::engine::endian::FileEndian;
@@ -137,14 +140,17 @@ impl Reader {
         ))
     }
 
+    /// Volume dimensions of the opened file.
     pub fn shape(&self) -> VolumeShape {
         self.shape
     }
 
+    /// Voxel data mode of the opened file.
     pub fn mode(&self) -> Mode {
         Mode::from_i32(self.header.mode).unwrap_or(Mode::Float32)
     }
 
+    /// A reference to the parsed MRC header.
     pub fn header(&self) -> &Header {
         &self.header
     }

@@ -1,4 +1,8 @@
-//! Endianness handling for MRC files
+//! Endianness detection and handling for MRC files.
+//!
+//! MRC files encode byte order via the 4-byte MACHST machine stamp.
+//! This module detects the stamp, provides the [`FileEndian`] enum, and
+//! defines the [`MachstInfo`] metadata type.
 
 /// Endianness of MRC file data.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

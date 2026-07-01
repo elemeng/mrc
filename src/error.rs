@@ -1,4 +1,7 @@
 //! Error types for MRC I/O and validation.
+//!
+//! The [`Error`] enum covers all fallible operations in this crate.
+//! [`HeaderValidationError`] provides granular diagnostics for header issues.
 
 /// The top-level error type for MRC I/O operations.
 ///
