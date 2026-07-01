@@ -130,8 +130,8 @@ unsafe fn convert_i8_to_f32_avx2(src: &[i8]) -> Vec<f32> {
         }
 
         // Tail elements: process remaining elements that don't fit a full vector
-        for j in i..src.len() {
-            *dst_ptr.add(j) = src[j] as f32;
+        for (j, &v) in src.iter().enumerate().skip(i) {
+            *dst_ptr.add(j) = v as f32;
         }
 
         // SAFETY: all src.len() elements initialized above.
@@ -174,8 +174,8 @@ unsafe fn convert_i16_to_f32_avx2(src: &[i16]) -> Vec<f32> {
         }
 
         // Tail elements
-        for j in i..src.len() {
-            *dst_ptr.add(j) = src[j] as f32;
+        for (j, &v) in src.iter().enumerate().skip(i) {
+            *dst_ptr.add(j) = v as f32;
         }
 
         // SAFETY: all src.len() elements initialized above.
@@ -218,8 +218,8 @@ unsafe fn convert_u16_to_f32_avx2(src: &[u16]) -> Vec<f32> {
         }
 
         // Tail elements
-        for j in i..src.len() {
-            *dst_ptr.add(j) = src[j] as f32;
+        for (j, &v) in src.iter().enumerate().skip(i) {
+            *dst_ptr.add(j) = v as f32;
         }
 
         // SAFETY: all src.len() elements initialized above.
@@ -269,8 +269,8 @@ unsafe fn convert_i8_to_f32_neon(src: &[i8]) -> Vec<f32> {
     }
 
     // Tail elements
-    for j in i..src.len() {
-        *dst_ptr.add(j) = src[j] as f32;
+    for (j, &v) in src.iter().enumerate().skip(i) {
+        *dst_ptr.add(j) = v as f32;
     }
 
     // SAFETY: all src.len() elements initialized above.
@@ -307,8 +307,8 @@ unsafe fn convert_i16_to_f32_neon(src: &[i16]) -> Vec<f32> {
     }
 
     // Tail elements
-    for j in i..src.len() {
-        *dst_ptr.add(j) = src[j] as f32;
+    for (j, &v) in src.iter().enumerate().skip(i) {
+        *dst_ptr.add(j) = v as f32;
     }
 
     // SAFETY: all src.len() elements initialized above.
@@ -345,8 +345,8 @@ unsafe fn convert_u16_to_f32_neon(src: &[u16]) -> Vec<f32> {
     }
 
     // Tail elements
-    for j in i..src.len() {
-        *dst_ptr.add(j) = src[j] as f32;
+    for (j, &v) in src.iter().enumerate().skip(i) {
+        *dst_ptr.add(j) = v as f32;
     }
 
     // SAFETY: all src.len() elements initialized above.

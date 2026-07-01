@@ -433,7 +433,7 @@ mod integration_tests {
         assert_eq!(block.data, expected_f32);
 
         // slices_f32 should also match
-        let all: Vec<f32> = r.slices_f32().map(|s| s.unwrap().data).flatten().collect();
+        let all: Vec<f32> = r.slices_f32().flat_map(|s| s.unwrap().data).collect();
         assert_eq!(all, expected_f32);
     }
 
