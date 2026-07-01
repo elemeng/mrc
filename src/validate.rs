@@ -3,8 +3,8 @@
 //! Provides [`validate_full`] for comprehensive file validation and
 //! [`ValidationReport`] for structured results.
 
-use crate::engine::stats::compute_stats;
 use crate::engine::endian::FileEndian;
+use crate::engine::stats::compute_stats;
 use crate::{Error, HeaderValidationError, Mode, Reader};
 use std::path::Path;
 
@@ -36,13 +36,25 @@ pub struct ValidationIssue {
 
 impl ValidationIssue {
     fn error(category: &'static str, message: String) -> Self {
-        Self { severity: Severity::Error, category, message }
+        Self {
+            severity: Severity::Error,
+            category,
+            message,
+        }
     }
     fn warning(category: &'static str, message: String) -> Self {
-        Self { severity: Severity::Warning, category, message }
+        Self {
+            severity: Severity::Warning,
+            category,
+            message,
+        }
     }
     fn info(category: &'static str, message: String) -> Self {
-        Self { severity: Severity::Info, category, message }
+        Self {
+            severity: Severity::Info,
+            category,
+            message,
+        }
     }
 }
 
@@ -120,30 +132,37 @@ pub fn validate_reader(
         }
         Err(e) => {
             let desc = match &e {
-                HeaderValidationError::InvalidDimensions { nx, ny, nz } =>
-                    format!("Dimensions ({nx}×{ny}×{nz}) must all be positive"),
-                HeaderValidationError::UnsupportedMode(m) =>
-                    format!("Unsupported mode value: {m}"),
-                HeaderValidationError::InvalidMap(m) =>
-                    format!("MAP field is {:?}, expected b\"MAP \"", std::str::from_utf8(m).unwrap_or("?")),
-                HeaderValidationError::InvalidIspg(s) =>
-                    format!("ISPG {s} is outside valid ranges (0, 1–230, 400–630)"),
-                HeaderValidationError::InvalidAxisMapping { mapc, mapr, maps } =>
-                    format!("Axis mapping ({mapc}, {mapr}, {maps}) is not a permutation of 1,2,3"),
-                HeaderValidationError::InvalidNsymbt(s) =>
-                    format!("NSYMBT is negative ({s})"),
-                HeaderValidationError::InvalidNlabl(n) =>
-                    format!("NLABL is {n}, must be 0–10"),
-                HeaderValidationError::InvalidNversion(n) =>
-                    format!("NVERSION is {n}, expected 20140 or 20141"),
-                HeaderValidationError::InvalidSampling { mx, my, mz } =>
-                    format!("Sampling ({mx}×{my}×{mz}) must all be positive"),
-                HeaderValidationError::InvalidVolumeStack { nz, mz, ispg } =>
-                    format!("Volume stack: nz={nz} not divisible by mz={mz} for ispg={ispg}"),
-                HeaderValidationError::LabelCountMismatch { nlabl, actual } =>
-                    format!("nlabl={nlabl} but {actual} non-empty labels found"),
-                HeaderValidationError::EmptyLabelBeforeFilled { index } =>
-                    format!("Empty label at index {index} before all filled labels"),
+                HeaderValidationError::InvalidDimensions { nx, ny, nz } => {
+                    format!("Dimensions ({nx}×{ny}×{nz}) must all be positive")
+                }
+                HeaderValidationError::UnsupportedMode(m) => format!("Unsupported mode value: {m}"),
+                HeaderValidationError::InvalidMap(m) => format!(
+                    "MAP field is {:?}, expected b\"MAP \"",
+                    std::str::from_utf8(m).unwrap_or("?")
+                ),
+                HeaderValidationError::InvalidIspg(s) => {
+                    format!("ISPG {s} is outside valid ranges (0, 1–230, 400–630)")
+                }
+                HeaderValidationError::InvalidAxisMapping { mapc, mapr, maps } => {
+                    format!("Axis mapping ({mapc}, {mapr}, {maps}) is not a permutation of 1,2,3")
+                }
+                HeaderValidationError::InvalidNsymbt(s) => format!("NSYMBT is negative ({s})"),
+                HeaderValidationError::InvalidNlabl(n) => format!("NLABL is {n}, must be 0–10"),
+                HeaderValidationError::InvalidNversion(n) => {
+                    format!("NVERSION is {n}, expected 20140 or 20141")
+                }
+                HeaderValidationError::InvalidSampling { mx, my, mz } => {
+                    format!("Sampling ({mx}×{my}×{mz}) must all be positive")
+                }
+                HeaderValidationError::InvalidVolumeStack { nz, mz, ispg } => {
+                    format!("Volume stack: nz={nz} not divisible by mz={mz} for ispg={ispg}")
+                }
+                HeaderValidationError::LabelCountMismatch { nlabl, actual } => {
+                    format!("nlabl={nlabl} but {actual} non-empty labels found")
+                }
+                HeaderValidationError::EmptyLabelBeforeFilled { index } => {
+                    format!("Empty label at index {index} before all filled labels")
+                }
             };
             issues.push(ValidationIssue::error("Header", desc));
         }
@@ -152,87 +171,126 @@ pub fn validate_reader(
     // ── 2. File size ──
     if let Some(data_size) = header.data_size() {
         let expected_total = 1024 + header.nsymbt.max(0) as usize + data_size;
-        issues.push(ValidationIssue::info("File size",
-            format!("Expected {} bytes (header + ext + data)", expected_total)));
+        issues.push(ValidationIssue::info(
+            "File size",
+            format!("Expected {} bytes (header + ext + data)", expected_total),
+        ));
     }
 
     // ── 3. Endianness ──
     let machst_info = FileEndian::from_machst_with_info(&header.machst);
     if !machst_info.is_standard {
-        issues.push(ValidationIssue::warning("Endianness",
-            format!("Non-standard MACHST stamp: {}", machst_info.description)));
+        issues.push(ValidationIssue::warning(
+            "Endianness",
+            format!("Non-standard MACHST stamp: {}", machst_info.description),
+        ));
     }
     let host = FileEndian::native();
     if endian != host {
-        issues.push(ValidationIssue::info("Endianness",
-            format!("Non-native byte order ({:?}), host is {:?}", endian, host)));
+        issues.push(ValidationIssue::info(
+            "Endianness",
+            format!("Non-native byte order ({:?}), host is {:?}", endian, host),
+        ));
     } else {
-        issues.push(ValidationIssue::info("Endianness",
-            "Native byte order, fast-path available".into()));
+        issues.push(ValidationIssue::info(
+            "Endianness",
+            "Native byte order, fast-path available".into(),
+        ));
     }
 
     // ── 4. Data statistics ──
     let data_bytes = reader.data_bytes();
-    match compute_stats(data_bytes, reader.mode(), endian) {
+    match compute_stats(
+        data_bytes,
+        reader.mode(),
+        endian,
+        reader.shape().nx,
+        reader.shape().ny * reader.shape().nz,
+    ) {
         Ok((actual_dmin, actual_dmax, actual_dmean, actual_rms)) => {
-            let complex = matches!(reader.mode(),
-                Mode::Float32Complex | Mode::Int16Complex);
+            let complex = matches!(reader.mode(), Mode::Float32Complex | Mode::Int16Complex);
 
             let stats_unset = header.dmin > header.dmax;
             let rms_unset = header.rms < 0.0;
 
             let rtol = 0.01f32;
 
-            let min_ok = complex || stats_unset
+            let min_ok = complex
+                || stats_unset
                 || crate::engine::stats::is_close(header.dmin, actual_dmin, rtol);
-            let max_ok = complex || stats_unset
+            let max_ok = complex
+                || stats_unset
                 || crate::engine::stats::is_close(header.dmax, actual_dmax, rtol);
-            let mean_ok = complex || stats_unset
+            let mean_ok = complex
+                || stats_unset
                 || crate::engine::stats::is_close(header.dmean, actual_dmean, rtol);
-            let rms_ok = rms_unset
-                || crate::engine::stats::is_close(header.rms, actual_rms, rtol);
+            let rms_ok = rms_unset || crate::engine::stats::is_close(header.rms, actual_rms, rtol);
 
             if !stats_unset || !rms_unset {
                 let mut mismatch_parts = Vec::new();
-                if !min_ok { mismatch_parts.push("dmin".to_string()); }
-                if !max_ok { mismatch_parts.push("dmax".to_string()); }
-                if !mean_ok { mismatch_parts.push("dmean".to_string()); }
-                if !rms_ok { mismatch_parts.push("rms".to_string()); }
+                if !min_ok {
+                    mismatch_parts.push("dmin".to_string());
+                }
+                if !max_ok {
+                    mismatch_parts.push("dmax".to_string());
+                }
+                if !mean_ok {
+                    mismatch_parts.push("dmean".to_string());
+                }
+                if !rms_ok {
+                    mismatch_parts.push("rms".to_string());
+                }
 
                 if mismatch_parts.is_empty() {
                     if stats_unset {
-                        issues.push(ValidationIssue::info("Statistics",
-                            "Statistics not written in header (sentinel values)".into()));
+                        issues.push(ValidationIssue::info(
+                            "Statistics",
+                            "Statistics not written in header (sentinel values)".into(),
+                        ));
                     } else {
-                        issues.push(ValidationIssue::info("Statistics",
-                            "All statistics match actual data (within 1 % tolerance)".into()));
+                        issues.push(ValidationIssue::info(
+                            "Statistics",
+                            "All statistics match actual data (within 1 % tolerance)".into(),
+                        ));
                     }
                 } else {
                     let mut detail = String::new();
                     if !min_ok {
                         detail.push_str(&format!(
-                            " dmin claimed={} actual={}", header.dmin, actual_dmin));
+                            " dmin claimed={} actual={}",
+                            header.dmin, actual_dmin
+                        ));
                     }
                     if !max_ok {
                         detail.push_str(&format!(
-                            " dmax claimed={} actual={}", header.dmax, actual_dmax));
+                            " dmax claimed={} actual={}",
+                            header.dmax, actual_dmax
+                        ));
                     }
                     if !mean_ok {
                         detail.push_str(&format!(
-                            " dmean claimed={} actual={}", header.dmean, actual_dmean));
+                            " dmean claimed={} actual={}",
+                            header.dmean, actual_dmean
+                        ));
                     }
                     if !rms_ok {
                         detail.push_str(&format!(
-                            " rms claimed={} actual={}", header.rms, actual_rms));
+                            " rms claimed={} actual={}",
+                            header.rms, actual_rms
+                        ));
                     }
-                    issues.push(ValidationIssue::error("Statistics",
-                        format!("Mismatch:{}", detail)));
+                    issues.push(ValidationIssue::error(
+                        "Statistics",
+                        format!("Mismatch:{}", detail),
+                    ));
                 }
             }
         }
         Err(e) => {
-            issues.push(ValidationIssue::error("Statistics",
-                format!("Cannot compute statistics: {e}")));
+            issues.push(ValidationIssue::error(
+                "Statistics",
+                format!("Cannot compute statistics: {e}"),
+            ));
         }
     }
 
@@ -241,8 +299,10 @@ pub fn validate_reader(
         match float_mode_issues(data_bytes, reader.mode(), endian) {
             Ok(has_issues) => {
                 if has_issues.is_empty() {
-                    issues.push(ValidationIssue::info("Data integrity",
-                        "All voxel values are finite numbers".into()));
+                    issues.push(ValidationIssue::info(
+                        "Data integrity",
+                        "All voxel values are finite numbers".into(),
+                    ));
                 } else {
                     for issue in has_issues {
                         issues.push(ValidationIssue::warning("Data integrity", issue));
@@ -250,8 +310,10 @@ pub fn validate_reader(
                 }
             }
             Err(e) => {
-                issues.push(ValidationIssue::warning("Data integrity",
-                    format!("Could not scan data: {e}")));
+                issues.push(ValidationIssue::warning(
+                    "Data integrity",
+                    format!("Could not scan data: {e}"),
+                ));
             }
         }
     }
@@ -262,16 +324,26 @@ pub fn validate_reader(
     } else if header.is_image_stack() {
         "image stack"
     } else if header.is_volume_stack() {
-        let nvol = if header.mz > 0 { header.nz / header.mz } else { 0 };
-        issues.push(ValidationIssue::info("Volume",
-            format!("Volume stack: {nvol} sub-volumes × {} slices", header.mz)));
+        let nvol = if header.mz > 0 {
+            header.nz / header.mz
+        } else {
+            0
+        };
+        issues.push(ValidationIssue::info(
+            "Volume",
+            format!("Volume stack: {nvol} sub-volumes × {} slices", header.mz),
+        ));
         "volume stack"
     } else {
         "3D volume"
     };
-    issues.push(ValidationIssue::info("Volume",
-        format!("{} × {} × {} voxels, {}",
-            header.nx, header.ny, header.nz, vol_type)));
+    issues.push(ValidationIssue::info(
+        "Volume",
+        format!(
+            "{} × {} × {} voxels, {}",
+            header.nx, header.ny, header.nz, vol_type
+        ),
+    ));
 
     Ok(ValidationReport {
         path: path.to_owned(),
@@ -295,10 +367,7 @@ pub fn validate_reader(
 ///
 /// # Errors
 /// Returns `Err` only when the file cannot be opened or read at all.
-pub fn validate_full<P: AsRef<Path>>(
-    path: P,
-    permissive: bool,
-) -> Result<ValidationReport, Error> {
+pub fn validate_full<P: AsRef<Path>>(path: P, permissive: bool) -> Result<ValidationReport, Error> {
     let path_str = path.as_ref().to_string_lossy().into_owned();
 
     let compression = match crate::io::reader::detect_compression(&path)? {
@@ -335,7 +404,9 @@ fn float_mode_issues(
                 f16_data.iter().map(|&v| f32::from(v)).collect()
             }
             #[cfg(not(feature = "f16"))]
-            return Ok(vec!["Float16 scanning unavailable (requires `f16` feature)".into()]);
+            return Ok(vec![
+                "Float16 scanning unavailable (requires `f16` feature)".into(),
+            ]);
         }
         _ => return Ok(Vec::new()),
     };
@@ -358,16 +429,22 @@ fn float_mode_issues(
     }
 
     if nan_count > 0 {
-        issues.push(format!("{nan_count} NaN values found ({:.2}%)",
-            nan_count as f64 / data.len() as f64 * 100.0));
+        issues.push(format!(
+            "{nan_count} NaN values found ({:.2}%)",
+            nan_count as f64 / data.len() as f64 * 100.0
+        ));
     }
     if inf_count > 0 {
-        issues.push(format!("{inf_count} +Inf values found ({:.2}%)",
-            inf_count as f64 / data.len() as f64 * 100.0));
+        issues.push(format!(
+            "{inf_count} +Inf values found ({:.2}%)",
+            inf_count as f64 / data.len() as f64 * 100.0
+        ));
     }
     if neg_inf_count > 0 {
-        issues.push(format!("{neg_inf_count} -Inf values found ({:.2}%)",
-            neg_inf_count as f64 / data.len() as f64 * 100.0));
+        issues.push(format!(
+            "{neg_inf_count} -Inf values found ({:.2}%)",
+            neg_inf_count as f64 / data.len() as f64 * 100.0
+        ));
     }
     Ok(issues)
 }

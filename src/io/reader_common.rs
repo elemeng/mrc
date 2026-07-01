@@ -97,7 +97,10 @@ macro_rules! impl_inherent_reader_methods {
             /// The volume is partitioned into non-overlapping tiles of size
             /// `tile_shape`. Tiles at the trailing edges may be truncated to fit
             /// the volume bounds.
-            pub fn tiles<T: Voxel>(&self, tile_shape: [usize; 3]) -> RegionIter<'_, T, $ty, TileStepper> {
+            pub fn tiles<T: Voxel>(
+                &self,
+                tile_shape: [usize; 3],
+            ) -> RegionIter<'_, T, $ty, TileStepper> {
                 RegionIter::with_stepper(self, self.shape(), TileStepper::new(tile_shape))
             }
             /// Alias for [`slices`](Self::slices).
@@ -143,10 +146,18 @@ macro_rules! impl_inherent_reader_methods {
             /// # Errors
             /// Returns [`Error::BoundsError`] if the region exceeds volume bounds.
             /// Returns [`Error::ModeMismatch`] if `T` does not match the file mode.
-            pub fn subregion<T: Voxel>(&self, offset: [usize; 3], shape: [usize; 3]) -> Result<VoxelBlock<T>, Error> {
+            pub fn subregion<T: Voxel>(
+                &self,
+                offset: [usize; 3],
+                shape: [usize; 3],
+            ) -> Result<VoxelBlock<T>, Error> {
                 let bytes = self.vs_read_block_bytes(offset, shape)?;
                 let data = self.vs_decode_block::<T>(&bytes)?;
-                Ok(VoxelBlock { offset, shape, data })
+                Ok(VoxelBlock {
+                    offset,
+                    shape,
+                    data,
+                })
             }
 
             /// Read the entire volume as a [`VoxelBlock<T>`].
@@ -163,11 +174,8 @@ macro_rules! impl_inherent_reader_methods {
             /// Read the entire volume as `f32`, converting from any mode.
             ///
             /// Supports all real-valued modes (Int8, Int16, Uint16, Float32,
-            /// Float16) and converts complex modes via magnitude.
+            /// Float16, Packed4Bit) and converts complex modes via magnitude.
             /// Returns the full volume in a single [`VoxelBlock<f32>`].
-            ///
-            /// # Errors
-            /// Returns [`Error::UnsupportedMode`] for Mode 101 (Packed4Bit).
             pub fn read_volume_f32(&self) -> Result<VoxelBlock<f32>, Error> {
                 let shape = self.shape();
                 let offset = [0, 0, 0];
@@ -177,54 +185,140 @@ macro_rules! impl_inherent_reader_methods {
                     Mode::Int16 => {
                         let block = self.subregion::<i16>(offset, block_shape)?;
                         let data = crate::engine::convert::convert_i16_slice_to_f32(&block.data);
-                        Ok(VoxelBlock { offset, shape: block_shape, data })
+                        Ok(VoxelBlock {
+                            offset,
+                            shape: block_shape,
+                            data,
+                        })
                     }
                     Mode::Uint16 => {
                         let block = self.subregion::<u16>(offset, block_shape)?;
                         let data = crate::engine::convert::convert_u16_slice_to_f32(&block.data);
-                        Ok(VoxelBlock { offset, shape: block_shape, data })
+                        Ok(VoxelBlock {
+                            offset,
+                            shape: block_shape,
+                            data,
+                        })
                     }
                     Mode::Int8 => {
                         let block = self.subregion::<i8>(offset, block_shape)?;
                         let data = crate::engine::convert::convert_i8_slice_to_f32(&block.data);
-                        Ok(VoxelBlock { offset, shape: block_shape, data })
+                        Ok(VoxelBlock {
+                            offset,
+                            shape: block_shape,
+                            data,
+                        })
                     }
                     #[cfg(feature = "f16")]
                     Mode::Float16 => {
                         let block = self.subregion::<crate::f16>(offset, block_shape)?;
                         let data = block.data.iter().map(|&v| f32::from(v)).collect();
-                        Ok(VoxelBlock { offset, shape: block_shape, data })
+                        Ok(VoxelBlock {
+                            offset,
+                            shape: block_shape,
+                            data,
+                        })
                     }
                     #[cfg(not(feature = "f16"))]
                     Mode::Float16 => Err(Error::UnsupportedMode),
                     Mode::Float32Complex => {
                         let block = self.subregion::<Float32Complex>(offset, block_shape)?;
-                        let data = block.data.iter()
+                        let data = block
+                            .data
+                            .iter()
                             .map(|c| c.to_real(ComplexToRealStrategy::Magnitude))
                             .collect();
-                        Ok(VoxelBlock { offset, shape: block_shape, data })
+                        Ok(VoxelBlock {
+                            offset,
+                            shape: block_shape,
+                            data,
+                        })
                     }
                     Mode::Int16Complex => {
                         let block = self.subregion::<Int16Complex>(offset, block_shape)?;
-                        let data = block.data.iter()
+                        let data = block
+                            .data
+                            .iter()
                             .map(|c| c.to_real(ComplexToRealStrategy::Magnitude))
                             .collect();
-                        Ok(VoxelBlock { offset, shape: block_shape, data })
+                        Ok(VoxelBlock {
+                            offset,
+                            shape: block_shape,
+                            data,
+                        })
                     }
-                    _ => Err(Error::UnsupportedMode),
+                    Mode::Packed4Bit => {
+                        let bytes = self.vs_read_block_bytes(offset, block_shape)?;
+                        let unpacked = crate::engine::convert::unpack_u4_bytes_to_u8(
+                            &bytes,
+                            shape.nx,
+                            shape.ny * shape.nz,
+                        );
+                        let data = unpacked.iter().map(|&v| v as f32).collect();
+                        Ok(VoxelBlock {
+                            offset,
+                            shape: block_shape,
+                            data,
+                        })
+                    }
                 }
+            }
+
+            /// Read the entire volume as `u8`, unpacking from Mode 101 (Packed4Bit).
+            ///
+            /// Each `u8` value is in the range 0–15.
+            ///
+            /// # Errors
+            /// Returns [`Error::ModeMismatch`] if the file mode is not [`Mode::Packed4Bit`].
+            pub fn read_volume_u8(&self) -> Result<VoxelBlock<u8>, Error> {
+                if self.mode() != Mode::Packed4Bit {
+                    return Err(Error::ModeMismatch {
+                        file_mode: self.mode(),
+                        requested_mode: Mode::Packed4Bit,
+                    });
+                }
+                let shape = self.shape();
+                let block_shape = [shape.nx, shape.ny, shape.nz];
+                let bytes = self.vs_read_block_bytes([0, 0, 0], block_shape)?;
+                let data = crate::engine::convert::unpack_u4_bytes_to_u8(
+                    &bytes,
+                    shape.nx,
+                    shape.ny * shape.nz,
+                );
+                Ok(VoxelBlock {
+                    offset: [0, 0, 0],
+                    shape: block_shape,
+                    data,
+                })
             }
 
             /// Iterate over Z-slices, converting each to `f32` automatically.
             ///
             /// Supports all real-valued MRC modes (Int8, Int16, Uint16, Float32,
-            /// Float16) and converts complex modes via magnitude. This is the
+            /// Float16, Packed4Bit) and converts complex modes via magnitude. This is the
             /// most convenient method for viewing or processing cryo-EM data.
             ///
             /// # Errors
-            /// Returns [`Error::UnsupportedMode`] for Mode 101 (Packed4Bit).
             /// Returns [`Error::ModeMismatch`] if no matching conversion exists.
             pub fn slices_f32(&self) -> VoxelIter<'_, f32> {
+                if self.mode() == Mode::Packed4Bit {
+                    let shape = self.shape();
+                    let nx = shape.nx;
+                    let ny = shape.ny;
+                    let nz = shape.nz;
+                    return Box::new((0..nz).map(move |z| {
+                        let bytes = self.vs_read_block_bytes([0, 0, z], [nx, ny, 1])?;
+                        let data = crate::engine::convert::unpack_u4_bytes_to_u8(&bytes, nx, ny)
+                            .iter()
+                            .map(|&v| v as f32)
+                            .collect();
+                        Ok(VoxelBlock {
+                            offset: [0, 0, z],
+                            shape: [nx, ny, 1],
+                            data,
+                        })
+                    }));
+                }
                 iter_f32_helper(
                     self.mode(),
                     self.slices::<f32>(),
@@ -241,6 +335,35 @@ macro_rules! impl_inherent_reader_methods {
             ///
             /// See [`slices_f32`](Self::slices_f32) for supported mode conversions.
             pub fn slabs_f32(&self, k: usize) -> VoxelIter<'_, f32> {
+                if self.mode() == Mode::Packed4Bit {
+                    let volume_shape = self.shape();
+                    let nx = volume_shape.nx;
+                    let ny = volume_shape.ny;
+                    let k = k.max(1);
+                    let mut z = 0usize;
+                    return Box::new(std::iter::from_fn(move || {
+                        if z >= volume_shape.nz {
+                            return None;
+                        }
+                        let start = z;
+                        let sz = k.min(volume_shape.nz - z);
+                        z += sz;
+                        let bytes = match self.vs_read_block_bytes([0, 0, start], [nx, ny, sz]) {
+                            Ok(b) => b,
+                            Err(e) => return Some(Err(e)),
+                        };
+                        let data =
+                            crate::engine::convert::unpack_u4_bytes_to_u8(&bytes, nx, ny * sz)
+                                .iter()
+                                .map(|&v| v as f32)
+                                .collect();
+                        Some(Ok(VoxelBlock {
+                            offset: [0, 0, start],
+                            shape: [nx, ny, sz],
+                            data,
+                        }))
+                    }));
+                }
                 iter_f32_helper(
                     self.mode(),
                     self.slabs::<f32>(k),
@@ -253,16 +376,31 @@ macro_rules! impl_inherent_reader_methods {
                     self.slabs::<Int16Complex>(k),
                 )
             }
-            /// Iterate over Z-slices as `u8`, narrowing from Mode 6 (Uint16).
+            /// Iterate over Z-slices as `u8`, narrowing from Mode 6 (Uint16)
+            /// or unpacking from Mode 101 (Packed4Bit).
             ///
-            /// Only works on files stored as [`Mode::Uint16`]. Each 16-bit value
-            /// is narrowed to 8 bits; values exceeding 255 produce an error.
-            ///
-            /// See also [`slices_mode0`](Self::slices_mode0) for Mode 0 (Int8) files.
+            /// For Uint16 files each 16-bit value is narrowed to 8 bits; values
+            /// exceeding 255 produce an error.
+            /// For Packed4Bit files each nibble is unpacked to `u8` (range 0–15).
             ///
             /// # Errors
-            /// Returns [`Error::ModeMismatch`] if the file mode is not `Uint16`.
+            /// Returns [`Error::ModeMismatch`] if the file mode is not `Uint16` or `Packed4Bit`.
             pub fn slices_u8(&self) -> VoxelIter<'_, u8> {
+                if self.mode() == Mode::Packed4Bit {
+                    let shape = self.shape();
+                    let nx = shape.nx;
+                    let ny = shape.ny;
+                    let nz = shape.nz;
+                    return Box::new((0..nz).map(move |z| {
+                        let bytes = self.vs_read_block_bytes([0, 0, z], [nx, ny, 1])?;
+                        let data = crate::engine::convert::unpack_u4_bytes_to_u8(&bytes, nx, ny);
+                        Ok(VoxelBlock {
+                            offset: [0, 0, z],
+                            shape: [nx, ny, 1],
+                            data,
+                        })
+                    }));
+                }
                 if self.mode() != Mode::Uint16 {
                     return Box::new(std::iter::once(Err(Error::ModeMismatch {
                         file_mode: self.mode(),
@@ -270,6 +408,53 @@ macro_rules! impl_inherent_reader_methods {
                     })));
                 }
                 Box::new(self.slices::<u16>().map(|b| {
+                    let b = b?;
+                    Ok(VoxelBlock {
+                        offset: b.offset,
+                        shape: b.shape,
+                        data: crate::engine::convert::convert_u16_slice_to_u8(&b.data)?,
+                    })
+                }))
+            }
+            /// Iterate over Z-slabs as `u8`, narrowing from Mode 6 (Uint16)
+            /// or unpacking from Mode 101 (Packed4Bit).
+            ///
+            /// See [`slices_u8`](Self::slices_u8) for mode-specific behaviour.
+            pub fn slabs_u8(&self, k: usize) -> VoxelIter<'_, u8> {
+                if self.mode() == Mode::Packed4Bit {
+                    let volume_shape = self.shape();
+                    let nx = volume_shape.nx;
+                    let ny = volume_shape.ny;
+                    let k = k.max(1);
+                    let mut z = 0usize;
+                    return Box::new(std::iter::from_fn(move || {
+                        if z >= volume_shape.nz {
+                            return None;
+                        }
+                        let start = z;
+                        let sz = k.min(volume_shape.nz - z);
+                        z += sz;
+                        let bytes = match self.vs_read_block_bytes([0, 0, start], [nx, ny, sz]) {
+                            Ok(b) => b,
+                            Err(e) => return Some(Err(e)),
+                        };
+                        let data =
+                            crate::engine::convert::unpack_u4_bytes_to_u8(&bytes, nx, ny * sz);
+                        Some(Ok(VoxelBlock {
+                            offset: [0, 0, start],
+                            shape: [nx, ny, sz],
+                            data,
+                        }))
+                    }));
+                }
+                if self.mode() != Mode::Uint16 {
+                    return Box::new(std::iter::once(Err(Error::ModeMismatch {
+                        file_mode: self.mode(),
+                        requested_mode: Mode::Uint16,
+                    })));
+                }
+                let k = k.max(1);
+                Box::new(self.slabs::<u16>(k).map(|b| {
                     let b = b?;
                     Ok(VoxelBlock {
                         offset: b.offset,
@@ -294,7 +479,8 @@ macro_rules! impl_inherent_reader_methods {
                 }
                 let volume_shape = self.shape();
                 Box::new((0..volume_shape.nz).map(move |z| {
-                    let bytes = self.vs_read_block_bytes([0, 0, z], [volume_shape.nx, volume_shape.ny, 1])?;
+                    let bytes =
+                        self.vs_read_block_bytes([0, 0, z], [volume_shape.nx, volume_shape.ny, 1])?;
                     let data = crate::engine::convert::reinterpret_m0(&bytes, interp);
                     Ok(VoxelBlock {
                         offset: [0, 0, z],
@@ -321,11 +507,15 @@ macro_rules! impl_inherent_reader_methods {
                 let k = k.max(1);
                 let mut z = 0usize;
                 Box::new(std::iter::from_fn(move || {
-                    if z >= volume_shape.nz { return None; }
+                    if z >= volume_shape.nz {
+                        return None;
+                    }
                     let start = z;
                     let sz = k.min(volume_shape.nz - z);
                     z += sz;
-                    let bytes = match self.vs_read_block_bytes([0, 0, start], [volume_shape.nx, volume_shape.ny, sz]) {
+                    let bytes = match self
+                        .vs_read_block_bytes([0, 0, start], [volume_shape.nx, volume_shape.ny, sz])
+                    {
                         Ok(b) => b,
                         Err(e) => return Some(Err(e)),
                     };
@@ -530,7 +720,6 @@ where
 /// # Errors
 ///
 /// * [`Error::BoundsError`] if the block exceeds volume bounds or the data length.
-/// * [`Error::UnsupportedMode`] if the mode is [`Mode::Packed4Bit`].
 pub(crate) fn validate_block_bounds(
     volume_shape: VolumeShape,
     mode: Mode,
@@ -550,31 +739,53 @@ pub(crate) fn validate_block_bounds(
         return Err(Error::BoundsError);
     }
 
-    if mode == Mode::Packed4Bit {
-        return Err(Error::UnsupportedMode);
-    }
-
     let count = sx
         .checked_mul(sy)
         .and_then(|v| v.checked_mul(sz))
         .ok_or(Error::BoundsError)?;
-    let byte_len = mode.byte_size_for_count(count);
+    let byte_len = if mode == Mode::Packed4Bit {
+        let row_bytes = sx.div_ceil(2);
+        row_bytes
+            .checked_mul(sy)
+            .and_then(|v| v.checked_mul(sz))
+            .ok_or(Error::BoundsError)?
+    } else {
+        mode.byte_size_for_count(count)
+    };
 
     if count == 0 {
         return Ok(0);
     }
 
     // Verify the data region is large enough for the last row of the block.
-    let last_row_start = volume_shape
-        .checked_linear_index([ox, oy + sy - 1, oz + sz - 1])
-        .ok_or(Error::BoundsError)?;
-    let last_byte = last_row_start
-        .checked_mul(mode.byte_size())
-        .and_then(|s| s.checked_add(sx * mode.byte_size()))
-        .ok_or(Error::BoundsError)?;
-
-    if last_byte > data_len {
-        return Err(Error::BoundsError);
+    if mode == Mode::Packed4Bit {
+        let vol_row_bytes = nx.div_ceil(2);
+        let last_vol_row = (oz + sz - 1) * ny + (oy + sy - 1);
+        let last_byte = last_vol_row
+            .checked_mul(vol_row_bytes)
+            .and_then(|b| {
+                let block_row_bytes = sx.div_ceil(2);
+                b.checked_add(if ox == 0 {
+                    block_row_bytes
+                } else {
+                    block_row_bytes + 1
+                })
+            })
+            .ok_or(Error::BoundsError)?;
+        if last_byte > data_len {
+            return Err(Error::BoundsError);
+        }
+    } else {
+        let last_row_start = volume_shape
+            .checked_linear_index([ox, oy + sy - 1, oz + sz - 1])
+            .ok_or(Error::BoundsError)?;
+        let last_byte = last_row_start
+            .checked_add(sx)
+            .map(|end| mode.byte_size_for_count(end))
+            .ok_or(Error::BoundsError)?;
+        if last_byte > data_len {
+            return Err(Error::BoundsError);
+        }
     }
 
     Ok(byte_len)
@@ -584,6 +795,9 @@ pub(crate) fn validate_block_bounds(
 ///
 /// The source `data` is treated as a C-ordered `[nx, ny, nz]` array where X is the
 /// fastest axis. The returned Vec contains the sub-block in C-order.
+///
+/// For [`Mode::Packed4Bit`], the byte layout uses 2 voxels per byte; voxel index
+/// `v` maps to byte `v / 2` in the data array.
 pub(crate) fn gather_block_bytes(
     data: &[u8],
     volume_shape: VolumeShape,
@@ -594,6 +808,39 @@ pub(crate) fn gather_block_bytes(
     let [nx, ny, _nz] = [volume_shape.nx, volume_shape.ny, volume_shape.nz];
     let [ox, oy, oz] = offset;
     let [sx, sy, sz] = block_shape;
+
+    let voxel_count = sx * sy * sz;
+    let byte_len = mode.byte_size_for_count(voxel_count);
+    let mut dst = vec![0u8; byte_len];
+
+    if mode == Mode::Packed4Bit {
+        // Each byte holds two voxels.  Compute source byte offset by dividing
+        // the voxel linear index by 2, and read row_bytes bytes per row.
+        let row_bytes = nx.div_ceil(2);
+        let block_row_bytes = sx.div_ceil(2);
+
+        // Fast path: full XY slab is contiguous in the file.
+        if ox == 0 && sx == nx && oy == 0 && sy == ny {
+            let slice_bytes = ny * row_bytes;
+            let start = oz * slice_bytes;
+            let byte_len = sz * slice_bytes;
+            return data[start..start + byte_len].to_vec();
+        }
+
+        for z in 0..sz {
+            for y in 0..sy {
+                let vol_row = (oz + z) * ny + (oy + y);
+                let src_start = vol_row * row_bytes + ox / 2;
+                let _dst_start = (y * sx / 2) + z * (sy * block_row_bytes);
+                // Use row-level addressing for correct odd-width handling
+                let actual_dst_start = (y + z * sy) * block_row_bytes;
+                dst[actual_dst_start..actual_dst_start + block_row_bytes]
+                    .copy_from_slice(&data[src_start..src_start + block_row_bytes]);
+            }
+        }
+        return dst;
+    }
+
     let b = mode.byte_size();
 
     // Fast path: full XY slab is contiguous in the file.
@@ -604,7 +851,6 @@ pub(crate) fn gather_block_bytes(
         return data[start..start + byte_len].to_vec();
     }
 
-    let mut dst = vec![0u8; sx * sy * sz * b];
     for z in 0..sz {
         for y in 0..sy {
             let src_linear = ox + (oy + y) * nx + (oz + z) * nx * ny;
@@ -672,6 +918,66 @@ pub(crate) fn encode_block_to_buf<T: EndianCodec + Sync>(
     Ok(())
 }
 
+/// Write already-packed bytes into the data buffer at a given offset and shape.
+///
+/// This is the byte-level version of [`encode_block_to_buf`], used for Mode 101
+/// (Packed4Bit) writes where the data is already packed row-by-row.
+/// Endianness does not apply (nibble ordering is endian-independent).
+///
+/// Note: only supports full-row writes (`block_offset[0] == 0`). Sub-XY blocks
+/// with non-zero X-offset would need read-modify-write at the nibble level.
+pub(crate) fn write_block_bytes(
+    packed: &[u8],
+    volume_shape: VolumeShape,
+    block_offset: [usize; 3],
+    block_shape: [usize; 3],
+    data_offset: usize,
+    buf: &mut [u8],
+) -> Result<(), Error> {
+    let [nx, ny, _nz] = [volume_shape.nx, volume_shape.ny, volume_shape.nz];
+    let [ox, oy, oz] = block_offset;
+    let [sx, sy, sz] = block_shape;
+    let file_row_bytes = nx.div_ceil(2); // packed bytes per row in the volume
+    let block_row_bytes = sx.div_ceil(2); // packed bytes per row in the block
+
+    // Only full-row (ox=0) blocks are supported to avoid nibble-level RMW.
+    assert!(ox == 0, "write_block_bytes requires ox == 0");
+
+    // Fast path: full XY slab is contiguous in the buffer.
+    if sx == nx && oy == 0 && sy == ny {
+        let slice_bytes = ny * file_row_bytes;
+        let start_byte = data_offset + oz * slice_bytes;
+        let byte_len = sz * slice_bytes;
+        let end_byte = start_byte + byte_len;
+        if end_byte > buf.len() {
+            return Err(Error::BoundsError);
+        }
+        buf[start_byte..end_byte].copy_from_slice(&packed[..byte_len]);
+        return Ok(());
+    }
+
+    // Scatter path: write row by row.
+    // Each row in the volume occupies file_row_bytes; each row in the block
+    // occupies block_row_bytes.
+    for z in 0..sz {
+        for y in 0..sy {
+            let vol_row = (oz + z) * ny + (oy + y);
+            let file_start = data_offset + vol_row * file_row_bytes;
+            let file_end = file_start + block_row_bytes;
+            if file_end > buf.len() {
+                return Err(Error::BoundsError);
+            }
+            let packed_start = (y + z * sy) * block_row_bytes;
+            let packed_end = packed_start + block_row_bytes;
+            if packed_end > packed.len() {
+                return Err(Error::BoundsError);
+            }
+            buf[file_start..file_end].copy_from_slice(&packed[packed_start..packed_end]);
+        }
+    }
+    Ok(())
+}
+
 /// Decode a raw byte block to the requested voxel type.
 ///
 /// Performs endian conversion if the file endianness differs from the host.
@@ -708,9 +1014,11 @@ pub(crate) fn decode_block<T: Voxel>(
 pub(crate) fn decode_native_endian<T: EndianCodec + Copy>(bytes: &[u8]) -> Result<Vec<T>, Error> {
     let n = bytes.len() / T::BYTE_SIZE;
     debug_assert_eq!(
-        bytes.len() % T::BYTE_SIZE, 0,
+        bytes.len() % T::BYTE_SIZE,
+        0,
         "decode_native_endian: bytes.len() ({}) must be a multiple of T::BYTE_SIZE ({})",
-        bytes.len(), T::BYTE_SIZE
+        bytes.len(),
+        T::BYTE_SIZE
     );
     let mut result = Vec::with_capacity(n);
     unsafe {
@@ -803,7 +1111,11 @@ pub(crate) fn open_compressed<D: std::io::Read>(
     // may reach here with a mismatched file, and slices must not panic).
     let ext_end = (1024 + ext_size).min(buf.len());
     let ext_header = buf[1024..ext_end].to_vec();
-    let data = if ext_end < buf.len() { buf[ext_end..].to_vec() } else { Vec::new() };
+    let data = if ext_end < buf.len() {
+        buf[ext_end..].to_vec()
+    } else {
+        Vec::new()
+    };
     let shape = VolumeShape::new(header.nx as usize, header.ny as usize, header.nz as usize);
 
     Ok(DecompressedMrc {

@@ -16,23 +16,59 @@ use std::vec::Vec;
 #[cfg(feature = "simd")]
 use super::simd;
 
-// === Packed4Bit (M101) Unpacking ===
+// === Packed4Bit (Mode 101) — row-by-row unpack/pack ===
 
-/// Unpack raw 4-bit packed bytes to `u16`.
+/// Unpack 4-bit packed bytes to `u8`, row-by-row.
 ///
-/// Each byte contains two nibbles. `num_values` specifies exactly how
-/// many nibbles to extract, which is required when row widths are odd and
-/// padding nibbles are present.
-pub(crate) fn unpack_u4_bytes_to_u16(src: &[u8], num_values: usize) -> Vec<u16> {
-    let mut dst = Vec::with_capacity(num_values);
-    for &byte in src {
-        dst.push((byte & 0x0F) as u16);
-        if dst.len() >= num_values {
-            break;
+/// Each row has `nx.div_ceil(2)` bytes in the source.  When `nx` is odd, the
+/// last byte's high nibble is padding and is ignored.
+///
+/// `ny` is the total number of rows (i.e. `ny * nz` for a 3D volume).
+///
+/// # Nibble ordering (SerialEM convention)
+/// - Low 4 bits  (bit 0–3) = first pixel  (smaller X coordinate)
+/// - High 4 bits (bit 4–7) = second pixel (larger X coordinate)
+pub(crate) fn unpack_u4_bytes_to_u8(src: &[u8], nx: usize, ny: usize) -> Vec<u8> {
+    let row_bytes = nx.div_ceil(2);
+    let mut dst = Vec::with_capacity(nx * ny);
+    for y in 0..ny {
+        let row_start = y * row_bytes;
+        for x in 0..nx {
+            let byte = src[row_start + x / 2];
+            let nibble = if x % 2 == 0 {
+                byte & 0x0F
+            } else {
+                (byte >> 4) & 0x0F
+            };
+            dst.push(nibble);
         }
-        dst.push(((byte >> 4) & 0x0F) as u16);
-        if dst.len() >= num_values {
-            break;
+    }
+    dst
+}
+
+/// Pack `u8` values (0–15) into 4-bit packed bytes, row-by-row.
+///
+/// Each row produces `nx.div_ceil(2)` bytes.  When `nx` is odd, the
+/// padding high nibble is zero-filled.
+///
+/// `ny` is the total number of rows (i.e. `ny * nz` for a 3D volume).
+///
+/// # Panics
+/// Panics if any value in `src` exceeds 15 in debug mode; release builds
+/// silently mask to 4 bits (`val & 0x0F`).
+pub(crate) fn pack_u8_to_u4_bytes(src: &[u8], nx: usize, ny: usize) -> Vec<u8> {
+    let row_bytes = nx.div_ceil(2);
+    let mut dst = vec![0u8; row_bytes * ny];
+    for y in 0..ny {
+        let row_start = y * row_bytes;
+        for x in 0..nx {
+            let val = src[y * nx + x] & 0x0F;
+            let byte_idx = row_start + x / 2;
+            if x % 2 == 0 {
+                dst[byte_idx] = val;
+            } else {
+                dst[byte_idx] |= val << 4;
+            }
         }
     }
     dst
@@ -184,10 +220,57 @@ mod tests {
 
     // Test M101 unpacking
     #[test]
-    fn test_unpack_u4_bytes_to_u16() {
+    fn test_unpack_u4_bytes_to_u8_even() {
         let bytes = vec![0x21, 0x43];
-        let result = unpack_u4_bytes_to_u16(&bytes, 4);
+        let result = unpack_u4_bytes_to_u8(&bytes, 4, 1);
+        // row: [0x21, 0x43]
+        // pixel 0: low of 0x21 = 1
+        // pixel 1: high of 0x21 = 2
+        // pixel 2: low of 0x43 = 3
+        // pixel 3: high of 0x43 = 4
         assert_eq!(result, vec![1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn test_unpack_u4_bytes_to_u8_odd() {
+        // nx=3 → row_bytes = 2; last byte's high nibble is padding
+        let bytes = vec![0x21, 0x30]; // low of 0x30 = 0 is the 3rd pixel, high 0x30=3 is padding
+        let result = unpack_u4_bytes_to_u8(&bytes, 3, 1);
+        // pixel 0: low of 0x21 = 1
+        // pixel 1: high of 0x21 = 2
+        // pixel 2: low of 0x30 = 0
+        assert_eq!(result, vec![1, 2, 0]);
+    }
+
+    #[test]
+    fn test_pack_u8_to_u4_bytes_even() {
+        let values = vec![1, 2, 3, 4];
+        let packed = pack_u8_to_u4_bytes(&values, 4, 1);
+        assert_eq!(packed, vec![0x21, 0x43]);
+    }
+
+    #[test]
+    fn test_pack_u8_to_u4_bytes_odd() {
+        let values = vec![1, 2, 3];
+        let packed = pack_u8_to_u4_bytes(&values, 3, 1);
+        // row_bytes = 2; byte0 = 1 | (2 << 4) = 0x21; byte1 = 3 | (0 << 4) = 0x03
+        assert_eq!(packed, vec![0x21, 0x03]);
+    }
+
+    #[test]
+    fn test_pack_unpack_roundtrip() {
+        let values: Vec<u8> = vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
+        let packed = pack_u8_to_u4_bytes(&values, 8, 2);
+        let unpacked = unpack_u4_bytes_to_u8(&packed, 8, 2);
+        assert_eq!(unpacked, values);
+    }
+
+    #[test]
+    fn test_pack_unpack_roundtrip_odd() {
+        let values: Vec<u8> = vec![1, 2, 3, 4, 5]; // nx=5, ny=1 → 5 pixels, 3 bytes
+        let packed = pack_u8_to_u4_bytes(&values, 5, 1);
+        let unpacked = unpack_u4_bytes_to_u8(&packed, 5, 1);
+        assert_eq!(unpacked, values);
     }
 
     // Test M0 reinterpretation

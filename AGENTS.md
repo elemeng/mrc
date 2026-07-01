@@ -10,30 +10,38 @@ This file contains project-specific context for AI coding agents working on the 
 - **Crate**: https://crates.io/crates/mrc
 - **Docs**: https://docs.rs/mrc
 - **License**: MIT
-- **Version**: 0.2.4
+- **Version**: 0.2.5 (check `Cargo.toml` for latest)
 
-A reference Python implementation (`mrcfile/`) is vendored in the repo for specification comparison, but it is **not** part of the Rust build and is gitignored in releases.
+A reference Python implementation (`mrcfile/`) is vendored in the repo for specification comparison, but it is **not** part of the Rust build and is gitignored in releases. The MRC-2014 specification is available locally as `mrcfile-official.md`.
 
 ## Technology Stack
 
 - **Language**: Rust, Edition 2024, MSRV 1.85
-- **Build Tool**: Cargo
+- **Build Tool**: Cargo (no `rust-toolchain.toml` — uses system Rust)
 - **CI**: GitHub Actions (`.github/workflows/rust.yml`) — builds and tests on `ubuntu-latest` for pushes/PRs to `main`
-- **Error Handling**: `thiserror` (no-std compatible)
+- **Error Handling**: `thiserror` 2.x (no-std compatible)
+- **No `unsafe` in public API**: All `unsafe` is internal; the public API is 100% safe Rust.
 - **Optional Dependencies**:
   - `memmap2` — memory-mapped I/O (`mmap` feature)
-  - `rayon` — parallel encoding (`parallel` feature)
-  - `flate2` — gzip compression (`gzip` feature)
-  - `bzip2` — bzip2 compression (`bzip2` feature)
+  - `rayon` 1.10 — parallel encoding (`parallel` feature)
+  - `half` 2.5 — half-precision f16 (`f16` feature)
+  - `flate2` 1.0 — gzip compression (`gzip` feature)
+  - `bzip2` 0.5 — bzip2 compression (`bzip2` feature)
 
 ## Build and Test Commands
 
 ```bash
+# Build with default features (mmap, f16, simd, parallel, gzip)
+cargo build
+
 # Build with all features (recommended for development)
 cargo build --all-features
 
 # Run all tests (unit + doc tests)
 cargo test --all-features
+
+# Run tests with only default features
+cargo test
 
 # Check formatting
 cargo fmt --check
@@ -47,72 +55,88 @@ cargo build --release --bin mrc-header
 cargo build --release --bin mrc-invert
 ```
 
-There are **no integration test directories** (`tests/` or `benches/`). All tests are inline `#[cfg(test)]` modules inside source files.
+There are **no integration test directories** (`tests/` or `benches/`). All tests are inline `#[cfg(test)]` modules inside source files. Criterion is in dev-dependencies but no `benches/` directory exists yet.
 
 ## Feature Flags
 
-| Feature | Description | Default |
-|---------|-------------|---------|
-| `mmap` | Memory-mapped readers/writers via `memmap2` | ✅ |
-| `f16` | Half-precision `f16` support via the `half` crate | ✅ |
-| `simd` | AVX2/NEON accelerated conversions (`i16→f32`, etc.) | ✅ |
-| `parallel` | Parallel encoding via `rayon` | ✅ |
-| `gzip` | Gzip-compressed MRC I/O | ✅ |
-| `bzip2` | Bzip2-compressed MRC I/O | ❌ |
+| Feature | Dependencies | Description | Default |
+|---------|-------------|-------------|---------|
+| `mmap` | `memmap2` | Memory-mapped readers/writers | ✅ |
+| `f16` | `half` | Half-precision `f16` support | ✅ |
+| `simd` | (none; uses `core::arch`) | AVX2/NEON accelerated conversions (`i16→f32`, etc.) | ✅ |
+| `parallel` | `rayon` | Parallel encoding for `write_block_parallel` | ✅ |
+| `gzip` | `flate2` | Gzip-compressed MRC I/O | ✅ |
+| `bzip2` | `bzip2` | Bzip2-compressed MRC I/O | ❌ |
 
-The `f16` feature enables half-precision float support via the `half` crate and works on stable Rust.
+The `simd` feature uses **runtime feature detection** (`is_x86_feature_detected!("avx2")` / `is_aarch64_feature_detected!("neon")`) — it never assumes the ISA is available at compile time. Scalar fallbacks are always present.
 
 ## Code Organization
 
 ```
 src/
-├── lib.rs              # Public API re-exports and convenience functions (open, create)
-├── error.rs            # Top-level `Error` and `HeaderValidationError` enums (thiserror)
-├── mode.rs             # `Mode` enum, `Voxel` trait, complex types, Packed4Bit
-├── header.rs           # `Header` struct (1024-byte MRC-2014 header), `HeaderBuilder`
-├── fei.rs              # FEI1/FEI2 extended header parsers
-├── validate.rs          # `ValidationReport`, `validate_full()`
+├── lib.rs                 # Public API re-exports and convenience functions (open, create), plus integration tests
+├── error.rs               # Top-level `Error` and `HeaderValidationError` enums (thiserror)
+├── mode.rs                # `Mode` enum, `Voxel` trait, complex types (Int16Complex, Float32Complex), Packed4Bit mode handling
+├── header.rs              # `Header` struct (1024-byte MRC-2014 header), `HeaderBuilder`
+├── fei.rs                 # FEI1/FEI2 extended header parsers
+├── validate.rs            # `ValidationReport`, `validate_full()`, `validate_reader()`
+├── iter.rs                # Lazy iterators: `RegionIter<T, R, S>`, `SliceStepper`, `SlabStepper`, `TileStepper`
 ├── engine/
 │   ├── mod.rs
-│   ├── block.rs        # `VolumeShape`, `VoxelBlock<T>`
-│   ├── codec.rs        # `EndianCodec` trait, `decode_slice`, `encode_slice`
-│   ├── convert.rs      # Type conversion utilities (i16→f32, etc.)
-│   ├── endian.rs       # `FileEndian` enum and detection
-│   ├── simd.rs         # AVX2/NEON SIMD kernels (unsafe)
-│   └── stats.rs        # Statistics computation for header validation
+│   ├── block.rs           # `VolumeShape`, `VoxelBlock<T>`
+│   ├── codec.rs           # `EndianCodec` trait, `decode_slice`, `encode_slice`, parallel `encode_block_parallel`
+│   ├── convert.rs         # Type conversion utilities (i16→f32, u16→f32, i8→f32, u8↔u16, Mode 0 reinterpretation, 4-bit unpacking)
+│   ├── endian.rs          # `FileEndian` enum, `MachstInfo` metadata
+│   ├── simd.rs            # AVX2/NEON SIMD kernels (unsafe) — i8→f32, i16→f32, u16→f32
+│   └── stats.rs           # Statistics computation (dmin, dmax, dmean, rms), header statistics validation
 ├── io/
 │   ├── mod.rs
-│   ├── reader.rs       # `CompressionType` and `detect_compression` helpers
-│   ├── reader_common.rs# Shared `VoxelSource` trait and helper functions
-│   ├── buffered.rs     # In-memory `Reader`
-│   ├── mmap_reader.rs  # `MmapReader` (zero-copy, requires `mmap`)
-│   ├── writer.rs       # `Writer`, `WriterBuilder`, `MmapWriter`, compressed writers
-│   ├── gzip.rs         # `GzipWriter`, `GzipCompressor` (requires `gzip`)
-│   └── bzip2.rs        # `Bzip2Writer`, `Bzip2Compressor` (requires `bzip2`)
+│   ├── reader.rs          # `CompressionType` and `detect_compression` helpers
+│   ├── reader_common.rs   # Shared `VoxelSource` trait, `ReaderCore` trait, block validation, gather/encode helpers, `parse_header`, `open_compressed`
+│   ├── buffered.rs        # In-memory `Reader` (loads entire file into Vec<u8>)
+│   ├── mmap_reader.rs     # `MmapReader` (zero-copy, requires `mmap` feature)
+│   ├── writer.rs          # `Writer`, `WriterBuilder`, `MmapWriter`, `CompressedWriter<C: Compressor>`, `Compressor` trait
+│   ├── gzip.rs            # `GzipCompressor`, `GzipWriter` type alias, gzip reader methods on Reader
+│   └── bzip2.rs           # `Bzip2Compressor`, `Bzip2Writer` type alias, bzip2 reader methods on Reader
 └── bin/
-    ├── mrc-validate.rs # CLI validation tool (`cargo run --bin mrc-validate`)
-    ├── mrc-header.rs   # CLI header inspector (`cargo run --bin mrc-header`)
-    └── mrc-invert.rs   # CLI contrast inverter (`cargo run --bin mrc-invert`)
+    ├── mrc-validate.rs    # CLI validation tool — comprehensive file validation with field filtering (`--field`)
+    ├── mrc-header.rs      # CLI header inspector — key:value output with inline validation (`--force` to skip)
+    └── mrc-invert.rs      # CLI contrast inverter — negates all voxel values, writes Float32 output
 ```
 
 ### Module Philosophy
 
 - `engine/` contains low-level, format-agnostic encoding/decoding primitives.
 - `io/` contains user-facing I/O strategies (buffered, mmap, compressed).
-- `iter/` provides lazy iterators that work over any `VoxelSource` implementor.
+- `iter/` (a single `iter.rs` file, not a directory) provides lazy iterators that work over any `VoxelSource` implementor.
 - The crate uses **sealed traits** (`VoxelSource`) to keep internal abstractions internal.
+- `Packed4Bit` (Mode 101) has no `Voxel` impl. Read via `read_volume_u8()`/`slices_u8_packed()` which unpack nibbles to `u8`; write via `write_u4_block()` which packs `u8` values (0–15) two-per-byte.
+
+### I/O Strategies
+
+| Reader | Description | Best for |
+|--------|-------------|---------|
+| `Reader` (buffered) | Loads entire file into `Vec<u8>` on open | Smaller files, random access |
+| `MmapReader` | Memory-maps the file, OS-managed paging | Large files, partial reads, zero-copy `slab_as` |
+
+| Writer | Description | Best for |
+|--------|-------------|---------|
+| `Writer` | Standard file I/O, writes blocks directly to disk | General use |
+| `MmapWriter` | Memory-mapped write via `memmap2::MmapMut` | Very large files (`mmap` feature) |
+| `GzipWriter` | Buffers in RAM, compresses on `finalize` | Compressed output (`gzip` feature) |
+| `Bzip2Writer` | Buffers in RAM, compresses on `finalize` | Compressed output (`bzip2` feature) |
+
+File open auto-detects gzip/bzip2 from magic bytes: `\x1f\x8b` → gzip, `BZ` → bzip2, anything else → plain.
 
 ### API Surface Discipline
 
-The top-level `lib.rs` is the *only* public entry point. Internal modules (`engine/`,
-`io/`, `iter/`, `fei/`) are marked `mod` (private) or, when their items must be
-re-exported, are `pub mod` but with `#[doc(hidden)]` on internal plumbing:
+The top-level `lib.rs` is the *only* public entry point. Internal modules (`engine/`, `io/`, `iter/`, `fei/`) are marked `mod` (private) or, when their items must be re-exported, are `pub mod` but with `#[doc(hidden)]` on internal plumbing:
 
 | Visibility | Items |
 |------------|-------|
-| **Public (in lib.rs)** | `open`, `create`, `Reader`, `WriterBuilder`, `Writer`, `Header`, `HeaderBuilder`, `Mode`, `Voxel`, `VoxelBlock`, `VolumeShape`, `RegionIter`, `FileEndian`, `Error`, `MmapReader`, `MmapWriter`, `GzipWriter`, `Bzip2Writer`, `validate_reader`, FEI types |
-| **`#[doc(hidden)]`** | `VoxelSource`, `ReaderCore`, `EndianCodec`, `Stepper`, `Compressor`, `MachstInfo`, `CompressionType`, `detect_compression`, `GzipCompressor`, `Bzip2Compressor` |
-| **`pub(crate)` only** | `validate_block_bounds`, `gather_block_bytes`, `decode_block`, `decode_native_endian`, `parse_header`, `DecompressedMrc`, `open_compressed`, `encode_block_to_buf`, `compute_stats`, `validate_header_stats` |
+| **Public (in lib.rs)** | `open`, `create`, `Reader`, `WriterBuilder`, `Writer`, `Header`, `HeaderBuilder`, `Mode`, `Voxel`, `VoxelBlock`, `VolumeShape`, `RegionIter`, `SliceStepper`, `SlabStepper`, `TileStepper`, `FileEndian`, `Error`, `HeaderValidationError`, `MmapReader`, `MmapWriter`, `GzipWriter`, `Bzip2Writer`, `validate_full`, `validate_reader`, `ValidationReport`, `ValidationIssue`, `Severity`, FEI types, `ComplexToRealStrategy`, `M0Interpretation`, `Int16Complex`, `Float32Complex`, `convert_u8_slice_to_u16`, `convert_u16_slice_to_u8`, `reinterpret_m0` |
+| **`#[doc(hidden)]`** | `VoxelSource`, `ReaderCore`, `EndianCodec`, `Compressor`, `MachstInfo`, `CompressionType`, `detect_compression`, `GzipCompressor`, `Bzip2Compressor` |
+| **`pub(crate)` only** | `validate_block_bounds`, `gather_block_bytes`, `encode_block_to_buf`, `decode_block`, `decode_native_endian`, `decode_slice`, `encode_slice`, `encode_block_parallel`, `parse_header`, `DecompressedMrc`, `open_compressed`, `compute_stats`, `validate_header_stats`, `unpack_u4_bytes_to_u16`, `convert_i8_slice_to_f32`, `convert_i16_slice_to_f32`, `convert_u16_slice_to_f32` |
 
 ## Development Conventions
 
@@ -128,6 +152,8 @@ re-exported, are `pub mod` but with `#[doc(hidden)]` on internal plumbing:
 
 - Fallible functions return `Result<T, Error>`.
 - `Error` is a central enum using `thiserror` for `#[from]` conversions.
+- Specific error variants: `Io`, `InvalidHeader`, `UnsupportedMode`, `BoundsError`, `TypeMismatch`, `BlockShapeMismatch`, `ModeMismatch`, `InvalidHeaderDetailed`, `StatsMismatch`, `Mmap`, `FileSizeMismatch`, `NotAVolumeStack`.
+- `HeaderValidationError` provides granular diagnostics for header validation.
 - `ModeMismatch` and `TypeMismatch` errors are preferred over silent data corruption.
 - Bounds checking on `VoxelBlock` shapes is mandatory.
 
@@ -135,12 +161,34 @@ re-exported, are `pub mod` but with `#[doc(hidden)]` on internal plumbing:
 
 - The `Voxel` trait connects Rust types to MRC modes at compile time.
 - Generic read/write APIs require `T: Voxel`, preventing runtime mode mismatches.
-- Built-in conversion conveniences: `slices_f32()`, `slabs_f32()`, `slices_u8()`, `slices_mode0()`, `slabs_mode0()`, `read_volume::<T>()`, `read_volume_f32()`, `write_u8_block()`, and `write_f16_from_f32()`. All other type conversion is the caller's responsibility.
+- Built-in conversion conveniences: `slices_f32()`, `slabs_f32()`, `slices_u8()`, `slabs_u8()`, `slices_mode0()`, `slabs_mode0()`, `read_volume::<T>()`, `read_volume_f32()`, `read_volume_u8()`, `write_u8_block()`, `write_f16_from_f32()`, and `write_u4_block()`. All other type conversion is the caller's responsibility.
+
+### MRC Mode Mapping
+
+| Mode constant | Rust type | `Voxel` impl | Typical use |
+|---------------|-----------|--------------|-------------|
+| 0 (Int8) | `i8` | ✅ | Binary masks |
+| 1 (Int16) | `i16` | ✅ | Raw cryo-EM density |
+| 2 (Float32) | `f32` | ✅ | Processed/reconstructed density |
+| 3 (Int16Complex) | `Int16Complex` | ✅ | Complex data (obsolete for writing) |
+| 4 (Float32Complex) | `Float32Complex` | ✅ | Complex data |
+| 6 (Uint16) | `u16` | ✅ | Segmentation labels |
+| 12 (Float16) | `f16` (via `half` crate, feature `f16`) | ✅ | Half-precision storage |
+| 101 (Packed4Bit) | `u8` (via `slices_u8`/`read_volume_u8`) | ❌ (no Voxel impl) | 4-bit packed data; unified `slices_u8`/`slices_f32` API |
+
+### File Endianness
+
+- MRC files encode byte order via the 4-byte MACHST machine stamp at offset 212.
+- Standard stamps: `0x44 0x44 0x00 0x00` = little-endian; `0x11 0x11 0x00 0x00` = big-endian.
+- CCP4 variant: `0x44 0x41` = little-endian.
+- New files are always little-endian per crate policy (matching Python `mrcfile`).
+- Header decode has an endianness fallback: if MODE is invalid under the detected endianness, the opposite is tried. This handles files with a wrong MACHST.
 
 ## Testing Strategy
 
-- **Unit Tests**: 51+ tests in inline `mod tests` blocks inside source files (`header.rs`, `engine/simd.rs`, `engine/convert.rs`, `engine/endian.rs`, `engine/stats.rs`, `io/reader.rs`, `lib.rs`).
+- **Unit Tests**: ~60+ tests in inline `mod tests` blocks inside source files (`header.rs`, `engine/simd.rs`, `engine/convert.rs`, `engine/endian.rs`, `engine/stats.rs`, `io/reader.rs`, `lib.rs`, `mode.rs`).
 - **Doc Tests**: Multiple doc-tests in `lib.rs`, `io/buffered.rs`, `io/writer.rs`, `io/mmap_reader.rs`, `header.rs`.
+- **Integration Tests**: Integration-level roundtrip tests live in `lib.rs` under `mod integration_tests`. They test write-then-read scenarios for Float32, Int16, Uint16, subregion reads, gzip compression, and header statistics.
 - **No External Fixtures**: Tests generate temporary MRC files programmatically (using `tempfile` in dev-dependencies) rather than checking large binary files into git.
 - **Coverage Gaps**: There is no dedicated benchmark suite (criterion is in dev-dependencies but no `benches/` directory exists).
 
@@ -149,46 +197,41 @@ re-exported, are `pub mod` but with `#[doc(hidden)]` on internal plumbing:
 The crate contains a small amount of `unsafe` Rust, all justified by performance:
 
 1. **SIMD Kernels** (`engine/simd.rs`): AVX2 and NEON intrinsics for `i8→f32`, `i16→f32`, `u16→f32`. Runtime feature detection gates these.
-2. **Memory Mapping** (`io/mmap_reader.rs`, `io/writer.rs`): `memmap2::MmapOptions::new().map()` requires `unsafe`.
+2. **Memory Mapping** (`io/mmap_reader.rs`, `io/writer.rs`): `memmap2::MmapOptions::new().map()` and `.map_mut()` require `unsafe`.
 3. **Fast-path memcpy** (`engine/codec.rs`): `core::ptr::copy_nonoverlapping` is used for native-endian decode/encode to avoid per-element branching.
 4. **`Vec::set_len`** (`engine/codec.rs`): Used after `Vec::with_capacity` when all elements are guaranteed to be overwritten immediately.
+5. **Zero-copy `slab_as`** (`io/mmap_reader.rs`): `core::slice::from_raw_parts` returns a `&[T]` into the memory map. Alignment, mode, and endianness are checked beforehand.
 
 **Agent Guidance**: When modifying unsafe code, ensure:
 - Runtime feature detection for SIMD (do not assume AVX2/NEON is available).
 - Alignment and size invariants are documented with `// SAFETY:` comments.
 - No undefined behavior is introduced through out-of-bounds raw pointer access.
+- `Vec::set_len` is only called after all elements in the allocated capacity are initialized.
 
 ## Known Issues and Technical Debt
 
-A detailed code review exists in `review.md` at the repository root. Items agents should be aware of:
-
 1. **`gather_block_bytes` fast-path assumes contiguous XY slabs**: For full-row slabs (`ox == 0 && sx == nx && oy == 0 && sy == ny`) a contiguous copy is used. Sub-XY blocks correctly use row-by-row scatter/gather.
-2. ~~**`decode_slice` panics on misaligned byte count** (Medium): If `bytes.len()` is not a multiple of `T::BYTE_SIZE`, `decode_slice` panics rather than returning a `Result`.~~ **Fixed**: Now returns `Result<Vec<T>, Error>`, propagating the error through `compute_stats` and `decode_block`.
-3. ~~**`encode_slice` asserts length match** (Medium): `assert_eq!` previously used instead of returning a `Result`.~~ **Fixed**: Now returns `Result<(), Error>`.
-4. ~~**Duplicated writer logic**: The scatter-path write loop (`write_block` for sub-XY blocks) was copy-pasted across `Writer`, `MmapWriter`, and `CompressedWriter`.~~ **Fixed**: Extracted shared `encode_block_to_buf` helper in `reader_common.rs`. MmapWriter and CompressedWriter now delegate to it.
-5. ~~**`slices_u8` return type triggers clippy `type_complexity`**: The `Result<Box<dyn Iterator<...>>>` return type...~~ **Fixed**: `slices_u8` now returns `VoxelIter<'_, u8>` directly (matching `slices_f32`), with the mode check baked into the returned iterator.
-6. ~~**`VoxelBlock::new` panics on shape mismatch** (Medium): The primary public constructor panicked on mismatched data length; `try_new` was the `Result`-based alternative.~~ **Fixed**: `new` now delegates to `try_new` and returns `Result<VoxelBlock<T>, Error>`. All call sites updated with `?` or `.unwrap()`.
-7. ~~**`TileStepper` edge-case confidence**: The tile-stepping logic is hard to visually verify for exact boundary conditions.~~ **Fixed**: Existing tests and integration tests now cover tile iteration via `subregion`.
-8. **`MmapReader::data_bytes()` silently truncates on undersized files in permissive mode**: When the file is smaller than the header claims, the method returns whatever bytes are available instead of signalling an error. In strict mode the file size is validated on open.
-9. ~~**`f16` feature missing from macro calls** (Compile failure): `slices_f32()` and `slabs_f32()` called `self.slices::<crate::f16>()` unconditionally.~~ **Fixed**: Split `iter_f32_helper` into f16-enabled and f16-disabled versions with proper cfg gates.
-10. ~~**`validate_full` type inference with `--no-default-features`** (Compile failure): `"plain".into()` couldn't infer `String` when only one match arm exists.~~ **Fixed**: Changed to `"plain".to_string()`.
-11. ~~**`add_label` FIFO shift corrupts labels** (Bug): The loop `copy_within(0..720, 80)` duplicated the oldest label into slot 1 and preserved slot 0 instead of dropping it.~~ **Fixed**: Reversed to `copy_within(80..800, 0)` which shifts slots 1-9 to 0-8.
-12. ~~**`slab_as` alignment UB** (Soundness): Assumed 4-byte-aligned `data_offset` but `nsymbt` can be arbitrary.~~ **Fixed**: Added runtime alignment check before the unsafe block, returns `Err` on misalignment.
-13. ~~**NEON functions lack runtime detection** (Soundness): AArch64 NEON functions called unconditionally.~~ **Fixed**: Added `is_aarch64_feature_detected!("neon")` guard.
-14. ~~**MmapWriter::update_header_stats silently skips** (Bug): Returned `Ok(())` when data extended beyond mmap.~~ **Fixed**: Returns `Err(BoundsError)`.
-15. ~~**Fei2Metadata::from_bytes missing length check** (Bug): No `FEI2_RECORD_SIZE` guard, could panic on 768-887 byte slices.~~ **Fixed**: Added explicit length check.
-16. ~~**Float16 validation false positive** (Bug): Without `f16` feature, `float_mode_issues` reported "All voxel values are finite" for Float16 files.~~ **Fixed**: Returns warning about missing `f16` feature.
-17. ~~**`data_offset` with negative `nsymbt`** (Bug): `as usize` cast produced huge values.~~ **Fixed**: Added `if nsymbt < 0 { 1024 }` guard.
-18. ~~**`decode_slice` TypeMismatch with `expected: 0`** (Code quality): Error showed "expected 0 bytes per voxel".~~ **Fixed**: Now uses `expected: T::BYTE_SIZE`.
+2. **`MmapReader::data_bytes()` silently truncates on undersized files in permissive mode**: When the file is smaller than the header claims, the method returns whatever bytes are available instead of signalling an error. In strict mode the file size is validated on open.
+3. **Compressed readers decompress entirely into RAM**: Gzip/Bzip2 readers decompress the entire file into memory on open. They do not stream. This makes them susceptible to decompression bombs.
+4. **No benchmark suite**: Criterion is in dev-dependencies but there is no `benches/` directory.
+5. **`gather_block_bytes` fast-path assumes contiguous XY slabs**: For full-row slabs (`ox == 0 && sx == nx && oy == 0 && sy == ny`) a contiguous copy is used. Sub-XY blocks correctly use row-by-row scatter/gather.
+6. **`MmapReader::data_bytes()` silently truncates on undersized files in permissive mode**: When the file is smaller than the header claims, the method returns whatever bytes are available instead of signalling an error. In strict mode the file size is validated on open.
+7. **Compressed readers decompress entirely into RAM**: Gzip/Bzip2 readers decompress the entire file into memory on open. They do not stream. This makes them susceptible to decompression bombs.
 
-Agents should read `review.md` before making large refactors to I/O or header code.
+## CLI Tools
+
+Three binary targets are available (`src/bin/`):
+
+- **`mrc-validate`**: Comprehensive file validation. Supports `--permissive` (warnings instead of hard errors), `--field <name>` (filter to specific checks), and `--list-fields`. Exit code 0 = valid, 1 = validation failed, 2 = usage error.
+- **`mrc-header`**: Header inspector with key:value output. Uses `--permissive` for lenient opening, `--force` to skip validation and show raw values only.
+- **`mrc-invert`**: Contrast inverter. Reads any mode via `slices_f32()`, negates every voxel, writes Float32 output. Shows progress every 100 slices.
 
 ## Deployment and Release
 
 - The crate is published to **crates.io**.
 - `cargo build --release` produces optimized artifacts.
-- The `mrc-validate` binary can be distributed as a standalone validation tool.
 - CI only runs on Ubuntu; there is no cross-platform or Windows/macOS testing in CI.
+- The CI workflow builds with `--release` and runs tests (without `--all-features`).
 
 ## Security Considerations
 
@@ -202,3 +245,7 @@ Agents should read `review.md` before making large refactors to I/O or header co
 
 - **MRC-2014 Spec**: `mrcfile-official.md` (local copy) or https://www.ccpem.ac.uk/mrc-format/mrc2014/
 - **Python Reference**: `mrcfile/` directory (CCP-EM's `mrcfile` Python package)
+
+## When Modifying This File
+
+If you modify any files, styles, structures, configurations, workflows, or other conventions mentioned in this guide, update the corresponding sections of this file to keep it current.

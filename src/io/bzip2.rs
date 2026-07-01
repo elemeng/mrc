@@ -19,9 +19,7 @@ impl crate::Reader {
     }
 
     /// Open a bzip2-compressed MRC file in **permissive** mode.
-    pub fn open_bzip2_permissive<P: AsRef<Path>>(
-        path: P,
-    ) -> Result<(Self, Vec<String>), Error> {
+    pub fn open_bzip2_permissive<P: AsRef<Path>>(path: P) -> Result<(Self, Vec<String>), Error> {
         Self::_open_bzip2(path, true)
     }
 

@@ -1,11 +1,14 @@
 //! Statistics computation for MRC data validation.
 
+use crate::Error;
 use crate::engine::codec::decode_slice;
 use crate::engine::endian::FileEndian;
-use crate::Error;
 use crate::mode::{Float32Complex, Int16Complex, Mode};
 
 /// Compute (dmin, dmax, dmean, rms) from raw data bytes.
+///
+/// `nx` and `ny` are the volume dimensions (needed for row-by-row decoding
+/// of [`Mode::Packed4Bit`]; for other modes they are unused).
 ///
 /// Returns sentinel values `(0.0, -1.0, -2.0, -1.0)` for empty data.
 ///
@@ -15,6 +18,8 @@ pub(crate) fn compute_stats(
     bytes: &[u8],
     mode: Mode,
     endian: FileEndian,
+    nx: usize,
+    ny: usize,
 ) -> Result<(f32, f32, f32, f32), Error> {
     Ok(match mode {
         Mode::Float32 => {
@@ -52,9 +57,7 @@ pub(crate) fn compute_stats(
         #[cfg(not(feature = "f16"))]
         Mode::Float16 => return Err(Error::UnsupportedMode),
         Mode::Packed4Bit => {
-            // Packed4Bit: each byte holds 2 values (low nibble, high nibble)
-            let num_values = bytes.len() * 2;
-            let unpacked = crate::engine::convert::unpack_u4_bytes_to_u16(bytes, num_values);
+            let unpacked = crate::engine::convert::unpack_u4_bytes_to_u8(bytes, nx, ny);
             stats_real(&unpacked)
         }
     })
@@ -158,8 +161,13 @@ pub(crate) fn validate_header_stats(
         Some(m) => m,
         None => return Err(crate::Error::UnsupportedMode),
     };
-    let (actual_dmin, actual_dmax, actual_dmean, actual_rms) =
-        compute_stats(data_bytes, mode, endian)?;
+    let (actual_dmin, actual_dmax, actual_dmean, actual_rms) = compute_stats(
+        data_bytes,
+        mode,
+        endian,
+        header.nx as usize,
+        header.ny as usize * header.nz as usize,
+    )?;
 
     let rtol = 0.01f32;
 
@@ -239,7 +247,8 @@ mod tests {
             .iter()
             .flat_map(|&v| v.to_le_bytes())
             .collect();
-        let (min, max, mean, _rms) = compute_stats(&bytes, Mode::Float32, FileEndian::LittleEndian).unwrap();
+        let (min, max, mean, _rms) =
+            compute_stats(&bytes, Mode::Float32, FileEndian::LittleEndian, 4, 1).unwrap();
         assert_eq!(min, 1.0);
         assert_eq!(max, 4.0);
         assert_eq!(mean, 2.5);

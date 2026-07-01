@@ -44,6 +44,34 @@ macro_rules! write_f16_from_f32_body {
     }};
 }
 
+macro_rules! write_u4_block_body {
+    ($self:ident, $block:ident) => {{
+        if $self.mode() != Mode::Packed4Bit {
+            return Err(Error::ModeMismatch {
+                file_mode: $self.mode(),
+                requested_mode: Mode::Packed4Bit,
+            });
+        }
+        if !$self.shape().contains_block($block.offset, $block.shape) {
+            return Err(Error::BoundsError);
+        }
+        for &v in &$block.data {
+            if v > 15 {
+                return Err(crate::Error::TypeMismatch {
+                    expected: 4,
+                    actual: 8,
+                });
+            }
+        }
+        let nx = $block.shape[0];
+        let ny = $block.shape[1];
+        let nz = $block.shape[2];
+        let packed = crate::engine::convert::pack_u8_to_u4_bytes(&$block.data, nx, ny * nz);
+        $self.write_block_bytes(&packed, $block.offset, $block.shape)?;
+        Ok(())
+    }};
+}
+
 use crate::engine::block::{VolumeShape, VoxelBlock};
 #[cfg(feature = "parallel")]
 use crate::engine::codec::encode_block_parallel;
@@ -73,6 +101,16 @@ macro_rules! builder_setters {
         /// Set the voxel data mode.
         pub fn mode<T: Voxel>(mut self) -> Self {
             self.header.mode = T::MODE.as_i32();
+            self
+        }
+
+        /// Set the MRC mode by raw integer value (for modes without a [`Voxel`] impl).
+        ///
+        /// This is primarily useful for [`Mode::Packed4Bit`] (mode 101) which does not
+        /// implement `Voxel`.  Invalid mode constants are caught by header validation
+        /// at `finish()` time.
+        pub fn mode_raw(mut self, mode: i32) -> Self {
+            self.header.mode = mode;
             self
         }
 
@@ -265,9 +303,6 @@ impl Writer {
                 "Warning: Mode 3 (Int16Complex) is obsolete and should not be used for writing new files."
             );
         }
-        if mode == Mode::Packed4Bit {
-            return Err(Error::UnsupportedMode);
-        }
         let bytes_per_voxel = mode.byte_size();
 
         let shape = VolumeShape::new(header.nx as usize, header.ny as usize, header.nz as usize);
@@ -431,6 +466,63 @@ impl Writer {
         write_f16_from_f32_body!(self, block)
     }
 
+    /// Write a block of `u8` data (0–15 per voxel) by packing to 4-bit (Mode 101).
+    ///
+    /// The file must have been created with [`Mode::Packed4Bit`]. Each `u8` value
+    /// is checked to be in the range 0–15; values exceeding 15 produce an error.
+    pub fn write_u4_block(&mut self, block: &VoxelBlock<u8>) -> Result<(), Error> {
+        write_u4_block_body!(self, block)
+    }
+
+    /// Write raw packed bytes at the given block offset.
+    ///
+    /// Internal helper used by [`write_u4_block`](Self::write_u4_block).
+    fn write_block_bytes(
+        &mut self,
+        packed: &[u8],
+        offset: [usize; 3],
+        shape: [usize; 3],
+    ) -> Result<(), Error> {
+        use std::io::{Seek, SeekFrom, Write};
+        let [nx, ny, _nz] = [self.shape.nx, self.shape.ny, self.shape.nz];
+        let [ox, oy, oz] = offset;
+        let [sx, sy, sz] = shape;
+        let file_row_bytes = nx.div_ceil(2);
+        let block_row_bytes = sx.div_ceil(2);
+
+        debug_assert!(ox == 0, "write_block_bytes requires ox == 0");
+
+        // Fast path: full XY slab is contiguous.
+        if sx == nx && oy == 0 && sy == ny {
+            let slice_bytes = ny * file_row_bytes;
+            let start_offset = (self.data_offset as usize) + oz * slice_bytes;
+            let byte_len = sz * slice_bytes;
+            let end_offset = start_offset + byte_len;
+            if end_offset > (self.data_offset as usize) + self.header.data_size().unwrap_or(0) {
+                return Err(Error::BoundsError);
+            }
+            self.file.seek(SeekFrom::Start(start_offset as u64))?;
+            self.file.write_all(&packed[..byte_len])?;
+            return Ok(());
+        }
+
+        // Scatter path: write row by row.
+        for z in 0..sz {
+            for y in 0..sy {
+                let vol_row = (oz + z) * ny + (oy + y);
+                let file_offset = (self.data_offset as usize) + vol_row * file_row_bytes;
+                let packed_start = (y + z * sy) * block_row_bytes;
+                let packed_end = packed_start + block_row_bytes;
+                if packed_end > packed.len() {
+                    return Err(Error::BoundsError);
+                }
+                self.file.seek(SeekFrom::Start(file_offset as u64))?;
+                self.file.write_all(&packed[packed_start..packed_end])?;
+            }
+        }
+        Ok(())
+    }
+
     /// Finalize the MRC file by rewriting the header at the beginning of the file.
     ///
     /// This must be called after all [`write_block`](Self::write_block) calls
@@ -476,7 +568,11 @@ impl Writer {
 fn update_header_stats_from_bytes(header: &mut Header, bytes: &[u8]) -> Result<(), Error> {
     let endian = header.detect_endian();
     let mode = Mode::from_i32(header.mode).ok_or(Error::UnsupportedMode)?;
-    let (dmin, dmax, dmean, rms) = crate::engine::stats::compute_stats(bytes, mode, endian)?;
+    let nx = header.nx.max(0) as usize;
+    let ny = header.ny.max(0) as usize;
+    let nz = header.nz.max(0) as usize;
+    let (dmin, dmax, dmean, rms) =
+        crate::engine::stats::compute_stats(bytes, mode, endian, nx, ny * nz)?;
     header.dmin = dmin;
     header.dmax = dmax;
     header.dmean = dmean;
@@ -581,9 +677,6 @@ impl MmapWriter {
             eprintln!(
                 "Warning: Mode 3 (Int16Complex) is obsolete and should not be used for writing new files."
             );
-        }
-        if mode == Mode::Packed4Bit {
-            return Err(Error::UnsupportedMode);
         }
         let bytes_per_voxel = mode.byte_size();
 
@@ -727,6 +820,28 @@ impl MmapWriter {
         write_f16_from_f32_body!(self, block)
     }
 
+    /// Write a block of `u8` data (0–15 per voxel) by packing to 4-bit (Mode 101).
+    pub fn write_u4_block(&mut self, block: &VoxelBlock<u8>) -> Result<(), Error> {
+        write_u4_block_body!(self, block)
+    }
+
+    /// Write raw packed bytes at the given block offset.
+    fn write_block_bytes(
+        &mut self,
+        packed: &[u8],
+        offset: [usize; 3],
+        shape: [usize; 3],
+    ) -> Result<(), Error> {
+        crate::io::reader_common::write_block_bytes(
+            packed,
+            self.shape,
+            offset,
+            shape,
+            self.data_offset,
+            &mut self.mmap,
+        )
+    }
+
     /// Scan the written data block and update header statistics.
     ///
     /// Unlike [`Writer::update_header_stats`], this does not need to read from
@@ -840,9 +955,6 @@ impl<C: Compressor> CompressedWriter<C> {
         let data = vec![0u8; data_size];
 
         let mode = Mode::from_i32(header.mode).ok_or(Error::UnsupportedMode)?;
-        if mode == Mode::Packed4Bit {
-            return Err(Error::UnsupportedMode);
-        }
         let bytes_per_voxel = mode.byte_size();
         let shape = VolumeShape::new(header.nx as usize, header.ny as usize, header.nz as usize);
 
@@ -922,6 +1034,28 @@ impl<C: Compressor> CompressedWriter<C> {
     #[cfg(feature = "f16")]
     pub fn write_f16_from_f32(&mut self, block: &VoxelBlock<f32>) -> Result<(), Error> {
         write_f16_from_f32_body!(self, block)
+    }
+
+    /// Write a block of `u8` data (0–15 per voxel) by packing to 4-bit (Mode 101).
+    pub fn write_u4_block(&mut self, block: &VoxelBlock<u8>) -> Result<(), Error> {
+        write_u4_block_body!(self, block)
+    }
+
+    /// Write raw packed bytes at the given block offset.
+    fn write_block_bytes(
+        &mut self,
+        packed: &[u8],
+        offset: [usize; 3],
+        shape: [usize; 3],
+    ) -> Result<(), Error> {
+        crate::io::reader_common::write_block_bytes(
+            packed,
+            self.shape,
+            offset,
+            shape,
+            0, // data starts at offset 0 within self.data
+            &mut self.data,
+        )
     }
 
     /// Scan the written data block and update `dmin`, `dmax`, `dmean` and `rms`

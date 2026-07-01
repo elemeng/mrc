@@ -88,11 +88,7 @@ impl<T> VoxelBlock<T> {
     /// # Errors
     /// Returns [`crate::Error::BoundsError`] if `shape` dimensions overflow `usize`.
     /// Returns [`crate::Error::BlockShapeMismatch`] if `data.len()` does not match `shape`.
-    pub fn new(
-        offset: [usize; 3],
-        shape: [usize; 3],
-        data: Vec<T>,
-    ) -> Result<Self, crate::Error> {
+    pub fn new(offset: [usize; 3], shape: [usize; 3], data: Vec<T>) -> Result<Self, crate::Error> {
         Self::try_new(offset, shape, data)
     }
 

@@ -187,7 +187,11 @@ impl Header {
     /// Returns `1024` when `nsymbt` is negative (to avoid integer wrap-around
     /// on malformed headers).
     pub const fn data_offset(&self) -> usize {
-        if self.nsymbt < 0 { 1024 } else { 1024 + self.nsymbt as usize }
+        if self.nsymbt < 0 {
+            1024
+        } else {
+            1024 + self.nsymbt as usize
+        }
     }
 
     #[inline]
@@ -196,14 +200,22 @@ impl Header {
     /// Returns `None` if the dimensions are so large that the calculation
     /// overflows `usize`.
     pub fn data_size(&self) -> Option<usize> {
-        let n = (self.nx as usize)
-            .checked_mul(self.ny as usize)?
-            .checked_mul(self.nz as usize)?;
+        let nx = self.nx.max(0) as usize;
+        let ny = self.ny.max(0) as usize;
+        let nz = self.nz.max(0) as usize;
         match Mode::from_i32(self.mode) {
             Some(mode) => {
                 match mode {
-                    Mode::Packed4Bit => Some(n.div_ceil(2)),
-                    _ => n.checked_mul(mode.byte_size()),
+                    // For Packed4Bit, each row is padded to a whole byte boundary:
+                    // row_bytes = nx.div_ceil(2), total = ny * row_bytes * nz
+                    Mode::Packed4Bit => {
+                        let row_bytes = nx.div_ceil(2);
+                        ny.checked_mul(row_bytes)?.checked_mul(nz)
+                    }
+                    _ => nx
+                        .checked_mul(ny)?
+                        .checked_mul(nz)?
+                        .checked_mul(mode.byte_size()),
                 }
             }
             None => None, // unknown/unsupported mode

@@ -154,8 +154,10 @@
 //! | [`Uint16`](Mode::Uint16) (6) | `u16` | Segmentation labels |
 //! | [`Float16`](Mode::Float16) (12) | `f16` | Half-precision storage (feature `f16`) |
 //!
-//! Complex ([`Int16Complex`], [`Float32Complex`]) and packed 4-bit
-//! ([`Packed4Bit`]) modes are also available — see their individual docs.
+//! Packed 4-bit data ([`Mode::Packed4Bit`], mode 101) is handled transparently by
+//! the unified API: [`slices_f32`](Reader::slices_f32) / [`read_volume_f32`](Reader::read_volume_f32)
+//! unpack nibbles to `f32`, [`slices_u8`](Reader::slices_u8) / [`slabs_u8`](Reader::slabs_u8)
+//! unpack to `u8` (0–15), and [`write_u4_block`](Writer::write_u4_block) packs `u8` values.
 //!
 //! When you don't know the mode ahead of time, use [`slices_f32`](Reader::slices_f32)
 //! which converts any mode to `f32`.
@@ -287,7 +289,7 @@ pub use engine::convert::{convert_u8_slice_to_u16, convert_u16_slice_to_u8, rein
 pub use error::{Error, HeaderValidationError};
 pub use header::{Header, HeaderBuilder};
 pub use mode::{
-    ComplexToRealStrategy, Float32Complex, Int16Complex, M0Interpretation, Mode, Packed4Bit, Voxel,
+    ComplexToRealStrategy, Float32Complex, Int16Complex, M0Interpretation, Mode, Voxel,
 };
 
 /// Half-precision floating point type (requires `f16` feature).
@@ -394,8 +396,13 @@ mod integration_tests {
 
         let data: Vec<f32> = (0..nx * ny * nz).map(|i| i as f32).collect();
         {
-            let mut w = create(f.path()).shape([nx, ny, nz]).mode::<f32>().finish().unwrap();
-            w.write_block(&VoxelBlock::new([0, 0, 0], [nx, ny, nz], data.clone()).unwrap()).unwrap();
+            let mut w = create(f.path())
+                .shape([nx, ny, nz])
+                .mode::<f32>()
+                .finish()
+                .unwrap();
+            w.write_block(&VoxelBlock::new([0, 0, 0], [nx, ny, nz], data.clone()).unwrap())
+                .unwrap();
             w.finalize().unwrap();
         }
 
@@ -422,8 +429,13 @@ mod integration_tests {
         let src: Vec<i16> = (0..total).map(|i| (i as i16) - 100).collect();
         let expected_f32: Vec<f32> = src.iter().map(|&v| v as f32).collect();
         {
-            let mut w = create(f.path()).shape([nx, ny, nz]).mode::<i16>().finish().unwrap();
-            w.write_block(&VoxelBlock::new([0, 0, 0], [nx, ny, nz], src).unwrap()).unwrap();
+            let mut w = create(f.path())
+                .shape([nx, ny, nz])
+                .mode::<i16>()
+                .finish()
+                .unwrap();
+            w.write_block(&VoxelBlock::new([0, 0, 0], [nx, ny, nz], src).unwrap())
+                .unwrap();
             w.finalize().unwrap();
         }
 
@@ -447,8 +459,13 @@ mod integration_tests {
 
         let src: Vec<u16> = (0..nx * ny * nz).map(|i| (i * 2) as u16).collect();
         {
-            let mut w = create(f.path()).shape([nx, ny, nz]).mode::<u16>().finish().unwrap();
-            w.write_block(&VoxelBlock::new([0, 0, 0], [nx, ny, nz], src.clone()).unwrap()).unwrap();
+            let mut w = create(f.path())
+                .shape([nx, ny, nz])
+                .mode::<u16>()
+                .finish()
+                .unwrap();
+            w.write_block(&VoxelBlock::new([0, 0, 0], [nx, ny, nz], src.clone()).unwrap())
+                .unwrap();
             w.finalize().unwrap();
         }
 
@@ -465,10 +482,15 @@ mod integration_tests {
         let ny = 32;
         let nz = 8;
 
-        let mut w = create(f.path()).shape([nx, ny, nz]).mode::<f32>().finish().unwrap();
+        let mut w = create(f.path())
+            .shape([nx, ny, nz])
+            .mode::<f32>()
+            .finish()
+            .unwrap();
         for z in 0..nz {
             let slice = vec![(z * nx * ny) as f32; nx * ny];
-            w.write_block(&VoxelBlock::new([0, 0, z], [nx, ny, 1], slice).unwrap()).unwrap();
+            w.write_block(&VoxelBlock::new([0, 0, z], [nx, ny, 1], slice).unwrap())
+                .unwrap();
         }
         w.finalize().unwrap();
 
@@ -490,8 +512,13 @@ mod integration_tests {
 
         let data: Vec<f32> = (0..nx * ny * nz).map(|i| i as f32).collect();
         {
-            let mut w = create(f.path()).shape([nx, ny, nz]).mode::<f32>().finish().unwrap();
-            w.write_block(&VoxelBlock::new([0, 0, 0], [nx, ny, nz], data.clone()).unwrap()).unwrap();
+            let mut w = create(f.path())
+                .shape([nx, ny, nz])
+                .mode::<f32>()
+                .finish()
+                .unwrap();
+            w.write_block(&VoxelBlock::new([0, 0, 0], [nx, ny, nz], data.clone()).unwrap())
+                .unwrap();
             w.finalize().unwrap();
         }
 
@@ -512,8 +539,13 @@ mod integration_tests {
 
         let data: Vec<f32> = (0..nx * ny * nz).map(|i| i as f32).collect();
         {
-            let mut w = create(f.path()).shape([nx, ny, nz]).mode::<f32>().finish_gzip().unwrap();
-            w.write_block(&VoxelBlock::new([0, 0, 0], [nx, ny, nz], data.clone()).unwrap()).unwrap();
+            let mut w = create(f.path())
+                .shape([nx, ny, nz])
+                .mode::<f32>()
+                .finish_gzip()
+                .unwrap();
+            w.write_block(&VoxelBlock::new([0, 0, 0], [nx, ny, nz], data.clone()).unwrap())
+                .unwrap();
             w.finalize().unwrap();
         }
 
@@ -534,8 +566,13 @@ mod integration_tests {
 
         let data: Vec<f32> = (0..total).map(|i| i as f32).collect();
         {
-            let mut w = create(f.path()).shape([nx, ny, nz]).mode::<f32>().finish().unwrap();
-            w.write_block(&VoxelBlock::new([0, 0, 0], [nx, ny, nz], data.clone()).unwrap()).unwrap();
+            let mut w = create(f.path())
+                .shape([nx, ny, nz])
+                .mode::<f32>()
+                .finish()
+                .unwrap();
+            w.write_block(&VoxelBlock::new([0, 0, 0], [nx, ny, nz], data.clone()).unwrap())
+                .unwrap();
             w.update_header_stats().unwrap();
             w.finalize().unwrap();
         }
@@ -543,6 +580,102 @@ mod integration_tests {
         let r = Reader::open(f.path()).unwrap();
         assert!(r.validate_header_stats().is_ok());
     }
+
+    // ── Packed4Bit (Mode 101) tests ──────────────────────────────────────
+
+    /// Write Mode 101 with even width, read back via read_volume_u8.
+    #[test]
+    fn mode101_roundtrip_even() {
+        let f = TempMrc::new("m101_even");
+        let nx = 4;
+        let ny = 4;
+        let nz = 2;
+        let total = nx * ny * nz;
+
+        let src: Vec<u8> = (0..total).map(|i| (i % 16) as u8).collect();
+        {
+            let mut w = create(f.path())
+                .shape([nx, ny, nz])
+                .mode_raw(101)
+                .finish()
+                .unwrap();
+            w.write_u4_block(&VoxelBlock::new([0, 0, 0], [nx, ny, nz], src.clone()).unwrap())
+                .unwrap();
+            w.finalize().unwrap();
+        }
+
+        let r = Reader::open(f.path()).unwrap();
+        let block = r.read_volume_u8().unwrap();
+        assert_eq!(block.data, src);
+
+        // slices_u8 should also match
+        let collected: Vec<u8> = r.slices_u8().flat_map(|s| s.unwrap().data).collect();
+        assert_eq!(collected, src);
+    }
+
+    /// Write Mode 101 with odd width (nx=3), read back.
+    #[test]
+    fn mode101_roundtrip_odd() {
+        let f = TempMrc::new("m101_odd");
+        let nx = 3;
+        let ny = 2;
+        let nz = 1;
+        let total = nx * ny * nz;
+
+        let src: Vec<u8> = (0..total).map(|i| (i % 16) as u8).collect();
+        {
+            let mut w = create(f.path())
+                .shape([nx, ny, nz])
+                .mode_raw(101)
+                .finish()
+                .unwrap();
+            w.write_u4_block(&VoxelBlock::new([0, 0, 0], [nx, ny, nz], src.clone()).unwrap())
+                .unwrap();
+            w.finalize().unwrap();
+        }
+
+        let r = Reader::open(f.path()).unwrap();
+        let block = r.read_volume_u8().unwrap();
+        assert_eq!(block.data, src);
+    }
+
+    /// Header stats on a Mode 101 file.
+    #[test]
+    fn mode101_header_stats() {
+        let f = TempMrc::new("m101_stats");
+        let nx = 8;
+        let ny = 4;
+        let nz = 1;
+        let total = nx * ny * nz;
+
+        let src: Vec<u8> = (0..total).map(|i| (i % 16) as u8).collect();
+        {
+            let mut w = create(f.path())
+                .shape([nx, ny, nz])
+                .mode_raw(101)
+                .finish()
+                .unwrap();
+            w.write_u4_block(&VoxelBlock::new([0, 0, 0], [nx, ny, nz], src.clone()).unwrap())
+                .unwrap();
+            w.update_header_stats().unwrap();
+            w.finalize().unwrap();
+        }
+
+        let r = Reader::open(f.path()).unwrap();
+        assert!(r.validate_header_stats().is_ok());
+    }
+
+    /// Value > 15 should produce an error.
+    #[test]
+    fn mode101_value_overflow() {
+        let f = TempMrc::new("m101_overflow");
+        let src = vec![16u8]; // 16 > 15
+        let mut w = create(f.path())
+            .shape([1, 1, 1])
+            .mode_raw(101)
+            .finish()
+            .unwrap();
+        let result = w.write_u4_block(&VoxelBlock::new([0, 0, 0], [1, 1, 1], src).unwrap());
+        assert!(result.is_err());
+    }
 }
-
-

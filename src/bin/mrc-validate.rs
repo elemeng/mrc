@@ -11,7 +11,10 @@ use std::env;
 use std::process;
 
 fn usage() {
-    eprintln!("mrc-validate v{} — MRC file validation tool", env!("CARGO_PKG_VERSION"));
+    eprintln!(
+        "mrc-validate v{} — MRC file validation tool",
+        env!("CARGO_PKG_VERSION")
+    );
     eprintln!();
     eprintln!("Performs comprehensive validation on an MRC file.");
     eprintln!("Auto-detects gzip/bzip2 compression.");
@@ -45,21 +48,21 @@ fn list_fields() {
     println!("Available --field values:");
     println!();
     let fields = [
-        ("dims",       "Volume dimensions"),
-        ("mode",       "Data mode value"),
-        ("map",        "MAP identifier field"),
-        ("ispg",       "Space group number"),
-        ("axis",       "Axis mapping (MAPC/MAPR/MAPS)"),
-        ("nsymbt",     "Extended header size"),
-        ("nlabl",      "Label count"),
-        ("nversion",   "MRC format version"),
-        ("sampling",   "Cell sampling"),
-        ("volume-stack","Volume stack (nz ÷ mz)"),
-        ("labels",     "Label sequence"),
-        ("stats",      "Data statistics cross-check"),
-        ("endian",     "Endianness / MACHST"),
-        ("integrity",  "NaN/Inf scan (float modes)"),
-        ("all",        "All checks (default)"),
+        ("dims", "Volume dimensions"),
+        ("mode", "Data mode value"),
+        ("map", "MAP identifier field"),
+        ("ispg", "Space group number"),
+        ("axis", "Axis mapping (MAPC/MAPR/MAPS)"),
+        ("nsymbt", "Extended header size"),
+        ("nlabl", "Label count"),
+        ("nversion", "MRC format version"),
+        ("sampling", "Cell sampling"),
+        ("volume-stack", "Volume stack (nz ÷ mz)"),
+        ("labels", "Label sequence"),
+        ("stats", "Data statistics cross-check"),
+        ("endian", "Endianness / MACHST"),
+        ("integrity", "NaN/Inf scan (float modes)"),
+        ("all", "All checks (default)"),
     ];
     for (name, desc) in &fields {
         println!("  {:<16} {}", name, desc);
@@ -141,7 +144,9 @@ fn main() {
         let norm_fields: Vec<String> = fields.iter().map(|f| normalize_field(f)).collect();
         issues.retain(|i| {
             let cat_norm = i.category.to_lowercase().replace(' ', "-");
-            norm_fields.iter().any(|f| f == &cat_norm || f == &i.category.to_lowercase())
+            norm_fields
+                .iter()
+                .any(|f| f == &cat_norm || f == &i.category.to_lowercase())
         });
     }
 
@@ -152,13 +157,29 @@ fn main() {
         println!("╚══════════════════════════════════════════════════════════════╝");
         println!();
 
-        let status = if report.is_valid() { "✅ VALID" } else { "❌ INVALID" };
+        let status = if report.is_valid() {
+            "✅ VALID"
+        } else {
+            "❌ INVALID"
+        };
         println!("  File:     {}", report.path);
-        println!("  Format:   {} ({})", report.compression,
-            if report.compression == "plain" { "uncompressed" } else { &report.compression });
+        println!(
+            "  Format:   {} ({})",
+            report.compression,
+            if report.compression == "plain" {
+                "uncompressed"
+            } else {
+                &report.compression
+            }
+        );
         println!("  Status:   {}", status);
-        println!("  Mode:     {} ({})", report.mode,
-            mrc::Mode::from_i32(report.mode).map(|m| format!("{m:?}")).unwrap_or("?".into()));
+        println!(
+            "  Mode:     {} ({})",
+            report.mode,
+            mrc::Mode::from_i32(report.mode)
+                .map(|m| format!("{m:?}"))
+                .unwrap_or("?".into())
+        );
         println!("  Size:     {} × {} × {}", report.nx, report.ny, report.nz);
         println!();
     }
@@ -171,8 +192,14 @@ fn main() {
     }
 
     for (cat, items) in &cat_map {
-        let error_count = items.iter().filter(|i| i.severity == Severity::Error).count();
-        let warn_count = items.iter().filter(|i| i.severity == Severity::Warning).count();
+        let error_count = items
+            .iter()
+            .filter(|i| i.severity == Severity::Error)
+            .count();
+        let warn_count = items
+            .iter()
+            .filter(|i| i.severity == Severity::Warning)
+            .count();
 
         let summary = match (error_count, warn_count) {
             (0, 0) => format!("── {} ──", cat),
@@ -185,9 +212,9 @@ fn main() {
 
         for issue in items {
             let icon = match issue.severity {
-                Severity::Error   => "  ❌ ",
+                Severity::Error => "  ❌ ",
                 Severity::Warning => "  ⚠️  ",
-                Severity::Info    => "  ℹ️  ",
+                Severity::Info => "  ℹ️  ",
             };
             println!("{}{}", icon, issue.message);
         }

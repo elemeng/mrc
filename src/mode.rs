@@ -176,35 +176,6 @@ impl Float32Complex {
     }
 }
 
-/// 4-bit data packed two values per byte (mode 101).
-///
-/// # Nibble ordering
-/// The MRC2014 specification does not explicitly define which nibble comes
-/// first. This implementation follows the de-facto convention used by CCP4,
-/// IMOD and other major packages:
-///
-/// * **low nibble** (`bits 0–3`) → first voxel
-/// * **high nibble** (`bits 4–7`) → second voxel
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
-pub struct Packed4Bit(pub(crate) u8);
-
-impl Packed4Bit {
-    /// Create a new Packed4Bit value
-    pub fn new(value: u8) -> Self {
-        Self(value)
-    }
-
-    /// First voxel stored in the low nibble (bits 0–3).
-    pub fn first(&self) -> u8 {
-        self.0 & 0x0F
-    }
-
-    /// Second voxel stored in the high nibble (bits 4–7).
-    pub fn second(&self) -> u8 {
-        (self.0 >> 4) & 0x0F
-    }
-}
-
 /// Trait for MRC voxel types with compile-time mode tracking.
 ///
 /// Each voxel type knows its MRC mode constant, enabling type-safe I/O
@@ -246,7 +217,3 @@ impl Voxel for u16 {
 impl Voxel for crate::f16 {
     const MODE: Mode = Mode::Float16;
 }
-
-// Note: Packed4Bit does not implement Voxel or EndianCodec because full
-// read/write support for 4-bit packed data is not yet implemented.
-// The Packed4Bit type is provided for manual unpacking via first()/second().

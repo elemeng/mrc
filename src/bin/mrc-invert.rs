@@ -9,12 +9,15 @@
 //! mrc-invert <input.mrc> <output.mrc>
 //! ```
 
-use mrc::{create, open, VoxelBlock};
+use mrc::{VoxelBlock, create, open};
 use std::env;
 use std::process;
 
 fn usage() {
-    eprintln!("mrc-invert v{} — MRC contrast inverter", env!("CARGO_PKG_VERSION"));
+    eprintln!(
+        "mrc-invert v{} — MRC contrast inverter",
+        env!("CARGO_PKG_VERSION")
+    );
     eprintln!();
     eprintln!("Negates every voxel value (v → −v) to flip black-on-white to");
     eprintln!("white-on-black and vice versa.  Reads any mode, writes Float32.");
@@ -57,8 +60,14 @@ fn main() {
     let shape = reader.shape();
     let mode = reader.mode();
 
-    eprintln!("Input:  {} × {} × {}, mode={:?}", shape.nx, shape.ny, shape.nz, mode);
-    eprintln!("Output: {} × {} × {}, mode=Float32 (inverted)", shape.nx, shape.ny, shape.nz);
+    eprintln!(
+        "Input:  {} × {} × {}, mode={:?}",
+        shape.nx, shape.ny, shape.nz, mode
+    );
+    eprintln!(
+        "Output: {} × {} × {}, mode=Float32 (inverted)",
+        shape.nx, shape.ny, shape.nz
+    );
 
     // Create output writer
     let mut writer = match create(output)
