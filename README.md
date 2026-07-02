@@ -26,7 +26,7 @@ use mrc::{open, create, VoxelBlock};
 // Read (auto-detects compression; handles common microscope quirks
 // like NVERSION=0 and "MAP\0" automatically)
 let reader = open("protein.mrc")?;
-for slice in reader.slices_f32() {
+for slice in reader.convert_slices::<f32>() {
     let block = slice?;  // Vec<f32>
 }
 
@@ -48,9 +48,9 @@ See **[docs.rs/mrc](https://docs.rs/mrc)** for the complete API reference, inclu
 - Reading files — `Reader`, `MmapReader`, compressed I/O, permissive mode,
   decompression bomb protection (256 GiB limit, configurable)
 - Writing files — `Writer`, `MmapWriter`, `GzipWriter`, `Bzip2Writer`
-- Iterators — slices, slabs, tiles, volumes, auto-conversion to `f32`,
+- Iterators — slices, slabs, tiles, volumes,
   generic `convert_slices::<T>()` / `convert_slabs::<T>()`
-- Full-volume reads — `read_volume::<T>()`, `read_volume_f32()`, `read_volume_u8()`,
+- Full-volume reads — `read_volume::<T>()`, `read_volume_u8()`,
   generic `convert_volume::<T>()`
 - Data modes — `Mode` enum and compile-time `Voxel` trait, including Packed4Bit
   read/write via `slices_u8` / `write_u4_block`

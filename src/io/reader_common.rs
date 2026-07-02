@@ -244,13 +244,6 @@ macro_rules! impl_inherent_reader_methods {
                 })
             }
 
-            /// Read the entire volume as `f32`, converting from any mode.
-            ///
-            /// Shorthand for `convert_volume::<f32>()`.
-            pub fn read_volume_f32(&self) -> Result<VoxelBlock<f32>, Error> {
-                self.convert_volume::<f32>()
-            }
-
             /// Read the entire volume as `u8`, unpacking from Mode 101 (Packed4Bit).
             ///
             /// Each `u8` value is in the range 0–15.
@@ -300,20 +293,6 @@ macro_rules! impl_inherent_reader_methods {
                     shape.nx,
                     shape.ny,
                 ))
-            }
-
-            /// Iterate over Z-slices, converting each to `f32` automatically.
-            ///
-            /// Shorthand for `convert_slices::<f32>()`.
-            pub fn slices_f32(&self) -> VoxelIter<'_, f32> {
-                self.convert_slices::<f32>()
-            }
-
-            /// Iterate over Z-slabs, converting each to `f32` automatically.
-            ///
-            /// Shorthand for `convert_slabs::<f32>(k)`.
-            pub fn slabs_f32(&self, k: usize) -> VoxelIter<'_, f32> {
-                self.convert_slabs::<f32>(k)
             }
 
             /// Iterate over Z-slabs, converting each to target type `T`.

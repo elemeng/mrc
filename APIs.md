@@ -109,7 +109,6 @@ The standard buffered reader. Loads the **entire file** into a `Vec<u8>` on open
 | `reader.read_block::<T>(offset, shape)` | `Result<VoxelBlock<T>>` | Deprecated, use `subregion` instead |
 | `reader.subregion::<T>(offset, shape)` | `Result<VoxelBlock<T>>` | Read and decode typed sub-block at any offset |
 | `reader.read_volume::<T>()` | `Result<VoxelBlock<T>>` | Read the entire volume as a single block |
-| `reader.read_volume_f32()` | `Result<VoxelBlock<f32>>` | Read entire volume, auto-convert any mode to `f32` |
 | `reader.read_volume_u8()` | `Result<VoxelBlock<u8>>` | Read volume as `u8` (Uint16 narrowing or Packed4Bit unpack) |
 | `reader.convert_volume::<T>()` | `Result<VoxelBlock<T>>` | Read volume, convert from any mode to type `T` |
 | `reader.validate_header_stats()` | `Result<()>` | Cross-check header stats vs actual data (1% tolerance) |
@@ -123,8 +122,6 @@ The standard buffered reader. Loads the **entire file** into a `Vec<u8>` on open
 | `reader.tiles::<T>(shape)` | `RegionIter<T, TileStepper>` | Arbitrary 3D tiles |
 | `reader.volumes::<T>()` | `Result<RegionIter<T, SlabStepper>>` | One sub-volume per step (volume stacks only) |
 | `reader.subregion::<T>(offset, shape)` | `Result<VoxelBlock<T>>` | Single block at given offset/shape |
-| `reader.slices_f32()` | iterator yielding `VoxelBlock<f32>` | Auto-converts any mode to `f32` (complex → magnitude) |
-| `reader.slabs_f32(k)` | iterator yielding `VoxelBlock<f32>` | Same as `slices_f32` but `k` planes at a time |
 | `reader.convert_slices::<T>()` | iterator yielding `VoxelBlock<T>` | Auto-convert any mode to target type `T` |
 | `reader.convert_slabs::<T>(k)` | iterator yielding `VoxelBlock<T>` | Same as `convert_slices` but `k` planes at a time |
 | `reader.slices_u8()` | iterator yielding `VoxelBlock<u8>` | Mode 6 (Uint16) or Mode 101 (Packed4Bit); narrows/nibble-unpacks to `u8` |
@@ -151,12 +148,11 @@ Requires the `mmap` feature.
 | `reader.read_block_bytes(offset, shape)` | `Result<Vec<u8>>` | Read raw bytes for any sub-block |
 | `reader.read_block::<T>(offset, shape)` | `Result<VoxelBlock<T>>` | Deprecated, use `subregion` instead |
 | `reader.read_volume::<T>()` | `Result<VoxelBlock<T>>` | Read the entire volume as a single block |
-| `reader.read_volume_f32()` | `Result<VoxelBlock<f32>>` | Read entire volume, auto-convert any mode to `f32` |
 | `reader.read_volume_u8()` | `Result<VoxelBlock<u8>>` | Read volume as `u8` (Uint16 narrowing or Packed4Bit unpack) |
 | `reader.convert_volume::<T>()` | `Result<VoxelBlock<T>>` | Read volume, convert from any mode to type `T` |
 | `reader.validate_header_stats()` | `Result<()>` | Cross-check header stats |
 
-`MmapReader` also has all the same **iterator methods** as `Reader` (`slices`, `slabs`, `tiles`, `slices_f32`, `slabs_f32`, `convert_slices`, `convert_slabs`, `slices_u8`, `slabs_u8`, `slices_mode0`, `slabs_mode0`, `volumes`, `subregion`, etc.).
+`MmapReader` also has all the same **iterator methods** as `Reader` (`slices`, `slabs`, `tiles`, `convert_slices`, `convert_slabs`, `slices_u8`, `slabs_u8`, `slices_mode0`, `slabs_mode0`, `volumes`, `subregion`, etc.).
 
 **When to use `MmapReader` vs `Reader`:**
 
@@ -435,11 +431,10 @@ Packed4Bit does **not** implement `Voxel` — instead it is handled transparentl
 by the unified API:
 - Reading: [`slices_u8`](Reader::slices_u8) / [`slabs_u8`](Reader::slabs_u8) /
   [`read_volume_u8`](Reader::read_volume_u8) unpack nibbles to `u8` (0–15);
-  [`slices_f32`](Reader::slices_f32) / [`convert_slices`](Reader::convert_slices)
+  [`convert_slices`](Reader::convert_slices) / [`convert_volume`](Reader::convert_volume)
   convert directly to `f32` or any target type.
 - Writing: [`write_u4_block`](Writer::write_u4_block) packs `u8` values
   two-per-byte.
-- Sub-block reads with odd X-offset are rejected (nibble alignment).
 
 ```rust
 pub enum ComplexToRealStrategy { RealPart, ImaginaryPart, Magnitude, Phase }
@@ -611,9 +606,8 @@ pub fn convert_u16_slice_to_u8(src: &[u16]) -> Result<Vec<u8>, Error>;
 ```
 
 These are convenience functions exposed from the crate root. The more comprehensive
-conversion infrastructure is used internally by `slices_f32` / `slabs_f32` /
-`convert_slices` / `convert_slabs` / `read_volume_f32` / `convert_volume` which
-automatically convert any MRC mode to the target type.
+conversion infrastructure is used internally by `convert_slices` / `convert_slabs` /
+`convert_volume` which automatically convert any MRC mode to the target type.
 
 ---
 

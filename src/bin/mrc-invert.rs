@@ -8,6 +8,9 @@
 //! ```text
 //! mrc-invert <input.mrc> <output.mrc>
 //! ```
+//!
+//! For each slice, the tool reads via `convert_slices::<f32>()`, negates
+//! all values, and writes the result as an equivalent Float32 slice.
 
 use mrc::{VoxelBlock, create, open};
 use std::env;
@@ -84,7 +87,7 @@ fn main() {
 
     // Process slice by slice
     let total_slices = shape.nz;
-    for (z, result) in reader.slices_f32().enumerate() {
+    for (z, result) in reader.convert_slices::<f32>().enumerate() {
         let block = match result {
             Ok(b) => b,
             Err(e) => {
