@@ -222,6 +222,43 @@ The crate contains a small amount of `unsafe` Rust, all justified by performance
 4. **No benchmark suite**: Criterion is in dev-dependencies but there is no `benches/` directory.
 5. **`Packed4Bit` sub-block reads require even X-offset**: `validate_block_bounds` rejects odd `ox` for Mode 101 to avoid nibble-level read-modify-write in `gather_block_bytes`. Full-frame and byte-aligned sub-block reads work correctly.
 
+## Planned Features
+
+### Streaming decompression for gzip/bzip2 files
+
+The Python `mrcfile` reference library does **not** provide streaming — it decompresses gzip/bzip2 files entirely into RAM (same as the current `Reader::open_gzip()`). However, for very large files (tomograms > 32 GB, tilt series on memory-constrained systems), full decompression is problematic.
+
+The planned design adds separate streaming reader types:
+
+```
+StreamingGzipReader  — implements VoxelSource + ReaderCore (feature `gzip`)
+StreamingBzip2Reader — implements VoxelSource + ReaderCore (feature `bzip2`)
+```
+
+**Why separate types (not modifying `Reader`):**
+- `data_bytes()` returns `&[u8]` — a streaming reader fundamentally cannot provide a reference to the full uncompressed data without decompressing everything, which defeats the purpose
+- `validate_header_stats()` and `validate_reader()` rely on `data_bytes()` — they would need rework for a single unified type
+- Following the `MmapReader` precedent (separate type for a different I/O strategy)
+- Python `mrcfile` doesn't stream, so full-decompress as default is correct
+
+**Key design decisions (from `plans/firestorm-nebula-wonder-man.md`):**
+- Header + extended header are decompressed eagerly on open (small, needed for metadata)
+- Voxel data is decompressed on demand through `VoxelSource::vs_read_block_bytes()`
+- Single-block cache (most recently accessed region) avoids redundant decompression for sequential iteration
+- Random access to a position before the current decompressor position requires restarting from the beginning (O(n) — correct but slow)
+- `impl_inherent_reader_methods!` macro generates all iterator methods automatically (slices, slabs, tiles, slices_f32, etc.)
+
+**File handle strategy:**
+1. Open `File`, wrap in `GzDecoder`/`BzDecoder`, read header + ext_header
+2. Re-open file for streaming (original decoder consumed the initial bytes)
+3. On seek-back, create fresh decoder from a new `File` handle, decompress + discard up to target
+
+**Open questions (future work):**
+- LRU slab cache or ring buffer for partial random-access patterns
+- Background thread double-buffering for sequential iteration
+- Indexed gzip (deflate block boundary index) for O(log n) seeks
+- Auto-selection of streaming vs full-decompress based on file size threshold
+
 ## CLI Tools
 
 Three binary targets are available (`src/bin/`):
@@ -241,7 +278,7 @@ Three binary targets are available (`src/bin/`):
 
 - **File Size Validation**: Readers validate that file size matches header-declared data size (with a `FileSizeMismatch` error) unless opened in permissive mode.
 - **Memory Mapping**: `MmapReader` maps files read-only. `MmapWriter` maps read-write and can mutate files in place.
-- **Compression**: Gzip/Bzip2 readers decompress the entire file into memory on open (they do not stream). This makes them susceptible to decompression bombs / zip bombs. Do not use these on untrusted input without size limits.
+- **Compression**: Gzip/Bzip2 readers decompress the entire file into memory on open (they do not stream). This makes them susceptible to decompression bombs / zip bombs. Do not use these on untrusted input without size limits. A streaming decompression API (`StreamingGzipReader`, `StreamingBzip2Reader`) is planned to mitigate this — see [Planned Features](#planned-features).
 - **No `unsafe` in public API**: All `unsafe` is internal; the public API is 100% safe Rust.
 - **Integer Overflow**: The codebase uses `checked_mul` and `checked_add` for size calculations in several places (`VolumeShape::total_voxels`, `checked_linear_index`, block validation), but not universally. Agents should maintain defensive arithmetic when computing byte offsets and buffer sizes.
 
