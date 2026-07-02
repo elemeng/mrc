@@ -1,7 +1,25 @@
 //! MRC file validation infrastructure.
 //!
-//! Provides [`validate_full`] for comprehensive file validation and
-//! [`ValidationReport`] for structured results.
+//! Provides [`validate_full`] for comprehensive file validation,
+//! [`validate_reader`] for validating an already-open reader, and
+//! [`ValidationReport`] for structured results with categorised issues.
+//!
+//! # Quick check
+//!
+//! ```no_run
+//! use mrc::validate::{validate_full, Severity};
+//!
+//! let report = validate_full("protein.mrc", false).unwrap();
+//! if report.is_valid() {
+//!     println!("File is valid");
+//! } else {
+//!     for issue in &report.issues {
+//!         if issue.severity == Severity::Error {
+//!             eprintln!("ERROR [{}]: {}", issue.category, issue.message);
+//!         }
+//!     }
+//! }
+//! ```
 
 use crate::engine::endian::FileEndian;
 use crate::engine::stats::compute_stats;
@@ -149,7 +167,7 @@ pub fn validate_reader(
                 HeaderValidationError::InvalidNsymbt(s) => format!("NSYMBT is negative ({s})"),
                 HeaderValidationError::InvalidNlabl(n) => format!("NLABL is {n}, must be 0–10"),
                 HeaderValidationError::InvalidNversion(n) => {
-                    format!("NVERSION is {n}, expected 20140 or 20141")
+                    format!("NVERSION is {n}, expected 0, 20140, or 20141")
                 }
                 HeaderValidationError::InvalidSampling { mx, my, mz } => {
                     format!("Sampling ({mx}×{my}×{mz}) must all be positive")

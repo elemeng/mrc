@@ -4,6 +4,14 @@
 //! (memory-mapped, requires `mmap`), and [`CompressedWriter`] (gzip/bzip2 backend).
 //! Use [`WriterBuilder`] or the [`create`](crate::create) convenience function
 //! to construct a writer.
+//!
+//! # Typical write lifecycle
+//!
+//! 1. Build a writer with [`create`](crate::create) or [`WriterBuilder::new`].
+//! 2. Write [`VoxelBlock`](crate::VoxelBlock)s with [`write_block`](Writer::write_block).
+//! 3. Optionally call [`update_header_stats`](Writer::update_header_stats) to
+//!    fill header density statistics.
+//! 4. Call [`finalize`](Writer::finalize) to rewrite the header with final metadata.
 
 macro_rules! write_u8_block_body {
     ($self:ident, $block:ident) => {{

@@ -1,10 +1,44 @@
 //! MRC-2014 header structure and builder.
 //!
-//! The [`Header`] struct represents the 1024-byte fixed header defined by the
-//! MRC-2014 specification. It provides encode/decode methods for raw bytes,
-//! validation helpers, and convenience accessors for common metadata fields.
+//! The [`Header`] struct mirrors the 1024-byte fixed header defined by the
+//! MRC-2014 specification. Every field is a typed public member — dimensions,
+//! cell parameters, axis mapping, density statistics, text labels, and more.
 //!
-//! Use [`HeaderBuilder`] to construct new headers with a fluent API.
+//! The `Header` provides encode/decode methods for raw bytes, validation
+//! helpers at three levels (basic, detailed, permissive), and convenience
+//! accessors for common metadata (voxel size, cell parameters, volume type,
+//! labels, FEI extended header info).
+//!
+//! Use [`HeaderBuilder`] to construct new headers with a fluent API that
+//! validates on build.
+//!
+//! # Example — decode/encode round-trip
+//!
+//! ```
+//! use mrc::Header;
+//!
+//! let mut raw = [0u8; 1024];
+//! // Standard MRC-2014 markers
+//! raw[208..212].copy_from_slice(b"MAP ");
+//! // Little-endian MACHST
+//! raw[212..216].copy_from_slice(&[0x44, 0x44, 0x00, 0x00]);
+//! // Dimensions: 64 x 64 x 1
+//! raw[0..4].copy_from_slice(&(64i32).to_le_bytes());
+//! raw[4..8].copy_from_slice(&(64i32).to_le_bytes());
+//! raw[8..12].copy_from_slice(&(1i32).to_le_bytes());
+//! // Mode 2 (Float32)
+//! raw[12..16].copy_from_slice(&(2i32).to_le_bytes());
+//!
+//! let header = Header::decode_from_bytes(&raw);
+//! assert_eq!(header.nx, 64);
+//! assert_eq!(header.ny, 64);
+//! assert_eq!(header.nz, 1);
+//! assert_eq!(header.mode, 2);
+//!
+//! let mut encoded = [0u8; 1024];
+//! header.encode_to_bytes(&mut encoded);
+//! assert_eq!(raw, encoded);
+//! ```
 
 use crate::Mode;
 
@@ -186,6 +220,12 @@ impl Header {
     ///
     /// Returns `1024` when `nsymbt` is negative (to avoid integer wrap-around
     /// on malformed headers).
+    ///
+    /// ```
+    /// use mrc::Header;
+    /// let h = Header::new();
+    /// assert_eq!(h.data_offset(), 1024);
+    /// ```
     pub const fn data_offset(&self) -> usize {
         if self.nsymbt < 0 {
             1024
@@ -199,6 +239,14 @@ impl Header {
     ///
     /// Returns `None` if the dimensions are so large that the calculation
     /// overflows `usize`.
+    ///
+    /// ```
+    /// use mrc::Header;
+    /// let mut h = Header::new();
+    /// h.nx = 64; h.ny = 64; h.nz = 32;
+    /// h.mode = 2; // Float32 → 4 bytes per voxel
+    /// assert_eq!(h.data_size(), Some(64 * 64 * 32 * 4));
+    /// ```
     pub fn data_size(&self) -> Option<usize> {
         let nx = self.nx.max(0) as usize;
         let ny = self.ny.max(0) as usize;
@@ -224,12 +272,28 @@ impl Header {
 
     #[inline]
     /// True when dimensions are positive and mode is supported.
+    ///
+    /// ```
+    /// use mrc::Header;
+    /// let h = Header::new();
+    /// // Default header has zero dimensions → invalid
+    /// assert!(!h.validate());
+    /// ```
     pub fn validate(&self) -> bool {
         self.validate_detailed().is_ok()
     }
 
     #[inline]
     /// Detailed header validation returning specific error information.
+    ///
+    /// ```
+    /// use mrc::Header;
+    /// let h = Header::new();
+    /// match h.validate_detailed() {
+    ///     Err(e) => assert!(e.to_string().contains("dimensions")),
+    ///     Ok(()) => unreachable!(),
+    /// }
+    /// ```
     pub fn validate_detailed(&self) -> Result<(), crate::HeaderValidationError> {
         use crate::HeaderValidationError;
 
@@ -294,7 +358,7 @@ impl Header {
         }
 
         let nversion = self.nversion();
-        if nversion != 20140 && nversion != 20141 {
+        if nversion != 0 && nversion != 20140 && nversion != 20141 {
             return Err(HeaderValidationError::InvalidNversion(nversion));
         }
 
@@ -429,6 +493,13 @@ impl Header {
     ///
     /// EXTTYP is a 4-byte ASCII string indicating the type of extended header.
     /// Common values: "CCP4", "MRCO", "SERI", "AGAR", "FEI1", "FEI2", "HDF5".
+    ///
+    /// ```
+    /// use mrc::Header;
+    /// let mut h = Header::new();
+    /// h.set_exttyp(*b"CCP4");
+    /// assert_eq!(h.exttyp(), *b"CCP4");
+    /// ```
     pub fn exttyp(&self) -> [u8; 4] {
         [
             self.extra[OFFSET_EXTTYP - OFFSET_EXTRA],
@@ -470,6 +541,12 @@ impl Header {
     /// Reads the 4-byte NVERSION number stored in `extra[12..16]`.
     ///
     /// This value is a numeric i32 and respects the file's endianness.
+    ///
+    /// ```
+    /// use mrc::Header;
+    /// let h = Header::new();
+    /// assert_eq!(h.nversion(), 20141);
+    /// ```
     pub fn nversion(&self) -> i32 {
         use crate::engine::codec::EndianCodec;
         let file_endian = self.detect_endian();
@@ -491,6 +568,15 @@ impl Header {
     /// Get the list of non-empty text labels.
     ///
     /// Returns up to `nlabl` labels, each trimmed of trailing whitespace.
+    ///
+    /// ```
+    /// use mrc::Header;
+    /// let mut h = Header::new();
+    /// h.add_label("my sample");
+    /// h.add_label("defocus series");
+    /// let labels = h.get_labels();
+    /// assert_eq!(labels, vec!["my sample", "defocus series"]);
+    /// ```
     pub fn get_labels(&self) -> Vec<String> {
         let count = self.nlabl.clamp(0, 10) as usize;
         let mut labels = Vec::with_capacity(count);
@@ -557,6 +643,12 @@ impl Header {
 
     #[inline]
     /// Detect the file endianness from the MACHST machine stamp
+    ///
+    /// ```
+    /// use mrc::{Header, FileEndian};
+    /// let h = Header::new();
+    /// assert_eq!(h.detect_endian(), FileEndian::LittleEndian);
+    /// ```
     pub fn detect_endian(&self) -> crate::FileEndian {
         crate::FileEndian::from_machst(&self.machst)
     }
@@ -570,6 +662,13 @@ impl Header {
     /// # Note
     /// Per crate policy, new MRC files are always written in little-endian format.
     /// This method is not intended for creating big-endian files from scratch.
+    ///
+    /// ```
+    /// use mrc::{Header, FileEndian};
+    /// let mut h = Header::new();
+    /// h.set_file_endian(FileEndian::BigEndian);
+    /// assert_eq!(h.detect_endian(), FileEndian::BigEndian);
+    /// ```
     pub fn set_file_endian(&mut self, endian: crate::FileEndian) {
         // Preserve the current nversion value before swapping endianness,
         // then re-encode it in the new byte order.
@@ -583,11 +682,27 @@ impl Header {
     // -------------------------------------------------------------------------
 
     /// Returns `true` if this is a single 2D image (`nz == 1`).
+    ///
+    /// ```
+    /// use mrc::Header;
+    /// let mut h = Header::new();
+    /// h.nz = 1;
+    /// assert!(h.is_single_image());
+    /// h.nz = 10;
+    /// assert!(!h.is_single_image());
+    /// ```
     pub fn is_single_image(&self) -> bool {
         self.nz == 1
     }
 
     /// Returns `true` if this is an image stack (`ispg == 0`).
+    ///
+    /// ```
+    /// use mrc::Header;
+    /// let mut h = Header::new();
+    /// h.ispg = 0;
+    /// assert!(h.is_image_stack());
+    /// ```
     pub fn is_image_stack(&self) -> bool {
         self.ispg == 0
     }
@@ -1099,5 +1214,21 @@ mod tests {
         let mut h = Header::new();
         h.set_file_endian(crate::FileEndian::BigEndian);
         assert_eq!(h.nversion(), 20141);
+    }
+
+    #[test]
+    fn test_nversion_zero_accepted_by_validate() {
+        // EPU files often leave NVERSION at 0 (uninitialized).
+        let mut h = Header::new();
+        h.nx = 64;
+        h.ny = 64;
+        h.nz = 1;
+        h.mx = 64;
+        h.my = 64;
+        h.mz = 1;
+        h.nlabl = 0;
+        h.set_nversion(0);
+        assert_eq!(h.nversion(), 0);
+        assert!(h.validate(), "NVERSION=0 should pass strict validation");
     }
 }

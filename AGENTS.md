@@ -146,7 +146,7 @@ The top-level `lib.rs` is the *only* public entry point. Internal modules (`engi
 - **Formatting**: Standard `rustfmt`. No custom `rustfmt.toml`.
 - **Clippy**: The crate enforces `#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]` in `lib.rs`. Production code must not use `.unwrap()` or `.expect()`.
 - **Inlining**: Small accessor methods and hot-path conversion functions are marked `#[inline]`.
-- **Documentation**: Heavy use of `//!` module docs and `///` item docs. Doc-tests are present and run with `cargo test`.
+- **Documentation**: Heavy use of `//!` module docs and `///` item docs. The crate-level doc (`lib.rs`) includes real-world workflow examples (tilt series, FEI metadata, volume stacks) and a troubleshooting table. Doc-tests are present and run with `cargo test` — ~30 doc-tests across `lib.rs`, `header.rs`, `validate.rs`, `error.rs`, `io/buffered.rs`, `io/writer.rs`, `io/mmap_reader.rs`, and `engine/codec.rs`.
 
 ### Error Handling
 
@@ -184,11 +184,17 @@ The top-level `lib.rs` is the *only* public entry point. Internal modules (`engi
 - New files are always little-endian per crate policy (matching Python `mrcfile`).
 - Header decode has an endianness fallback: if MODE is invalid under the detected endianness, the opposite is tried. This handles files with a wrong MACHST.
 
+### Header Validation
+
+- `Header::validate_detailed()` enforces strict MRC-2014 compliance. Since v0.2.5 it also accepts NVERSION=0 (uninitialized, common in EPU microscope files) alongside 20140/20141, so `open()` works on EPU data without special flags.
+- `Header::validate_permissive()` turns most non-fatal issues into warnings.
+- `validate_map()` accepts `"MAP "`, `"MAP\0"`, `"MAPI"`, and all-zero MAP fields — covering EPU, IMOD, and uninitialized headers.
+
 ## Testing Strategy
 
-- **Unit Tests**: ~60+ tests in inline `mod tests` blocks inside source files (`header.rs`, `engine/simd.rs`, `engine/convert.rs`, `engine/endian.rs`, `engine/stats.rs`, `io/reader.rs`, `lib.rs`, `mode.rs`).
-- **Doc Tests**: Multiple doc-tests in `lib.rs`, `io/buffered.rs`, `io/writer.rs`, `io/mmap_reader.rs`, `header.rs`.
-- **Integration Tests**: Integration-level roundtrip tests live in `lib.rs` under `mod integration_tests`. They test write-then-read scenarios for Float32, Int16, Uint16, subregion reads, gzip compression, and header statistics.
+- **Unit Tests**: ~61 tests in inline `mod tests` blocks inside source files (`header.rs`, `engine/simd.rs`, `engine/convert.rs`, `engine/endian.rs`, `engine/stats.rs`, `io/reader.rs`, `lib.rs`, `mode.rs`).
+- **Doc Tests**: ~31 doc-tests in `lib.rs`, `header.rs`, `validate.rs`, `error.rs`, `io/buffered.rs`, `io/writer.rs`, `io/mmap_reader.rs`, and `engine/codec.rs`.
+- **Integration Tests**: Integration-level roundtrip tests live in `lib.rs` under `mod integration_tests`. They test write-then-read scenarios for Float32, Int16, Uint16, subregion reads, gzip compression, header statistics, and Packed4Bit (Mode 101) read/write.
 - **No External Fixtures**: Tests generate temporary MRC files programmatically (using `tempfile` in dev-dependencies) rather than checking large binary files into git.
 - **Coverage Gaps**: There is no dedicated benchmark suite (criterion is in dev-dependencies but no `benches/` directory exists).
 

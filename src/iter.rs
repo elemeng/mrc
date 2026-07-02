@@ -1,7 +1,17 @@
 //! Lazy iterators for reading MRC files by slices, slabs, or blocks.
 //!
 //! All iterators are backed by a single [`RegionIter`] type parameterized by a
-//! [`Stepper`] strategy that generates `(offset, shape)` pairs.
+//! [`Stepper`] strategy that generates `(offset, shape)` pairs. The concrete
+//! stepper types — [`SliceStepper`], [`SlabStepper`], [`TileStepper`] — define
+//! how the volume is partitioned.
+//!
+//! Users typically obtain iterators from reader methods rather than constructing
+//! them directly:
+//!
+//! - [`Reader::slices`](crate::Reader::slices) — one Z-plane at a time
+//! - [`Reader::slabs`](crate::Reader::slabs) — batches of `k` Z-planes
+//! - [`Reader::tiles`](crate::Reader::tiles) — arbitrary 3D tiles
+//! - [`Reader::slices_f32`](crate::Reader::slices_f32) — any mode auto-converted to `f32`
 
 use crate::Error;
 use crate::engine::block::{VolumeShape, VoxelBlock};

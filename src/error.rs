@@ -1,7 +1,29 @@
 //! Error types for MRC I/O and validation.
 //!
-//! The [`Error`] enum covers all fallible operations in this crate.
-//! [`HeaderValidationError`] provides granular diagnostics for header issues.
+//! The [`Error`] enum is the single error type returned by all fallible
+//! operations in this crate. It covers I/O failures, header issues, type
+//! mismatches, bounds errors, compression problems, and statistics mismatches.
+//!
+//! [`HeaderValidationError`] provides fine-grained diagnostics for header
+//! problems — dimensions, axis mapping, space group, labels, NVERSION, etc.
+//!
+//! # Example — matching specific errors
+//!
+//! ```rust
+//! use mrc::Error;
+//!
+//! fn check(err: &Error) -> &'static str {
+//!     match err {
+//!         Error::Io(_) => "I/O problem",
+//!         Error::InvalidHeader => "bad header",
+//!         Error::ModeMismatch { .. } => "wrong voxel type for this file",
+//!         Error::BoundsError => "access outside volume",
+//!         Error::FileSizeMismatch { .. } => "file truncated or has trailing data",
+//!         _ => "other",
+//!     }
+//! }
+//! assert_eq!(check(&Error::BoundsError), "access outside volume");
+//! ```
 
 /// The top-level error type for MRC I/O operations.
 ///
@@ -91,8 +113,8 @@ pub enum HeaderValidationError {
     /// The label count is outside the range 0–10.
     #[error("Invalid nlabl: {0} (must be between 0 and 10)")]
     InvalidNlabl(i32),
-    /// The NVERSION value is not 20140 or 20141.
-    #[error("Invalid nversion: {0} (expected 20140 or 20141)")]
+    /// The NVERSION value is not 0, 20140, or 20141.
+    #[error("Invalid nversion: {0} (expected 0, 20140, or 20141)")]
     InvalidNversion(i32),
     /// Volume stack consistency check failed (`nz` must be divisible by `mz`).
     #[error(

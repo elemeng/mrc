@@ -103,6 +103,7 @@ The standard buffered reader. Loads the **entire file** into a `Vec<u8>` on open
 | `reader.subregion::<T>(offset, shape)` | `Result<VoxelBlock<T>>` | Read and decode typed sub-block at any offset |
 | `reader.read_volume::<T>()` | `Result<VoxelBlock<T>>` | Read the entire volume as a single block |
 | `reader.read_volume_f32()` | `Result<VoxelBlock<f32>>` | Read entire volume, auto-convert any mode to `f32` |
+| `reader.read_volume_u8()` | `Result<VoxelBlock<u8>>` | Read volume as `u8` (Uint16 narrowing or Packed4Bit unpack) |
 | `reader.validate_header_stats()` | `Result<()>` | Cross-check header stats vs actual data (1% tolerance) |
 
 **Iterator methods** (all return lazy `RegionIter` or boxed iterators, see [Iterators](#iterators)):
@@ -120,7 +121,8 @@ The standard buffered reader. Loads the **entire file** into a `Vec<u8>` on open
 | `reader.subregion::<T>(offset, shape)` | `Result<VoxelBlock<T>>` | Single block at given offset/shape |
 | `reader.slices_f32()` | iterator yielding `VoxelBlock<f32>` | Auto-converts any mode to `f32` (complex → magnitude) |
 | `reader.slabs_f32(k)` | iterator yielding `VoxelBlock<f32>` | Same as `slices_f32` but `k` planes at a time |
-| `reader.slices_u8()` | iterator yielding `VoxelBlock<u8>` | Mode 6 (Uint16) only; narrows to `u8` |
+| `reader.slices_u8()` | iterator yielding `VoxelBlock<u8>` | Mode 6 (Uint16) or Mode 101 (Packed4Bit); narrows/nibble-unpacks to `u8` |
+| `reader.slabs_u8(k)` | iterator yielding `VoxelBlock<u8>` | Same as `slices_u8` but `k` planes at a time |
 | `reader.slices_mode0(interp)` | iterator yielding `VoxelBlock<f32>` | Mode 0 (Int8) only; signed or unsigned |
 | `reader.slabs_mode0(k, interp)` | iterator yielding `VoxelBlock<f32>` | Same as `slices_mode0` but `k` planes at a time |
 
@@ -144,6 +146,7 @@ Requires the `mmap` feature.
 | `reader.read_block::<T>(offset, shape)` | `Result<VoxelBlock<T>>` | Deprecated, use `subregion` instead |
 | `reader.read_volume::<T>()` | `Result<VoxelBlock<T>>` | Read the entire volume as a single block |
 | `reader.read_volume_f32()` | `Result<VoxelBlock<f32>>` | Read entire volume, auto-convert any mode to `f32` |
+| `reader.read_volume_u8()` | `Result<VoxelBlock<u8>>` | Read volume as `u8` (Uint16 narrowing or Packed4Bit unpack) |
 | `reader.validate_header_stats()` | `Result<()>` | Cross-check header stats |
 
 `MmapReader` also has all the same **iterator methods** as `Reader` (`slices`, `slabs`, `tiles`, `slices_f32`, `slabs_f32`, `slices_u8`, `slices_mode0`, `slabs_mode0`, `volumes`, `subregion`, etc.).
@@ -196,6 +199,7 @@ Additional builder methods behind feature flags:
 | `writer.header()` | Mutable access to header (modify before `finalize`) |
 | `writer.write_block::<T>(&block)` | Write a typed voxel block. `T` must match file mode |
 | `writer.write_u8_block(&block)` | Convenience: write `VoxelBlock<u8>` to a Uint16 file (auto-widens) |
+| `writer.write_u4_block(&block)` | Convenience: write `VoxelBlock<u8>` to a Packed4Bit file (auto-packs, values must be 0–15) |
 | `writer.write_f16_from_f32(&block)` | Convenience: write `VoxelBlock<f32>` to a Float16 file (feature `f16`) |
 | `writer.write_block_parallel::<T>(&block)` | Parallel-encoded write (feature `parallel`; contiguous XY slabs only) |
 | `writer.finalize()` | Rewrite header to disk (call when all blocks are written) |
@@ -353,7 +357,7 @@ pub enum Mode {
     Float32Complex = 4,  // 2× f32 (real + imaginary)
     Uint16 = 6,          // unsigned 16-bit integer
     Float16 = 12,        // 16-bit float (requires `f16` feature)
-    Packed4Bit = 101,    // 4-bit packed (read-only via unpacking)
+    Packed4Bit = 101,    // 4-bit packed (read/write via nibble unpack/pack)
 }
 ```
 
@@ -420,16 +424,15 @@ Both have `to_real(strategy: ComplexToRealStrategy) -> f32`:
 - `Magnitude` — `sqrt(real² + imag²)`
 - `Phase` — `atan2(imag, real)`
 
-```rust
-pub struct Packed4Bit(pub(crate) u8);
-impl Packed4Bit {
-    pub fn new(value: u8) -> Self;
-    pub fn first(&self) -> u8;   // low nibble (bits 0-3)
-    pub fn second(&self) -> u8;  // high nibble (bits 4-7)
-}
-```
-
-Packed4Bit does **not** implement `Voxel` — full read/write for mode 101 is not yet supported. Use `first()`/`second()` to manually unpack.
+Packed4Bit does **not** implement `Voxel` — instead it is handled transparently
+by the unified API:
+- Reading: [`slices_u8`](Reader::slices_u8) / [`slabs_u8`](Reader::slabs_u8) /
+  [`read_volume_u8`](Reader::read_volume_u8) unpack nibbles to `u8` (0–15);
+  [`slices_f32`](Reader::slices_f32) / [`read_volume_f32`](Reader::read_volume_f32)
+  convert directly to `f32`.
+- Writing: [`write_u4_block`](Writer::write_u4_block) packs `u8` values
+  two-per-byte.
+- Sub-block reads with odd X-offset are rejected (nibble alignment).
 
 ```rust
 pub enum ComplexToRealStrategy { RealPart, ImaginaryPart, Magnitude, Phase }

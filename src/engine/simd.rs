@@ -1,7 +1,10 @@
 //! SIMD-accelerated conversion kernels
 //!
-//! This module provides portable SIMD implementations of common voxel type
-//! conversions using Rust's `std::simd` API (available in Rust 1.85+).
+//! Provides platform-specific SIMD implementations of common voxel type
+//! conversions using raw `core::arch` intrinsics (AVX2 on x86_64, NEON on
+//! AArch64). All SIMD paths use **runtime feature detection** — they fall
+//! back to scalar code when the required ISA is not available, so the binary
+//! runs on any CPU of the target architecture.
 //!
 //! # Supported Conversions
 //!

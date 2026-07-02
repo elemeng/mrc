@@ -23,13 +23,14 @@ mrc = "0.2"
 ```rust
 use mrc::{open, create, VoxelBlock};
 
-// Read (auto-detects gzip/bzip2)
+// Read (auto-detects compression; handles common microscope quirks
+// like NVERSION=0 and "MAP\0" automatically)
 let reader = open("protein.mrc")?;
 for slice in reader.slices_f32() {
     let block = slice?;  // Vec<f32>
 }
 
-// Write
+// Write — always call .finalize() or the header will be incomplete
 let mut writer = create("output.mrc")
     .shape([512, 512, 256])
     .mode::<f32>()
@@ -53,6 +54,8 @@ See **[docs.rs/mrc](https://docs.rs/mrc)** for the complete API reference, inclu
 - FEI extended headers — typed `Fei1Metadata` / `Fei2Metadata` parsing
 - Error handling — `Error` and `HeaderValidationError`
 - Validation — `validate_full` / `validate_reader` / `ValidationReport`
+- **Real-world workflows** — tilt series, FEI metadata, volume stacks
+- **Troubleshooting** — common errors and how to fix them
 
 ## CLI Tools
 

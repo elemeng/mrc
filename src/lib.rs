@@ -96,8 +96,12 @@
 //!
 //! ### Quirky files
 //!
-//! [`Reader::open_permissive`] opens files with minor header issues as
-//! warnings instead of hard errors — handy for data from older instruments.
+//! Common quirks from microscopes (NVERSION left at 0, `"MAP\0"` instead of
+//! `"MAP "`) are handled transparently by [`open()`] — no special flags needed.
+//!
+//! For esoteric or severely non-standard files, use
+//! [`Reader::open_permissive`] which turns non-critical header issues into
+//! warnings instead of hard errors:
 //!
 //! ```no_run
 //! # fn main() -> Result<(), mrc::Error> {
@@ -266,6 +270,110 @@
 //! If you already have an open [`Reader`], use
 //! [`validate_reader`](crate::validate::validate_reader) to avoid
 //! re-opening the file.
+//!
+//! # Real-world workflows
+//!
+//! ## 1. Process a tilt series from a microscope
+//!
+//! Files from Thermo Fisher / FEI microscopes often have quirks (NVERSION
+//! left at 0, `"MAP\0"` instead of `"MAP "`). The crate handles these
+//! transparently — [`open()`] works without special flags.
+//!
+//! A common pipeline: open a tilt series, read the FEI metadata (tilt
+//! angles, defocus), then iterate over slices:
+//!
+//! ```no_run
+//! # fn main() -> Result<(), mrc::Error> {
+//! use mrc::{open, parse_fei1_records};
+//!
+//! let reader = open("tiltseries.mrc")?;
+//! println!("{}×{}×{} voxels, mode {:?}",
+//!     reader.shape().nx, reader.shape().ny, reader.shape().nz,
+//!     reader.mode());
+//!
+//! // Read FEI extended header metadata (tilt angles, defocus, etc.)
+//! if let Some(records) = parse_fei1_records(reader.ext_header_bytes()) {
+//!     for (i, r) in records.iter().enumerate() {
+//!         println!("tilt {i}: α={:.1}°, defocus={:.1} µm",
+//!             r.alpha_tilt, r.defocus);
+//!     }
+//! }
+//!
+//! // Process each slice
+//! for slice in reader.slices_f32() {
+//!     let block = slice?;
+//!     // block.data: Vec<f32> — ready for filtering, CTF correction, etc.
+//! }
+//! # Ok(()) }
+//! ```
+//!
+//! If a file still fails to open, use
+//! [`open_permissive`](Reader::open_permissive) for lenient header handling,
+//! or [`validate_full`](crate::validate::validate_full) to diagnose the issue.
+//!
+//! ## 2. Write a processed map
+//!
+//! After processing, write the result as a new MRC file. Always call
+//! [`finalize`](Writer::finalize) — without it the header is stale and the
+//! file may be unreadable by other tools:
+//!
+//! ```no_run
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! use mrc::create;
+//!
+//! let mut writer = create("reconstructed.mrc")
+//!     .shape([512, 512, 256])
+//!     .mode::<f32>()
+//!     .finish()?;
+//!
+//! for z in 0..256 {
+//!     let slice = vec![0.0f32; 512 * 512];
+//!     writer.write_block(&mrc::VoxelBlock::new(
+//!         [0, 0, z], [512, 512, 1], slice,
+//!     )?)?;
+//! }
+//!
+//! // ⚠️ Compute and store header density statistics
+//! writer.update_header_stats()?;
+//!
+//! // ⚠️ REQUIRED: rewrites the header with final metadata
+//! writer.finalize()?;
+//! # Ok(()) }
+//! ```
+//!
+//! **Without [`finalize`](Writer::finalize)** the header retains its initial
+//! (zeroed or default) statistics and metadata. Most MRC readers will still
+//! open the file, but density statistics will be wrong and tools like IMOD
+//! or UCSF Chimera may display garbage contrast.
+//!
+//! ## 3. Read subtomogram averages from a volume stack
+//!
+//! Volume stacks (ISPG 401–630) pack multiple sub-volumes into one file,
+//! each `mz` slices thick. Use [`volumes`](Reader::volumes) to iterate:
+//!
+//! ```no_run
+//! # fn main() -> Result<(), mrc::Error> {
+//! # let reader = mrc::Reader::open("averages.mrc")?;
+//! for volume in reader.volumes::<f32>()? {
+//!     let vol = volume?;
+//!     println!("sub-volume at z={} ({}×{}×{} voxels)",
+//!         vol.offset[2], vol.shape[0], vol.shape[1], vol.shape[2]);
+//!     // vol.data: Vec<f32> with nx * ny * mz elements
+//! }
+//! # Ok(()) }
+//! ```
+//!
+//! # Troubleshooting
+//!
+//! | Error | Likely cause | What to try |
+//! |---|---|---|
+//! | [`InvalidHeader`](Error::InvalidHeader) | Not an MRC file, or file has severe header corruption | Run `mrc-validate file.mrc` for diagnostics; try [`open_permissive`](Reader::open_permissive) |
+//! | [`FileSizeMismatch`](Error::FileSizeMismatch) | File was truncated during transfer, or has trailing garbage | Re-download the file; check `mrc-validate` output |
+//! | [`ModeMismatch`](Error::ModeMismatch) | Using `slices::<f32>()` on an Int16 file | Use [`slices_f32()`](Reader::slices_f32) instead — it auto-converts any mode |
+//! | [`BoundsError`](Error::BoundsError) | Requested block falls outside the volume | Check offset + shape against the volume dimensions |
+//! | [`UnsupportedMode`](Error::UnsupportedMode) | File uses a mode this crate doesn't support (e.g. complex modes, or mode without the `f16` feature) | Enable the `f16` feature, or convert the file with another tool |
+//! | Unexpected `Io` error | File permissions, filesystem issue, or path doesn't exist | Check the file path and permissions |
+//! | File opens but values look wrong | Endianness mismatch or byte-order stamp is incorrect | The crate's endianness fallback handles most cases; try `mrc-validate` to confirm |
 
 #![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
 
@@ -333,6 +441,9 @@ pub use io::reader::{CompressionType, detect_compression};
 /// Open an MRC file for reading, auto-detecting gzip or bzip2 compression.
 ///
 /// This is a convenience wrapper around [`Reader::open`].
+/// Common microscope quirks (NVERSION left at 0, `"MAP\0"` instead of `"MAP "`)
+/// are handled transparently — no special flags needed.
+///
 /// For permissive mode or compressed-file-specific openers,
 /// use [`Reader::open_permissive`], [`Reader::open_gzip`], etc. directly.
 pub fn open<P: AsRef<std::path::Path>>(path: P) -> Result<Reader, Error> {

@@ -1,4 +1,14 @@
 //! Statistics computation for MRC data validation.
+//!
+//! Computes `(dmin, dmax, dmean, rms)` from raw MRC data bytes, respecting
+//! the file's [`Mode`] and endianness. Used internally by
+//! [`Reader::validate_header_stats`](crate::Reader::validate_header_stats) and
+//! [`validate_full`](crate::validate::validate_full) to cross-check header
+//! density statistics against actual voxel data.
+//!
+//! Handles all modes: Int8, Int16, Uint16, Float32, Float16 (with `f16`
+//! feature), Float32Complex, Int16Complex, and Packed4Bit. Complex modes
+//! compute RMS only (dmin/dmax/dmean sentinels are set).
 
 use crate::Error;
 use crate::engine::codec::decode_slice;
