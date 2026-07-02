@@ -1484,7 +1484,7 @@ mod tests {
         assert_eq!(max, 5.0);
         assert_eq!(mean, 3.0);
         // pop stddev of [1,2,3,4,5] = sqrt(2.0) ≈ 1.4142
-        assert!((rms - 1.4142135).abs() < 1e-5);
+        assert!((rms - std::f32::consts::SQRT_2).abs() < 1e-5);
     }
 
     #[test]

@@ -9,8 +9,6 @@
 //! - `u8` → `u16`, `u16` → `u8` (Mode 6 utilities)
 //! - Mode 0 reinterpretation (signed vs unsigned `i8`)
 //! - 4-bit packed data unpacking/packing
-//! - Mode 0 reinterpretation (signed vs unsigned `i8`)
-//! - 4-bit packed data unpacking/packing
 
 use crate::Voxel;
 use crate::mode::M0Interpretation;
@@ -74,7 +72,7 @@ impl ConvertFrom<u16> for f32 {
 #[cfg(feature = "f16")]
 impl ConvertFrom<crate::f16> for f32 {
     fn convert_from(src: &[crate::f16]) -> Vec<f32> {
-        src.iter().map(|&v| f32::from(v)).collect()
+        convert_f16_slice_to_f32(src)
     }
 }
 

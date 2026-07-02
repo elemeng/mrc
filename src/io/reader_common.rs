@@ -80,7 +80,8 @@ where
 
 /// A reader wrapper that auto-converts all voxel data to type `T`.
 ///
-/// Created via [`Reader::as`](crate::Reader::as) or [`MmapReader::as`](crate::MmapReader::as).
+/// Created via [`Reader::convert`](crate::Reader::convert) or
+/// [`MmapReader::convert`](crate::MmapReader::convert).
 /// All iteration methods return [`VoxelBlock<T>`] with automatic mode conversion.
 ///
 /// ```ignore

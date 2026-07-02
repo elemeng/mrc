@@ -217,7 +217,7 @@ Memory-mapped writer. Created via `WriterBuilder::finish_mmap()`.
 Requires `mmap` feature.
 
 Same API as `Writer` (`write_block`, `write_block_as`, `write_u8_block`,
-`write_block_parallel`, `finalize`, `update_header_stats`).
+`write_u4_block`, `write_block_parallel`, `finalize`, `update_header_stats`).
 
 Key difference: `update_header_stats` does not re-read from disk since data is
 already in the memory map. `finalize` flushes the mmap instead of seeking.
@@ -621,7 +621,7 @@ automatically converts any MRC mode to the target type via `.slices()`, `.slabs(
 |---|---|---|
 | `mmap` | ✅ | `MmapReader`, `MmapWriter`, `WriterBuilder::finish_mmap()` |
 | `f16` | ✅ | `half::f16` type, `Mode::Float16`, `write_block_as()` for f32→f16 |
-| `simd` | ✅ | AVX2/NEON accelerated i8/i16/u16→f32 conversions |
+| `simd` | ✅ | AVX2/NEON accelerated integer→f32, f16↔f32, byte-swap, and f32 statistics |
 | `parallel` | ✅ | `write_block_parallel()` using `rayon` |
 | `gzip` | ✅ | Gzip auto-detection, `Reader::open_gzip()`, `GzipWriter` |
 | `bzip2` | ❌ | Bzip2 auto-detection, `Reader::open_bzip2()`, `Bzip2Writer` |

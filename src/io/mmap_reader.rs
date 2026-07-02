@@ -174,6 +174,9 @@ impl MmapReader {
     ///
     /// This returns a slice starting at the beginning of voxel data
     /// (after the header and extended header).
+    ///
+    /// **Note:** In permissive mode, when the file is smaller than the header
+    /// claims, this silently truncates and returns whatever bytes are available.
     pub fn data_bytes(&self) -> &[u8] {
         let data_size = self.header.data_size().unwrap_or(0);
         let end = self.data_offset + data_size;
