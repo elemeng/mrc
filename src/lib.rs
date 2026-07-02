@@ -435,6 +435,13 @@ pub use fei::{
     parse_fei2_records,
 };
 
+/// Default decompression safety limit for gzip/bzip2 files (256 GiB).
+///
+/// Applied before the header is parsed, preventing decompression bombs.
+/// Override via [`Reader::open_gzip_with_limit`] or
+/// [`Reader::open_bzip2_with_limit`].
+pub use io::reader_common::DEFAULT_MAX_DECOMPRESSED_BYTES;
+
 #[doc(hidden)]
 pub use io::reader::{CompressionType, detect_compression};
 
@@ -443,6 +450,11 @@ pub use io::reader::{CompressionType, detect_compression};
 /// This is a convenience wrapper around [`Reader::open`].
 /// Common microscope quirks (NVERSION left at 0, `"MAP\0"` instead of `"MAP "`)
 /// are handled transparently — no special flags needed.
+///
+/// For compressed files, decompression is capped at
+/// [`DEFAULT_MAX_DECOMPRESSED_BYTES`] (256 GiB) to prevent bombs.
+/// Use [`Reader::open_gzip_with_limit`] or [`Reader::open_bzip2_with_limit`]
+/// to set a custom limit.
 ///
 /// For permissive mode or compressed-file-specific openers,
 /// use [`Reader::open_permissive`], [`Reader::open_gzip`], etc. directly.

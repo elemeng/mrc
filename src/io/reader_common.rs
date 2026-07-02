@@ -11,6 +11,7 @@ use crate::iter::{RegionIter, SlabStepper, SliceStepper, TileStepper};
 use crate::mode::{ComplexToRealStrategy, Float32Complex, Int16Complex, M0Interpretation, Voxel};
 use crate::{Error, Header, Mode};
 use std::borrow::Cow;
+use std::io::Read;
 
 /// Internal helper: boxed iterator over [`VoxelBlock`] results.
 ///
@@ -1052,6 +1053,18 @@ pub(crate) fn parse_header(
     Ok((header, warnings, endian, data_size))
 }
 
+/// Default maximum decompressed bytes for compressed MRC files (256 GiB).
+///
+/// This is an absolute cap applied **before** parsing the header, preventing
+/// decompression bombs where a small compressed file claims huge dimensions.
+///
+/// Used by [`Reader::open_gzip`](crate::Reader::open_gzip) and
+/// [`Reader::open_bzip2`](crate::Reader::open_bzip2). Pass a custom value to
+/// [`Reader::open_gzip_with_limit`](crate::Reader::open_gzip_with_limit) or
+/// [`Reader::open_bzip2_with_limit`](crate::Reader::open_bzip2_with_limit) to
+/// override.
+pub const DEFAULT_MAX_DECOMPRESSED_BYTES: u64 = 256 * 1024 * 1024 * 1024;
+
 /// Components of a decompressed MRC file, returned by [`open_compressed`].
 pub(crate) struct DecompressedMrc {
     /// Parsed MRC header.
@@ -1070,14 +1083,42 @@ pub(crate) struct DecompressedMrc {
 
 /// Open a compressed MRC file (gzip or bzip2) from a decoder.
 ///
-/// Reads the entire decompressed stream into memory, parses the header,
-/// validates size, and returns the components needed to construct a [`Reader`].
+/// Reads the decompressed stream into memory with a safety cap on total
+/// output bytes (`max_bytes`). This cap is applied **before** parsing the
+/// header, so a malicious file that claims huge dimensions cannot trigger
+/// unbounded memory allocation.
+///
+/// After decompression, the header is parsed and the actual size is validated
+/// against the header-declared size (unless in permissive mode).
+///
+/// # Safety limit
+///
+/// If the decompressed stream exceeds `max_bytes`, the function returns an
+/// [`Error::Io`] with `"Decompressed data exceeds safety limit"`. The default
+/// value is [`DEFAULT_MAX_DECOMPRESSED_BYTES`] (256 GiB), accessible through
+/// [`Reader::open_gzip_with_limit`](crate::Reader::open_gzip_with_limit) and
+/// [`Reader::open_bzip2_with_limit`](crate::Reader::open_bzip2_with_limit).
 pub(crate) fn open_compressed<D: std::io::Read>(
     mut decoder: D,
     permissive: bool,
+    max_bytes: u64,
 ) -> Result<DecompressedMrc, crate::Error> {
-    let mut buf = Vec::new();
-    decoder.read_to_end(&mut buf)?;
+    // Read up to max_bytes + 1 so we can detect truncation by the cap.
+    // If the stream exceeds max_bytes we return an error immediately,
+    // before the header is ever inspected.
+    let limit = max_bytes + 1;
+    let mut buf = Vec::with_capacity(limit.min(1024 * 1024) as usize);
+    decoder.by_ref().take(limit).read_to_end(&mut buf)?;
+
+    if buf.len() > max_bytes as usize {
+        return Err(crate::Error::Io(std::io::Error::other(format!(
+            "Decompressed data exceeds safety limit of {max_bytes} bytes \
+             ({} GiB). Refusing to allocate. \
+             Use Reader::open_gzip_with_limit() or Reader::open_bzip2_with_limit() \
+             with a larger max_bytes if you trust this file.",
+            max_bytes / (1024 * 1024 * 1024),
+        ))));
+    }
 
     if buf.len() < 1024 {
         return Err(crate::Error::InvalidHeader);

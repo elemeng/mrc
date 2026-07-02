@@ -59,10 +59,17 @@ impl Reader {
     /// For gzip files it delegates to [`open_gzip`](Self::open_gzip); for bzip2
     /// files to [`open_bzip2`](Self::open_bzip2).
     ///
+    /// **Decompression safety:** Gzip and bzip2 files are decompressed with a
+    /// hard cap of [`DEFAULT_MAX_DECOMPRESSED_BYTES`] (256 GiB) to prevent
+    /// decompression bombs. Use [`open_gzip_with_limit`](Self::open_gzip_with_limit)
+    /// or [`open_bzip2_with_limit`](Self::open_bzip2_with_limit) for a custom limit.
+    ///
     /// **Note:** gzip and bzip2 support require the `gzip` and `bzip2` feature
     /// flags respectively. Both are enabled by default. If a compressed file is
     /// opened without the corresponding feature, it will be misinterpreted as
     /// plain and fail with [`InvalidHeader`](crate::Error::InvalidHeader).
+    ///
+    /// [`DEFAULT_MAX_DECOMPRESSED_BYTES`]: crate::DEFAULT_MAX_DECOMPRESSED_BYTES
     pub fn open<P: AsRef<std::path::Path>>(path: P) -> Result<Self, Error> {
         match crate::io::reader::detect_compression(&path)? {
             crate::io::reader::CompressionType::Plain => Self::open_plain(path),
