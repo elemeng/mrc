@@ -11,7 +11,7 @@
 //! - [`Reader::slices`](crate::Reader::slices) — one Z-plane at a time
 //! - [`Reader::slabs`](crate::Reader::slabs) — batches of `k` Z-planes
 //! - [`Reader::tiles`](crate::Reader::tiles) — arbitrary 3D tiles
-//! - [`Reader::slices_f32`](crate::Reader::slices_f32) — any mode auto-converted to `f32`
+//! - [`reader.convert::<f32>().slices()`](crate::io::reader_common::ConvertReader::slices) — any mode auto-converted to `f32`
 
 use crate::Error;
 use crate::engine::block::{VolumeShape, VoxelBlock};

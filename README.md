@@ -93,7 +93,7 @@ v0.2 adds SIMD acceleration, parallel encoding, type conversion iterators, compr
 - [x] Complete MRC-2014 format support
 - [x] Iterator-centric API (slices, slabs, tiles)
 - [x] Type-safe I/O with compile-time mode checking
-- [x] SIMD acceleration (AVX2, NEON)
+- [x] SIMD acceleration (AVX2, NEON) — i8→f32, i16→f32, u16→f32
 - [x] Memory-mapped I/O and parallel encoding
 - [x] All data types (modes 0–4, 6, 12, 101)
 - [x] Compression support (gzip, bzip2)

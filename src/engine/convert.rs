@@ -4,9 +4,11 @@
 //! powers the unified reader conversion system.
 //!
 //! Specific conversions:
-//! - `i8`/`i16`/`u16` → `f32` (for `slices_f32` / `slabs_f32`)
-//! - `f16` → `f32` (for `slices_f32`)
+//! - `i8`/`i16`/`u16`/`u8` → `f32` (for `convert::<f32>()` auto-conversion)
+//! - `f16` ↔ `f32` (for `convert::<f32>()` auto-conversion and `write_block_as`)
 //! - `u8` → `u16`, `u16` → `u8` (Mode 6 utilities)
+//! - Mode 0 reinterpretation (signed vs unsigned `i8`)
+//! - 4-bit packed data unpacking/packing
 //! - Mode 0 reinterpretation (signed vs unsigned `i8`)
 //! - 4-bit packed data unpacking/packing
 
@@ -136,8 +138,13 @@ pub(crate) fn pack_u8_to_u4_bytes(src: &[u8], nx: usize, ny: usize) -> Vec<u8> {
 /// Reinterpret Mode 0 (8-bit) data as signed or unsigned and convert to `f32`.
 pub fn reinterpret_m0(data: &[u8], interp: M0Interpretation) -> Vec<f32> {
     match interp {
-        M0Interpretation::Signed => data.iter().map(|&x| x as i8 as f32).collect(),
-        M0Interpretation::Unsigned => data.iter().map(|&x| x as f32).collect(),
+        M0Interpretation::Signed => {
+            // Cast u8 bytes to i8, then batch-convert with SIMD when available
+            let src: &[i8] =
+                unsafe { core::slice::from_raw_parts(data.as_ptr() as *const i8, data.len()) };
+            convert_i8_slice_to_f32(src)
+        }
+        M0Interpretation::Unsigned => convert_u8_slice_to_f32(data),
     }
 }
 
@@ -177,6 +184,42 @@ pub(crate) fn convert_u16_slice_to_f32(src: &[u16]) -> Vec<f32> {
 #[cfg(not(feature = "simd"))]
 pub(crate) fn convert_u16_slice_to_f32(src: &[u16]) -> Vec<f32> {
     src.iter().map(|&x| x as f32).collect()
+}
+
+/// Batch conversion from u8 to f32 using SIMD when available.
+#[cfg(feature = "simd")]
+pub(crate) fn convert_u8_slice_to_f32(src: &[u8]) -> Vec<f32> {
+    simd::convert_u8_to_f32_simd(src)
+}
+
+/// Batch conversion from u8 to f32 (scalar fallback).
+#[cfg(not(feature = "simd"))]
+pub(crate) fn convert_u8_slice_to_f32(src: &[u8]) -> Vec<f32> {
+    src.iter().map(|&x| x as f32).collect()
+}
+
+/// Batch conversion from f16 to f32 using SIMD when available.
+#[cfg(all(feature = "simd", feature = "f16"))]
+pub(crate) fn convert_f16_slice_to_f32(src: &[crate::f16]) -> Vec<f32> {
+    simd::convert_f16_to_f32_simd(src)
+}
+
+/// Batch conversion from f16 to f32 (scalar fallback).
+#[cfg(not(all(feature = "simd", feature = "f16")))]
+pub(crate) fn convert_f16_slice_to_f32(src: &[crate::f16]) -> Vec<f32> {
+    src.iter().map(|&v| f32::from(v)).collect()
+}
+
+/// Batch conversion from f32 to f16 using SIMD when available.
+#[cfg(all(feature = "simd", feature = "f16"))]
+pub(crate) fn convert_f32_slice_to_f16(src: &[f32]) -> Vec<crate::f16> {
+    simd::convert_f32_to_f16_simd(src)
+}
+
+/// Batch conversion from f32 to f16 (scalar fallback).
+#[cfg(not(all(feature = "simd", feature = "f16")))]
+pub(crate) fn convert_f32_slice_to_f16(src: &[f32]) -> Vec<crate::f16> {
+    src.iter().map(|&v| crate::f16::from_f32(v)).collect()
 }
 
 // ============================================================================
@@ -223,7 +266,7 @@ where
         Mode::Float16 => {
             // Route through f32 to avoid requiring T: ConvertFrom<crate::f16>
             let src = decode_slice::<crate::f16>(bytes, endian)?;
-            let f32_data: Vec<f32> = src.iter().map(|&v| f32::from(v)).collect();
+            let f32_data = convert_f16_slice_to_f32(&src);
             Ok(T::convert_from(&f32_data))
         }
         Mode::Float32Complex => {
@@ -244,7 +287,7 @@ where
         }
         Mode::Packed4Bit => {
             let unpacked = unpack_u4_bytes_to_u8(bytes, nx, ny);
-            let f32_data: Vec<f32> = unpacked.iter().map(|&v| v as f32).collect();
+            let f32_data = convert_u8_slice_to_f32(&unpacked);
             Ok(T::convert_from(&f32_data))
         }
     }
@@ -293,7 +336,7 @@ where
         }
         Mode::Packed4Bit => {
             let unpacked = unpack_u4_bytes_to_u8(bytes, nx, ny);
-            let f32_data: Vec<f32> = unpacked.iter().map(|&v| v as f32).collect();
+            let f32_data = convert_u8_slice_to_f32(&unpacked);
             Ok(T::convert_from(&f32_data))
         }
     }

@@ -245,7 +245,7 @@ macro_rules! impl_inherent_reader_methods {
             /// Iterate over Z-slices (1 voxel thick along Z) as [`VoxelBlock`]s.
             ///
             /// Each item is a contiguous full-XY slab at one Z position.
-            /// See also [`slices_f32`](Self::slices_f32) for automatic mode conversion.
+            /// See also [`convert::<f32>()`](Self::convert) for automatic mode conversion.
             pub fn slices<T: Voxel>(&self) -> RegionIter<'_, T, $ty, SliceStepper> {
                 RegionIter::with_stepper(self, self.shape(), SliceStepper::new())
             }
@@ -253,7 +253,7 @@ macro_rules! impl_inherent_reader_methods {
             ///
             /// Each item is a contiguous full-XY slab of `k` Z-planes.
             /// The final slab may be shorter than `k` near the end of the volume.
-            /// See also [`slabs_f32`](Self::slabs_f32) for automatic mode conversion.
+            /// See also [`convert::<f32>()`](Self::convert) for automatic mode conversion.
             pub fn slabs<T: Voxel>(&self, k: usize) -> RegionIter<'_, T, $ty, SlabStepper> {
                 RegionIter::with_stepper(self, self.shape(), SlabStepper::new(k))
             }

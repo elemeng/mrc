@@ -363,7 +363,7 @@
 //! | [`FileSizeMismatch`](Error::FileSizeMismatch) | File was truncated during transfer, or has trailing garbage | Re-download the file; check `mrc-validate` output |
 //! | [`ModeMismatch`](Error::ModeMismatch) | Using `slices::<f32>()` on an Int16 file | Use [`convert::<f32>()`](Reader::convert) instead — it auto-converts any mode |
 //! | [`BoundsError`](Error::BoundsError) | Requested block falls outside the volume | Check offset + shape against the volume dimensions |
-//! | [`UnsupportedMode`](Error::UnsupportedMode) | File uses a mode this crate doesn't support (e.g. complex modes, or mode without the `f16` feature) | Enable the `f16` feature, or convert the file with another tool |
+//! | [`UnsupportedMode`](Error::UnsupportedMode) | File uses a mode this crate doesn't support (e.g. an unrecognised mode constant, or mode without the `f16` feature) | Enable the `f16` feature, or convert the file with another tool |
 //! | Unexpected `Io` error | File permissions, filesystem issue, or path doesn't exist | Check the file path and permissions |
 //! | File opens but values look wrong | Endianness mismatch or byte-order stamp is incorrect | The crate's endianness fallback handles most cases; try `mrc-validate` to confirm |
 

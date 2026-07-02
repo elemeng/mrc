@@ -125,6 +125,8 @@ The standard buffered reader. Loads the **entire file** into a `Vec<u8>` on open
 | `reader.convert::<T>().slices()` | iterator yielding `VoxelBlock<T>` | Auto-convert any mode to target type `T` |
 | `reader.convert::<T>().slabs(k)` | iterator yielding `VoxelBlock<T>` | Same as `slices` but `k` planes at a time |
 | `reader.convert::<T>().tiles(shape)` | iterator yielding `VoxelBlock<T>` | Same as `slices` but arbitrary 3D tiles |
+| `reader.convert::<T>().subregion(offset, shape)` | `Result<VoxelBlock<T>>` | Single block at given offset/shape, auto-converted |
+| `reader.convert::<T>().read_volume()` | `Result<VoxelBlock<T>>` | Full volume as one block, auto-converted |
 | `reader.slices_u8()` | iterator yielding `VoxelBlock<u8>` | Mode 6 (Uint16) or Mode 101 (Packed4Bit); narrows/nibble-unpacks to `u8` |
 | `reader.slabs_u8(k)` | iterator yielding `VoxelBlock<u8>` | Same as `slices_u8` but `k` planes at a time |
 | `reader.slices_mode0(interp)` | iterator yielding `VoxelBlock<f32>` | Mode 0 (Int8) only; signed or unsigned |
@@ -432,8 +434,8 @@ Packed4Bit does **not** implement `Voxel` — instead it is handled transparentl
 by the unified API:
 - Reading: [`slices_u8`](Reader::slices_u8) / [`slabs_u8`](Reader::slabs_u8) /
   [`read_volume_u8`](Reader::read_volume_u8) unpack nibbles to `u8` (0–15);
-  [`convert_slices`](Reader::convert_slices) / [`convert_volume`](Reader::convert_volume)
-  convert directly to `f32` or any target type.
+  [`convert::<f32>()`](Reader::convert) / [`convert::<T>()`](Reader::convert)
+  convert directly to `f32` or any target type via `.slices()` / `.read_volume()`.
 - Writing: [`write_u4_block`](Writer::write_u4_block) packs `u8` values
   two-per-byte.
 
@@ -607,8 +609,9 @@ pub fn convert_u16_slice_to_u8(src: &[u16]) -> Result<Vec<u8>, Error>;
 ```
 
 These are convenience functions exposed from the crate root. The more comprehensive
-conversion infrastructure is used internally by `convert_slices` / `convert_slabs` /
-`convert_volume` which automatically convert any MRC mode to the target type.
+conversion infrastructure is used internally by [`convert::<T>()`](Reader::convert) which
+automatically converts any MRC mode to the target type via `.slices()`, `.slabs()`,
+`.tiles()`, `.subregion()`, and `.read_volume()`.
 
 ---
 

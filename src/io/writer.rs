@@ -52,11 +52,7 @@ macro_rules! write_block_as_body {
         match $self.mode() {
             #[cfg(feature = "f16")]
             Mode::Float16 => {
-                let data: Vec<crate::f16> = $block
-                    .data
-                    .iter()
-                    .map(|&v| crate::f16::from_f32(v))
-                    .collect();
+                let data = crate::engine::convert::convert_f32_slice_to_f16(&$block.data);
                 $self.write_block::<crate::f16>(&VoxelBlock {
                     offset: $block.offset,
                     shape: $block.shape,

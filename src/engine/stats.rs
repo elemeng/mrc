@@ -61,7 +61,7 @@ pub(crate) fn compute_stats(
         #[cfg(feature = "f16")]
         Mode::Float16 => {
             let data = decode_slice::<crate::f16>(bytes, endian)?;
-            let data_f32: Vec<f32> = data.iter().map(|&v| f32::from(v)).collect();
+            let data_f32 = crate::engine::convert::convert_f16_slice_to_f32(&data);
             stats_real(&data_f32)
         }
         #[cfg(not(feature = "f16"))]
@@ -75,32 +75,55 @@ pub(crate) fn compute_stats(
 
 fn stats_real<T>(data: &[T]) -> (f32, f32, f32, f32)
 where
-    T: Copy + Into<f64>,
+    T: Copy + Into<f64> + 'static,
 {
     if data.is_empty() {
         return (0.0, -1.0, -2.0, -1.0);
     }
+
+    // Specialized SIMD path for f32 (most common case).
+    #[cfg(feature = "simd")]
+    {
+        // SAFETY: we check the type identity via pointer comparison after
+        // monomorphisation — the compiler optimises the branch away.
+        if core::any::TypeId::of::<T>() == core::any::TypeId::of::<f32>() {
+            let f32_data: &[f32] =
+                unsafe { core::slice::from_raw_parts(data.as_ptr() as *const f32, data.len()) };
+            return stats_f32_simd_inner(f32_data);
+        }
+    }
+
+    // Generic single-pass scalar using Welford's online algorithm.
+    let len = data.len();
     let mut min = f64::INFINITY;
     let mut max = f64::NEG_INFINITY;
-    let mut sum = 0.0f64;
+    let mut n = 0u64;
+    let mut mean = 0.0f64;
+    let mut m2 = 0.0f64;
+
     for &v in data {
-        let vf = v.into();
-        if vf < min {
-            min = vf;
+        let x = v.into();
+        n += 1;
+        if x < min {
+            min = x;
         }
-        if vf > max {
-            max = vf;
+        if x > max {
+            max = x;
         }
-        sum += vf;
+        let delta = x - mean;
+        mean += delta / n as f64;
+        m2 += delta * (x - mean);
     }
-    let mean = sum / data.len() as f64;
-    let mut variance_sum = 0.0f64;
-    for &v in data {
-        let d = v.into() - mean;
-        variance_sum += d * d;
-    }
-    let rms = (variance_sum / data.len() as f64).sqrt();
+
+    let rms = (m2 / len as f64).sqrt();
     (min as f32, max as f32, mean as f32, rms as f32)
+}
+
+/// SIMD-accelerated single-pass statistics for f32 data.
+#[cfg(feature = "simd")]
+fn stats_f32_simd_inner(data: &[f32]) -> (f32, f32, f32, f32) {
+    use crate::engine::simd::stats_f32_simd;
+    stats_f32_simd(data)
 }
 
 fn rms_complex_f32(data: &[Float32Complex]) -> f32 {

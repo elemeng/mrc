@@ -10,7 +10,7 @@ This file contains project-specific context for AI coding agents working on the 
 - **Crate**: https://crates.io/crates/mrc
 - **Docs**: https://docs.rs/mrc
 - **License**: MIT
-- **Version**: 0.2.5 (check `Cargo.toml` for latest)
+- **Version**: 0.2.6 (check `Cargo.toml` for latest)
 
 A reference Python implementation (`mrcfile`) is available on PyPI for specification comparison, but this crate is a standalone Rust implementation. The MRC-2014 specification is available locally as `mrcfile-official.md`.
 
