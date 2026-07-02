@@ -434,14 +434,6 @@ impl Writer {
         write_block_as_body!(self, block)
     }
 
-    /// Write an `f32` block to a Float16 file.
-    ///
-    /// Shorthand for `write_block_as`.
-    #[cfg(feature = "f16")]
-    pub fn write_f16_from_f32(&mut self, block: &VoxelBlock<f32>) -> Result<(), Error> {
-        self.write_block_as(block)
-    }
-
     /// Write a block with parallel encoding and sequential file I/O.
     ///
     /// Encoding is performed in parallel using all available cores.
@@ -765,12 +757,6 @@ impl MmapWriter {
         write_block_as_body!(self, block)
     }
 
-    /// Write an `f32` block to a Float16 file. Shorthand for `write_block_as`.
-    #[cfg(feature = "f16")]
-    pub fn write_f16_from_f32(&mut self, block: &VoxelBlock<f32>) -> Result<(), Error> {
-        self.write_block_as(block)
-    }
-
     /// Write a block of voxels to the memory-mapped file.
     ///
     /// The type `T` must match the file's voxel mode exactly.
@@ -1083,12 +1069,6 @@ impl<C: Compressor> CompressedWriter<C> {
     /// Write a block with automatic type conversion to the file's mode.
     pub fn write_block_as(&mut self, block: &VoxelBlock<f32>) -> Result<(), Error> {
         write_block_as_body!(self, block)
-    }
-
-    /// Write an `f32` block to a Float16 file. Shorthand for `write_block_as`.
-    #[cfg(feature = "f16")]
-    pub fn write_f16_from_f32(&mut self, block: &VoxelBlock<f32>) -> Result<(), Error> {
-        self.write_block_as(block)
     }
 
     /// Write a block of `u8` data (0–15 per voxel) by packing to 4-bit (Mode 101).

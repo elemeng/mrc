@@ -205,10 +205,9 @@ Additional builder methods behind feature flags:
 | `writer.mode()` | Voxel mode |
 | `writer.header()` | Mutable access to header (modify before `finalize`) |
 | `writer.write_block::<T>(&block)` | Write a typed voxel block. `T` must match file mode |
-| `writer.write_block_as(&block)` | Write with auto-conversion to file's mode (e.g. `f32` → Float16) |
 | `writer.write_u8_block(&block)` | Convenience: write `VoxelBlock<u8>` to a Uint16 file (auto-widens) |
 | `writer.write_u4_block(&block)` | Convenience: write `VoxelBlock<u8>` to a Packed4Bit file (auto-packs, values must be 0–15) |
-| `writer.write_f16_from_f32(&block)` | Convenience: write `VoxelBlock<f32>` to a Float16 file (feature `f16`) |
+| `writer.write_block_as(&block)` | Write with auto-conversion to file's mode (e.g. `f32` → Float16) |
 | `writer.write_block_parallel::<T>(&block)` | Parallel-encoded write (feature `parallel`; contiguous XY slabs only) |
 | `writer.finalize()` | Rewrite header to disk (call when all blocks are written) |
 | `writer.update_header_stats()` | Scan all data, compute dmin/dmax/dmean/rms, update header |
@@ -218,7 +217,7 @@ Additional builder methods behind feature flags:
 Memory-mapped writer. Created via `WriterBuilder::finish_mmap()`.
 Requires `mmap` feature.
 
-Same API as `Writer` (`write_block`, `write_block_as`, `write_u8_block`, `write_f16_from_f32`,
+Same API as `Writer` (`write_block`, `write_block_as`, `write_u8_block`,
 `write_block_parallel`, `finalize`, `update_header_stats`).
 
 Key difference: `update_header_stats` does not re-read from disk since data is
@@ -238,7 +237,7 @@ Created via `WriterBuilder::finish_gzip()` / `finish_bzip2()`.
 only on `finalize`. Not suitable for large volumes that exceed RAM.
 
 Full API: `shape()`, `mode()`, `header()`, `write_block()`, `write_block_as()`, `write_u8_block()`,
-`write_f16_from_f32()`, `update_header_stats()` (reads from in-memory buffer),
+`update_header_stats()` (reads from in-memory buffer),
 `finalize()` (takes `self` by value).
 
 ---
@@ -436,8 +435,8 @@ Packed4Bit does **not** implement `Voxel` — instead it is handled transparentl
 by the unified API:
 - Reading: [`slices_u8`](Reader::slices_u8) / [`slabs_u8`](Reader::slabs_u8) /
   [`read_volume_u8`](Reader::read_volume_u8) unpack nibbles to `u8` (0–15);
-  [`slices_f32`](Reader::slices_f32) / [`read_volume_f32`](Reader::read_volume_f32)
-  convert directly to `f32`.
+  [`slices_f32`](Reader::slices_f32) / [`convert_slices`](Reader::convert_slices)
+  convert directly to `f32` or any target type.
 - Writing: [`write_u4_block`](Writer::write_u4_block) packs `u8` values
   two-per-byte.
 - Sub-block reads with odd X-offset are rejected (nibble alignment).
@@ -623,7 +622,7 @@ automatically convert any MRC mode to the target type.
 | Feature | Default | What it enables |
 |---|---|---|
 | `mmap` | ✅ | `MmapReader`, `MmapWriter`, `WriterBuilder::finish_mmap()` |
-| `f16` | ✅ | `half::f16` type, `Mode::Float16`, `write_f16_from_f32()` |
+| `f16` | ✅ | `half::f16` type, `Mode::Float16`, `write_block_as()` for f32→f16 |
 | `simd` | ✅ | AVX2/NEON accelerated i8/i16/u16→f32 conversions |
 | `parallel` | ✅ | `write_block_parallel()` using `rayon` |
 | `gzip` | ✅ | Gzip auto-detection, `Reader::open_gzip()`, `GzipWriter` |

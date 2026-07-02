@@ -309,6 +309,13 @@ macro_rules! impl_inherent_reader_methods {
                 self.convert_slices::<f32>()
             }
 
+            /// Iterate over Z-slabs, converting each to `f32` automatically.
+            ///
+            /// Shorthand for `convert_slabs::<f32>(k)`.
+            pub fn slabs_f32(&self, k: usize) -> VoxelIter<'_, f32> {
+                self.convert_slabs::<f32>(k)
+            }
+
             /// Iterate over Z-slabs, converting each to target type `T`.
             pub fn convert_slabs<T>(&self, k: usize) -> VoxelIter<'_, T>
             where
@@ -328,12 +335,6 @@ macro_rules! impl_inherent_reader_methods {
                 ))
             }
 
-            /// Iterate over Z-slabs, converting each to `f32` automatically.
-            ///
-            /// Shorthand for `convert_slabs::<f32>(k)`.
-            pub fn slabs_f32(&self, k: usize) -> VoxelIter<'_, f32> {
-                self.convert_slabs::<f32>(k)
-            }
             /// Iterate over Z-slices as `u8`, narrowing from Mode 6 (Uint16)
             /// or unpacking from Mode 101 (Packed4Bit).
             ///
