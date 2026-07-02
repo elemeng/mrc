@@ -77,6 +77,17 @@
 //! # Ok(()) }
 //! ```
 //!
+//! When the `ndarray` feature is enabled, get numpy-like multidimensional access:
+//!
+//! ```no_run
+//! # fn main() -> Result<(), mrc::Error> {
+//! # let reader = mrc::Reader::open("density.mrc")?;
+//! let arr = reader.to_ndarray::<f32>()?;
+//! // arr is ndarray::Array3<f32> with shape [nz, ny, nx]
+//! let center = arr[[arr.shape()[0] / 2, arr.shape()[1] / 2, arr.shape()[2] / 2]];
+//! # Ok(()) }
+//! ```
+//!
 //! ### Large files
 //!
 //! When the file does not fit in RAM, use [`MmapReader`] (requires the
@@ -210,6 +221,7 @@
 //! | `parallel` | Parallel encoding via `rayon` | ✅ |
 //! | `gzip` | Gzip-compressed I/O | ✅ |
 //! | `bzip2` | Bzip2-compressed I/O | ❌ |
+//! | `ndarray` | Return volumes as `ndarray::Array3<T>` via `to_ndarray()` | ❌ |
 //!
 //! # Advanced topics
 //!

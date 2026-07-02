@@ -162,6 +162,18 @@ where
         let block_shape = [s.nx, s.ny, s.nz];
         self.subregion([0, 0, 0], block_shape)
     }
+
+    /// Read the entire volume as an `ndarray::Array3<T>` with shape `[nz, ny, nx]`
+    /// (matching Python `mrcfile`'s numpy array convention).
+    ///
+    /// Requires the `ndarray` feature.
+    #[cfg(feature = "ndarray")]
+    pub fn to_ndarray(&self) -> Result<ndarray::Array3<T>, Error> {
+        let block = self.read_volume()?;
+        let s = self.inner.shape();
+        ndarray::Array3::from_shape_vec([s.nz, s.ny, s.nx], block.data)
+            .map_err(|_| Error::BoundsError)
+    }
 }
 
 /// Adds `.convert::<T>()` method on a reader type.
@@ -319,6 +331,21 @@ macro_rules! impl_inherent_reader_methods {
             pub fn read_volume<T: Voxel>(&self) -> Result<VoxelBlock<T>, Error> {
                 let s = self.shape();
                 self.subregion([0, 0, 0], [s.nx, s.ny, s.nz])
+            }
+
+            /// Read the entire volume as an `ndarray::Array3<T>` with shape `[nz, ny, nx]`
+            /// (matching Python `mrcfile`'s numpy array convention).
+            ///
+            /// Requires the `ndarray` feature.
+            ///
+            /// # Errors
+            /// Returns [`Error::ModeMismatch`] if `T` does not match the file mode.
+            #[cfg(feature = "ndarray")]
+            pub fn to_ndarray<T: Voxel>(&self) -> Result<ndarray::Array3<T>, Error> {
+                let block = self.read_volume::<T>()?;
+                let s = self.shape();
+                ndarray::Array3::from_shape_vec([s.nz, s.ny, s.nx], block.data)
+                    .map_err(|_| Error::BoundsError)
             }
 
             /// Read the entire volume as `u8`, unpacking from Mode 101 (Packed4Bit).

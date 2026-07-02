@@ -67,6 +67,7 @@ There are **no integration test directories** (`tests/` or `benches/`). All test
 | `parallel` | `rayon` | Parallel encoding for `write_block_parallel` | ✅ |
 | `gzip` | `flate2` | Gzip-compressed MRC I/O | ✅ |
 | `bzip2` | `bzip2` | Bzip2-compressed MRC I/O | ❌ |
+| `ndarray` | `ndarray` | Return volumes as `ndarray::Array3` via `to_ndarray()` | ❌ |
 
 The `simd` feature uses **runtime feature detection** (`is_x86_feature_detected!("avx2")` / `is_aarch64_feature_detected!("neon")`) — it never assumes the ISA is available at compile time. Scalar fallbacks are always present.
 
