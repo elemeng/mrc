@@ -2,7 +2,7 @@
 //!
 //! This module contains the [`VoxelSource`] trait and helper functions that are
 //! used by [`Reader`](crate::Reader) and [`MmapReader`](crate::MmapReader) to implement block validation, endian
-//! decoding, and the `slices_f32` / `slabs_f32` convenience iterators.
+//! decoding, and auto-conversion iterators (`slices_f32`, `convert_slices`, etc.).
 
 use crate::engine::block::{VolumeShape, VoxelBlock};
 use crate::engine::codec::{EndianCodec, decode_slice, encode_slice};
@@ -15,10 +15,8 @@ use std::io::Read;
 
 /// Internal helper: boxed iterator over [`VoxelBlock`] results.
 ///
-/// The most common pattern for conversion iterators that mix heterogeneous
-/// inner iterator types (e.g. `slices_f32` branching on mode). Defining it
-/// as a type alias avoids clippy's `type_complexity` lint while keeping the
-/// concrete type visible.
+/// Used by `convert_iter` to return type-erased iterators without
+/// exposing complex generic types in the public API.
 type VoxelIter<'a, T> = Box<dyn Iterator<Item = Result<VoxelBlock<T>, Error>> + 'a>;
 
 /// Raw-byte block iterator (no type decoding).
@@ -163,22 +161,6 @@ macro_rules! impl_inherent_reader_methods {
             ) -> RegionIter<'_, T, $ty, TileStepper> {
                 RegionIter::with_stepper(self, self.shape(), TileStepper::new(tile_shape))
             }
-            /// Alias for [`slices`](Self::slices).
-            pub fn images<T: Voxel>(&self) -> RegionIter<'_, T, $ty, SliceStepper> {
-                self.slices()
-            }
-            /// Alias for [`slabs`](Self::slabs).
-            pub fn image_stack<T: Voxel>(&self, k: usize) -> RegionIter<'_, T, $ty, SlabStepper> {
-                self.slabs(k)
-            }
-            /// Alias for [`slices`](Self::slices).
-            pub fn planes<T: Voxel>(&self) -> RegionIter<'_, T, $ty, SliceStepper> {
-                self.slices()
-            }
-            /// Alias for [`slabs`](Self::slabs).
-            pub fn plane_stack<T: Voxel>(&self, k: usize) -> RegionIter<'_, T, $ty, SlabStepper> {
-                self.slabs(k)
-            }
             /// Iterate over sub-volumes of a volume-stack file.
             ///
             /// Each sub-volume is `mz` slices thick, where `mz` is taken from
@@ -234,8 +216,8 @@ macro_rules! impl_inherent_reader_methods {
             /// Read the entire volume, converting from any mode to `T`.
             ///
             /// Supports all real-valued modes, complex modes (via magnitude), and
-            /// Packed4Bit (via nibble unpack). This is the generic replacement for
-            /// `read_volume_f32` — just use `read_volume::<f32>()`.
+            /// Packed4Bit (via nibble unpack). Shorthand for the common case:
+            /// [`read_volume_f32`](Self::read_volume_f32).
             pub fn convert_volume<T>(&self) -> Result<VoxelBlock<T>, Error>
             where
                 T: Voxel

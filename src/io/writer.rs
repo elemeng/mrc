@@ -63,10 +63,7 @@ macro_rules! write_block_as_body {
                     data,
                 })
             }
-            _ => Err(Error::ModeMismatch {
-                file_mode: $self.mode(),
-                requested_mode: $self.mode(),
-            }),
+            _ => Err(Error::UnsupportedMode),
         }
     }};
 }

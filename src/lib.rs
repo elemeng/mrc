@@ -50,11 +50,13 @@
 //! * [`slabs`](Reader::slabs) — batches of `k` Z-planes
 //! * [`tiles`](Reader::tiles) — arbitrary 3D blocks
 //! * [`subregion`](Reader::subregion) — a single block by coordinate
+//! * [`convert_slices`](Reader::convert_slices) — any Z-plane, converted to any type
 //!
 //! Or grab the full volume in one call:
 //!
 //! * [`read_volume::<T>()`](Reader::read_volume) — full volume as any [`Voxel`] type
 //! * [`read_volume_f32()`](Reader::read_volume_f32) — full volume, any mode converted to `f32`
+//! * [`convert_volume`](Reader::convert_volume) — full volume, converted to any type
 //!
 //! Each yields [`VoxelBlock<T>`] — a data chunk with its `offset` and
 //! `shape`, so you always know where it belongs.
@@ -131,6 +133,8 @@
 //! 1. **Write** blocks with [`write_block`](Writer::write_block). The type
 //!    `T` matches the file's mode — a compile-time check that prevents
 //!    accidentally treating bytes as the wrong kind of number.
+//!    Use [`write_block_as`](Writer::write_block_as) for automatic conversion
+//!    (e.g. write `f32` data to a Float16 file).
 //! 2. Optionally call [`update_header_stats`](Writer::update_header_stats)
 //!    before finalize to fill in `dmin`/`dmax`/`dmean`/`rms`.
 //! 3. **Finalize** with [`finalize`](Writer::finalize) to rewrite the header

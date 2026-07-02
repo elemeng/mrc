@@ -111,6 +111,7 @@ The standard buffered reader. Loads the **entire file** into a `Vec<u8>` on open
 | `reader.read_volume::<T>()` | `Result<VoxelBlock<T>>` | Read the entire volume as a single block |
 | `reader.read_volume_f32()` | `Result<VoxelBlock<f32>>` | Read entire volume, auto-convert any mode to `f32` |
 | `reader.read_volume_u8()` | `Result<VoxelBlock<u8>>` | Read volume as `u8` (Uint16 narrowing or Packed4Bit unpack) |
+| `reader.convert_volume::<T>()` | `Result<VoxelBlock<T>>` | Read volume, convert from any mode to type `T` |
 | `reader.validate_header_stats()` | `Result<()>` | Cross-check header stats vs actual data (1% tolerance) |
 
 **Iterator methods** (all return lazy `RegionIter` or boxed iterators, see [Iterators](#iterators)):
@@ -120,14 +121,12 @@ The standard buffered reader. Loads the **entire file** into a `Vec<u8>` on open
 | `reader.slices::<T>()` | `RegionIter<T, SliceStepper>` | One Z-plane at a time |
 | `reader.slabs::<T>(k)` | `RegionIter<T, SlabStepper>` | `k` contiguous Z-planes |
 | `reader.tiles::<T>(shape)` | `RegionIter<T, TileStepper>` | Arbitrary 3D tiles |
-| `reader.images::<T>()` | alias for `slices` | Same as `slices` |
-| `reader.image_stack::<T>(k)` | alias for `slabs` | Same as `slabs` |
-| `reader.planes::<T>()` | alias for `slices` | Same as `slices` |
-| `reader.plane_stack::<T>(k)` | alias for `slabs` | Same as `slabs` |
 | `reader.volumes::<T>()` | `Result<RegionIter<T, SlabStepper>>` | One sub-volume per step (volume stacks only) |
 | `reader.subregion::<T>(offset, shape)` | `Result<VoxelBlock<T>>` | Single block at given offset/shape |
 | `reader.slices_f32()` | iterator yielding `VoxelBlock<f32>` | Auto-converts any mode to `f32` (complex → magnitude) |
 | `reader.slabs_f32(k)` | iterator yielding `VoxelBlock<f32>` | Same as `slices_f32` but `k` planes at a time |
+| `reader.convert_slices::<T>()` | iterator yielding `VoxelBlock<T>` | Auto-convert any mode to target type `T` |
+| `reader.convert_slabs::<T>(k)` | iterator yielding `VoxelBlock<T>` | Same as `convert_slices` but `k` planes at a time |
 | `reader.slices_u8()` | iterator yielding `VoxelBlock<u8>` | Mode 6 (Uint16) or Mode 101 (Packed4Bit); narrows/nibble-unpacks to `u8` |
 | `reader.slabs_u8(k)` | iterator yielding `VoxelBlock<u8>` | Same as `slices_u8` but `k` planes at a time |
 | `reader.slices_mode0(interp)` | iterator yielding `VoxelBlock<f32>` | Mode 0 (Int8) only; signed or unsigned |
@@ -154,9 +153,10 @@ Requires the `mmap` feature.
 | `reader.read_volume::<T>()` | `Result<VoxelBlock<T>>` | Read the entire volume as a single block |
 | `reader.read_volume_f32()` | `Result<VoxelBlock<f32>>` | Read entire volume, auto-convert any mode to `f32` |
 | `reader.read_volume_u8()` | `Result<VoxelBlock<u8>>` | Read volume as `u8` (Uint16 narrowing or Packed4Bit unpack) |
+| `reader.convert_volume::<T>()` | `Result<VoxelBlock<T>>` | Read volume, convert from any mode to type `T` |
 | `reader.validate_header_stats()` | `Result<()>` | Cross-check header stats |
 
-`MmapReader` also has all the same **iterator methods** as `Reader` (`slices`, `slabs`, `tiles`, `slices_f32`, `slabs_f32`, `slices_u8`, `slices_mode0`, `slabs_mode0`, `volumes`, `subregion`, etc.).
+`MmapReader` also has all the same **iterator methods** as `Reader` (`slices`, `slabs`, `tiles`, `slices_f32`, `slabs_f32`, `convert_slices`, `convert_slabs`, `slices_u8`, `slabs_u8`, `slices_mode0`, `slabs_mode0`, `volumes`, `subregion`, etc.).
 
 **When to use `MmapReader` vs `Reader`:**
 
@@ -205,6 +205,7 @@ Additional builder methods behind feature flags:
 | `writer.mode()` | Voxel mode |
 | `writer.header()` | Mutable access to header (modify before `finalize`) |
 | `writer.write_block::<T>(&block)` | Write a typed voxel block. `T` must match file mode |
+| `writer.write_block_as(&block)` | Write with auto-conversion to file's mode (e.g. `f32` → Float16) |
 | `writer.write_u8_block(&block)` | Convenience: write `VoxelBlock<u8>` to a Uint16 file (auto-widens) |
 | `writer.write_u4_block(&block)` | Convenience: write `VoxelBlock<u8>` to a Packed4Bit file (auto-packs, values must be 0–15) |
 | `writer.write_f16_from_f32(&block)` | Convenience: write `VoxelBlock<f32>` to a Float16 file (feature `f16`) |
@@ -217,7 +218,7 @@ Additional builder methods behind feature flags:
 Memory-mapped writer. Created via `WriterBuilder::finish_mmap()`.
 Requires `mmap` feature.
 
-Same API as `Writer` (`write_block`, `write_u8_block`, `write_f16_from_f32`,
+Same API as `Writer` (`write_block`, `write_block_as`, `write_u8_block`, `write_f16_from_f32`,
 `write_block_parallel`, `finalize`, `update_header_stats`).
 
 Key difference: `update_header_stats` does not re-read from disk since data is
@@ -236,7 +237,7 @@ Created via `WriterBuilder::finish_gzip()` / `finish_bzip2()`.
 **Important:** Compressed writers buffer the **entire file** in memory and compress
 only on `finalize`. Not suitable for large volumes that exceed RAM.
 
-Full API: `shape()`, `mode()`, `header()`, `write_block()`, `write_u8_block()`,
+Full API: `shape()`, `mode()`, `header()`, `write_block()`, `write_block_as()`, `write_u8_block()`,
 `write_f16_from_f32()`, `update_header_stats()` (reads from in-memory buffer),
 `finalize()` (takes `self` by value).
 
@@ -611,8 +612,9 @@ pub fn convert_u16_slice_to_u8(src: &[u16]) -> Result<Vec<u8>, Error>;
 ```
 
 These are convenience functions exposed from the crate root. The more comprehensive
-conversion infrastructure (i16→f32, u16→f32, i8→f32) is used internally by
-`slices_f32` / `slabs_f32` but not directly exposed.
+conversion infrastructure is used internally by `slices_f32` / `slabs_f32` /
+`convert_slices` / `convert_slabs` / `read_volume_f32` / `convert_volume` which
+automatically convert any MRC mode to the target type.
 
 ---
 

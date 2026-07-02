@@ -1,12 +1,12 @@
 //! MRC-specific type conversions.
 //!
-//! This module provides the generic conversion traits [`ConvertFrom`] and
-//! [`ConvertTo`] that power the unified reader/writer conversion system.
+//! This module provides the generic conversion trait [`ConvertFrom`] that
+//! powers the unified reader conversion system.
 //!
 //! Specific conversions:
 //! - `i8`/`i16`/`u16` → `f32` (for `slices_f32` / `slabs_f32`)
-//! - `u16` → `f16`, `f32` → `f16` (for `slices_f16` / `write_f16_from_f32`)
-//! - `u8` → `u16`, `u16` → `u8` (Packed4Bit and Mode 6 utilities)
+//! - `f16` → `f32` (for `slices_f32`)
+//! - `u8` → `u16`, `u16` → `u8` (Mode 6 utilities)
 //! - Mode 0 reinterpretation (signed vs unsigned `i8`)
 //! - 4-bit packed data unpacking/packing
 
@@ -196,14 +196,6 @@ where
     Ok(Dst::convert_from(&src))
 }
 
-/// Convert a raw byte slice from any MRC mode to target type `T`.
-///
-/// This is the single dispatch point for all reader-side conversions.
-/// The source mode is determined at runtime (from the file's header);
-/// the target type `T` is a compile-time generic.
-///
-/// Handles all real-valued modes, complex modes (via magnitude), and
-/// Packed4Bit (via nibble unpack).
 /// Convert a raw byte slice from any MRC mode to target type `T`.
 ///
 /// This is the single dispatch point for all reader-side conversions.

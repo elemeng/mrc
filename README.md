@@ -48,8 +48,10 @@ See **[docs.rs/mrc](https://docs.rs/mrc)** for the complete API reference, inclu
 - Reading files — `Reader`, `MmapReader`, compressed I/O, permissive mode,
   decompression bomb protection (256 GiB limit, configurable)
 - Writing files — `Writer`, `MmapWriter`, `GzipWriter`, `Bzip2Writer`
-- Iterators — slices, slabs, tiles, volumes, auto-conversion to `f32`
-- Full-volume reads — `read_volume::<T>()`, `read_volume_f32()`, `read_volume_u8()`
+- Iterators — slices, slabs, tiles, volumes, auto-conversion to `f32`,
+  generic `convert_slices::<T>()` / `convert_slabs::<T>()`
+- Full-volume reads — `read_volume::<T>()`, `read_volume_f32()`, `read_volume_u8()`,
+  generic `convert_volume::<T>()`
 - Data modes — `Mode` enum and compile-time `Voxel` trait, including Packed4Bit
   read/write via `slices_u8` / `write_u4_block`
 - Headers — `Header`, `HeaderBuilder`, validation, endianness

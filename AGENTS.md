@@ -161,7 +161,7 @@ The top-level `lib.rs` is the *only* public entry point. Internal modules (`engi
 
 - The `Voxel` trait connects Rust types to MRC modes at compile time.
 - Generic read/write APIs require `T: Voxel`, preventing runtime mode mismatches.
-- Built-in conversion conveniences: `slices_f32()`, `slabs_f32()`, `slices_u8()`, `slabs_u8()`, `slices_mode0()`, `slabs_mode0()`, `read_volume::<T>()`, `read_volume_f32()`, `read_volume_u8()`, `write_u8_block()`, `write_f16_from_f32()`, and `write_u4_block()`. All other type conversion is the caller's responsibility.
+- Built-in conversion conveniences: `slices_f32()`, `slabs_f32()`, `slices_u8()`, `slabs_u8()`, `slices_mode0()`, `slabs_mode0()`, `convert_slices::<T>()`, `convert_slabs::<T>()`, `convert_volume::<T>()`, `read_volume::<T>()`, `read_volume_f32()`, `read_volume_u8()`, `write_block_as()`, `write_u8_block()`, `write_f16_from_f32()`, and `write_u4_block()`.
 
 ### MRC Mode Mapping
 
