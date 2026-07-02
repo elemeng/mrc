@@ -1,20 +1,80 @@
 //! MRC-specific type conversions.
 //!
-//! This module provides conversions for the overwhelmingly common cryo-EM
-//! workflows that the crate supports as conveniences:
+//! This module provides the generic conversion traits [`ConvertFrom`] and
+//! [`ConvertTo`] that power the unified reader/writer conversion system.
 //!
+//! Specific conversions:
 //! - `i8`/`i16`/`u16` → `f32` (for `slices_f32` / `slabs_f32`)
+//! - `u16` → `f16`, `f32` → `f16` (for `slices_f16` / `write_f16_from_f32`)
+//! - `u8` → `u16`, `u16` → `u8` (Packed4Bit and Mode 6 utilities)
 //! - Mode 0 reinterpretation (signed vs unsigned `i8`)
-//! - 4-bit packed data unpacking
-//!
-//! The remaining conversions are `pub(crate)`; only the public free functions
-//! in `lib.rs` are exposed.
+//! - 4-bit packed data unpacking/packing
 
+use crate::Voxel;
 use crate::mode::M0Interpretation;
 use std::vec::Vec;
 
 #[cfg(feature = "simd")]
 use super::simd;
+
+use super::codec::decode_slice;
+use super::endian::FileEndian;
+use crate::Error;
+use crate::mode::{ComplexToRealStrategy, Float32Complex, Int16Complex, Mode};
+
+// ============================================================================
+// Generic conversion traits
+// ============================================================================
+
+/// Convert from a source voxel type to `Self` (reader side).
+///
+/// Used by [`convert_block`] to dispatch per-mode conversions at runtime.
+/// The source type is determined by the file's on-disk mode; `Self` is the
+/// target type requested by the caller.
+///
+/// # Identity
+/// The blanket `impl<T: Voxel> ConvertFrom<T> for T` handles the case
+/// where source and target are the same type (no conversion needed).
+pub trait ConvertFrom<Src: Voxel>: Voxel {
+    /// Convert a slice of source voxels to `Self`.
+    fn convert_from(src: &[Src]) -> Vec<Self>;
+}
+
+/// Identity conversion: same source and target, just copy.
+impl<T: Voxel> ConvertFrom<T> for T {
+    fn convert_from(src: &[T]) -> Vec<T> {
+        src.to_vec()
+    }
+}
+
+// ============================================================================
+// ConvertFrom implementations (reader side — any source → target)
+// ============================================================================
+
+impl ConvertFrom<i16> for f32 {
+    fn convert_from(src: &[i16]) -> Vec<f32> {
+        convert_i16_slice_to_f32(src)
+    }
+}
+
+impl ConvertFrom<i8> for f32 {
+    fn convert_from(src: &[i8]) -> Vec<f32> {
+        convert_i8_slice_to_f32(src)
+    }
+}
+
+impl ConvertFrom<u16> for f32 {
+    fn convert_from(src: &[u16]) -> Vec<f32> {
+        convert_u16_slice_to_f32(src)
+    }
+}
+
+#[cfg(feature = "f16")]
+impl ConvertFrom<crate::f16> for f32 {
+    fn convert_from(src: &[crate::f16]) -> Vec<f32> {
+        src.iter().map(|&v| f32::from(v)).collect()
+    }
+}
 
 // === Packed4Bit (Mode 101) — row-by-row unpack/pack ===
 
@@ -117,6 +177,134 @@ pub(crate) fn convert_u16_slice_to_f32(src: &[u16]) -> Vec<f32> {
 #[cfg(not(feature = "simd"))]
 pub(crate) fn convert_u16_slice_to_f32(src: &[u16]) -> Vec<f32> {
     src.iter().map(|&x| x as f32).collect()
+}
+
+// ============================================================================
+// Generic conversion dispatcher — single match over all source modes
+// ============================================================================
+
+/// Decode raw bytes as source type `Src` and convert to destination type `Dst`
+/// via the [`ConvertFrom`] trait.
+pub(crate) fn convert_with<Src: Voxel, Dst>(
+    bytes: &[u8],
+    endian: FileEndian,
+) -> Result<Vec<Dst>, Error>
+where
+    Dst: ConvertFrom<Src>,
+{
+    let src = decode_slice::<Src>(bytes, endian)?;
+    Ok(Dst::convert_from(&src))
+}
+
+/// Convert a raw byte slice from any MRC mode to target type `T`.
+///
+/// This is the single dispatch point for all reader-side conversions.
+/// The source mode is determined at runtime (from the file's header);
+/// the target type `T` is a compile-time generic.
+///
+/// Handles all real-valued modes, complex modes (via magnitude), and
+/// Packed4Bit (via nibble unpack).
+/// Convert a raw byte slice from any MRC mode to target type `T`.
+///
+/// This is the single dispatch point for all reader-side conversions.
+/// The source mode is determined at runtime (from the file's header);
+/// the target type `T` is a compile-time generic.
+///
+/// Handles all real-valued modes, complex modes (via magnitude), and
+/// Packed4Bit (via nibble unpack).
+#[cfg(feature = "f16")]
+pub(crate) fn convert_block<T>(
+    bytes: &[u8],
+    mode: Mode,
+    endian: FileEndian,
+    nx: usize,
+    ny: usize,
+) -> Result<Vec<T>, Error>
+where
+    T: Voxel + ConvertFrom<i8> + ConvertFrom<i16> + ConvertFrom<u16> + ConvertFrom<f32>,
+{
+    match mode {
+        Mode::Int8 => convert_with::<i8, T>(bytes, endian),
+        Mode::Int16 => convert_with::<i16, T>(bytes, endian),
+        Mode::Uint16 => convert_with::<u16, T>(bytes, endian),
+        Mode::Float32 => convert_with::<f32, T>(bytes, endian),
+        Mode::Float16 => {
+            // Route through f32 to avoid requiring T: ConvertFrom<crate::f16>
+            let src = decode_slice::<crate::f16>(bytes, endian)?;
+            let f32_data: Vec<f32> = src.iter().map(|&v| f32::from(v)).collect();
+            Ok(T::convert_from(&f32_data))
+        }
+        Mode::Float32Complex => {
+            let src = decode_slice::<Float32Complex>(bytes, endian)?;
+            let mag: Vec<f32> = src
+                .iter()
+                .map(|c| c.to_real(ComplexToRealStrategy::Magnitude))
+                .collect();
+            Ok(T::convert_from(&mag))
+        }
+        Mode::Int16Complex => {
+            let src = decode_slice::<Int16Complex>(bytes, endian)?;
+            let mag: Vec<f32> = src
+                .iter()
+                .map(|c| c.to_real(ComplexToRealStrategy::Magnitude))
+                .collect();
+            Ok(T::convert_from(&mag))
+        }
+        Mode::Packed4Bit => {
+            let unpacked = unpack_u4_bytes_to_u8(bytes, nx, ny);
+            let f32_data: Vec<f32> = unpacked.iter().map(|&v| v as f32).collect();
+            Ok(T::convert_from(&f32_data))
+        }
+    }
+}
+
+/// Convert a raw byte slice from any MRC mode to target type `T`.
+///
+/// This is the single dispatch point for all reader-side conversions.
+/// The source mode is determined at runtime (from the file's header);
+/// the target type `T` is a compile-time generic.
+///
+/// Handles all real-valued modes, complex modes (via magnitude), and
+/// Packed4Bit (via nibble unpack).
+#[cfg(not(feature = "f16"))]
+pub(crate) fn convert_block<T>(
+    bytes: &[u8],
+    mode: Mode,
+    endian: FileEndian,
+    nx: usize,
+    ny: usize,
+) -> Result<Vec<T>, Error>
+where
+    T: Voxel + ConvertFrom<i8> + ConvertFrom<i16> + ConvertFrom<u16> + ConvertFrom<f32>,
+{
+    match mode {
+        Mode::Int8 => convert_with::<i8, T>(bytes, endian),
+        Mode::Int16 => convert_with::<i16, T>(bytes, endian),
+        Mode::Uint16 => convert_with::<u16, T>(bytes, endian),
+        Mode::Float32 => convert_with::<f32, T>(bytes, endian),
+        Mode::Float16 => Err(Error::UnsupportedMode),
+        Mode::Float32Complex => {
+            let src = decode_slice::<Float32Complex>(bytes, endian)?;
+            let mag: Vec<f32> = src
+                .iter()
+                .map(|c| c.to_real(ComplexToRealStrategy::Magnitude))
+                .collect();
+            Ok(T::convert_from(&mag))
+        }
+        Mode::Int16Complex => {
+            let src = decode_slice::<Int16Complex>(bytes, endian)?;
+            let mag: Vec<f32> = src
+                .iter()
+                .map(|c| c.to_real(ComplexToRealStrategy::Magnitude))
+                .collect();
+            Ok(T::convert_from(&mag))
+        }
+        Mode::Packed4Bit => {
+            let unpacked = unpack_u4_bytes_to_u8(bytes, nx, ny);
+            let f32_data: Vec<f32> = unpacked.iter().map(|&v| v as f32).collect();
+            Ok(T::convert_from(&f32_data))
+        }
+    }
 }
 
 // =============================================================================

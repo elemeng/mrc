@@ -7,8 +7,8 @@
 use crate::engine::block::{VolumeShape, VoxelBlock};
 use crate::engine::codec::{EndianCodec, decode_slice, encode_slice};
 use crate::engine::endian::FileEndian;
-use crate::iter::{RegionIter, SlabStepper, SliceStepper, TileStepper};
-use crate::mode::{ComplexToRealStrategy, Float32Complex, Int16Complex, M0Interpretation, Voxel};
+use crate::iter::{RegionIter, SlabStepper, SliceStepper, Stepper, TileStepper};
+use crate::mode::{M0Interpretation, Voxel};
 use crate::{Error, Header, Mode};
 use std::borrow::Cow;
 use std::io::Read;
@@ -20,6 +20,65 @@ use std::io::Read;
 /// as a type alias avoids clippy's `type_complexity` lint while keeping the
 /// concrete type visible.
 type VoxelIter<'a, T> = Box<dyn Iterator<Item = Result<VoxelBlock<T>, Error>> + 'a>;
+
+/// Raw-byte block iterator (no type decoding).
+///
+/// Yields `(raw_bytes, offset, shape)` triples. Used as the base for generic
+/// conversion iterators via [`convert_iter`].
+pub(crate) struct RawRegionIter<'a, R: VoxelSource, S> {
+    reader: &'a R,
+    volume_shape: VolumeShape,
+    stepper: S,
+}
+
+impl<'a, R: VoxelSource, S> RawRegionIter<'a, R, S> {
+    pub(crate) fn new(reader: &'a R, volume_shape: VolumeShape, stepper: S) -> Self {
+        Self {
+            reader,
+            volume_shape,
+            stepper,
+        }
+    }
+}
+
+impl<'a, R: VoxelSource, S: Stepper> Iterator for RawRegionIter<'a, R, S> {
+    type Item = Result<(Vec<u8>, [usize; 3], [usize; 3]), Error>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let (offset, shape) = self.stepper.next(self.volume_shape)?;
+        match self.reader.vs_read_block_bytes(offset, shape) {
+            Ok(bytes) => Some(Ok((bytes.into_owned(), offset, shape))),
+            Err(e) => Some(Err(e)),
+        }
+    }
+}
+
+/// Wrap a raw-byte iterator, converting each block to type `T` via
+/// [`convert_block`](crate::engine::convert::convert_block).
+pub(crate) fn convert_iter<'a, R: VoxelSource, S: Stepper + 'a, T>(
+    raw: RawRegionIter<'a, R, S>,
+    mode: Mode,
+    endian: FileEndian,
+    nx: usize,
+    ny: usize,
+) -> impl Iterator<Item = Result<VoxelBlock<T>, Error>> + 'a
+where
+    T: crate::engine::convert::ConvertFrom<i8>
+        + crate::engine::convert::ConvertFrom<i16>
+        + crate::engine::convert::ConvertFrom<u16>
+        + crate::engine::convert::ConvertFrom<f32>
+        + Voxel,
+{
+    raw.map(move |result| {
+        let (bytes, offset, shape) = result?;
+        let data = crate::engine::convert::convert_block::<T>(&bytes, mode, endian, nx, ny)?;
+        Ok(VoxelBlock {
+            offset,
+            shape,
+            data,
+        })
+    })
+}
 
 mod private {
     /// Sealed trait marker — prevents external implementations of [`VoxelSource`].
@@ -172,97 +231,42 @@ macro_rules! impl_inherent_reader_methods {
                 self.subregion([0, 0, 0], [s.nx, s.ny, s.nz])
             }
 
-            /// Read the entire volume as `f32`, converting from any mode.
+            /// Read the entire volume, converting from any mode to `T`.
             ///
-            /// Supports all real-valued modes (Int8, Int16, Uint16, Float32,
-            /// Float16, Packed4Bit) and converts complex modes via magnitude.
-            /// Returns the full volume in a single [`VoxelBlock<f32>`].
-            pub fn read_volume_f32(&self) -> Result<VoxelBlock<f32>, Error> {
+            /// Supports all real-valued modes, complex modes (via magnitude), and
+            /// Packed4Bit (via nibble unpack). This is the generic replacement for
+            /// `read_volume_f32` — just use `read_volume::<f32>()`.
+            pub fn convert_volume<T>(&self) -> Result<VoxelBlock<T>, Error>
+            where
+                T: Voxel
+                    + crate::engine::convert::ConvertFrom<i8>
+                    + crate::engine::convert::ConvertFrom<i16>
+                    + crate::engine::convert::ConvertFrom<u16>
+                    + crate::engine::convert::ConvertFrom<f32>,
+            {
                 let shape = self.shape();
                 let offset = [0, 0, 0];
                 let block_shape = [shape.nx, shape.ny, shape.nz];
-                match self.mode() {
-                    Mode::Float32 => self.subregion::<f32>(offset, block_shape),
-                    Mode::Int16 => {
-                        let block = self.subregion::<i16>(offset, block_shape)?;
-                        let data = crate::engine::convert::convert_i16_slice_to_f32(&block.data);
-                        Ok(VoxelBlock {
-                            offset,
-                            shape: block_shape,
-                            data,
-                        })
-                    }
-                    Mode::Uint16 => {
-                        let block = self.subregion::<u16>(offset, block_shape)?;
-                        let data = crate::engine::convert::convert_u16_slice_to_f32(&block.data);
-                        Ok(VoxelBlock {
-                            offset,
-                            shape: block_shape,
-                            data,
-                        })
-                    }
-                    Mode::Int8 => {
-                        let block = self.subregion::<i8>(offset, block_shape)?;
-                        let data = crate::engine::convert::convert_i8_slice_to_f32(&block.data);
-                        Ok(VoxelBlock {
-                            offset,
-                            shape: block_shape,
-                            data,
-                        })
-                    }
-                    #[cfg(feature = "f16")]
-                    Mode::Float16 => {
-                        let block = self.subregion::<crate::f16>(offset, block_shape)?;
-                        let data = block.data.iter().map(|&v| f32::from(v)).collect();
-                        Ok(VoxelBlock {
-                            offset,
-                            shape: block_shape,
-                            data,
-                        })
-                    }
-                    #[cfg(not(feature = "f16"))]
-                    Mode::Float16 => Err(Error::UnsupportedMode),
-                    Mode::Float32Complex => {
-                        let block = self.subregion::<Float32Complex>(offset, block_shape)?;
-                        let data = block
-                            .data
-                            .iter()
-                            .map(|c| c.to_real(ComplexToRealStrategy::Magnitude))
-                            .collect();
-                        Ok(VoxelBlock {
-                            offset,
-                            shape: block_shape,
-                            data,
-                        })
-                    }
-                    Mode::Int16Complex => {
-                        let block = self.subregion::<Int16Complex>(offset, block_shape)?;
-                        let data = block
-                            .data
-                            .iter()
-                            .map(|c| c.to_real(ComplexToRealStrategy::Magnitude))
-                            .collect();
-                        Ok(VoxelBlock {
-                            offset,
-                            shape: block_shape,
-                            data,
-                        })
-                    }
-                    Mode::Packed4Bit => {
-                        let bytes = self.vs_read_block_bytes(offset, block_shape)?;
-                        let unpacked = crate::engine::convert::unpack_u4_bytes_to_u8(
-                            &bytes,
-                            shape.nx,
-                            shape.ny * shape.nz,
-                        );
-                        let data = unpacked.iter().map(|&v| v as f32).collect();
-                        Ok(VoxelBlock {
-                            offset,
-                            shape: block_shape,
-                            data,
-                        })
-                    }
-                }
+                let bytes = self.vs_read_block_bytes(offset, block_shape)?;
+                let data = crate::engine::convert::convert_block::<T>(
+                    &bytes,
+                    self.mode(),
+                    self.endian(),
+                    shape.nx,
+                    shape.ny,
+                )?;
+                Ok(VoxelBlock {
+                    offset,
+                    shape: block_shape,
+                    data,
+                })
+            }
+
+            /// Read the entire volume as `f32`, converting from any mode.
+            ///
+            /// Shorthand for `convert_volume::<f32>()`.
+            pub fn read_volume_f32(&self) -> Result<VoxelBlock<f32>, Error> {
+                self.convert_volume::<f32>()
             }
 
             /// Read the entire volume as `u8`, unpacking from Mode 101 (Packed4Bit).
@@ -293,89 +297,60 @@ macro_rules! impl_inherent_reader_methods {
                 })
             }
 
+            /// Iterate over Z-slices, converting each to target type `T`.
+            ///
+            /// Supports all real-valued MRC modes, complex modes (via magnitude),
+            /// and Packed4Bit (via nibble unpack). This is the generic replacement
+            /// for `slices_f32` — just use `convert_slices::<f32>()`.
+            pub fn convert_slices<T>(&self) -> VoxelIter<'_, T>
+            where
+                T: Voxel
+                    + crate::engine::convert::ConvertFrom<i8>
+                    + crate::engine::convert::ConvertFrom<i16>
+                    + crate::engine::convert::ConvertFrom<u16>
+                    + crate::engine::convert::ConvertFrom<f32>,
+            {
+                let shape = self.shape();
+                Box::new(convert_iter::<_, SliceStepper, T>(
+                    RawRegionIter::new(self, shape, SliceStepper::new()),
+                    self.mode(),
+                    self.endian(),
+                    shape.nx,
+                    shape.ny,
+                ))
+            }
+
             /// Iterate over Z-slices, converting each to `f32` automatically.
             ///
-            /// Supports all real-valued MRC modes (Int8, Int16, Uint16, Float32,
-            /// Float16, Packed4Bit) and converts complex modes via magnitude. This is the
-            /// most convenient method for viewing or processing cryo-EM data.
-            ///
-            /// # Errors
-            /// Returns [`Error::ModeMismatch`] if no matching conversion exists.
+            /// Shorthand for `convert_slices::<f32>()`.
             pub fn slices_f32(&self) -> VoxelIter<'_, f32> {
-                if self.mode() == Mode::Packed4Bit {
-                    let shape = self.shape();
-                    let nx = shape.nx;
-                    let ny = shape.ny;
-                    let nz = shape.nz;
-                    return Box::new((0..nz).map(move |z| {
-                        let bytes = self.vs_read_block_bytes([0, 0, z], [nx, ny, 1])?;
-                        let data = crate::engine::convert::unpack_u4_bytes_to_u8(&bytes, nx, ny)
-                            .iter()
-                            .map(|&v| v as f32)
-                            .collect();
-                        Ok(VoxelBlock {
-                            offset: [0, 0, z],
-                            shape: [nx, ny, 1],
-                            data,
-                        })
-                    }));
-                }
-                iter_f32_helper(
-                    self.mode(),
-                    self.slices::<f32>(),
-                    self.slices::<i16>(),
-                    self.slices::<u16>(),
-                    self.slices::<i8>(),
-                    #[cfg(feature = "f16")]
-                    self.slices::<crate::f16>(),
-                    self.slices::<Float32Complex>(),
-                    self.slices::<Int16Complex>(),
-                )
+                self.convert_slices::<f32>()
             }
+
+            /// Iterate over Z-slabs, converting each to target type `T`.
+            pub fn convert_slabs<T>(&self, k: usize) -> VoxelIter<'_, T>
+            where
+                T: Voxel
+                    + crate::engine::convert::ConvertFrom<i8>
+                    + crate::engine::convert::ConvertFrom<i16>
+                    + crate::engine::convert::ConvertFrom<u16>
+                    + crate::engine::convert::ConvertFrom<f32>,
+            {
+                let shape = self.shape();
+                Box::new(convert_iter::<_, SlabStepper, T>(
+                    RawRegionIter::new(self, shape, SlabStepper::new(k)),
+                    self.mode(),
+                    self.endian(),
+                    shape.nx,
+                    shape.ny,
+                ))
+            }
+
             /// Iterate over Z-slabs, converting each to `f32` automatically.
             ///
-            /// See [`slices_f32`](Self::slices_f32) for supported mode conversions.
+            /// Shorthand for `convert_slabs::<f32>(k)`.
             pub fn slabs_f32(&self, k: usize) -> VoxelIter<'_, f32> {
-                if self.mode() == Mode::Packed4Bit {
-                    let volume_shape = self.shape();
-                    let nx = volume_shape.nx;
-                    let ny = volume_shape.ny;
-                    let k = k.max(1);
-                    let mut z = 0usize;
-                    return Box::new(std::iter::from_fn(move || {
-                        if z >= volume_shape.nz {
-                            return None;
-                        }
-                        let start = z;
-                        let sz = k.min(volume_shape.nz - z);
-                        z += sz;
-                        let bytes = match self.vs_read_block_bytes([0, 0, start], [nx, ny, sz]) {
-                            Ok(b) => b,
-                            Err(e) => return Some(Err(e)),
-                        };
-                        let data =
-                            crate::engine::convert::unpack_u4_bytes_to_u8(&bytes, nx, ny * sz)
-                                .iter()
-                                .map(|&v| v as f32)
-                                .collect();
-                        Some(Ok(VoxelBlock {
-                            offset: [0, 0, start],
-                            shape: [nx, ny, sz],
-                            data,
-                        }))
-                    }));
-                }
-                iter_f32_helper(
-                    self.mode(),
-                    self.slabs::<f32>(k),
-                    self.slabs::<i16>(k),
-                    self.slabs::<u16>(k),
-                    self.slabs::<i8>(k),
-                    #[cfg(feature = "f16")]
-                    self.slabs::<crate::f16>(k),
-                    self.slabs::<Float32Complex>(k),
-                    self.slabs::<Int16Complex>(k),
-                )
+                self.convert_slabs::<f32>(k)
             }
             /// Iterate over Z-slices as `u8`, narrowing from Mode 6 (Uint16)
             /// or unpacking from Mode 101 (Packed4Bit).
@@ -535,182 +510,6 @@ macro_rules! impl_inherent_reader_methods {
 impl_inherent_reader_methods!(crate::Reader);
 #[cfg(feature = "mmap")]
 impl_inherent_reader_methods!(crate::MmapReader);
-
-/// Shared helper for `slices_f32` / `slabs_f32` — selects the correct
-/// conversion based on file mode.
-///
-/// Supports all real-valued modes plus Float16, and converts complex modes
-/// via magnitude (most common default for real-valued visualisation).
-#[cfg(feature = "f16")]
-#[allow(clippy::too_many_arguments)]
-fn iter_f32_helper<'a, I, I16, I16E, U16, U16E, I8, I8E, IF16, IF16E, IC32, IC32E, IC16, IC16E>(
-    mode: Mode,
-    iter_f32: I,
-    iter_i16: I16,
-    iter_u16: U16,
-    iter_i8: I8,
-    iter_f16: IF16,
-    iter_c32: IC32,
-    iter_c16: IC16,
-) -> VoxelIter<'a, f32>
-where
-    I: Iterator<Item = Result<VoxelBlock<f32>, Error>> + 'a,
-    I16: Iterator<Item = Result<VoxelBlock<i16>, I16E>> + 'a,
-    I16E: Into<Error>,
-    U16: Iterator<Item = Result<VoxelBlock<u16>, U16E>> + 'a,
-    U16E: Into<Error>,
-    I8: Iterator<Item = Result<VoxelBlock<i8>, I8E>> + 'a,
-    I8E: Into<Error>,
-    IF16: Iterator<Item = Result<VoxelBlock<crate::f16>, IF16E>> + 'a,
-    IF16E: Into<Error>,
-    IC32: Iterator<Item = Result<VoxelBlock<Float32Complex>, IC32E>> + 'a,
-    IC32E: Into<Error>,
-    IC16: Iterator<Item = Result<VoxelBlock<Int16Complex>, IC16E>> + 'a,
-    IC16E: Into<Error>,
-{
-    match mode {
-        Mode::Float32 => Box::new(iter_f32) as Box<dyn Iterator<Item = _>>,
-        Mode::Int16 => Box::new(iter_i16.map(|b| {
-            let b = b.map_err(Into::into)?;
-            Ok(VoxelBlock {
-                offset: b.offset,
-                shape: b.shape,
-                data: crate::engine::convert::convert_i16_slice_to_f32(&b.data),
-            })
-        })),
-        Mode::Uint16 => Box::new(iter_u16.map(|b| {
-            let b = b.map_err(Into::into)?;
-            Ok(VoxelBlock {
-                offset: b.offset,
-                shape: b.shape,
-                data: crate::engine::convert::convert_u16_slice_to_f32(&b.data),
-            })
-        })),
-        Mode::Int8 => Box::new(iter_i8.map(|b| {
-            let b = b.map_err(Into::into)?;
-            Ok(VoxelBlock {
-                offset: b.offset,
-                shape: b.shape,
-                data: crate::engine::convert::convert_i8_slice_to_f32(&b.data),
-            })
-        })),
-        #[cfg(feature = "f16")]
-        Mode::Float16 => Box::new(iter_f16.map(|b| {
-            let b = b.map_err(Into::into)?;
-            Ok(VoxelBlock {
-                offset: b.offset,
-                shape: b.shape,
-                data: b.data.iter().map(|&v| f32::from(v)).collect(),
-            })
-        })),
-        Mode::Float32Complex => Box::new(iter_c32.map(|b| {
-            let b = b.map_err(Into::into)?;
-            Ok(VoxelBlock {
-                offset: b.offset,
-                shape: b.shape,
-                data: b
-                    .data
-                    .iter()
-                    .map(|c| c.to_real(crate::mode::ComplexToRealStrategy::Magnitude))
-                    .collect(),
-            })
-        })),
-        Mode::Int16Complex => Box::new(iter_c16.map(|b| {
-            let b = b.map_err(Into::into)?;
-            Ok(VoxelBlock {
-                offset: b.offset,
-                shape: b.shape,
-                data: b
-                    .data
-                    .iter()
-                    .map(|c| c.to_real(crate::mode::ComplexToRealStrategy::Magnitude))
-                    .collect(),
-            })
-        })),
-        _ => Box::new(std::iter::once(Err(Error::UnsupportedMode))),
-    }
-}
-
-/// Version of [`iter_f32_helper`] used when the `f16` feature is disabled.
-/// Omits the Float16 iterator parameter and returns `UnsupportedMode` for Float16 mode.
-#[cfg(not(feature = "f16"))]
-#[allow(clippy::too_many_arguments)]
-fn iter_f32_helper<'a, I, I16, I16E, U16, U16E, I8, I8E, IC32, IC32E, IC16, IC16E>(
-    mode: Mode,
-    iter_f32: I,
-    iter_i16: I16,
-    iter_u16: U16,
-    iter_i8: I8,
-    iter_c32: IC32,
-    iter_c16: IC16,
-) -> VoxelIter<'a, f32>
-where
-    I: Iterator<Item = Result<VoxelBlock<f32>, Error>> + 'a,
-    I16: Iterator<Item = Result<VoxelBlock<i16>, I16E>> + 'a,
-    I16E: Into<Error>,
-    U16: Iterator<Item = Result<VoxelBlock<u16>, U16E>> + 'a,
-    U16E: Into<Error>,
-    I8: Iterator<Item = Result<VoxelBlock<i8>, I8E>> + 'a,
-    I8E: Into<Error>,
-    IC32: Iterator<Item = Result<VoxelBlock<Float32Complex>, IC32E>> + 'a,
-    IC32E: Into<Error>,
-    IC16: Iterator<Item = Result<VoxelBlock<Int16Complex>, IC16E>> + 'a,
-    IC16E: Into<Error>,
-{
-    match mode {
-        Mode::Float32 => Box::new(iter_f32) as Box<dyn Iterator<Item = _>>,
-        Mode::Int16 => Box::new(iter_i16.map(|b| {
-            let b = b.map_err(Into::into)?;
-            Ok(VoxelBlock {
-                offset: b.offset,
-                shape: b.shape,
-                data: crate::engine::convert::convert_i16_slice_to_f32(&b.data),
-            })
-        })),
-        Mode::Uint16 => Box::new(iter_u16.map(|b| {
-            let b = b.map_err(Into::into)?;
-            Ok(VoxelBlock {
-                offset: b.offset,
-                shape: b.shape,
-                data: crate::engine::convert::convert_u16_slice_to_f32(&b.data),
-            })
-        })),
-        Mode::Int8 => Box::new(iter_i8.map(|b| {
-            let b = b.map_err(Into::into)?;
-            Ok(VoxelBlock {
-                offset: b.offset,
-                shape: b.shape,
-                data: crate::engine::convert::convert_i8_slice_to_f32(&b.data),
-            })
-        })),
-        Mode::Float16 => Box::new(std::iter::once(Err(Error::UnsupportedMode))),
-        Mode::Float32Complex => Box::new(iter_c32.map(|b| {
-            let b = b.map_err(Into::into)?;
-            Ok(VoxelBlock {
-                offset: b.offset,
-                shape: b.shape,
-                data: b
-                    .data
-                    .iter()
-                    .map(|c| c.to_real(crate::mode::ComplexToRealStrategy::Magnitude))
-                    .collect(),
-            })
-        })),
-        Mode::Int16Complex => Box::new(iter_c16.map(|b| {
-            let b = b.map_err(Into::into)?;
-            Ok(VoxelBlock {
-                offset: b.offset,
-                shape: b.shape,
-                data: b
-                    .data
-                    .iter()
-                    .map(|c| c.to_real(crate::mode::ComplexToRealStrategy::Magnitude))
-                    .collect(),
-            })
-        })),
-        _ => Box::new(std::iter::once(Err(Error::UnsupportedMode))),
-    }
-}
 
 /// Validate a block read/write request.
 ///

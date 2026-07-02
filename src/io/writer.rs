@@ -8,49 +8,11 @@
 //! # Typical write lifecycle
 //!
 //! 1. Build a writer with [`create`](crate::create) or [`WriterBuilder::new`].
-//! 2. Write [`VoxelBlock`](crate::VoxelBlock)s with [`write_block`](Writer::write_block).
+//! 2. Write [`VoxelBlock`](crate::VoxelBlock)s with [`write_block`](Writer::write_block)
+//!    or [`write_block_as`](Writer::write_block_as) for automatic type conversion.
 //! 3. Optionally call [`update_header_stats`](Writer::update_header_stats) to
 //!    fill header density statistics.
 //! 4. Call [`finalize`](Writer::finalize) to rewrite the header with final metadata.
-
-macro_rules! write_u8_block_body {
-    ($self:ident, $block:ident) => {{
-        if $self.mode() != Mode::Uint16 {
-            return Err(Error::ModeMismatch {
-                file_mode: $self.mode(),
-                requested_mode: Mode::Uint16,
-            });
-        }
-        let widened = crate::engine::convert::convert_u8_slice_to_u16(&$block.data);
-        $self.write_block(&VoxelBlock {
-            offset: $block.offset,
-            shape: $block.shape,
-            data: widened,
-        })
-    }};
-}
-
-#[cfg_attr(not(feature = "f16"), allow(unused_macros))]
-macro_rules! write_f16_from_f32_body {
-    ($self:ident, $block:ident) => {{
-        if $self.mode() != Mode::Float16 {
-            return Err(Error::ModeMismatch {
-                file_mode: $self.mode(),
-                requested_mode: Mode::Float16,
-            });
-        }
-        let data: Vec<crate::f16> = $block
-            .data
-            .iter()
-            .map(|&v| crate::f16::from_f32(v))
-            .collect();
-        $self.write_block::<crate::f16>(&VoxelBlock {
-            offset: $block.offset,
-            shape: $block.shape,
-            data,
-        })
-    }};
-}
 
 macro_rules! write_u4_block_body {
     ($self:ident, $block:ident) => {{
@@ -77,6 +39,35 @@ macro_rules! write_u4_block_body {
         let packed = crate::engine::convert::pack_u8_to_u4_bytes(&$block.data, nx, ny * nz);
         $self.write_block_bytes(&packed, $block.offset, $block.shape)?;
         Ok(())
+    }};
+}
+
+// Helper: write block with automatic type conversion to the file's mode.
+// Dispatches on self.mode() at runtime. Currently supports f32 → Float16.
+macro_rules! write_block_as_body {
+    ($self:ident, $block:ident) => {{
+        if !$self.shape().contains_block($block.offset, $block.shape) {
+            return Err(Error::BoundsError);
+        }
+        match $self.mode() {
+            #[cfg(feature = "f16")]
+            Mode::Float16 => {
+                let data: Vec<crate::f16> = $block
+                    .data
+                    .iter()
+                    .map(|&v| crate::f16::from_f32(v))
+                    .collect();
+                $self.write_block::<crate::f16>(&VoxelBlock {
+                    offset: $block.offset,
+                    shape: $block.shape,
+                    data,
+                })
+            }
+            _ => Err(Error::ModeMismatch {
+                file_mode: $self.mode(),
+                requested_mode: $self.mode(),
+            }),
+        }
     }};
 }
 
@@ -412,7 +403,46 @@ impl Writer {
     /// # Errors
     /// Returns [`Error::ModeMismatch`] if the file mode is not `Uint16`.
     pub fn write_u8_block(&mut self, block: &VoxelBlock<u8>) -> Result<(), Error> {
-        write_u8_block_body!(self, block)
+        if self.mode() != Mode::Uint16 {
+            return Err(Error::ModeMismatch {
+                file_mode: self.mode(),
+                requested_mode: Mode::Uint16,
+            });
+        }
+        let widened = crate::engine::convert::convert_u8_slice_to_u16(&block.data);
+        self.write_block(&VoxelBlock {
+            offset: block.offset,
+            shape: block.shape,
+            data: widened,
+        })
+    }
+
+    /// Write a block with automatic type conversion to the file's mode.
+    ///
+    /// The caller provides data as `f32` (or another source type) and it is
+    /// converted to the file's on-disk mode. For example, writing `f32` data
+    /// to a Float16 file:
+    ///
+    /// ```ignore
+    /// writer.write_block_as(&f32_block)?;
+    /// ```
+    ///
+    /// Currently supports `f32` → Float16 conversion. More pairs will be
+    /// added in future releases.
+    ///
+    /// # Errors
+    /// Returns [`Error::ModeMismatch`] if no conversion is available for the
+    /// file's mode.
+    pub fn write_block_as(&mut self, block: &VoxelBlock<f32>) -> Result<(), Error> {
+        write_block_as_body!(self, block)
+    }
+
+    /// Write an `f32` block to a Float16 file.
+    ///
+    /// Shorthand for `write_block_as`.
+    #[cfg(feature = "f16")]
+    pub fn write_f16_from_f32(&mut self, block: &VoxelBlock<f32>) -> Result<(), Error> {
+        self.write_block_as(block)
     }
 
     /// Write a block with parallel encoding and sequential file I/O.
@@ -463,15 +493,6 @@ impl Writer {
         }
 
         Ok(())
-    }
-
-    /// Write an `f32` block to a Float16 file.
-    ///
-    /// This is a convenience method for the common case of writing f32 data
-    /// to a half-precision MRC file.
-    #[cfg(feature = "f16")]
-    pub fn write_f16_from_f32(&mut self, block: &VoxelBlock<f32>) -> Result<(), Error> {
-        write_f16_from_f32_body!(self, block)
     }
 
     /// Write a block of `u8` data (0–15 per voxel) by packing to 4-bit (Mode 101).
@@ -728,7 +749,29 @@ impl MmapWriter {
     /// # Errors
     /// Returns [`Error::ModeMismatch`] if the file mode is not `Uint16`.
     pub fn write_u8_block(&mut self, block: &VoxelBlock<u8>) -> Result<(), Error> {
-        write_u8_block_body!(self, block)
+        if self.mode() != Mode::Uint16 {
+            return Err(Error::ModeMismatch {
+                file_mode: self.mode(),
+                requested_mode: Mode::Uint16,
+            });
+        }
+        let widened = crate::engine::convert::convert_u8_slice_to_u16(&block.data);
+        self.write_block(&VoxelBlock {
+            offset: block.offset,
+            shape: block.shape,
+            data: widened,
+        })
+    }
+
+    /// Write a block with automatic type conversion to the file's mode.
+    pub fn write_block_as(&mut self, block: &VoxelBlock<f32>) -> Result<(), Error> {
+        write_block_as_body!(self, block)
+    }
+
+    /// Write an `f32` block to a Float16 file. Shorthand for `write_block_as`.
+    #[cfg(feature = "f16")]
+    pub fn write_f16_from_f32(&mut self, block: &VoxelBlock<f32>) -> Result<(), Error> {
+        self.write_block_as(block)
     }
 
     /// Write a block of voxels to the memory-mapped file.
@@ -820,12 +863,6 @@ impl MmapWriter {
             })?;
 
         Ok(())
-    }
-
-    /// Write an `f32` block to a Float16 file.
-    #[cfg(feature = "f16")]
-    pub fn write_f16_from_f32(&mut self, block: &VoxelBlock<f32>) -> Result<(), Error> {
-        write_f16_from_f32_body!(self, block)
     }
 
     /// Write a block of `u8` data (0–15 per voxel) by packing to 4-bit (Mode 101).
@@ -1032,16 +1069,29 @@ impl<C: Compressor> CompressedWriter<C> {
     /// is widened to `u16` before writing, matching Python `mrcfile`'s
     /// auto-conversion behaviour for `np.uint8` data.
     pub fn write_u8_block(&mut self, block: &VoxelBlock<u8>) -> Result<(), Error> {
-        write_u8_block_body!(self, block)
+        if self.mode() != Mode::Uint16 {
+            return Err(Error::ModeMismatch {
+                file_mode: self.mode(),
+                requested_mode: Mode::Uint16,
+            });
+        }
+        let widened = crate::engine::convert::convert_u8_slice_to_u16(&block.data);
+        self.write_block(&VoxelBlock {
+            offset: block.offset,
+            shape: block.shape,
+            data: widened,
+        })
     }
 
-    /// Write an `f32` block to a Float16 file.
-    ///
-    /// This is a convenience method for the common case of writing f32 data
-    /// to a half-precision MRC file.
+    /// Write a block with automatic type conversion to the file's mode.
+    pub fn write_block_as(&mut self, block: &VoxelBlock<f32>) -> Result<(), Error> {
+        write_block_as_body!(self, block)
+    }
+
+    /// Write an `f32` block to a Float16 file. Shorthand for `write_block_as`.
     #[cfg(feature = "f16")]
     pub fn write_f16_from_f32(&mut self, block: &VoxelBlock<f32>) -> Result<(), Error> {
-        write_f16_from_f32_body!(self, block)
+        self.write_block_as(block)
     }
 
     /// Write a block of `u8` data (0–15 per voxel) by packing to 4-bit (Mode 101).
