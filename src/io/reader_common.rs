@@ -2,7 +2,7 @@
 //!
 //! This module contains the [`VoxelSource`] trait and helper functions that are
 //! used by [`Reader`](crate::Reader) and [`MmapReader`](crate::MmapReader) to implement block validation, endian
-//! decoding, and auto-conversion iterators (`slices_f32`, `convert_slices`, etc.).
+//! decoding, and auto-conversion via [`ConvertReader`].
 
 use crate::engine::block::{VolumeShape, VoxelBlock};
 use crate::engine::codec::{EndianCodec, decode_slice, encode_slice};
@@ -76,6 +76,113 @@ where
             data,
         })
     })
+}
+
+/// A reader wrapper that auto-converts all voxel data to type `T`.
+///
+/// Created via [`Reader::as`](crate::Reader::as) or [`MmapReader::as`](crate::MmapReader::as).
+/// All iteration methods return [`VoxelBlock<T>`] with automatic mode conversion.
+///
+/// ```ignore
+/// for slice in reader.convert::<f32>().slices() {
+///     let block = slice?;  // VoxelBlock<f32>
+/// }
+/// ```
+pub struct ConvertReader<'a, R, T> {
+    inner: &'a R,
+    _target: core::marker::PhantomData<T>,
+}
+
+impl<'a, R: VoxelSource + ReaderCore, T> ConvertReader<'a, R, T>
+where
+    T: Voxel
+        + crate::engine::convert::ConvertFrom<i8>
+        + crate::engine::convert::ConvertFrom<i16>
+        + crate::engine::convert::ConvertFrom<u16>
+        + crate::engine::convert::ConvertFrom<f32>,
+{
+    /// Iterate over Z-slices, auto-converting each to `T`.
+    pub fn slices(&self) -> VoxelIter<'_, T> {
+        let shape = self.inner.shape();
+        Box::new(convert_iter::<_, SliceStepper, T>(
+            RawRegionIter::new(self.inner, shape, SliceStepper::new()),
+            self.inner.mode(),
+            self.inner.endian(),
+            shape.nx,
+            shape.ny,
+        ))
+    }
+
+    /// Iterate over Z-slabs, auto-converting each to `T`.
+    pub fn slabs(&self, k: usize) -> VoxelIter<'_, T> {
+        let shape = self.inner.shape();
+        Box::new(convert_iter::<_, SlabStepper, T>(
+            RawRegionIter::new(self.inner, shape, SlabStepper::new(k)),
+            self.inner.mode(),
+            self.inner.endian(),
+            shape.nx,
+            shape.ny,
+        ))
+    }
+
+    /// Iterate over 3D tiles, auto-converting each to `T`.
+    pub fn tiles(&self, tile_shape: [usize; 3]) -> VoxelIter<'_, T> {
+        let shape = self.inner.shape();
+        Box::new(convert_iter::<_, TileStepper, T>(
+            RawRegionIter::new(self.inner, shape, TileStepper::new(tile_shape)),
+            self.inner.mode(),
+            self.inner.endian(),
+            shape.nx,
+            shape.ny,
+        ))
+    }
+
+    /// Read a sub-region, auto-converting to `T`.
+    pub fn subregion(&self, offset: [usize; 3], shape: [usize; 3]) -> Result<VoxelBlock<T>, Error> {
+        let bytes = self.inner.vs_read_block_bytes(offset, shape)?;
+        let s = self.inner.shape();
+        let data = crate::engine::convert::convert_block::<T>(
+            &bytes,
+            self.inner.mode(),
+            self.inner.endian(),
+            s.nx,
+            s.ny,
+        )?;
+        Ok(VoxelBlock {
+            offset,
+            shape,
+            data,
+        })
+    }
+
+    /// Read the entire volume, auto-converting to `T`.
+    pub fn read_volume(&self) -> Result<VoxelBlock<T>, Error> {
+        let s = self.inner.shape();
+        let block_shape = [s.nx, s.ny, s.nz];
+        self.subregion([0, 0, 0], block_shape)
+    }
+}
+
+/// Adds `.convert::<T>()` method on a reader type.
+macro_rules! impl_convert_method {
+    ($ty:ty) => {
+        impl $ty {
+            /// Return a wrapper that auto-converts all reads to type `T`.
+            pub fn convert<T>(&self) -> ConvertReader<'_, $ty, T>
+            where
+                T: Voxel
+                    + crate::engine::convert::ConvertFrom<i8>
+                    + crate::engine::convert::ConvertFrom<i16>
+                    + crate::engine::convert::ConvertFrom<u16>
+                    + crate::engine::convert::ConvertFrom<f32>,
+            {
+                ConvertReader {
+                    inner: self,
+                    _target: core::marker::PhantomData,
+                }
+            }
+        }
+    };
 }
 
 mod private {
@@ -213,37 +320,6 @@ macro_rules! impl_inherent_reader_methods {
                 self.subregion([0, 0, 0], [s.nx, s.ny, s.nz])
             }
 
-            /// Read the entire volume, converting from any mode to `T`.
-            ///
-            /// Supports all real-valued modes, complex modes (via magnitude), and
-            /// Packed4Bit (via nibble unpack). Shorthand for the common case:
-            /// [`read_volume_f32`](Self::read_volume_f32).
-            pub fn convert_volume<T>(&self) -> Result<VoxelBlock<T>, Error>
-            where
-                T: Voxel
-                    + crate::engine::convert::ConvertFrom<i8>
-                    + crate::engine::convert::ConvertFrom<i16>
-                    + crate::engine::convert::ConvertFrom<u16>
-                    + crate::engine::convert::ConvertFrom<f32>,
-            {
-                let shape = self.shape();
-                let offset = [0, 0, 0];
-                let block_shape = [shape.nx, shape.ny, shape.nz];
-                let bytes = self.vs_read_block_bytes(offset, block_shape)?;
-                let data = crate::engine::convert::convert_block::<T>(
-                    &bytes,
-                    self.mode(),
-                    self.endian(),
-                    shape.nx,
-                    shape.ny,
-                )?;
-                Ok(VoxelBlock {
-                    offset,
-                    shape: block_shape,
-                    data,
-                })
-            }
-
             /// Read the entire volume as `u8`, unpacking from Mode 101 (Packed4Bit).
             ///
             /// Each `u8` value is in the range 0–15.
@@ -270,67 +346,6 @@ macro_rules! impl_inherent_reader_methods {
                     shape: block_shape,
                     data,
                 })
-            }
-
-            /// Iterate over Z-slices, converting each to target type `T`.
-            ///
-            /// Supports all real-valued MRC modes, complex modes (via magnitude),
-            /// and Packed4Bit (via nibble unpack). This is the generic replacement
-            /// for `slices_f32` — just use `convert_slices::<f32>()`.
-            pub fn convert_slices<T>(&self) -> VoxelIter<'_, T>
-            where
-                T: Voxel
-                    + crate::engine::convert::ConvertFrom<i8>
-                    + crate::engine::convert::ConvertFrom<i16>
-                    + crate::engine::convert::ConvertFrom<u16>
-                    + crate::engine::convert::ConvertFrom<f32>,
-            {
-                let shape = self.shape();
-                Box::new(convert_iter::<_, SliceStepper, T>(
-                    RawRegionIter::new(self, shape, SliceStepper::new()),
-                    self.mode(),
-                    self.endian(),
-                    shape.nx,
-                    shape.ny,
-                ))
-            }
-
-            /// Iterate over Z-slabs, converting each to target type `T`.
-            pub fn convert_slabs<T>(&self, k: usize) -> VoxelIter<'_, T>
-            where
-                T: Voxel
-                    + crate::engine::convert::ConvertFrom<i8>
-                    + crate::engine::convert::ConvertFrom<i16>
-                    + crate::engine::convert::ConvertFrom<u16>
-                    + crate::engine::convert::ConvertFrom<f32>,
-            {
-                let shape = self.shape();
-                Box::new(convert_iter::<_, SlabStepper, T>(
-                    RawRegionIter::new(self, shape, SlabStepper::new(k)),
-                    self.mode(),
-                    self.endian(),
-                    shape.nx,
-                    shape.ny,
-                ))
-            }
-
-            /// Iterate over 3D tiles, converting each to target type `T`.
-            pub fn convert_tiles<T>(&self, tile_shape: [usize; 3]) -> VoxelIter<'_, T>
-            where
-                T: Voxel
-                    + crate::engine::convert::ConvertFrom<i8>
-                    + crate::engine::convert::ConvertFrom<i16>
-                    + crate::engine::convert::ConvertFrom<u16>
-                    + crate::engine::convert::ConvertFrom<f32>,
-            {
-                let shape = self.shape();
-                Box::new(convert_iter::<_, TileStepper, T>(
-                    RawRegionIter::new(self, shape, TileStepper::new(tile_shape)),
-                    self.mode(),
-                    self.endian(),
-                    shape.nx,
-                    shape.ny,
-                ))
             }
 
             /// Iterate over Z-slices as `u8`, narrowing from Mode 6 (Uint16)
@@ -489,8 +504,11 @@ macro_rules! impl_inherent_reader_methods {
 }
 
 impl_inherent_reader_methods!(crate::Reader);
+impl_convert_method!(crate::Reader);
 #[cfg(feature = "mmap")]
 impl_inherent_reader_methods!(crate::MmapReader);
+#[cfg(feature = "mmap")]
+impl_convert_method!(crate::MmapReader);
 
 /// Validate a block read/write request.
 ///

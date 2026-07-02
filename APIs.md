@@ -110,8 +110,8 @@ The standard buffered reader. Loads the **entire file** into a `Vec<u8>` on open
 | `reader.subregion::<T>(offset, shape)` | `Result<VoxelBlock<T>>` | Read and decode typed sub-block at any offset |
 | `reader.read_volume::<T>()` | `Result<VoxelBlock<T>>` | Read the entire volume as a single block |
 | `reader.read_volume_u8()` | `Result<VoxelBlock<u8>>` | Read volume as `u8` (Uint16 narrowing or Packed4Bit unpack) |
-| `reader.convert_volume::<T>()` | `Result<VoxelBlock<T>>` | Read volume, convert from any mode to type `T` |
 | `reader.validate_header_stats()` | `Result<()>` | Cross-check header stats vs actual data (1% tolerance) |
+| `reader.convert::<T>()` | [`ConvertReader`] | Returns a wrapper; all reads auto-convert to type `T` |
 
 **Iterator methods** (all return lazy `RegionIter` or boxed iterators, see [Iterators](#iterators)):
 
@@ -122,9 +122,9 @@ The standard buffered reader. Loads the **entire file** into a `Vec<u8>` on open
 | `reader.tiles::<T>(shape)` | `RegionIter<T, TileStepper>` | Arbitrary 3D tiles |
 | `reader.volumes::<T>()` | `Result<RegionIter<T, SlabStepper>>` | One sub-volume per step (volume stacks only) |
 | `reader.subregion::<T>(offset, shape)` | `Result<VoxelBlock<T>>` | Single block at given offset/shape |
-| `reader.convert_slices::<T>()` | iterator yielding `VoxelBlock<T>` | Auto-convert any mode to target type `T` |
-| `reader.convert_slabs::<T>(k)` | iterator yielding `VoxelBlock<T>` | Same as `convert_slices` but `k` planes at a time |
-| `reader.convert_tiles::<T>(shape)` | iterator yielding `VoxelBlock<T>` | Same as `convert_slices` but arbitrary 3D tiles |
+| `reader.convert::<T>().slices()` | iterator yielding `VoxelBlock<T>` | Auto-convert any mode to target type `T` |
+| `reader.convert::<T>().slabs(k)` | iterator yielding `VoxelBlock<T>` | Same as `slices` but `k` planes at a time |
+| `reader.convert::<T>().tiles(shape)` | iterator yielding `VoxelBlock<T>` | Same as `slices` but arbitrary 3D tiles |
 | `reader.slices_u8()` | iterator yielding `VoxelBlock<u8>` | Mode 6 (Uint16) or Mode 101 (Packed4Bit); narrows/nibble-unpacks to `u8` |
 | `reader.slabs_u8(k)` | iterator yielding `VoxelBlock<u8>` | Same as `slices_u8` but `k` planes at a time |
 | `reader.slices_mode0(interp)` | iterator yielding `VoxelBlock<f32>` | Mode 0 (Int8) only; signed or unsigned |
@@ -150,10 +150,10 @@ Requires the `mmap` feature.
 | `reader.read_block::<T>(offset, shape)` | `Result<VoxelBlock<T>>` | Deprecated, use `subregion` instead |
 | `reader.read_volume::<T>()` | `Result<VoxelBlock<T>>` | Read the entire volume as a single block |
 | `reader.read_volume_u8()` | `Result<VoxelBlock<u8>>` | Read volume as `u8` (Uint16 narrowing or Packed4Bit unpack) |
-| `reader.convert_volume::<T>()` | `Result<VoxelBlock<T>>` | Read volume, convert from any mode to type `T` |
+| `reader.convert::<T>()` | [`ConvertReader`] | Returns a wrapper; all reads auto-convert to type `T` |
 | `reader.validate_header_stats()` | `Result<()>` | Cross-check header stats |
 
-`MmapReader` also has all the same **iterator methods** as `Reader` (`slices`, `slabs`, `tiles`, `convert_slices`, `convert_slabs`, `convert_tiles`, `slices_u8`, `slabs_u8`, `slices_mode0`, `slabs_mode0`, `volumes`, `subregion`, etc.).
+`MmapReader` also has all the same **iterator methods** as `Reader` (`slices`, `slabs`, `tiles`, `convert`, `slices_u8`, `slabs_u8`, `slices_mode0`, `slabs_mode0`, `volumes`, `subregion`, etc.).
 
 **When to use `MmapReader` vs `Reader`:**
 

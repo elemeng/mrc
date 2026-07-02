@@ -12,7 +12,7 @@
 //!
 //! fn main() -> Result<(), Box<dyn std::error::Error>> {
 //!     let reader = open("protein.mrc")?;          // auto-detects compression
-//!     for slice in reader.convert_slices::<f32>() {           // converts to f32 for you
+//!     for slice in reader.convert::<f32>().slices() {           // converts to f32 for you
 //!         let block = slice?;
 //!     }
 //!
@@ -50,28 +50,13 @@
 //! * [`slabs`](Reader::slabs) — batches of `k` Z-planes
 //! * [`tiles`](Reader::tiles) — arbitrary 3D blocks
 //! * [`subregion`](Reader::subregion) — a single block by coordinate
-//! * [`convert_slices`](Reader::convert_slices) — any Z-plane, converted to any type
-//! * [`convert_slabs`](Reader::convert_slabs) — `k` Z-planes, converted to any type
-//! * [`convert_tiles`](Reader::convert_tiles) — 3D tiles, converted to any type
 //!
-//! Or grab the full volume in one call:
-//!
-//! * [`read_volume::<T>()`](Reader::read_volume) — full volume as any [`Voxel`] type
-//! * [`convert_volume`](Reader::convert_volume) — full volume, converted to any type
-//!
-//! Each yields [`VoxelBlock<T>`] — a data chunk with its `offset` and
-//! `shape`, so you always know where it belongs.
-//!
-//! For density maps stored as integers, use [`convert_slices`](Reader::convert_slices)
-//! or [`convert_volume`](Reader::convert_volume) to get `f32` with
-//! automatic mode conversion (no need to match the file's storage type):
-//! It converts every MRC mode to `f32` (integer widening, complex→magnitude,
-//! the works):
+//! For automatic mode conversion, use [`convert`](Reader::convert):
 //!
 //! ```no_run
 //! # fn main() -> Result<(), mrc::Error> {
 //! # let reader = mrc::Reader::open("density.mrc")?;
-//! for slice in reader.convert_slices::<f32>() {
+//! for slice in reader.convert::<f32>().slices() {
 //!     let block = slice?;
 //!     println!("slice {} mean density: {:.2}",
 //!         block.offset[2],
@@ -80,11 +65,11 @@
 //! # Ok(()) }
 //! ```
 //!
-//! Or read the full volume at once with [`convert_volume::<f32>()`](Reader::convert_volume)
-//! and wrap with `ndarray` for numpy-like slicing:
+//! Or read the full volume as `f32` with
+//! [`convert::<f32>().read_volume()`](Reader::convert):
 //!
 //! ```text
-//! let block = reader.convert_volume::<f32>()?;
+//! let block = reader.convert::<f32>().read_volume()?;
 //! let array = ndarray::Array3::from_shape_vec(
 //!     [reader.shape().nz, reader.shape().ny, reader.shape().nx],
 //!     block.data,
@@ -165,11 +150,12 @@
 //! | [`Float16`](Mode::Float16) (12) | `f16` | Half-precision storage (feature `f16`) |
 //!
 //! Packed 4-bit data ([`Mode::Packed4Bit`], mode 101) is handled transparently by
-//! the unified API: [`convert_slices`](Reader::convert_slices) / [`convert_volume`](Reader::convert_volume)
-//! unpack nibbles to `f32` or any target type, [`slices_u8`](Reader::slices_u8) / [`slabs_u8`](Reader::slabs_u8)
-//! unpack to `u8` (0–15), and [`write_u4_block`](Writer::write_u4_block) packs `u8` values.
+//! the unified API: [`convert::<f32>()`](Reader::convert) / [`convert::<T>()`](Reader::convert)
+//! unpack nibbles to `f32` or any target type, [`slices_u8`](Reader::slices_u8) /
+//! [`slabs_u8`](Reader::slabs_u8) unpack to `u8` (0–15), and
+//! [`write_u4_block`](Writer::write_u4_block) packs `u8` values.
 //!
-//! When you don't know the mode ahead of time, use [`convert_slices`](Reader::convert_slices)
+//! When you don't know the mode ahead of time, use [`convert::<f32>()`](Reader::convert)
 //! which converts any mode to the requested type (commonly `f32`).
 //!
 //! # Headers
@@ -207,7 +193,7 @@
 //!
 //! This crate does **one thing** — read and write MRC files. It does not
 //! do array arithmetic, image processing, or type conversion beyond a few
-//! MRC-specific shortcuts (`convert_slices`, `slices_mode0`, `slices_u8`).
+//! MRC-specific shortcuts (`convert::<f32>()`, `slices_mode0`, `slices_u8`).
 //! Leave those to crates like `ndarray`, or your own code.
 //!
 //! # Feature flags
@@ -231,7 +217,7 @@
 //! * [`Io`](Error::Io) — the file could not be read or written
 //! * [`InvalidHeader`](Error::InvalidHeader) — not a valid MRC file
 //! * [`ModeMismatch`](Error::ModeMismatch) — calling `slices::<f32>()` on
-//!   an Int16 file; use `convert_slices::<f32>()` instead
+//!   an Int16 file; use `convert::<f32>()` instead
 //! * [`BoundsError`](Error::BoundsError) — read or write outside the volume
 //! * [`FileSizeMismatch`](Error::FileSizeMismatch) — file truncated or
 //!   has trailing garbage
@@ -306,7 +292,7 @@
 //! }
 //!
 //! // Process each slice
-//! for slice in reader.convert_slices::<f32>() {
+//! for slice in reader.convert::<f32>().slices() {
 //!     let block = slice?;
 //!     // block.data: Vec<f32> — ready for filtering, CTF correction, etc.
 //! }
@@ -375,7 +361,7 @@
 //! |---|---|---|
 //! | [`InvalidHeader`](Error::InvalidHeader) | Not an MRC file, or file has severe header corruption | Run `mrc-validate file.mrc` for diagnostics; try [`open_permissive`](Reader::open_permissive) |
 //! | [`FileSizeMismatch`](Error::FileSizeMismatch) | File was truncated during transfer, or has trailing garbage | Re-download the file; check `mrc-validate` output |
-//! | [`ModeMismatch`](Error::ModeMismatch) | Using `slices::<f32>()` on an Int16 file | Use [`convert_slices::<f32>()`](Reader::convert_slices) instead — it auto-converts any mode |
+//! | [`ModeMismatch`](Error::ModeMismatch) | Using `slices::<f32>()` on an Int16 file | Use [`convert::<f32>()`](Reader::convert) instead — it auto-converts any mode |
 //! | [`BoundsError`](Error::BoundsError) | Requested block falls outside the volume | Check offset + shape against the volume dimensions |
 //! | [`UnsupportedMode`](Error::UnsupportedMode) | File uses a mode this crate doesn't support (e.g. complex modes, or mode without the `f16` feature) | Enable the `f16` feature, or convert the file with another tool |
 //! | Unexpected `Io` error | File permissions, filesystem issue, or path doesn't exist | Check the file path and permissions |
@@ -542,7 +528,7 @@ mod integration_tests {
         assert_eq!(&block.shape, &[nx, ny, nz]);
 
         // convert_volume::<f32> on Float32 should give the same result
-        let block2 = r.convert_volume::<f32>().unwrap();
+        let block2 = r.convert::<f32>().read_volume().unwrap();
         assert_eq!(block2.data, data);
     }
 
@@ -570,12 +556,13 @@ mod integration_tests {
 
         let r = Reader::open(f.path()).unwrap();
         // convert_volume::<f32> auto-converts Int16 → f32
-        let block = r.convert_volume::<f32>().unwrap();
+        let block = r.convert::<f32>().read_volume().unwrap();
         assert_eq!(block.data, expected_f32);
 
-        // convert_slices::<f32> should also match
+        // as::<f32>().slices() should also match
         let all: Vec<f32> = r
-            .convert_slices::<f32>()
+            .convert::<f32>()
+            .slices()
             .flat_map(|s| s.unwrap().data)
             .collect();
         assert_eq!(all, expected_f32);
@@ -634,7 +621,7 @@ mod integration_tests {
         assert_eq!(block.data.len(), 8 * 8 * 3);
     }
 
-    /// Read entire volume via read_volume matches collecting convert_slices::<f32>.
+    /// Read entire volume via read_volume matches collecting as::<f32>().slices().
     #[test]
     fn read_volume_via_convert_slices_f32() {
         let f = TempMrc::new("vol_vs_slices");
@@ -657,7 +644,8 @@ mod integration_tests {
         let r = Reader::open(f.path()).unwrap();
         let vol = r.read_volume::<f32>().unwrap();
         let collected: Vec<f32> = r
-            .convert_slices::<f32>()
+            .convert::<f32>()
+            .slices()
             .flat_map(|s| s.unwrap().data)
             .collect();
         assert_eq!(vol.data, collected);
