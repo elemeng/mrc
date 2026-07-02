@@ -71,7 +71,7 @@ impl VolumeShape {
 /// A contiguous chunk of voxel data with a 3D offset and shape.
 ///
 /// Created by [`VoxelBlock::new`] or returned by reader methods such as
-/// [`Reader::slices`](crate::Reader::slices) and [`Reader::subregion`](crate::Reader::subregion).
+/// [`Reader::slices`](crate::ReaderMethods::slices) and [`Reader::subregion`](crate::ReaderMethods::subregion).
 #[derive(Debug, Clone)]
 pub struct VoxelBlock<T> {
     /// Corner of the block within the volume, in voxels `[x, y, z]`.

@@ -9,6 +9,7 @@
 
 use crate::engine::block::VolumeShape;
 use crate::engine::endian::FileEndian;
+use crate::io::reader_common::ReaderMethods;
 use crate::mode::Voxel;
 use crate::{Error, Header, Mode};
 
@@ -25,7 +26,7 @@ use std::vec::Vec;
 /// # Example
 ///
 /// ```no_run
-/// use mrc::Reader;
+/// use mrc::{Reader, ReaderMethods};
 ///
 /// fn main() -> Result<(), Box<dyn std::error::Error>> {
 ///     let reader = Reader::open("protein.mrc")?;
@@ -199,8 +200,8 @@ impl Reader {
     ///
     /// Returns an error if `T` does not match the file's voxel mode.
     ///
-    /// Use [`subregion`](Self::subregion) instead — it is available on all
-    /// reader types and behaves identically.
+    /// Use [`subregion`](crate::ReaderMethods::subregion) instead — it is
+    /// available on all reader types and behaves identically.
     #[deprecated(since = "0.2.4", note = "use `subregion` instead")]
     pub fn read_block<T: Voxel>(
         &self,

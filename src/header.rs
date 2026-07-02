@@ -823,13 +823,45 @@ impl Header {
     pub fn decode_from_bytes(bytes: &[u8; 1024]) -> Self {
         Self::decode_from_bytes_with_info(bytes).0
     }
+}
 
+/// Structured warning emitted when the MACHST byte-order stamp does not
+/// match the actual data endianness, and the decoder had to fall back.
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EndianFallbackWarning {
+    /// MACHST says little-endian but MODE is only valid as big-endian.
+    MachstLeDataBe,
+    /// MACHST says big-endian but MODE is only valid as little-endian.
+    MachstBeDataLe,
+}
+
+impl core::fmt::Display for EndianFallbackWarning {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::MachstLeDataBe => write!(
+                f,
+                "MACHST indicates little-endian but MODE is valid only as \
+                 big-endian; using big-endian"
+            ),
+            Self::MachstBeDataLe => write!(
+                f,
+                "MACHST indicates big-endian but MODE is valid only as \
+                 little-endian; using little-endian"
+            ),
+        }
+    }
+}
+
+impl Header {
     /// Decode header and return any byte-order fallback that occurred.
     ///
     /// Returns `(header, warning)` where `warning` is `Some` if the MACHST
     /// indicated one endianness but the MODE field was only valid under the
     /// opposite endianness.
-    pub fn decode_from_bytes_with_info(bytes: &[u8; 1024]) -> (Self, Option<&'static str>) {
+    pub fn decode_from_bytes_with_info(
+        bytes: &[u8; 1024],
+    ) -> (Self, Option<EndianFallbackWarning>) {
         use crate::engine::endian::FileEndian;
 
         let machst = [
@@ -850,12 +882,8 @@ impl Header {
             let candidate = Self::decode_with_endian(bytes, opposite);
             if crate::Mode::from_i32(candidate.mode).is_some() {
                 let warning = match detected {
-                    FileEndian::LittleEndian => {
-                        "MACHST indicates little-endian but MODE is valid only as big-endian; using big-endian"
-                    }
-                    FileEndian::BigEndian => {
-                        "MACHST indicates big-endian but MODE is valid only as little-endian; using little-endian"
-                    }
+                    FileEndian::LittleEndian => EndianFallbackWarning::MachstLeDataBe,
+                    FileEndian::BigEndian => EndianFallbackWarning::MachstBeDataLe,
                 };
                 return (candidate, Some(warning));
             }

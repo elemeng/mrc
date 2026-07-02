@@ -8,7 +8,7 @@
 //! # Quick example
 //!
 //! ```no_run
-//! use mrc::{open, create, VoxelBlock};
+//! use mrc::{open, create, VoxelBlock, ConvertMethods};
 //!
 //! fn main() -> Result<(), Box<dyn std::error::Error>> {
 //!     // Read — auto-detects gzip/bzip2 compression
@@ -48,15 +48,16 @@
 //!
 //! Then pick an iteration method:
 //!
-//! * [`slices`](Reader::slices) — one Z-plane at a time
-//! * [`slabs`](Reader::slabs) — batches of `k` Z-planes
-//! * [`tiles`](Reader::tiles) — arbitrary 3D blocks
-//! * [`subregion`](Reader::subregion) — a single block by coordinate
+//! * [`slices`](ReaderMethods::slices) — one Z-plane at a time
+//! * [`slabs`](ReaderMethods::slabs) — batches of `k` Z-planes
+//! * [`tiles`](ReaderMethods::tiles) — arbitrary 3D blocks
+//! * [`subregion`](ReaderMethods::subregion) — a single block by coordinate
 //!
-//! For automatic mode conversion, use [`convert`](Reader::convert):
+//! For automatic mode conversion, use [`convert`](ConvertMethods::convert):
 //!
 //! ```no_run
 //! # fn main() -> Result<(), mrc::Error> {
+//! # use mrc::ConvertMethods;
 //! # let reader = mrc::Reader::open("density.mrc")?;
 //! for slice in reader.convert::<f32>().slices() {
 //!     let block = slice?;
@@ -71,6 +72,7 @@
 //!
 //! ```no_run
 //! # fn main() -> Result<(), mrc::Error> {
+//! # use mrc::ConvertMethods;
 //! # let reader = mrc::Reader::open("density.mrc")?;
 //! let block = reader.convert::<f32>().read_volume()?;
 //! println!("read {} voxels", block.data.len());
@@ -81,6 +83,7 @@
 //!
 //! ```no_run
 //! # fn main() -> Result<(), mrc::Error> {
+//! # use mrc::{ConvertMethods, ReaderMethods};
 //! # let reader = mrc::Reader::open("density.mrc")?;
 //! let arr = reader.to_ndarray::<f32>()?;
 //! // arr is ndarray::Array3<f32> with shape [nz, ny, nx]
@@ -162,16 +165,16 @@
 //! | [`Float32Complex`](Mode::Float32Complex) (4) | [`Float32Complex`] | Complex data (f32 real + f32 imag) |
 //! | [`Uint16`](Mode::Uint16) (6) | `u16` | Segmentation labels |
 //! | [`Float16`](Mode::Float16) (12) | `f16` | Half-precision storage (feature `f16`) |
-//! | [`Packed4Bit`](Mode::Packed4Bit) (101) | `u8` via [`slices_u8`](Reader::slices_u8) | 4-bit packed data; no `Voxel` impl |
+//! | [`Packed4Bit`](Mode::Packed4Bit) (101) | `u8` via [`slices_u8`](ReaderMethods::slices_u8) | 4-bit packed data; no `Voxel` impl |
 //!
 //! Packed 4-bit data is handled transparently by the unified API:
-//! [`convert::<f32>()`](Reader::convert) unpacks nibbles to `f32`,
-//! [`slices_u8`](Reader::slices_u8) / [`slabs_u8`](Reader::slabs_u8) unpack
+//! [`convert::<f32>()`](ConvertMethods::convert) unpacks nibbles to `f32`,
+//! [`slices_u8`](ReaderMethods::slices_u8) / [`slabs_u8`](ReaderMethods::slabs_u8) unpack
 //! to `u8` (0–15), and [`write_u4_block`](Writer::write_u4_block) packs
 //! `u8` values back.
 //!
 //! When you don't know the mode ahead of time, use
-//! [`convert::<f32>()`](Reader::convert) which converts any mode to `f32`.
+//! [`convert::<f32>()`](ConvertMethods::convert) which converts any mode to `f32`.
 //!
 //! # Headers
 //!
@@ -311,7 +314,7 @@
 //!
 //! ```no_run
 //! # fn main() -> Result<(), mrc::Error> {
-//! use mrc::{open, parse_fei1_records};
+//! use mrc::{open, parse_fei1_records, ConvertMethods};
 //!
 //! let reader = open("tiltseries.mrc")?;
 //! println!("{}×{}×{} voxels, mode {:?}",
@@ -371,10 +374,11 @@
 //! ## 3. Read subtomogram averages from a volume stack
 //!
 //! Volume stacks (ISPG 401–630) pack multiple sub-volumes into one file,
-//! each `mz` slices thick. Use [`volumes`](Reader::volumes) to iterate:
+//! each `mz` slices thick. Use [`volumes`](ReaderMethods::volumes) to iterate:
 //!
 //! ```no_run
 //! # fn main() -> Result<(), mrc::Error> {
+//! # use mrc::ReaderMethods;
 //! # let reader = mrc::Reader::open("averages.mrc")?;
 //! for volume in reader.volumes::<f32>()? {
 //!     let vol = volume?;
@@ -390,7 +394,7 @@
 //! |---|---|---|
 //! | [`InvalidHeader`](Error::InvalidHeader) | Not an MRC file, or header corruption | Run `mrc-validate file.mrc`; try [`open_permissive`](Reader::open_permissive) |
 //! | [`FileSizeMismatch`](Error::FileSizeMismatch) | File truncated or has trailing garbage | Re-download or check `mrc-validate` output |
-//! | [`ModeMismatch`](Error::ModeMismatch) | Using `slices::<f32>()` on an Int16 file | Use [`convert::<f32>()`](Reader::convert) — auto-converts any mode |
+//! | [`ModeMismatch`](Error::ModeMismatch) | Using `slices::<f32>()` on an Int16 file | Use [`convert::<f32>()`](ConvertMethods::convert) — auto-converts any mode |
 //! | [`BoundsError`](Error::BoundsError) | Block outside volume | Check offset + shape against dimensions |
 //! | [`UnsupportedMode`](Error::UnsupportedMode) | Unrecognised mode, or mode needs the `f16` feature | Enable `f16` feature or convert with another tool |
 //! | `Io` error | File permissions, filesystem issue | Check the file path and permissions |
@@ -462,6 +466,19 @@ pub use fei::{
 /// Override via [`Reader::open_gzip_with_limit`] or
 /// [`Reader::open_bzip2_with_limit`].
 pub use io::reader_common::DEFAULT_MAX_DECOMPRESSED_BYTES;
+
+/// Universal iterator / read API for all MRC reader types.
+///
+/// Import this trait to call `slices`, `slabs`, `tiles`, `subregion`,
+/// `read_volume`, `slices_u8`, `slabs_u8`, `slices_mode0`, `slabs_mode0`,
+/// `read_volume_u8`, `volumes`, and `to_ndarray` on any reader.
+pub use io::reader_common::ReaderMethods;
+
+/// Auto-conversion API for MRC readers.
+///
+/// Import this trait to call `.convert::<T>()` on any reader, enabling
+/// automatic mode conversion (e.g. Int16 → f32).
+pub use io::reader_common::ConvertMethods;
 
 #[doc(hidden)]
 pub use io::reader::{CompressionType, detect_compression};

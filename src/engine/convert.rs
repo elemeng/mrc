@@ -221,6 +221,56 @@ pub(crate) fn convert_f32_slice_to_f16(src: &[f32]) -> Vec<crate::f16> {
 }
 
 // ============================================================================
+// Write-side conversions (f32 → integer types)
+// ============================================================================
+
+/// Convert `f32` values to `i16`, clamping to the representable range.
+pub(crate) fn convert_f32_slice_to_i16(src: &[f32]) -> Vec<i16> {
+    src.iter()
+        .map(|&v| {
+            if v >= i16::MAX as f32 {
+                i16::MAX
+            } else if v <= i16::MIN as f32 {
+                i16::MIN
+            } else {
+                v as i16
+            }
+        })
+        .collect()
+}
+
+/// Convert `f32` values to `u16`, clamping to the representable range.
+/// Negative values are clamped to 0.
+pub(crate) fn convert_f32_slice_to_u16(src: &[f32]) -> Vec<u16> {
+    src.iter()
+        .map(|&v| {
+            if v >= u16::MAX as f32 {
+                u16::MAX
+            } else if v <= 0.0 {
+                0
+            } else {
+                v as u16
+            }
+        })
+        .collect()
+}
+
+/// Convert `f32` values to `i8`, clamping to the representable range.
+pub(crate) fn convert_f32_slice_to_i8(src: &[f32]) -> Vec<i8> {
+    src.iter()
+        .map(|&v| {
+            if v >= i8::MAX as f32 {
+                i8::MAX
+            } else if v <= i8::MIN as f32 {
+                i8::MIN
+            } else {
+                v as i8
+            }
+        })
+        .collect()
+}
+
+// ============================================================================
 // Generic conversion dispatcher — single match over all source modes
 // ============================================================================
 
@@ -245,7 +295,6 @@ where
 ///
 /// Handles all real-valued modes, complex modes (via magnitude), and
 /// Packed4Bit (via nibble unpack).
-#[cfg(feature = "f16")]
 pub(crate) fn convert_block<T>(
     bytes: &[u8],
     mode: Mode,
@@ -257,50 +306,13 @@ where
     T: Voxel + ConvertFrom<i8> + ConvertFrom<i16> + ConvertFrom<u16> + ConvertFrom<f32>,
 {
     match mode {
-        Mode::Int8 => convert_with::<i8, T>(bytes, endian),
-        Mode::Int16 => convert_with::<i16, T>(bytes, endian),
-        Mode::Uint16 => convert_with::<u16, T>(bytes, endian),
-        Mode::Float32 => convert_with::<f32, T>(bytes, endian),
-        Mode::Float16 => {
-            // Route through f32 to avoid requiring T: ConvertFrom<crate::f16>
-            let src = decode_slice::<crate::f16>(bytes, endian)?;
-            let f32_data = convert_f16_slice_to_f32(&src);
-            Ok(T::convert_from(&f32_data))
-        }
-        Mode::Float32Complex => {
-            let src = decode_slice::<Float32Complex>(bytes, endian)?;
-            let mag: Vec<f32> = src
-                .iter()
-                .map(|c| c.to_real(ComplexToRealStrategy::Magnitude))
-                .collect();
-            Ok(T::convert_from(&mag))
-        }
-        Mode::Int16Complex => {
-            let src = decode_slice::<Int16Complex>(bytes, endian)?;
-            let mag: Vec<f32> = src
-                .iter()
-                .map(|c| c.to_real(ComplexToRealStrategy::Magnitude))
-                .collect();
-            Ok(T::convert_from(&mag))
-        }
-        Mode::Packed4Bit => {
-            let unpacked = unpack_u4_bytes_to_u8(bytes, nx, ny);
-            let f32_data = convert_u8_slice_to_f32(&unpacked);
-            Ok(T::convert_from(&f32_data))
-        }
+        Mode::Float16 => convert_block_float16(bytes, endian),
+        other => convert_block_inner(bytes, other, endian, nx, ny),
     }
 }
 
-/// Convert a raw byte slice from any MRC mode to target type `T`.
-///
-/// This is the single dispatch point for all reader-side conversions.
-/// The source mode is determined at runtime (from the file's header);
-/// the target type `T` is a compile-time generic.
-///
-/// Handles all real-valued modes, complex modes (via magnitude), and
-/// Packed4Bit (via nibble unpack).
-#[cfg(not(feature = "f16"))]
-pub(crate) fn convert_block<T>(
+/// Shared handler for the 7 modes that do not depend on the `f16` feature.
+fn convert_block_inner<T>(
     bytes: &[u8],
     mode: Mode,
     endian: FileEndian,
@@ -315,7 +327,6 @@ where
         Mode::Int16 => convert_with::<i16, T>(bytes, endian),
         Mode::Uint16 => convert_with::<u16, T>(bytes, endian),
         Mode::Float32 => convert_with::<f32, T>(bytes, endian),
-        Mode::Float16 => Err(Error::UnsupportedMode),
         Mode::Float32Complex => {
             let src = decode_slice::<Float32Complex>(bytes, endian)?;
             let mag: Vec<f32> = src
@@ -337,7 +348,27 @@ where
             let f32_data = convert_u8_slice_to_f32(&unpacked);
             Ok(T::convert_from(&f32_data))
         }
+        // Float16 handled separately by convert_block_float16
+        Mode::Float16 => unreachable!("Float16 is dispatched via convert_block_float16"),
     }
+}
+
+/// Handle Float16 mode conversion, which depends on the `f16` feature.
+#[cfg(feature = "f16")]
+fn convert_block_float16<T>(bytes: &[u8], endian: FileEndian) -> Result<Vec<T>, Error>
+where
+    T: Voxel + ConvertFrom<i8> + ConvertFrom<i16> + ConvertFrom<u16> + ConvertFrom<f32>,
+{
+    // Route through f32 to avoid requiring T: ConvertFrom<crate::f16>
+    let src = decode_slice::<crate::f16>(bytes, endian)?;
+    let f32_data = convert_f16_slice_to_f32(&src);
+    Ok(T::convert_from(&f32_data))
+}
+
+/// Float16 conversion unavailable — requires the `f16` feature.
+#[cfg(not(feature = "f16"))]
+fn convert_block_float16<T>(_bytes: &[u8], _endian: FileEndian) -> Result<Vec<T>, Error> {
+    Err(Error::UnsupportedMode)
 }
 
 // =============================================================================

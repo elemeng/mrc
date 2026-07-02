@@ -43,13 +43,37 @@ macro_rules! write_u4_block_body {
 }
 
 // Helper: write block with automatic type conversion to the file's mode.
-// Dispatches on self.mode() at runtime. Currently supports f32 → Float16.
+// Dispatches on self.mode() at runtime.
 macro_rules! write_block_as_body {
     ($self:ident, $block:ident) => {{
         if !$self.shape().contains_block($block.offset, $block.shape) {
             return Err(Error::BoundsError);
         }
         match $self.mode() {
+            Mode::Int8 => {
+                let data = crate::engine::convert::convert_f32_slice_to_i8(&$block.data);
+                $self.write_block::<i8>(&VoxelBlock {
+                    offset: $block.offset,
+                    shape: $block.shape,
+                    data,
+                })
+            }
+            Mode::Int16 => {
+                let data = crate::engine::convert::convert_f32_slice_to_i16(&$block.data);
+                $self.write_block::<i16>(&VoxelBlock {
+                    offset: $block.offset,
+                    shape: $block.shape,
+                    data,
+                })
+            }
+            Mode::Uint16 => {
+                let data = crate::engine::convert::convert_f32_slice_to_u16(&$block.data);
+                $self.write_block::<u16>(&VoxelBlock {
+                    offset: $block.offset,
+                    shape: $block.shape,
+                    data,
+                })
+            }
             #[cfg(feature = "f16")]
             Mode::Float16 => {
                 let data = crate::engine::convert::convert_f32_slice_to_f16(&$block.data);
@@ -350,7 +374,7 @@ impl Writer {
         let b = self.bytes_per_voxel;
         let file_endian = self.header.detect_endian();
 
-        // Fast path: full XY slab is contiguous in the file.
+        // Fast path: origin-aligned full XY slab — contiguous in the file.
         if ox == 0 && sx == nx && oy == 0 && sy == ny {
             let linear =
                 (ox as u64) + (oy as u64) * (nx as u64) + (oz as u64) * (nx as u64) * (ny as u64);
@@ -412,16 +436,19 @@ impl Writer {
 
     /// Write a block with automatic type conversion to the file's mode.
     ///
-    /// The caller provides data as `f32` (or another source type) and it is
-    /// converted to the file's on-disk mode. For example, writing `f32` data
-    /// to a Float16 file:
+    /// The caller provides data as `f32` and it is converted to the file's
+    /// on-disk mode. Supported conversions:
+    ///
+    /// | File mode | Conversion |
+    /// |-----------|------------|
+    /// | [`Int8`](Mode::Int8) | `f32` → `i8` (clamped) |
+    /// | [`Int16`](Mode::Int16) | `f32` → `i16` (clamped) |
+    /// | [`Uint16`](Mode::Uint16) | `f32` → `u16` (clamped) |
+    /// | [`Float16`](Mode::Float16) | `f32` → `f16` (requires `f16` feature) |
     ///
     /// ```ignore
     /// writer.write_block_as(&f32_block)?;
     /// ```
-    ///
-    /// Currently supports `f32` → Float16 conversion. More pairs will be
-    /// added in future releases.
     ///
     /// # Errors
     /// Returns [`Error::ModeMismatch`] if no conversion is available for the
@@ -562,8 +589,13 @@ impl Writer {
     /// Scan the written data block and update `dmin`, `dmax`, `dmean` and `rms`
     /// in the header to match the actual file contents.
     ///
-    /// This is an optional convenience; it reads the entire data block back
-    /// from disk, so it can be expensive for large files.
+    /// ⚠️ **Performance:** This reads the entire data block back from disk, so it
+    /// can be expensive for files larger than a few GB.  The
+    /// [`MmapWriter::update_header_stats`](crate::MmapWriter::update_header_stats)
+    /// alternative is zero-copy because the data is already in the memory map.
+    ///
+    /// This is an optional convenience; consider computing statistics at write
+    /// time if the data volume is large.
     pub fn update_header_stats(&mut self) -> Result<(), Error> {
         use std::io::{Read, Seek, SeekFrom};
         let data_size = self.header.data_size().ok_or(Error::InvalidHeader)?;
@@ -749,6 +781,8 @@ impl MmapWriter {
     }
 
     /// Write a block with automatic type conversion to the file's mode.
+    ///
+    /// Supported: `f32` → `i8`/`i16`/`u16`/`f16` (clamped as needed).
     pub fn write_block_as(&mut self, block: &VoxelBlock<f32>) -> Result<(), Error> {
         write_block_as_body!(self, block)
     }
@@ -1063,6 +1097,8 @@ impl<C: Compressor> CompressedWriter<C> {
     }
 
     /// Write a block with automatic type conversion to the file's mode.
+    ///
+    /// Supported: `f32` → `i8`/`i16`/`u16`/`f16` (clamped as needed).
     pub fn write_block_as(&mut self, block: &VoxelBlock<f32>) -> Result<(), Error> {
         write_block_as_body!(self, block)
     }

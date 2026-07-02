@@ -8,9 +8,9 @@
 //! Users typically obtain iterators from reader methods rather than constructing
 //! them directly:
 //!
-//! - [`Reader::slices`](crate::Reader::slices) — one Z-plane at a time
-//! - [`Reader::slabs`](crate::Reader::slabs) — batches of `k` Z-planes
-//! - [`Reader::tiles`](crate::Reader::tiles) — arbitrary 3D tiles
+//! - [`Reader::slices`](crate::ReaderMethods::slices) — one Z-plane at a time
+//! - [`Reader::slabs`](crate::ReaderMethods::slabs) — batches of `k` Z-planes
+//! - [`Reader::tiles`](crate::ReaderMethods::tiles) — arbitrary 3D tiles
 //! - [`reader.convert::<f32>().slices()`](crate::io::reader_common::ConvertReader::slices) — any mode auto-converted to `f32`
 
 use crate::Error;

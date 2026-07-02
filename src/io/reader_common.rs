@@ -1,6 +1,6 @@
 //! Shared helpers for all MRC reader implementations.
 //!
-//! This module contains the [`VoxelSource`] trait and helper functions that are
+//! This module contains the `VoxelSource` trait and helper functions that are
 //! used by [`Reader`](crate::Reader) and [`MmapReader`](crate::MmapReader) to implement block validation, endian
 //! decoding, and auto-conversion via [`ConvertReader`].
 
@@ -80,7 +80,7 @@ where
 
 /// A reader wrapper that auto-converts all voxel data to type `T`.
 ///
-/// Created via [`Reader::convert`](crate::Reader::convert) or
+/// Created via [`ReaderMethods::convert`](crate::ReaderMethods::convert) or
 /// [`MmapReader::convert`](crate::MmapReader::convert).
 /// All iteration methods return [`VoxelBlock<T>`] with automatic mode conversion.
 ///
@@ -176,28 +176,6 @@ where
     }
 }
 
-/// Adds `.convert::<T>()` method on a reader type.
-macro_rules! impl_convert_method {
-    ($ty:ty) => {
-        impl $ty {
-            /// Return a wrapper that auto-converts all reads to type `T`.
-            pub fn convert<T>(&self) -> ConvertReader<'_, $ty, T>
-            where
-                T: Voxel
-                    + crate::engine::convert::ConvertFrom<i8>
-                    + crate::engine::convert::ConvertFrom<i16>
-                    + crate::engine::convert::ConvertFrom<u16>
-                    + crate::engine::convert::ConvertFrom<f32>,
-            {
-                ConvertReader {
-                    inner: self,
-                    _target: core::marker::PhantomData,
-                }
-            }
-        }
-    };
-}
-
 mod private {
     /// Sealed trait marker — prevents external implementations of [`VoxelSource`].
     pub trait Sealed {}
@@ -251,292 +229,343 @@ pub trait ReaderCore: VoxelSource {
     fn ext_header_bytes(&self) -> &[u8];
 }
 
-/// Generates inherent iterator methods on reader types.
-macro_rules! impl_inherent_reader_methods {
-    ($ty:ty) => {
-        impl $ty {
-            /// Iterate over Z-slices (1 voxel thick along Z) as [`VoxelBlock`]s.
-            ///
-            /// Each item is a contiguous full-XY slab at one Z position.
-            /// See also [`convert::<f32>()`](Self::convert) for automatic mode conversion.
-            pub fn slices<T: Voxel>(&self) -> RegionIter<'_, T, $ty, SliceStepper> {
-                RegionIter::with_stepper(self, self.shape(), SliceStepper::new())
-            }
-            /// Iterate over Z-slabs of `k` slices as [`VoxelBlock`]s.
-            ///
-            /// Each item is a contiguous full-XY slab of `k` Z-planes.
-            /// The final slab may be shorter than `k` near the end of the volume.
-            /// See also [`convert::<f32>()`](Self::convert) for automatic mode conversion.
-            pub fn slabs<T: Voxel>(&self, k: usize) -> RegionIter<'_, T, $ty, SlabStepper> {
-                RegionIter::with_stepper(self, self.shape(), SlabStepper::new(k))
-            }
-            /// Iterate over 3D tiles of the given shape as [`VoxelBlock`]s.
-            ///
-            /// The volume is partitioned into non-overlapping tiles of size
-            /// `tile_shape`. Tiles at the trailing edges may be truncated to fit
-            /// the volume bounds.
-            pub fn tiles<T: Voxel>(
-                &self,
-                tile_shape: [usize; 3],
-            ) -> RegionIter<'_, T, $ty, TileStepper> {
-                RegionIter::with_stepper(self, self.shape(), TileStepper::new(tile_shape))
-            }
-            /// Iterate over sub-volumes of a volume-stack file.
-            ///
-            /// Each sub-volume is `mz` slices thick, where `mz` is taken from
-            /// the header's sampling field.
-            ///
-            /// # Errors
-            /// Returns [`Error::NotAVolumeStack`] if the file is not a volume stack
-            /// (ispg not in 401–630).
-            pub fn volumes<T: Voxel>(&self) -> Result<RegionIter<'_, T, $ty, SlabStepper>, Error> {
-                let mz = self.header().mz.max(0) as usize;
-                if !self.header().is_volume_stack() || mz == 0 {
-                    return Err(Error::NotAVolumeStack {
-                        ispg: self.header().ispg,
-                        mz: self.header().mz,
-                    });
-                }
-                Ok(self.slabs(mz))
-            }
-            /// Read a single arbitrary 3D sub-region as a [`VoxelBlock`].
-            ///
-            /// Unlike the iterators (`slices`, `slabs`, `tiles`), this reads
-            /// exactly one block at the given offset and shape. Useful for
-            /// random-access reads of specific regions.
-            ///
-            /// # Errors
-            /// Returns [`Error::BoundsError`] if the region exceeds volume bounds.
-            /// Returns [`Error::ModeMismatch`] if `T` does not match the file mode.
-            pub fn subregion<T: Voxel>(
-                &self,
-                offset: [usize; 3],
-                shape: [usize; 3],
-            ) -> Result<VoxelBlock<T>, Error> {
-                let bytes = self.vs_read_block_bytes(offset, shape)?;
-                let data = self.vs_decode_block::<T>(&bytes)?;
-                Ok(VoxelBlock {
-                    offset,
-                    shape,
-                    data,
-                })
-            }
+// ============================================================================
+// ReaderMethods trait — unified iteration / read API
+// ============================================================================
 
-            /// Read the entire volume as a [`VoxelBlock<T>`].
-            ///
-            /// Shorthand for `subregion([0, 0, 0], [nx, ny, nz])`.
-            ///
-            /// # Errors
-            /// Returns [`Error::ModeMismatch`] if `T` does not match the file mode.
-            pub fn read_volume<T: Voxel>(&self) -> Result<VoxelBlock<T>, Error> {
-                let s = self.shape();
-                self.subregion([0, 0, 0], [s.nx, s.ny, s.nz])
-            }
+/// Iterator methods available on all MRC reader types.
+///
+/// Import this trait to call methods like [`slices`](ReaderMethods::slices),
+/// [`slabs`](ReaderMethods::slabs), [`subregion`](ReaderMethods::subregion),
+/// [`read_volume`](ReaderMethods::read_volume), [`slices_u8`](ReaderMethods::slices_u8),
+/// and others on any reader.
+///
+/// ```ignore
+/// use mrc::{Reader, ReaderMethods};
+///
+/// let reader = Reader::open("file.mrc")?;
+/// for slice in reader.slices::<f32>() { ... }
+/// # Ok::<_, mrc::Error>(())
+/// ```
+pub trait ReaderMethods: VoxelSource + ReaderCore + Sized {
+    /// Iterate over Z-slices (1 voxel thick along Z) as [`VoxelBlock`]s.
+    ///
+    /// Each item is a contiguous full-XY slab at one Z position.
+    /// See also [`convert`](ConvertMethods::convert) for automatic mode conversion.
+    fn slices<T: Voxel>(&self) -> RegionIter<'_, T, Self, SliceStepper> {
+        RegionIter::with_stepper(self, self.shape(), SliceStepper::new())
+    }
 
-            /// Read the entire volume as an `ndarray::Array3<T>` with shape `[nz, ny, nx]`
-            /// (matching Python `mrcfile`'s numpy array convention).
-            ///
-            /// Requires the `ndarray` feature.
-            ///
-            /// # Errors
-            /// Returns [`Error::ModeMismatch`] if `T` does not match the file mode.
-            #[cfg(feature = "ndarray")]
-            pub fn to_ndarray<T: Voxel>(&self) -> Result<ndarray::Array3<T>, Error> {
-                let block = self.read_volume::<T>()?;
-                let s = self.shape();
-                ndarray::Array3::from_shape_vec([s.nz, s.ny, s.nx], block.data)
-                    .map_err(|_| Error::BoundsError)
-            }
+    /// Iterate over Z-slabs of `k` slices as [`VoxelBlock`]s.
+    ///
+    /// Each item is a contiguous full-XY slab of `k` Z-planes.
+    /// The final slab may be shorter than `k` near the end of the volume.
+    /// See also [`convert`](ConvertMethods::convert) for automatic mode conversion.
+    fn slabs<T: Voxel>(&self, k: usize) -> RegionIter<'_, T, Self, SlabStepper> {
+        RegionIter::with_stepper(self, self.shape(), SlabStepper::new(k))
+    }
 
-            /// Read the entire volume as `u8`, unpacking from Mode 101 (Packed4Bit).
-            ///
-            /// Each `u8` value is in the range 0–15.
-            ///
-            /// # Errors
-            /// Returns [`Error::ModeMismatch`] if the file mode is not [`Mode::Packed4Bit`].
-            pub fn read_volume_u8(&self) -> Result<VoxelBlock<u8>, Error> {
-                if self.mode() != Mode::Packed4Bit {
-                    return Err(Error::ModeMismatch {
-                        file_mode: self.mode(),
-                        requested_mode: Mode::Packed4Bit,
-                    });
-                }
-                let shape = self.shape();
-                let block_shape = [shape.nx, shape.ny, shape.nz];
-                let bytes = self.vs_read_block_bytes([0, 0, 0], block_shape)?;
-                let data = crate::engine::convert::unpack_u4_bytes_to_u8(
-                    &bytes,
-                    shape.nx,
-                    shape.ny * shape.nz,
-                );
-                Ok(VoxelBlock {
-                    offset: [0, 0, 0],
-                    shape: block_shape,
-                    data,
-                })
-            }
+    /// Iterate over 3D tiles of the given shape as [`VoxelBlock`]s.
+    ///
+    /// The volume is partitioned into non-overlapping tiles of size
+    /// `tile_shape`. Tiles at the trailing edges may be truncated to fit
+    /// the volume bounds.
+    fn tiles<T: Voxel>(&self, tile_shape: [usize; 3]) -> RegionIter<'_, T, Self, TileStepper> {
+        RegionIter::with_stepper(self, self.shape(), TileStepper::new(tile_shape))
+    }
 
-            /// Iterate over Z-slices as `u8`, narrowing from Mode 6 (Uint16)
-            /// or unpacking from Mode 101 (Packed4Bit).
-            ///
-            /// For Uint16 files each 16-bit value is narrowed to 8 bits; values
-            /// exceeding 255 produce an error.
-            /// For Packed4Bit files each nibble is unpacked to `u8` (range 0–15).
-            ///
-            /// # Errors
-            /// Returns [`Error::ModeMismatch`] if the file mode is not `Uint16` or `Packed4Bit`.
-            pub fn slices_u8(&self) -> VoxelIter<'_, u8> {
-                if self.mode() == Mode::Packed4Bit {
-                    let shape = self.shape();
-                    let nx = shape.nx;
-                    let ny = shape.ny;
-                    let nz = shape.nz;
-                    return Box::new((0..nz).map(move |z| {
-                        let bytes = self.vs_read_block_bytes([0, 0, z], [nx, ny, 1])?;
-                        let data = crate::engine::convert::unpack_u4_bytes_to_u8(&bytes, nx, ny);
-                        Ok(VoxelBlock {
-                            offset: [0, 0, z],
-                            shape: [nx, ny, 1],
-                            data,
-                        })
-                    }));
-                }
-                if self.mode() != Mode::Uint16 {
-                    return Box::new(std::iter::once(Err(Error::ModeMismatch {
-                        file_mode: self.mode(),
-                        requested_mode: Mode::Uint16,
-                    })));
-                }
-                Box::new(self.slices::<u16>().map(|b| {
-                    let b = b?;
-                    Ok(VoxelBlock {
-                        offset: b.offset,
-                        shape: b.shape,
-                        data: crate::engine::convert::convert_u16_slice_to_u8(&b.data)?,
-                    })
-                }))
-            }
-            /// Iterate over Z-slabs as `u8`, narrowing from Mode 6 (Uint16)
-            /// or unpacking from Mode 101 (Packed4Bit).
-            ///
-            /// See [`slices_u8`](Self::slices_u8) for mode-specific behaviour.
-            pub fn slabs_u8(&self, k: usize) -> VoxelIter<'_, u8> {
-                if self.mode() == Mode::Packed4Bit {
-                    let volume_shape = self.shape();
-                    let nx = volume_shape.nx;
-                    let ny = volume_shape.ny;
-                    let k = k.max(1);
-                    let mut z = 0usize;
-                    return Box::new(std::iter::from_fn(move || {
-                        if z >= volume_shape.nz {
-                            return None;
-                        }
-                        let start = z;
-                        let sz = k.min(volume_shape.nz - z);
-                        z += sz;
-                        let bytes = match self.vs_read_block_bytes([0, 0, start], [nx, ny, sz]) {
-                            Ok(b) => b,
-                            Err(e) => return Some(Err(e)),
-                        };
-                        let data =
-                            crate::engine::convert::unpack_u4_bytes_to_u8(&bytes, nx, ny * sz);
-                        Some(Ok(VoxelBlock {
-                            offset: [0, 0, start],
-                            shape: [nx, ny, sz],
-                            data,
-                        }))
-                    }));
-                }
-                if self.mode() != Mode::Uint16 {
-                    return Box::new(std::iter::once(Err(Error::ModeMismatch {
-                        file_mode: self.mode(),
-                        requested_mode: Mode::Uint16,
-                    })));
-                }
-                let k = k.max(1);
-                Box::new(self.slabs::<u16>(k).map(|b| {
-                    let b = b?;
-                    Ok(VoxelBlock {
-                        offset: b.offset,
-                        shape: b.shape,
-                        data: crate::engine::convert::convert_u16_slice_to_u8(&b.data)?,
-                    })
-                }))
-            }
-            /// Iterate over Z-slices of a Mode 0 file, interpreting as signed or unsigned.
-            ///
-            /// Mode 0 (Int8) is ambiguous — some files store unsigned 8-bit data.
-            /// Use this method to control interpretation via [`M0Interpretation`].
-            ///
-            /// # Errors
-            /// Returns [`Error::ModeMismatch`] if the file mode is not `Int8`.
-            pub fn slices_mode0(&self, interp: M0Interpretation) -> VoxelIter<'_, f32> {
-                if self.mode() != Mode::Int8 {
-                    return Box::new(std::iter::once(Err(Error::ModeMismatch {
-                        file_mode: self.mode(),
-                        requested_mode: Mode::Int8,
-                    })));
-                }
-                let volume_shape = self.shape();
-                Box::new((0..volume_shape.nz).map(move |z| {
-                    let bytes =
-                        self.vs_read_block_bytes([0, 0, z], [volume_shape.nx, volume_shape.ny, 1])?;
-                    let data = crate::engine::convert::reinterpret_m0(&bytes, interp);
-                    Ok(VoxelBlock {
-                        offset: [0, 0, z],
-                        shape: [volume_shape.nx, volume_shape.ny, 1],
-                        data,
-                    })
-                }))
-            }
-            /// Iterate over Z-slabs of a Mode 0 file, interpreting as signed or unsigned.
-            ///
-            /// Like [`slices_mode0`](Self::slices_mode0) but reads `k` slices per
-            /// iteration for improved throughput.
-            ///
-            /// # Errors
-            /// Returns [`Error::ModeMismatch`] if the file mode is not `Int8`.
-            pub fn slabs_mode0(&self, k: usize, interp: M0Interpretation) -> VoxelIter<'_, f32> {
-                if self.mode() != Mode::Int8 {
-                    return Box::new(std::iter::once(Err(Error::ModeMismatch {
-                        file_mode: self.mode(),
-                        requested_mode: Mode::Int8,
-                    })));
-                }
-                let volume_shape = self.shape();
-                let k = k.max(1);
-                let mut z = 0usize;
-                Box::new(std::iter::from_fn(move || {
-                    if z >= volume_shape.nz {
-                        return None;
-                    }
-                    let start = z;
-                    let sz = k.min(volume_shape.nz - z);
-                    z += sz;
-                    let bytes = match self
-                        .vs_read_block_bytes([0, 0, start], [volume_shape.nx, volume_shape.ny, sz])
-                    {
-                        Ok(b) => b,
-                        Err(e) => return Some(Err(e)),
-                    };
-                    let data = crate::engine::convert::reinterpret_m0(&bytes, interp);
-                    Some(Ok(VoxelBlock {
-                        offset: [0, 0, start],
-                        shape: [volume_shape.nx, volume_shape.ny, sz],
-                        data,
-                    }))
-                }))
-            }
+    /// Iterate over sub-volumes of a volume-stack file.
+    ///
+    /// Each sub-volume is `mz` slices thick, where `mz` is taken from
+    /// the header's sampling field.
+    ///
+    /// # Errors
+    /// Returns [`Error::NotAVolumeStack`] if the file is not a volume stack
+    /// (ispg not in 401–630).
+    fn volumes<T: Voxel>(&self) -> Result<RegionIter<'_, T, Self, SlabStepper>, Error>
+    where
+        Self: Sized,
+    {
+        let mz = self.header().mz.max(0) as usize;
+        if !self.header().is_volume_stack() || mz == 0 {
+            return Err(Error::NotAVolumeStack {
+                ispg: self.header().ispg,
+                mz: self.header().mz,
+            });
         }
-    };
+        Ok(self.slabs(mz))
+    }
+
+    /// Read a single arbitrary 3D sub-region as a [`VoxelBlock`].
+    ///
+    /// Unlike the iterators (`slices`, `slabs`, `tiles`), this reads
+    /// exactly one block at the given offset and shape. Useful for
+    /// random-access reads of specific regions.
+    ///
+    /// # Errors
+    /// Returns [`Error::BoundsError`] if the region exceeds volume bounds.
+    /// Returns [`Error::ModeMismatch`] if `T` does not match the file mode.
+    fn subregion<T: Voxel>(
+        &self,
+        offset: [usize; 3],
+        shape: [usize; 3],
+    ) -> Result<VoxelBlock<T>, Error> {
+        let bytes = self.vs_read_block_bytes(offset, shape)?;
+        let data = self.vs_decode_block::<T>(&bytes)?;
+        Ok(VoxelBlock {
+            offset,
+            shape,
+            data,
+        })
+    }
+
+    /// Read the entire volume as a [`VoxelBlock<T>`].
+    ///
+    /// Shorthand for [`subregion`](ReaderMethods::subregion)`([0, 0, 0], [nx, ny, nz])`.
+    ///
+    /// # Errors
+    /// Returns [`Error::ModeMismatch`] if `T` does not match the file mode.
+    fn read_volume<T: Voxel>(&self) -> Result<VoxelBlock<T>, Error> {
+        let s = self.shape();
+        self.subregion([0, 0, 0], [s.nx, s.ny, s.nz])
+    }
+
+    /// Read the entire volume as an `ndarray::Array3<T>` with shape `[nz, ny, nx]`
+    /// (matching Python `mrcfile`'s numpy array convention).
+    ///
+    /// Requires the `ndarray` feature.
+    ///
+    /// # Errors
+    /// Returns [`Error::ModeMismatch`] if `T` does not match the file mode.
+    #[cfg(feature = "ndarray")]
+    fn to_ndarray<T: Voxel>(&self) -> Result<ndarray::Array3<T>, Error> {
+        let block = self.read_volume::<T>()?;
+        let s = self.shape();
+        ndarray::Array3::from_shape_vec([s.nz, s.ny, s.nx], block.data)
+            .map_err(|_| Error::BoundsError)
+    }
+
+    /// Read the entire volume as `u8`, unpacking from Mode 101 (Packed4Bit).
+    ///
+    /// Each `u8` value is in the range 0–15.
+    ///
+    /// # Errors
+    /// Returns [`Error::ModeMismatch`] if the file mode is not [`Mode::Packed4Bit`].
+    fn read_volume_u8(&self) -> Result<VoxelBlock<u8>, Error> {
+        if self.mode() != Mode::Packed4Bit {
+            return Err(Error::ModeMismatch {
+                file_mode: self.mode(),
+                requested_mode: Mode::Packed4Bit,
+            });
+        }
+        let shape = self.shape();
+        let block_shape = [shape.nx, shape.ny, shape.nz];
+        let bytes = self.vs_read_block_bytes([0, 0, 0], block_shape)?;
+        let data =
+            crate::engine::convert::unpack_u4_bytes_to_u8(&bytes, shape.nx, shape.ny * shape.nz);
+        Ok(VoxelBlock {
+            offset: [0, 0, 0],
+            shape: block_shape,
+            data,
+        })
+    }
+
+    /// Iterate over Z-slices as `u8`, narrowing from Mode 6 (Uint16)
+    /// or unpacking from Mode 101 (Packed4Bit).
+    ///
+    /// For Uint16 files each 16-bit value is narrowed to 8 bits; values
+    /// exceeding 255 produce an error.
+    /// For Packed4Bit files each nibble is unpacked to `u8` (range 0–15).
+    ///
+    /// # Errors
+    /// Returns [`Error::ModeMismatch`] if the file mode is not `Uint16` or `Packed4Bit`.
+    fn slices_u8(&self) -> VoxelIter<'_, u8> {
+        if self.mode() == Mode::Packed4Bit {
+            let shape = self.shape();
+            let nx = shape.nx;
+            let ny = shape.ny;
+            let nz = shape.nz;
+            return Box::new((0..nz).map(move |z| {
+                let bytes = self.vs_read_block_bytes([0, 0, z], [nx, ny, 1])?;
+                let data = crate::engine::convert::unpack_u4_bytes_to_u8(&bytes, nx, ny);
+                Ok(VoxelBlock {
+                    offset: [0, 0, z],
+                    shape: [nx, ny, 1],
+                    data,
+                })
+            }));
+        }
+        if self.mode() != Mode::Uint16 {
+            return Box::new(std::iter::once(Err(Error::ModeMismatch {
+                file_mode: self.mode(),
+                requested_mode: Mode::Uint16,
+            })));
+        }
+        Box::new(self.slices::<u16>().map(|b| {
+            let b = b?;
+            Ok(VoxelBlock {
+                offset: b.offset,
+                shape: b.shape,
+                data: crate::engine::convert::convert_u16_slice_to_u8(&b.data)?,
+            })
+        }))
+    }
+
+    /// Iterate over Z-slabs as `u8`, narrowing from Mode 6 (Uint16)
+    /// or unpacking from Mode 101 (Packed4Bit).
+    ///
+    /// See [`slices_u8`](ReaderMethods::slices_u8) for mode-specific behaviour.
+    fn slabs_u8(&self, k: usize) -> VoxelIter<'_, u8> {
+        if self.mode() == Mode::Packed4Bit {
+            let volume_shape = self.shape();
+            let nx = volume_shape.nx;
+            let ny = volume_shape.ny;
+            let k = k.max(1);
+            let mut z = 0usize;
+            return Box::new(std::iter::from_fn(move || {
+                if z >= volume_shape.nz {
+                    return None;
+                }
+                let start = z;
+                let sz = k.min(volume_shape.nz - z);
+                z += sz;
+                let bytes = match self.vs_read_block_bytes([0, 0, start], [nx, ny, sz]) {
+                    Ok(b) => b,
+                    Err(e) => return Some(Err(e)),
+                };
+                let data = crate::engine::convert::unpack_u4_bytes_to_u8(&bytes, nx, ny * sz);
+                Some(Ok(VoxelBlock {
+                    offset: [0, 0, start],
+                    shape: [nx, ny, sz],
+                    data,
+                }))
+            }));
+        }
+        if self.mode() != Mode::Uint16 {
+            return Box::new(std::iter::once(Err(Error::ModeMismatch {
+                file_mode: self.mode(),
+                requested_mode: Mode::Uint16,
+            })));
+        }
+        let k = k.max(1);
+        Box::new(self.slabs::<u16>(k).map(|b| {
+            let b = b?;
+            Ok(VoxelBlock {
+                offset: b.offset,
+                shape: b.shape,
+                data: crate::engine::convert::convert_u16_slice_to_u8(&b.data)?,
+            })
+        }))
+    }
+
+    /// Iterate over Z-slices of a Mode 0 file, interpreting as signed or unsigned.
+    ///
+    /// Mode 0 (Int8) is ambiguous — some files store unsigned 8-bit data.
+    /// Use this method to control interpretation via [`M0Interpretation`].
+    ///
+    /// # Errors
+    /// Returns [`Error::ModeMismatch`] if the file mode is not `Int8`.
+    fn slices_mode0(&self, interp: M0Interpretation) -> VoxelIter<'_, f32> {
+        if self.mode() != Mode::Int8 {
+            return Box::new(std::iter::once(Err(Error::ModeMismatch {
+                file_mode: self.mode(),
+                requested_mode: Mode::Int8,
+            })));
+        }
+        let volume_shape = self.shape();
+        Box::new((0..volume_shape.nz).map(move |z| {
+            let bytes =
+                self.vs_read_block_bytes([0, 0, z], [volume_shape.nx, volume_shape.ny, 1])?;
+            let data = crate::engine::convert::reinterpret_m0(&bytes, interp);
+            Ok(VoxelBlock {
+                offset: [0, 0, z],
+                shape: [volume_shape.nx, volume_shape.ny, 1],
+                data,
+            })
+        }))
+    }
+
+    /// Iterate over Z-slabs of a Mode 0 file, interpreting as signed or unsigned.
+    ///
+    /// Like [`slices_mode0`](ReaderMethods::slices_mode0) but reads `k` slices per
+    /// iteration for improved throughput.
+    ///
+    /// # Errors
+    /// Returns [`Error::ModeMismatch`] if the file mode is not `Int8`.
+    fn slabs_mode0(&self, k: usize, interp: M0Interpretation) -> VoxelIter<'_, f32> {
+        if self.mode() != Mode::Int8 {
+            return Box::new(std::iter::once(Err(Error::ModeMismatch {
+                file_mode: self.mode(),
+                requested_mode: Mode::Int8,
+            })));
+        }
+        let volume_shape = self.shape();
+        let k = k.max(1);
+        let mut z = 0usize;
+        Box::new(std::iter::from_fn(move || {
+            if z >= volume_shape.nz {
+                return None;
+            }
+            let start = z;
+            let sz = k.min(volume_shape.nz - z);
+            z += sz;
+            let bytes = match self
+                .vs_read_block_bytes([0, 0, start], [volume_shape.nx, volume_shape.ny, sz])
+            {
+                Ok(b) => b,
+                Err(e) => return Some(Err(e)),
+            };
+            let data = crate::engine::convert::reinterpret_m0(&bytes, interp);
+            Some(Ok(VoxelBlock {
+                offset: [0, 0, start],
+                shape: [volume_shape.nx, volume_shape.ny, sz],
+                data,
+            }))
+        }))
+    }
 }
 
-impl_inherent_reader_methods!(crate::Reader);
-impl_convert_method!(crate::Reader);
-#[cfg(feature = "mmap")]
-impl_inherent_reader_methods!(crate::MmapReader);
-#[cfg(feature = "mmap")]
-impl_convert_method!(crate::MmapReader);
+/// Blanket implementation for all types implementing `VoxelSource` + `ReaderCore`.
+impl<R: VoxelSource + ReaderCore> ReaderMethods for R {}
+
+/// Adds `.convert::<T>()` method on reader types.
+///
+/// Import this trait alongside [`ReaderMethods`] to enable automatic mode
+/// conversion on any reader.
+///
+/// ```ignore
+/// use mrc::{Reader, ConvertMethods};
+///
+/// let reader = Reader::open("file.mrc")?;
+/// for slice in reader.convert::<f32>().slices() { ... }
+/// # Ok::<_, mrc::Error>(())
+/// ```
+pub trait ConvertMethods: VoxelSource + ReaderCore + Sized {
+    /// Return a wrapper that auto-converts all reads to type `T`.
+    fn convert<T>(&self) -> ConvertReader<'_, Self, T>
+    where
+        T: Voxel
+            + crate::engine::convert::ConvertFrom<i8>
+            + crate::engine::convert::ConvertFrom<i16>
+            + crate::engine::convert::ConvertFrom<u16>
+            + crate::engine::convert::ConvertFrom<f32>;
+}
+
+impl<R: VoxelSource + ReaderCore> ConvertMethods for R {
+    fn convert<T>(&self) -> ConvertReader<'_, R, T>
+    where
+        T: Voxel
+            + crate::engine::convert::ConvertFrom<i8>
+            + crate::engine::convert::ConvertFrom<i16>
+            + crate::engine::convert::ConvertFrom<u16>
+            + crate::engine::convert::ConvertFrom<f32>,
+    {
+        ConvertReader {
+            inner: self,
+            _target: core::marker::PhantomData,
+        }
+    }
+}
 
 /// Validate a block read/write request.
 ///
@@ -642,7 +671,7 @@ pub(crate) fn gather_block_bytes(
         let byte_len = block_row_bytes * sy * sz;
         let mut dst = vec![0u8; byte_len];
 
-        // Fast path: full XY slab is contiguous in the file.
+        // Fast path: origin-aligned full XY slab — contiguous in the file.
         if ox == 0 && sx == nx && oy == 0 && sy == ny {
             let slice_bytes = ny * vol_row_bytes;
             let start = oz * slice_bytes;
@@ -667,7 +696,7 @@ pub(crate) fn gather_block_bytes(
     let byte_len = voxel_count * b;
     let mut dst = vec![0u8; byte_len];
 
-    // Fast path: full XY slab is contiguous in the file.
+    // Fast path: origin-aligned full XY slab — contiguous in the file.
     if ox == 0 && sx == nx && oy == 0 && sy == ny {
         let linear = oz * nx * ny;
         let start = linear * b;
@@ -709,7 +738,7 @@ pub(crate) fn encode_block_to_buf<T: EndianCodec + Sync>(
     let [sx, sy, sz] = block.shape;
     let b = bytes_per_voxel;
 
-    // Fast path: full XY slab is contiguous in the buffer.
+    // Fast path: origin-aligned full XY slab — contiguous in the buffer.
     if ox == 0 && sx == nx && oy == 0 && sy == ny {
         let linear = oz * nx * ny;
         let start_byte = data_offset + linear * b;
@@ -767,7 +796,7 @@ pub(crate) fn write_block_bytes(
     // Only full-row (ox=0) blocks are supported to avoid nibble-level RMW.
     assert!(ox == 0, "write_block_bytes requires ox == 0");
 
-    // Fast path: full XY slab is contiguous in the buffer.
+    // Fast path: origin-aligned full XY slab — contiguous in the buffer.
     if sx == nx && oy == 0 && sy == ny {
         let slice_bytes = ny * file_row_bytes;
         let start_byte = data_offset + oz * slice_bytes;
@@ -871,8 +900,8 @@ pub(crate) fn parse_header(
             .map_err(crate::Error::InvalidHeaderDetailed)?;
         Vec::new()
     };
-    if let Some(msg) = endian_warning {
-        warnings.push(msg.to_string());
+    if let Some(w) = endian_warning {
+        warnings.push(w.to_string());
     }
     let data_size = header.data_size().ok_or(crate::Error::InvalidHeader)?;
     let endian = header.detect_endian();

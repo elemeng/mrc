@@ -7,6 +7,7 @@
 
 use crate::engine::block::{VolumeShape, VoxelBlock};
 use crate::engine::endian::FileEndian;
+use crate::io::reader_common::ReaderMethods;
 use crate::mode::Voxel;
 use crate::{Error, Header, Mode};
 
@@ -29,11 +30,11 @@ use std::vec::Vec;
 /// voxel data, also zero-copy.
 ///
 /// For non-native-endian files or type-mismatched reads, use
-/// [`subregion`](Self::subregion) which always allocates.
+/// [`subregion`](crate::ReaderMethods::subregion) which always allocates.
 ///
 /// # Example
 /// ```no_run
-/// use mrc::MmapReader;
+/// use mrc::{MmapReader, ReaderMethods};
 ///
 /// fn main() -> Result<(), Box<dyn std::error::Error>> {
 ///     let reader = MmapReader::open("large_file.mrc")?;
@@ -59,6 +60,10 @@ pub struct MmapReader {
     data_offset: usize,
     endian: FileEndian,
     shape: VolumeShape,
+    /// Set in permissive mode when the file is smaller than the header
+    /// claims.  When `true`, [`data_bytes()`](Self::data_bytes) returns
+    /// whatever bytes are available rather than signalling an error.
+    pub(crate) truncated: bool,
 }
 
 #[cfg(feature = "mmap")]
@@ -111,19 +116,22 @@ impl MmapReader {
             .data_offset()
             .checked_add(data_size)
             .ok_or(Error::InvalidHeader)?;
-        if !permissive {
+        let truncated = if !permissive {
             if mmap.len() != expected_size {
                 return Err(Error::FileSizeMismatch {
                     expected: expected_size,
                     actual: mmap.len(),
                 });
             }
+            false
         } else if mmap.len() < header.data_offset() {
             return Err(Error::FileSizeMismatch {
                 expected: header.data_offset(),
                 actual: mmap.len(),
             });
-        }
+        } else {
+            mmap.len() < expected_size
+        };
 
         let _mode = Mode::from_i32(header.mode).ok_or(Error::UnsupportedMode)?;
         Ok((
@@ -133,6 +141,7 @@ impl MmapReader {
                 data_offset: header.data_offset(),
                 endian,
                 shape,
+                truncated,
             },
             warnings,
         ))
@@ -177,6 +186,7 @@ impl MmapReader {
     ///
     /// **Note:** In permissive mode, when the file is smaller than the header
     /// claims, this silently truncates and returns whatever bytes are available.
+    /// Use [`is_truncated()`](Self::is_truncated) to detect this case.
     pub fn data_bytes(&self) -> &[u8] {
         let data_size = self.header.data_size().unwrap_or(0);
         let end = self.data_offset + data_size;
@@ -199,7 +209,7 @@ impl MmapReader {
     /// * `k > 0` and `z + k <= nz`
     ///
     /// For non-native-endian files or type mismatches, use
-    /// [`subregion`](Self::subregion) instead.
+    /// [`subregion`](crate::ReaderMethods::subregion) instead.
     pub fn slab_as<T: Voxel>(&self, z: usize, k: usize) -> Result<&[T], Error> {
         if T::MODE != self.mode() {
             return Err(Error::ModeMismatch {
@@ -252,6 +262,14 @@ impl MmapReader {
             let ptr = self.mmap.as_ptr().add(byte_start) as *const T;
             Ok(core::slice::from_raw_parts(ptr, count))
         }
+    }
+
+    /// Returns `true` when the file is shorter than the header's declared data
+    /// size (only possible when opened in permissive mode).  When `true`,
+    /// [`data_bytes()`](Self::data_bytes) returns whatever bytes are available
+    /// rather than the full declared extent.
+    pub fn is_truncated(&self) -> bool {
+        self.truncated
     }
 
     /// Cross-check header statistics against actual data.
@@ -326,8 +344,8 @@ impl MmapReader {
     ///
     /// Returns an error if `T` does not match the file's voxel mode.
     ///
-    /// Use [`subregion`](Self::subregion) instead — it is available on all
-    /// reader types and behaves identically.
+    /// Use [`subregion`](crate::ReaderMethods::subregion) instead — it is
+    /// available on all reader types and behaves identically.
     #[deprecated(since = "0.2.4", note = "use `subregion` instead")]
     pub fn read_block<T: Voxel>(
         &self,
