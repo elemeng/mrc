@@ -51,11 +51,12 @@
 //! * [`tiles`](Reader::tiles) — arbitrary 3D blocks
 //! * [`subregion`](Reader::subregion) — a single block by coordinate
 //! * [`convert_slices`](Reader::convert_slices) — any Z-plane, converted to any type
+//! * [`convert_slabs`](Reader::convert_slabs) — `k` Z-planes, converted to any type
+//! * [`convert_tiles`](Reader::convert_tiles) — 3D tiles, converted to any type
 //!
 //! Or grab the full volume in one call:
 //!
 //! * [`read_volume::<T>()`](Reader::read_volume) — full volume as any [`Voxel`] type
-//! * [`convert_volume::<f32>()`](Reader::convert_volume) — full volume, any mode converted to `f32`
 //! * [`convert_volume`](Reader::convert_volume) — full volume, converted to any type
 //!
 //! Each yields [`VoxelBlock<T>`] — a data chunk with its `offset` and

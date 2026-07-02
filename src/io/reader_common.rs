@@ -314,6 +314,25 @@ macro_rules! impl_inherent_reader_methods {
                 ))
             }
 
+            /// Iterate over 3D tiles, converting each to target type `T`.
+            pub fn convert_tiles<T>(&self, tile_shape: [usize; 3]) -> VoxelIter<'_, T>
+            where
+                T: Voxel
+                    + crate::engine::convert::ConvertFrom<i8>
+                    + crate::engine::convert::ConvertFrom<i16>
+                    + crate::engine::convert::ConvertFrom<u16>
+                    + crate::engine::convert::ConvertFrom<f32>,
+            {
+                let shape = self.shape();
+                Box::new(convert_iter::<_, TileStepper, T>(
+                    RawRegionIter::new(self, shape, TileStepper::new(tile_shape)),
+                    self.mode(),
+                    self.endian(),
+                    shape.nx,
+                    shape.ny,
+                ))
+            }
+
             /// Iterate over Z-slices as `u8`, narrowing from Mode 6 (Uint16)
             /// or unpacking from Mode 101 (Packed4Bit).
             ///

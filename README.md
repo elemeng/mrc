@@ -49,7 +49,7 @@ See **[docs.rs/mrc](https://docs.rs/mrc)** for the complete API reference, inclu
   decompression bomb protection (256 GiB limit, configurable)
 - Writing files — `Writer`, `MmapWriter`, `GzipWriter`, `Bzip2Writer`
 - Iterators — slices, slabs, tiles, volumes,
-  generic `convert_slices::<T>()` / `convert_slabs::<T>()`
+  generic `convert_slices::<T>()` / `convert_slabs::<T>()` / `convert_tiles::<T>()`
 - Full-volume reads — `read_volume::<T>()`, `read_volume_u8()`,
   generic `convert_volume::<T>()`
 - Data modes — `Mode` enum and compile-time `Voxel` trait, including Packed4Bit

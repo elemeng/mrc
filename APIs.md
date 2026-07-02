@@ -124,6 +124,7 @@ The standard buffered reader. Loads the **entire file** into a `Vec<u8>` on open
 | `reader.subregion::<T>(offset, shape)` | `Result<VoxelBlock<T>>` | Single block at given offset/shape |
 | `reader.convert_slices::<T>()` | iterator yielding `VoxelBlock<T>` | Auto-convert any mode to target type `T` |
 | `reader.convert_slabs::<T>(k)` | iterator yielding `VoxelBlock<T>` | Same as `convert_slices` but `k` planes at a time |
+| `reader.convert_tiles::<T>(shape)` | iterator yielding `VoxelBlock<T>` | Same as `convert_slices` but arbitrary 3D tiles |
 | `reader.slices_u8()` | iterator yielding `VoxelBlock<u8>` | Mode 6 (Uint16) or Mode 101 (Packed4Bit); narrows/nibble-unpacks to `u8` |
 | `reader.slabs_u8(k)` | iterator yielding `VoxelBlock<u8>` | Same as `slices_u8` but `k` planes at a time |
 | `reader.slices_mode0(interp)` | iterator yielding `VoxelBlock<f32>` | Mode 0 (Int8) only; signed or unsigned |
@@ -152,7 +153,7 @@ Requires the `mmap` feature.
 | `reader.convert_volume::<T>()` | `Result<VoxelBlock<T>>` | Read volume, convert from any mode to type `T` |
 | `reader.validate_header_stats()` | `Result<()>` | Cross-check header stats |
 
-`MmapReader` also has all the same **iterator methods** as `Reader` (`slices`, `slabs`, `tiles`, `convert_slices`, `convert_slabs`, `slices_u8`, `slabs_u8`, `slices_mode0`, `slabs_mode0`, `volumes`, `subregion`, etc.).
+`MmapReader` also has all the same **iterator methods** as `Reader` (`slices`, `slabs`, `tiles`, `convert_slices`, `convert_slabs`, `convert_tiles`, `slices_u8`, `slabs_u8`, `slices_mode0`, `slabs_mode0`, `volumes`, `subregion`, etc.).
 
 **When to use `MmapReader` vs `Reader`:**
 
