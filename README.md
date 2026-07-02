@@ -44,6 +44,7 @@ writer.finalize()?;
 ## Full Documentation
 
 See **[docs.rs/mrc](https://docs.rs/mrc)** for the complete API reference, including:
+(For API docs, see [APIs.md](APIs.md).)
 
 - Reading files — `Reader`, `MmapReader`, compressed I/O, permissive mode,
   decompression bomb protection (256 GiB limit, configurable)

@@ -203,7 +203,7 @@ pub(crate) fn convert_f16_slice_to_f32(src: &[crate::f16]) -> Vec<f32> {
 }
 
 /// Batch conversion from f16 to f32 (scalar fallback).
-#[cfg(not(all(feature = "simd", feature = "f16")))]
+#[cfg(all(feature = "f16", not(feature = "simd")))]
 pub(crate) fn convert_f16_slice_to_f32(src: &[crate::f16]) -> Vec<f32> {
     src.iter().map(|&v| f32::from(v)).collect()
 }
@@ -215,7 +215,7 @@ pub(crate) fn convert_f32_slice_to_f16(src: &[f32]) -> Vec<crate::f16> {
 }
 
 /// Batch conversion from f32 to f16 (scalar fallback).
-#[cfg(not(all(feature = "simd", feature = "f16")))]
+#[cfg(all(feature = "f16", not(feature = "simd")))]
 pub(crate) fn convert_f32_slice_to_f16(src: &[f32]) -> Vec<crate::f16> {
     src.iter().map(|&v| crate::f16::from_f32(v)).collect()
 }

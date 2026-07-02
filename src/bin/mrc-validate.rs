@@ -163,15 +163,13 @@ fn main() {
             "❌ INVALID"
         };
         println!("  File:     {}", report.path);
-        println!(
-            "  Format:   {} ({})",
-            report.compression,
-            if report.compression == "plain" {
-                "uncompressed"
-            } else {
-                &report.compression
-            }
-        );
+        let format_desc = match report.compression.as_str() {
+            "plain" => "plain (uncompressed)",
+            "gzip" => "gzip-compressed",
+            "bzip2" => "bzip2-compressed",
+            other => other,
+        };
+        println!("  Format:   {}", format_desc);
         println!("  Status:   {}", status);
         println!(
             "  Mode:     {} ({})",

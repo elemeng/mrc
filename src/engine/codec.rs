@@ -277,39 +277,23 @@ pub(crate) fn decode_slice<T: EndianCodec + Send + Copy>(
         return Ok(result);
     }
 
-    // Non-native endian: SIMD byte-swap raw bytes to native order, then memcpy.
-    let dst_bytes =
-        unsafe { std::slice::from_raw_parts_mut(result.as_mut_ptr() as *mut u8, bytes.len()) };
-    match T::BYTE_SIZE {
-        2 => crate::engine::simd::swap_2byte_simd(bytes, dst_bytes),
-        4 => crate::engine::simd::swap_4byte_simd(bytes, dst_bytes),
-        8 => crate::engine::simd::swap_8byte_simd(bytes, dst_bytes),
-        _ => {
-            // Fallback for unusual byte sizes (e.g. 1, 3, 5, ...)
-            #[cfg(feature = "parallel")]
-            {
-                use rayon::prelude::*;
-                const CHUNK_VOXELS: usize = 262_144;
-                let result_slice =
-                    unsafe { std::slice::from_raw_parts_mut(result.as_mut_ptr(), n) };
-                result_slice
-                    .par_chunks_mut(CHUNK_VOXELS)
-                    .zip(bytes.par_chunks(CHUNK_VOXELS * T::BYTE_SIZE))
-                    .for_each(|(dst, src)| {
-                        for (i, val) in dst.iter_mut().enumerate() {
-                            *val = T::from_bytes(src, i * T::BYTE_SIZE, endian);
-                        }
-                    });
-            }
-            #[cfg(not(feature = "parallel"))]
-            {
-                let result_slice =
-                    unsafe { std::slice::from_raw_parts_mut(result.as_mut_ptr(), n) };
-                for (i, slot) in result_slice.iter_mut().enumerate() {
-                    *slot = T::from_bytes(bytes, i * T::BYTE_SIZE, endian);
-                }
+    // Non-native endian: byte-swap raw bytes to native order, then memcpy.
+    #[cfg(feature = "simd")]
+    {
+        let dst_bytes =
+            unsafe { std::slice::from_raw_parts_mut(result.as_mut_ptr() as *mut u8, bytes.len()) };
+        match T::BYTE_SIZE {
+            2 => crate::engine::simd::swap_2byte_simd(bytes, dst_bytes),
+            4 => crate::engine::simd::swap_4byte_simd(bytes, dst_bytes),
+            8 => crate::engine::simd::swap_8byte_simd(bytes, dst_bytes),
+            _ => {
+                per_element_decode::<T>(&mut result, bytes, n, endian);
             }
         }
+    }
+    #[cfg(not(feature = "simd"))]
+    {
+        per_element_decode::<T>(&mut result, bytes, n, endian);
     }
 
     // SAFETY: all n elements have been initialized above (either via SIMD swap + memcpy, or fallback).
@@ -354,7 +338,7 @@ pub(crate) fn encode_slice<T: EndianCodec + Sync>(
         return Ok(());
     }
 
-    // Non-native endian: memcpy native bytes, then SIMD byte-swap in-place.
+    // Non-native endian: memcpy native bytes, then byte-swap in-place.
     unsafe {
         core::ptr::copy_nonoverlapping(
             values.as_ptr() as *const u8,
@@ -362,55 +346,105 @@ pub(crate) fn encode_slice<T: EndianCodec + Sync>(
             bytes.len(),
         );
     }
-    match T::BYTE_SIZE {
-        2 => {
-            let (src, dst) = (bytes.as_ptr(), bytes.as_mut_ptr());
-            let len = bytes.len();
-            crate::engine::simd::swap_2byte_simd(
-                unsafe { std::slice::from_raw_parts(src, len) },
-                unsafe { std::slice::from_raw_parts_mut(dst, len) },
-            );
-        }
-        4 => {
-            let (src, dst) = (bytes.as_ptr(), bytes.as_mut_ptr());
-            let len = bytes.len();
-            crate::engine::simd::swap_4byte_simd(
-                unsafe { std::slice::from_raw_parts(src, len) },
-                unsafe { std::slice::from_raw_parts_mut(dst, len) },
-            );
-        }
-        8 => {
-            let (src, dst) = (bytes.as_ptr(), bytes.as_mut_ptr());
-            let len = bytes.len();
-            crate::engine::simd::swap_8byte_simd(
-                unsafe { std::slice::from_raw_parts(src, len) },
-                unsafe { std::slice::from_raw_parts_mut(dst, len) },
-            );
-        }
-        _ => {
-            // Fallback for unusual byte sizes: re-encode per element.
-            #[cfg(feature = "parallel")]
-            {
-                use rayon::prelude::*;
-                const CHUNK_VOXELS: usize = 262_144;
-                bytes
-                    .par_chunks_mut(CHUNK_VOXELS * T::BYTE_SIZE)
-                    .zip(values.par_chunks(CHUNK_VOXELS))
-                    .for_each(|(dst, src)| {
-                        for (i, val) in src.iter().enumerate() {
-                            val.to_bytes(dst, i * T::BYTE_SIZE, endian);
-                        }
-                    });
+    #[cfg(feature = "simd")]
+    {
+        match T::BYTE_SIZE {
+            2 => {
+                let (src, dst) = (bytes.as_ptr(), bytes.as_mut_ptr());
+                let len = bytes.len();
+                crate::engine::simd::swap_2byte_simd(
+                    unsafe { std::slice::from_raw_parts(src, len) },
+                    unsafe { std::slice::from_raw_parts_mut(dst, len) },
+                );
             }
-            #[cfg(not(feature = "parallel"))]
-            {
-                for (i, val) in values.iter().enumerate() {
-                    val.to_bytes(bytes, i * T::BYTE_SIZE, endian);
-                }
+            4 => {
+                let (src, dst) = (bytes.as_ptr(), bytes.as_mut_ptr());
+                let len = bytes.len();
+                crate::engine::simd::swap_4byte_simd(
+                    unsafe { std::slice::from_raw_parts(src, len) },
+                    unsafe { std::slice::from_raw_parts_mut(dst, len) },
+                );
+            }
+            8 => {
+                let (src, dst) = (bytes.as_ptr(), bytes.as_mut_ptr());
+                let len = bytes.len();
+                crate::engine::simd::swap_8byte_simd(
+                    unsafe { std::slice::from_raw_parts(src, len) },
+                    unsafe { std::slice::from_raw_parts_mut(dst, len) },
+                );
+            }
+            _ => {
+                per_element_encode::<T>(values, bytes, endian);
             }
         }
     }
+    #[cfg(not(feature = "simd"))]
+    {
+        per_element_encode::<T>(values, bytes, endian);
+    }
     Ok(())
+}
+
+// ============================================================================
+// Per-element fallback helpers (used when simd feature is disabled)
+// ============================================================================
+
+/// Per-element decode fallback for non-native endian files.
+/// Used when the `simd` feature is not available.
+///
+/// Initializes the first `n` elements of `result` (which must have capacity ≥ n).
+/// Does NOT call `set_len` — the caller is responsible for that.
+fn per_element_decode<T: EndianCodec + Send>(
+    result: &mut Vec<T>,
+    bytes: &[u8],
+    n: usize,
+    endian: FileEndian,
+) {
+    #[cfg(feature = "parallel")]
+    {
+        use rayon::prelude::*;
+        const CHUNK_VOXELS: usize = 262_144;
+        let result_slice = unsafe { std::slice::from_raw_parts_mut(result.as_mut_ptr(), n) };
+        result_slice
+            .par_chunks_mut(CHUNK_VOXELS)
+            .zip(bytes.par_chunks(CHUNK_VOXELS * T::BYTE_SIZE))
+            .for_each(|(dst, src)| {
+                for (i, val) in dst.iter_mut().enumerate() {
+                    *val = T::from_bytes(src, i * T::BYTE_SIZE, endian);
+                }
+            });
+    }
+    #[cfg(not(feature = "parallel"))]
+    {
+        let result_slice = unsafe { std::slice::from_raw_parts_mut(result.as_mut_ptr(), n) };
+        for (i, slot) in result_slice.iter_mut().enumerate() {
+            *slot = T::from_bytes(bytes, i * T::BYTE_SIZE, endian);
+        }
+    }
+}
+
+/// Per-element encode fallback for non-native endian files.
+/// Used when the `simd` feature is not available.
+fn per_element_encode<T: EndianCodec + Sync>(values: &[T], bytes: &mut [u8], endian: FileEndian) {
+    #[cfg(feature = "parallel")]
+    {
+        use rayon::prelude::*;
+        const CHUNK_VOXELS: usize = 262_144;
+        bytes
+            .par_chunks_mut(CHUNK_VOXELS * T::BYTE_SIZE)
+            .zip(values.par_chunks(CHUNK_VOXELS))
+            .for_each(|(dst, src)| {
+                for (i, val) in src.iter().enumerate() {
+                    val.to_bytes(dst, i * T::BYTE_SIZE, endian);
+                }
+            });
+    }
+    #[cfg(not(feature = "parallel"))]
+    {
+        for (i, val) in values.iter().enumerate() {
+            val.to_bytes(bytes, i * T::BYTE_SIZE, endian);
+        }
+    }
 }
 
 // ============================================================================
