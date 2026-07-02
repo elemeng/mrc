@@ -131,9 +131,10 @@
 //! 1. **Write** blocks with [`write_block`](Writer::write_block). The type
 //!    `T` matches the file's mode — a compile-time check that prevents
 //!    accidentally treating bytes as the wrong kind of number.
-//! 2. **Finalize** with [`finalize`](Writer::finalize) to rewrite the header.
-//! 3. Optionally call [`update_header_stats`](Writer::update_header_stats)
+//! 2. Optionally call [`update_header_stats`](Writer::update_header_stats)
 //!    before finalize to fill in `dmin`/`dmax`/`dmean`/`rms`.
+//! 3. **Finalize** with [`finalize`](Writer::finalize) to rewrite the header
+//!    with final metadata. **Required** — without it the header is stale.
 //!
 //! Four backends through the same builder:
 //!

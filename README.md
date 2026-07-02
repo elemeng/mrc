@@ -45,11 +45,13 @@ writer.finalize()?;
 
 See **[docs.rs/mrc](https://docs.rs/mrc)** for the complete API reference, including:
 
-- Reading files — `Reader`, `MmapReader`, compressed I/O, permissive mode
+- Reading files — `Reader`, `MmapReader`, compressed I/O, permissive mode,
+  decompression bomb protection (256 GiB limit, configurable)
 - Writing files — `Writer`, `MmapWriter`, `GzipWriter`, `Bzip2Writer`
 - Iterators — slices, slabs, tiles, volumes, auto-conversion to `f32`
-- Full-volume reads — `read_volume::<T>()` and `read_volume_f32()`
-- Data modes — `Mode` enum and compile-time `Voxel` trait
+- Full-volume reads — `read_volume::<T>()`, `read_volume_f32()`, `read_volume_u8()`
+- Data modes — `Mode` enum and compile-time `Voxel` trait, including Packed4Bit
+  read/write via `slices_u8` / `write_u4_block`
 - Headers — `Header`, `HeaderBuilder`, validation, endianness
 - FEI extended headers — typed `Fei1Metadata` / `Fei2Metadata` parsing
 - Error handling — `Error` and `HeaderValidationError`
@@ -96,11 +98,11 @@ v0.2 adds SIMD acceleration, parallel encoding, type conversion iterators, compr
 - [x] FEI1/FEI2 extended header parsing
 - [x] Header statistics computation and validation
 - [x] Permissive mode and volume stack support
+- [x] Decompression bomb protection (configurable 256 GiB limit)
 
 **v0.3.x** — Extended Features
 
 - [ ] Extended header parsing for CCP4, MRCO, SERI, AGAR formats
-- [ ] Streaming decompression
 - [ ] Dedicated benchmark suite
 
 ## License

@@ -12,7 +12,7 @@ This file contains project-specific context for AI coding agents working on the 
 - **License**: MIT
 - **Version**: 0.2.5 (check `Cargo.toml` for latest)
 
-A reference Python implementation (`mrcfile/`) is vendored in the repo for specification comparison, but it is **not** part of the Rust build and is gitignored in releases. The MRC-2014 specification is available locally as `mrcfile-official.md`.
+A reference Python implementation (`mrcfile`) is available on PyPI for specification comparison, but this crate is a standalone Rust implementation. The MRC-2014 specification is available locally as `mrcfile-official.md`.
 
 ## Technology Stack
 
@@ -110,7 +110,7 @@ src/
 - `io/` contains user-facing I/O strategies (buffered, mmap, compressed).
 - `iter/` (a single `iter.rs` file, not a directory) provides lazy iterators that work over any `VoxelSource` implementor.
 - The crate uses **sealed traits** (`VoxelSource`) to keep internal abstractions internal.
-- `Packed4Bit` (Mode 101) has no `Voxel` impl. Read via `read_volume_u8()`/`slices_u8_packed()` which unpack nibbles to `u8`; write via `write_u4_block()` which packs `u8` values (0–15) two-per-byte.
+- `Packed4Bit` (Mode 101) has no `Voxel` impl. Read via `read_volume_u8()`/`slices_u8()` which unpack nibbles to `u8`; write via `write_u4_block()` which packs `u8` values (0–15) two-per-byte.
 
 ### I/O Strategies
 
@@ -134,9 +134,9 @@ The top-level `lib.rs` is the *only* public entry point. Internal modules (`engi
 
 | Visibility | Items |
 |------------|-------|
-| **Public (in lib.rs)** | `open`, `create`, `Reader`, `WriterBuilder`, `Writer`, `Header`, `HeaderBuilder`, `Mode`, `Voxel`, `VoxelBlock`, `VolumeShape`, `RegionIter`, `SliceStepper`, `SlabStepper`, `TileStepper`, `FileEndian`, `Error`, `HeaderValidationError`, `MmapReader`, `MmapWriter`, `GzipWriter`, `Bzip2Writer`, `validate_full`, `validate_reader`, `ValidationReport`, `ValidationIssue`, `Severity`, FEI types, `ComplexToRealStrategy`, `M0Interpretation`, `Int16Complex`, `Float32Complex`, `convert_u8_slice_to_u16`, `convert_u16_slice_to_u8`, `reinterpret_m0` |
+| **Public (in lib.rs)** | `open`, `create`, `Reader`, `WriterBuilder`, `Writer`, `Header`, `HeaderBuilder`, `Mode`, `Voxel`, `VoxelBlock`, `VolumeShape`, `RegionIter`, `SliceStepper`, `SlabStepper`, `TileStepper`, `FileEndian`, `Error`, `HeaderValidationError`, `MmapReader`, `MmapWriter`, `GzipWriter`, `Bzip2Writer`, `validate_full`, `validate_reader`, `ValidationReport`, `ValidationIssue`, `Severity`, FEI types, `ComplexToRealStrategy`, `M0Interpretation`, `Int16Complex`, `Float32Complex`, `convert_u8_slice_to_u16`, `convert_u16_slice_to_u8`, `reinterpret_m0`, `DEFAULT_MAX_DECOMPRESSED_BYTES` |
 | **`#[doc(hidden)]`** | `VoxelSource`, `ReaderCore`, `EndianCodec`, `Compressor`, `MachstInfo`, `CompressionType`, `detect_compression`, `GzipCompressor`, `Bzip2Compressor` |
-| **`pub(crate)` only** | `validate_block_bounds`, `gather_block_bytes`, `encode_block_to_buf`, `decode_block`, `decode_native_endian`, `decode_slice`, `encode_slice`, `encode_block_parallel`, `parse_header`, `DecompressedMrc`, `open_compressed`, `compute_stats`, `validate_header_stats`, `unpack_u4_bytes_to_u16`, `convert_i8_slice_to_f32`, `convert_i16_slice_to_f32`, `convert_u16_slice_to_f32` |
+| **`pub(crate)` only** | `validate_block_bounds`, `gather_block_bytes`, `encode_block_to_buf`, `decode_block`, `decode_native_endian`, `decode_slice`, `encode_slice`, `encode_block_parallel`, `parse_header`, `DecompressedMrc`, `open_compressed`, `compute_stats`, `validate_header_stats`, `unpack_u4_bytes_to_u8`, `convert_i8_slice_to_f32`, `convert_i16_slice_to_f32`, `convert_u16_slice_to_f32` |
 
 ## Development Conventions
 
@@ -218,9 +218,8 @@ The crate contains a small amount of `unsafe` Rust, all justified by performance
 
 1. **`gather_block_bytes` fast-path assumes contiguous XY slabs**: For full-row slabs (`ox == 0 && sx == nx && oy == 0 && sy == ny`) a contiguous copy is used. Sub-XY blocks correctly use row-by-row scatter/gather.
 2. **`MmapReader::data_bytes()` silently truncates on undersized files in permissive mode**: When the file is smaller than the header claims, the method returns whatever bytes are available instead of signalling an error. In strict mode the file size is validated on open.
-3. **Compressed readers decompress entirely into RAM**: Gzip/Bzip2 readers decompress the entire file into memory on open. They do not stream. This makes them susceptible to decompression bombs.
-4. **No benchmark suite**: Criterion is in dev-dependencies but there is no `benches/` directory.
-5. **`Packed4Bit` sub-block reads require even X-offset**: `validate_block_bounds` rejects odd `ox` for Mode 101 to avoid nibble-level read-modify-write in `gather_block_bytes`. Full-frame and byte-aligned sub-block reads work correctly.
+3. **No benchmark suite**: Criterion is in dev-dependencies but there is no `benches/` directory.
+4. **`Packed4Bit` sub-block reads require even X-offset**: `validate_block_bounds` rejects odd `ox` for Mode 101 to avoid nibble-level read-modify-write in `gather_block_bytes`. Full-frame and byte-aligned sub-block reads work correctly.
 
 ## CLI Tools
 
@@ -241,14 +240,14 @@ Three binary targets are available (`src/bin/`):
 
 - **File Size Validation**: Readers validate that file size matches header-declared data size (with a `FileSizeMismatch` error) unless opened in permissive mode.
 - **Memory Mapping**: `MmapReader` maps files read-only. `MmapWriter` maps read-write and can mutate files in place.
-- **Compression**: Gzip/Bzip2 readers decompress the entire file into memory on open (they do not stream). This makes them susceptible to decompression bombs / zip bombs. Do not use these on untrusted input without size limits.
+- **Compression**: Gzip/Bzip2 readers decompress the entire file into memory on open (they do not stream). A hard cap of [`DEFAULT_MAX_DECOMPRESSED_BYTES`](crate::DEFAULT_MAX_DECOMPRESSED_BYTES) (256 GiB) is enforced before the header is parsed, preventing decompression bombs. Use [`open_gzip_with_limit`](crate::Reader::open_gzip_with_limit) / [`open_bzip2_with_limit`](crate::Reader::open_bzip2_with_limit) for a custom limit, or set to `u64::MAX` to disable the cap.
 - **No `unsafe` in public API**: All `unsafe` is internal; the public API is 100% safe Rust.
 - **Integer Overflow**: The codebase uses `checked_mul` and `checked_add` for size calculations in several places (`VolumeShape::total_voxels`, `checked_linear_index`, block validation), but not universally. Agents should maintain defensive arithmetic when computing byte offsets and buffer sizes.
 
 ## External References
 
 - **MRC-2014 Spec**: `mrcfile-official.md` (local copy) or https://www.ccpem.ac.uk/mrc-format/mrc2014/
-- **Python Reference**: `mrcfile/` directory (CCP-EM's `mrcfile` Python package)
+- **Python Reference**: CCP-EM's `mrcfile` Python package
 
 ## When Modifying This File
 

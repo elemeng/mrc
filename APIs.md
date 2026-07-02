@@ -75,6 +75,11 @@ pub fn create<P: AsRef<Path>>(path: P) -> WriterBuilder
 
 `open` wraps `Reader::open`. `create` wraps `WriterBuilder::new`. These are the idiomatic entry points for most use cases.
 
+```rust
+// Decompression safety limit for gzip/bzip2 files (256 GiB).
+pub const DEFAULT_MAX_DECOMPRESSED_BYTES: u64 = 274_877_906_944;
+```
+
 ---
 
 ## Readers
@@ -87,8 +92,10 @@ The standard buffered reader. Loads the **entire file** into a `Vec<u8>` on open
 |---|---|---|
 | `Reader::open(path)` | `Result<Reader>` | Auto-detect compression, open file |
 | `Reader::open_plain(path)` | `Result<Reader>` | Force plain (uncompressed) |
-| `Reader::open_gzip(path)` | `Result<Reader>` | Force gzip (requires `gzip`) |
-| `Reader::open_bzip2(path)` | `Result<Reader>` | Force bzip2 (requires `bzip2`) |
+| `Reader::open_gzip(path)` | `Result<Reader>` | Force gzip (requires `gzip`); 256 GiB decompression limit |
+| `Reader::open_gzip_with_limit(path, max)` | `Result<Reader>` | Force gzip with custom `max_bytes` limit |
+| `Reader::open_bzip2(path)` | `Result<Reader>` | Force bzip2 (requires `bzip2`); 256 GiB decompression limit |
+| `Reader::open_bzip2_with_limit(path, max)` | `Result<Reader>` | Force bzip2 with custom `max_bytes` limit |
 | `Reader::open_permissive(path)` | `Result<(Reader, Vec<String>)>` | Open with lenient header validation; warnings returned separately |
 | `Reader::open_gzip_permissive(path)` | `Result<(Reader, Vec<String>)>` | Permissive gzip |
 | `Reader::open_bzip2_permissive(path)` | `Result<(Reader, Vec<String>)>` | Permissive bzip2 |
@@ -257,7 +264,7 @@ The 1024-byte MRC-2014 header. Every field is a public `struct` member.
 | `nsymbt` | `i32` | Extended header size in bytes |
 | `extra` | `[u8; 100]` | Extra bytes (bytes 8-11 = EXTTYP, 12-15 = NVERSION) |
 | `origin` | `[f32; 3]` | Volume/phase origin |
-| `map` | `[u8; 4]` | Must be `b"MAP "` |
+| `map` | `[u8; 4]` | Must be `b"MAP "`; `b"MAP\0"`, `b"MAPI"`, and all-zero also accepted for compatibility |
 | `machst` | `[u8; 4]` | Machine stamp (LE = `0x44 0x44`, BE = `0x11 0x11`) |
 | `rms` | `f32` | RMS deviation |
 | `nlabl` | `i32` | Number of labels (0-10) |
@@ -631,7 +638,11 @@ Reading handles both endiannesses transparently.
 Non-critical issues become warnings instead of errors.
 
 **Compression is transparent on read** — `open()` auto-detects gzip/bzip2 from
-magic bytes and decompresses the whole file into memory.
+magic bytes and decompresses the whole file into memory. A hard cap of
+[`DEFAULT_MAX_DECOMPRESSED_BYTES`] (256 GiB) prevents decompression bombs.
+Use `open_gzip_with_limit()` / `open_bzip2_with_limit()` for a custom limit.
+
+[`DEFAULT_MAX_DECOMPRESSED_BYTES`]: #top-level-functions
 
 **`finalize()` rewrites the header** — the header is written optimistically at
 file creation and rewritten at the end to capture any modifications (e.g. updated
