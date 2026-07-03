@@ -13,7 +13,18 @@
 //!
 //! # Field coverage
 //!
-//! These parsers cover the **most frequently used** fields for each format.
+//! - **CCP4**: Fully parsed as 80-byte text lines. The format stores space
+//!   group symmetry operators as human-readable ASCII text, one operator per
+//!   line separated by `*`.
+//! - **MRCO**: Raw bytes only. The byte layout is not standardised across
+//!   implementations. Access `raw` and interpret per your application.
+//! - **SERI**: The tilt angle (`alpha_tilt`, bytes 0–3 as `f32` LE) is
+//!   exposed. Other fields documented in the
+//!   [IMOD mrc_format.txt](http://bio3d.colorado.edu/imod/doc/mrc_format.txt)
+//!   are accessible via the `raw` byte array.
+//! - **AGAR**: Raw bytes only. The byte layout is not standardised; access
+//!   `raw` and interpret per your application.
+//!
 //! For fields not yet exposed, access the raw extended header bytes directly
 //! via [`Reader::ext_header_bytes`](crate::Reader::ext_header_bytes).
 
@@ -140,10 +151,14 @@ pub const SERI_RECORD_SIZE: usize = 256;
 /// is documented in the IMOD documentation at
 /// <http://bio3d.colorado.edu/imod/doc/mrc_format.txt>.
 ///
-/// Only the most commonly accessed fields are exposed below.  Access the
-/// raw bytes for less frequently used fields.
+/// The tilt angle at bytes 0–3 (little-endian `f32`) is the most commonly
+/// accessed field and is exposed directly.  All other fields are accessible
+/// via the [`raw`](SeriRecord::raw) byte array.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SeriRecord {
+    /// Tilt angle in degrees, read from bytes 0–3 as little-endian `f32`.
+    /// This is the single most commonly accessed field in SerialEM records.
+    pub alpha_tilt: f32,
     /// Raw 256-byte record — access unparsed fields via this slice.
     pub raw: [u8; SERI_RECORD_SIZE],
 }
@@ -155,7 +170,8 @@ impl SeriRecord {
         }
         let mut raw = [0u8; SERI_RECORD_SIZE];
         raw.copy_from_slice(&bytes[..SERI_RECORD_SIZE]);
-        Some(Self { raw })
+        let alpha_tilt = f32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+        Some(Self { raw, alpha_tilt })
     }
 }
 
@@ -278,10 +294,14 @@ mod tests {
 
     #[test]
     fn seri_roundtrip() {
-        let buf = vec![99u8; SERI_RECORD_SIZE];
+        let mut buf = vec![0u8; SERI_RECORD_SIZE];
+        // Set tilt angle at bytes 0-3 (f32 LE)
+        buf[0..4].copy_from_slice(&(-35.5f32).to_le_bytes());
+        buf[4] = 99; // marker for raw check
         let records = parse_seri_records(&buf).unwrap();
         assert_eq!(records.len(), 1);
-        assert_eq!(records[0].raw[0], 99);
+        assert!((records[0].alpha_tilt - (-35.5)).abs() < 1e-6);
+        assert_eq!(records[0].raw[4], 99);
     }
 
     #[test]
