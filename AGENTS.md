@@ -290,7 +290,6 @@ Three binary targets are available (`src/bin/`):
 ### v0.4.x — Ecosystem & Performance
 
 - `serde` support for `Header` serialization (JSON/YAML roundtrip)
-- Async I/O via `tokio` (non-blocking read/write)
 - Python bindings via PyO3 / `maturin`
 - Cross-platform CI with real EMDB test fixtures
 - Lazy voxel views — zero-copy `ArrayView3` / `&[T]` for native-endian files
