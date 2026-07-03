@@ -21,7 +21,7 @@ mrc = "0.2"
 ## Quick Start
 
 ```rust
-use mrc::{open, create, VoxelBlock};
+use mrc::{open, create, VoxelBlock, ConvertMethods};
 
 // Read (auto-detects compression; handles common microscope quirks
 // like NVERSION=0 and "MAP\0" automatically)
@@ -49,8 +49,8 @@ See **[docs.rs/mrc](https://docs.rs/mrc)** for the complete API reference, inclu
 - Reading files — `Reader`, `MmapReader`, compressed I/O, permissive mode,
   decompression bomb protection (256 GiB limit, configurable)
 - Writing files — `Writer`, `MmapWriter`, `GzipWriter`, `Bzip2Writer`
-- Iterators — slices, slabs, tiles, volumes,
-  auto-conversion via `reader.convert::<T>().slices()` etc.
+- Iterators — slices, slabs, tiles, volumes (import `ReaderMethods` trait)
+- Auto-conversion — `reader.convert::<T>().slices()` etc. (import `ConvertMethods` trait)
 - Full-volume reads — `read_volume::<T>()`, `read_volume_u8()`,
   auto-conversion via `reader.convert::<T>().read_volume()`
 - Data modes — `Mode` enum and compile-time `Voxel` trait, including Packed4Bit
@@ -102,11 +102,11 @@ v0.2 adds SIMD acceleration, parallel encoding, type conversion iterators, compr
 - [x] Header statistics computation and validation
 - [x] Permissive mode and volume stack support
 - [x] Decompression bomb protection (configurable 256 GiB limit)
+- [x] Criterion benchmark suite (slices, mmap, write, stats, conversion)
 
 **v0.3.x** — Extended Features
 
 - [ ] Extended header parsing for CCP4, MRCO, SERI, AGAR formats
-- [ ] Dedicated benchmark suite
 
 ## License
 

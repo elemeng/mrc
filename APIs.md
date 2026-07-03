@@ -34,7 +34,7 @@
 ## Quick Start
 
 ```rust
-use mrc::{open, create, VoxelBlock, Mode};
+use mrc::{open, create, VoxelBlock, Mode, ReaderMethods};
 
 // ── Reading (auto-detects gzip/bzip2) ──
 let reader = open("protein.mrc")?;
@@ -86,7 +86,22 @@ pub const DEFAULT_MAX_DECOMPRESSED_BYTES: u64 = 274_877_906_944;
 
 ### `Reader`
 
-The standard buffered reader. Loads the **entire file** into a `Vec<u8>` on open. All fields and methods are accessed through inherent impls.
+The standard buffered reader. Loads the **entire file** into a `Vec<u8>` on open.
+
+**Trait imports:** Iterator and conversion methods (`slices`, `slabs`, `tiles`,
+`subregion`, `read_volume`, `convert`, `slices_u8`, etc.) are defined on the
+[`ReaderMethods`] and [`ConvertMethods`] traits. Import them to use these
+methods:
+
+```rust
+use mrc::{Reader, ReaderMethods, ConvertMethods};
+
+let reader = Reader::open("file.mrc")?;
+for slice in reader.slices::<f32>() { ... }
+for slice in reader.convert::<f32>().slices() { ... }
+```
+
+The table below lists inherent methods first, then the trait-provided methods.
 
 | Method | Returns | Description |
 |---|---|---|
@@ -107,35 +122,47 @@ The standard buffered reader. Loads the **entire file** into a `Vec<u8>` on open
 | `reader.ext_header_bytes()` | `&[u8]` | Extended header bytes (empty if none) |
 | `reader.read_block_bytes(offset, shape)` | `Result<Vec<u8>>` | Read raw bytes for any sub-block |
 | `reader.read_block::<T>(offset, shape)` | `Result<VoxelBlock<T>>` | Deprecated, use `subregion` instead |
-| `reader.subregion::<T>(offset, shape)` | `Result<VoxelBlock<T>>` | Read and decode typed sub-block at any offset |
-| `reader.read_volume::<T>()` | `Result<VoxelBlock<T>>` | Read the entire volume as a single block |
-| `reader.read_volume_u8()` | `Result<VoxelBlock<u8>>` | Read volume as `u8` (Uint16 narrowing or Packed4Bit unpack) |
 | `reader.validate_header_stats()` | `Result<()>` | Cross-check header stats vs actual data (1% tolerance) |
-| `reader.convert::<T>()` | [`ConvertReader`] | Returns a wrapper; all reads auto-convert to type `T` |
+| `reader.is_truncated()` | `bool` | `true` if permissive-mode open found a truncated file |
 
-**Iterator methods** (all return lazy `RegionIter` or boxed iterators, see [Iterators](#iterators)):
+**Methods from [`ReaderMethods`] trait** (import `use mrc::ReaderMethods;`):
 
 | Method | Returns | Description |
 |---|---|---|
+| `reader.subregion::<T>(offset, shape)` | `Result<VoxelBlock<T>>` | Read and decode typed sub-block at any offset |
+| `reader.read_volume::<T>()` | `Result<VoxelBlock<T>>` | Read the entire volume as a single block |
+| `reader.read_volume_u8()` | `Result<VoxelBlock<u8>>` | Read volume as `u8` (Uint16 narrowing or Packed4Bit unpack) |
 | `reader.slices::<T>()` | `RegionIter<T, SliceStepper>` | One Z-plane at a time |
 | `reader.slabs::<T>(k)` | `RegionIter<T, SlabStepper>` | `k` contiguous Z-planes |
 | `reader.tiles::<T>(shape)` | `RegionIter<T, TileStepper>` | Arbitrary 3D tiles |
 | `reader.volumes::<T>()` | `Result<RegionIter<T, SlabStepper>>` | One sub-volume per step (volume stacks only) |
-| `reader.subregion::<T>(offset, shape)` | `Result<VoxelBlock<T>>` | Single block at given offset/shape |
-| `reader.convert::<T>().slices()` | iterator yielding `VoxelBlock<T>` | Auto-convert any mode to target type `T` |
-| `reader.convert::<T>().slabs(k)` | iterator yielding `VoxelBlock<T>` | Same as `slices` but `k` planes at a time |
-| `reader.convert::<T>().tiles(shape)` | iterator yielding `VoxelBlock<T>` | Same as `slices` but arbitrary 3D tiles |
-| `reader.convert::<T>().subregion(offset, shape)` | `Result<VoxelBlock<T>>` | Single block at given offset/shape, auto-converted |
-| `reader.convert::<T>().read_volume()` | `Result<VoxelBlock<T>>` | Full volume as one block, auto-converted |
 | `reader.slices_u8()` | iterator yielding `VoxelBlock<u8>` | Mode 6 (Uint16) or Mode 101 (Packed4Bit); narrows/nibble-unpacks to `u8` |
 | `reader.slabs_u8(k)` | iterator yielding `VoxelBlock<u8>` | Same as `slices_u8` but `k` planes at a time |
 | `reader.slices_mode0(interp)` | iterator yielding `VoxelBlock<f32>` | Mode 0 (Int8) only; signed or unsigned |
 | `reader.slabs_mode0(k, interp)` | iterator yielding `VoxelBlock<f32>` | Same as `slices_mode0` but `k` planes at a time |
 
+**Methods from [`ConvertMethods`] trait** (import `use mrc::ConvertMethods;`):
+
+| Method | Returns | Description |
+|---|---|---|
+| `reader.convert::<T>()` | [`ConvertReader`] | Returns a wrapper; all reads auto-convert to type `T` |
+
+Then use the wrapper's inherent methods:
+
+| Method | Returns | Description |
+|---|---|---|
+| `reader.convert::<T>().slices()` | iterator yielding `VoxelBlock<T>` | Auto-convert any mode to target type `T` |
+| `reader.convert::<T>().slabs(k)` | iterator yielding `VoxelBlock<T>` | Same as `slices` but `k` planes at a time |
+| `reader.convert::<T>().tiles(shape)` | iterator yielding `VoxelBlock<T>` | Same as `slices` but arbitrary 3D tiles |
+| `reader.convert::<T>().subregion(offset, shape)` | `Result<VoxelBlock<T>>` | Single block at given offset/shape, auto-converted |
+| `reader.convert::<T>().read_volume()` | `Result<VoxelBlock<T>>` | Full volume as one block, auto-converted |
+
 ### `MmapReader`
 
 Memory-mapped reader with **zero-copy** access for native-endian files.
-Requires the `mmap` feature.
+Requires the `mmap` feature.  Import the [`ReaderMethods`] and [`ConvertMethods`]
+traits for slice/subregion/convert methods (see [Reader](#reader) above for the
+full method list).
 
 | Method | Returns | Description |
 |---|---|---|
@@ -146,16 +173,18 @@ Requires the `mmap` feature.
 | `reader.header()` | `&Header` | Parsed header |
 | `reader.endian()` | `FileEndian` | Detected byte order |
 | `reader.data_bytes()` | `&[u8]` | Raw voxel data (zero-copy) |
+| `reader.is_truncated()` | `bool` | `true` if permissive-mode mmap is shorter than header claims |
 | `reader.ext_header_bytes()` | `&[u8]` | Extended header bytes |
 | `reader.slab_as::<T>(z, k)` | `Result<&[T]>` | **Zero-copy** typed access into the mmap (requires native endian + matching type) |
 | `reader.read_block_bytes(offset, shape)` | `Result<Vec<u8>>` | Read raw bytes for any sub-block |
 | `reader.read_block::<T>(offset, shape)` | `Result<VoxelBlock<T>>` | Deprecated, use `subregion` instead |
-| `reader.read_volume::<T>()` | `Result<VoxelBlock<T>>` | Read the entire volume as a single block |
-| `reader.read_volume_u8()` | `Result<VoxelBlock<u8>>` | Read volume as `u8` (Uint16 narrowing or Packed4Bit unpack) |
 | `reader.convert::<T>()` | [`ConvertReader`] | Returns a wrapper; all reads auto-convert to type `T` |
 | `reader.validate_header_stats()` | `Result<()>` | Cross-check header stats |
 
-`MmapReader` also has all the same **iterator methods** as `Reader` (`slices`, `slabs`, `tiles`, `convert`, `slices_u8`, `slabs_u8`, `slices_mode0`, `slabs_mode0`, `volumes`, `subregion`, etc.).
+`MmapReader` also has all the same **trait-provided methods** as `Reader`
+via [`ReaderMethods`] and [`ConvertMethods`] (`slices`, `slabs`, `tiles`,
+`convert`, `slices_u8`, `slabs_u8`, `slices_mode0`, `slabs_mode0`,
+`volumes`, `subregion`, `read_volume`, `read_volume_u8`, etc.).
 
 **When to use `MmapReader` vs `Reader`:**
 
@@ -206,7 +235,7 @@ Additional builder methods behind feature flags:
 | `writer.write_block::<T>(&block)` | Write a typed voxel block. `T` must match file mode |
 | `writer.write_u8_block(&block)` | Convenience: write `VoxelBlock<u8>` to a Uint16 file (auto-widens) |
 | `writer.write_u4_block(&block)` | Convenience: write `VoxelBlock<u8>` to a Packed4Bit file (auto-packs, values must be 0–15) |
-| `writer.write_block_as(&block)` | Write with auto-conversion to file's mode (e.g. `f32` → Float16) |
+| `writer.write_block_as(&block)` | Write with auto-conversion to file's mode: `f32` → `i8`/`i16`/`u16`/`f16` (clamped) |
 | `writer.write_block_parallel::<T>(&block)` | Parallel-encoded write (feature `parallel`; contiguous XY slabs only) |
 | `writer.finalize()` | Rewrite header to disk (call when all blocks are written) |
 | `writer.update_header_stats()` | Scan all data, compute dmin/dmax/dmean/rms, update header |
@@ -280,7 +309,7 @@ The 1024-byte MRC-2014 header. Every field is a public `struct` member.
 | `header.validate_detailed()` | `Result<(), HeaderValidationError>` | Full structural validation |
 | `header.validate_permissive()` | `Result<Vec<String>>` | Lenient validation with warnings |
 | `header.decode_from_bytes(bytes)` | `Header` | Parse from raw 1024 bytes (auto endian) |
-| `header.decode_from_bytes_with_info(bytes)` | `(Header, Option<&str>)` | Parse with endian fallback diagnostics |
+| `header.decode_from_bytes_with_info(bytes)` | `(Header, Option<EndianFallbackWarning>)` | Parse with endian fallback diagnostics |
 | `header.encode_to_bytes(&mut [u8; 1024])` | `()` | Encode to raw bytes |
 | `header.exttyp()` | `[u8; 4]` | Extended header type from `extra[8..12]` |
 | `header.set_exttyp(value)` | `()` | Set extended header type |
@@ -432,9 +461,9 @@ Both have `to_real(strategy: ComplexToRealStrategy) -> f32`:
 
 Packed4Bit does **not** implement `Voxel` — instead it is handled transparently
 by the unified API:
-- Reading: [`slices_u8`](Reader::slices_u8) / [`slabs_u8`](Reader::slabs_u8) /
-  [`read_volume_u8`](Reader::read_volume_u8) unpack nibbles to `u8` (0–15);
-  [`convert::<f32>()`](Reader::convert) / [`convert::<T>()`](Reader::convert)
+- Reading: [`slices_u8`](ReaderMethods::slices_u8) / [`slabs_u8`](ReaderMethods::slabs_u8) /
+  [`read_volume_u8`](ReaderMethods::read_volume_u8) unpack nibbles to `u8` (0–15);
+  [`convert::<f32>()`](ConvertMethods::convert) / [`convert::<T>()`](ConvertMethods::convert)
   convert directly to `f32` or any target type via `.slices()` / `.read_volume()`.
 - Writing: [`write_u4_block`](Writer::write_u4_block) packs `u8` values
   two-per-byte.
@@ -469,9 +498,15 @@ pub struct TileStepper;     // arbitrary 3D tiles
 | `SlabStepper` | `SlabStepper::new(k)` | Steps `k` slices at a time, block shape = `[nx, ny, k]` |
 | `TileStepper` | `TileStepper::new([sx, sy, sz])` | Raster-scans volume in `[sx, sy, sz]` tiles |
 
-You don't normally interact with `RegionIter` directly — just use the reader methods that return them:
+You don't normally interact with `RegionIter` directly — just use the reader
+methods (from the [`ReaderMethods`] trait, imported via
+`use mrc::ReaderMethods;`):
 
 ```rust
+use mrc::{Reader, ReaderMethods};
+
+let reader = Reader::open("file.mrc")?;
+
 for slice in reader.slices::<f32>() {
     let block = slice?;
     // block.offset, block.shape, block.data
@@ -609,9 +644,10 @@ pub fn convert_u16_slice_to_u8(src: &[u16]) -> Result<Vec<u8>, Error>;
 ```
 
 These are convenience functions exposed from the crate root. The more comprehensive
-conversion infrastructure is used internally by [`convert::<T>()`](Reader::convert) which
+conversion infrastructure is used internally by [`convert::<T>()`](ConvertMethods::convert) which
 automatically converts any MRC mode to the target type via `.slices()`, `.slabs()`,
-`.tiles()`, `.subregion()`, and `.read_volume()`.
+`.tiles()`, `.subregion()`, and `.read_volume()`.  Import the
+[`ConvertMethods`] trait (`use mrc::ConvertMethods;`) to access `.convert()`.
 
 ---
 
@@ -625,6 +661,7 @@ automatically converts any MRC mode to the target type via `.slices()`, `.slabs(
 | `parallel` | ✅ | `write_block_parallel()` using `rayon` |
 | `gzip` | ✅ | Gzip auto-detection, `Reader::open_gzip()`, `GzipWriter` |
 | `bzip2` | ❌ | Bzip2 auto-detection, `Reader::open_bzip2()`, `Bzip2Writer` |
+| `ndarray` | ❌ | Return volumes as `ndarray::Array3<T>` via `to_ndarray()` |
 
 ---
 

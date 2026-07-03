@@ -53,6 +53,11 @@
 //! * [`tiles`](ReaderMethods::tiles) — arbitrary 3D blocks
 //! * [`subregion`](ReaderMethods::subregion) — a single block by coordinate
 //!
+//! > **Trait imports:** Iterator methods require importing the [`ReaderMethods`]
+//! > trait; the `.convert()` auto-conversion API requires the [`ConvertMethods`]
+//! > trait. Both are re-exported from the crate root — just add
+//! > `use mrc::{ReaderMethods, ConvertMethods};`.
+//!
 //! For automatic mode conversion, use [`convert`](ConvertMethods::convert):
 //!
 //! ```no_run
