@@ -89,24 +89,36 @@ v0.2 adds SIMD acceleration, parallel encoding, type conversion iterators, compr
 
 ## Roadmap
 
-**v0.2.x** — Core + SIMD + FEI (current)
+**v0.3.x** — Stabilization & Quality (current)
 
 - [x] Complete MRC-2014 format support
 - [x] Iterator-centric API (slices, slabs, tiles)
 - [x] Type-safe I/O with compile-time mode checking
-- [x] SIMD acceleration (AVX2, NEON) — i8→f32, i16→f32, u16→f32
+- [x] SIMD acceleration (AVX2, NEON) — i8→f32, i16→f32, u16→f32, f16↔f32, byte-swap, stats
 - [x] Memory-mapped I/O and parallel encoding
 - [x] All data types (modes 0–4, 6, 12, 101)
 - [x] Compression support (gzip, bzip2)
-- [x] FEI1/FEI2 extended header parsing
+- [x] All extended header parsers (FEI1/2, CCP4, MRCO, SERI, AGAR)
 - [x] Header statistics computation and validation
 - [x] Permissive mode and volume stack support
 - [x] Decompression bomb protection (configurable 256 GiB limit)
-- [x] Criterion benchmark suite (slices, mmap, write, stats, conversion)
+- [x] Criterion benchmark suite + integration tests
+- [x] Unified `ConvertReader` API with inherent forwarding
+- [x] `ndarray` feature for numpy-like volume access
+- [ ] Streaming decompression (reduce RAM for gzip/bzip2 files)
+- [ ] `no_std` + `alloc` support for embedded / GPU contexts
+- [ ] SIMD f32→i16/i8 clamping in write-hot paths
+- [ ] Richer error context (offset, mode in BoundsError / ModeMismatch)
 
-**v0.3.x** — Extended Features
+**v0.4.x** — Ecosystem & Performance
 
-- [x] Extended header parsing for CCP4, MRCO, SERI, AGAR formats
+- [ ] `serde` support for `Header` serialization (JSON/YAML roundtrip)
+- [ ] Streaming compressed writer (reduce peak RAM on finalize)
+- [ ] Async I/O via `tokio` (non-blocking read/write)
+- [ ] Python bindings via PyO3 / `maturin`
+- [ ] Parallel reader (rayon-based volume iteration)
+- [ ] cross-platform CI with real EMDB test fixtures
+- [ ] Lazy voxel views — zero-copy `ArrayView3` / `&[T]` for native-endian files
 
 **Note:** This crate is under active development. While most features are functional, occasional API changes are possible. Contributions welcome — please report issues and share your ideas!
 

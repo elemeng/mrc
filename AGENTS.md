@@ -280,6 +280,25 @@ Three binary targets are available (`src/bin/`):
 - **MRC-2014 Spec**: `mrcfile-official.md` (local copy) or https://www.ccpem.ac.uk/mrc-format/mrc2014/
 - **Python Reference**: CCP-EM's `mrcfile` Python package
 
+## Roadmap
+
+### v0.3.x — Stabilization & Quality (current)
+
+- Streaming decompression (reduce RAM pressure for gzip/bzip2 files)
+- `no_std` + `alloc` support for embedded / GPU contexts
+- SIMD f32→i16/i8 clamping in write-hot paths
+- Richer error context (offset, mode in BoundsError / ModeMismatch)
+
+### v0.4.x — Ecosystem & Performance
+
+- `serde` support for `Header` serialization (JSON/YAML roundtrip)
+- Streaming compressed writer (reduce peak RAM on finalize)
+- Async I/O via `tokio` (non-blocking read/write)
+- Python bindings via PyO3 / `maturin`
+- Parallel reader (rayon-based volume iteration)
+- Cross-platform CI with real EMDB test fixtures
+- Lazy voxel views — zero-copy `ArrayView3` / `&[T]` for native-endian files
+
 ## When Modifying This File
 
 If you modify any files, styles, structures, configurations, workflows, or other conventions mentioned in this guide, update the corresponding sections of this file to keep it current.
