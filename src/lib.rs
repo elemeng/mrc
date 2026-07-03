@@ -405,6 +405,7 @@
 
 mod engine;
 mod error;
+mod ext_header;
 mod fei;
 mod header;
 mod io;
@@ -459,6 +460,13 @@ pub use io::bzip2::Bzip2Writer;
 pub use fei::{
     FEI1_RECORD_SIZE, FEI2_RECORD_SIZE, Fei1Metadata, Fei2Metadata, parse_fei1_records,
     parse_fei2_records,
+};
+
+/// Extended header types for CCP4, MRCO, SerialEM, and Agard formats.
+pub use ext_header::{
+    AGAR_RECORD_SIZE, AgarRecord, CCP4_RECORD_SIZE, Ccp4Record, MRCO_RECORD_SIZE, MrcoRecord,
+    SERI_RECORD_SIZE, SeriRecord, parse_agar_records, parse_ccp4_records, parse_mrco_records,
+    parse_seri_records,
 };
 
 /// Default decompression safety limit for gzip/bzip2 files (256 GiB).
@@ -847,5 +855,314 @@ mod integration_tests {
             .unwrap();
         let result = w.write_u4_block(&VoxelBlock::new([0, 0, 0], [1, 1, 1], src).unwrap());
         assert!(result.is_err());
+    }
+
+    // ── Complex mode roundtrip tests ──────────────────────────────────────
+
+    /// Write Int16Complex (Mode 3), read back.
+    #[test]
+    fn roundtrip_complex_i16() {
+        let f = TempMrc::new("cpx_i16");
+        let nx = 4;
+        let ny = 4;
+        let nz = 2;
+        let total = nx * ny * nz;
+
+        let src: Vec<Int16Complex> = (0..total)
+            .map(|i| Int16Complex {
+                real: i as i16,
+                imag: (i * 10) as i16,
+            })
+            .collect();
+        {
+            let mut w = create(f.path())
+                .shape([nx, ny, nz])
+                .mode::<Int16Complex>()
+                .finish()
+                .unwrap();
+            w.write_block(&VoxelBlock::new([0, 0, 0], [nx, ny, nz], src.clone()).unwrap())
+                .unwrap();
+            w.finalize().unwrap();
+        }
+
+        let r = Reader::open(f.path()).unwrap();
+        let block = r.read_volume::<Int16Complex>().unwrap();
+        assert_eq!(block.data.len(), total);
+        for (a, b) in block.data.iter().zip(src.iter()) {
+            assert_eq!(a.real, b.real);
+            assert_eq!(a.imag, b.imag);
+        }
+
+        // convert::<f32>() should return magnitude
+        let mag_block = r.convert::<f32>().read_volume().unwrap();
+        for (i, val) in mag_block.data.iter().enumerate() {
+            let expected = ((i as f32).powi(2) + ((i * 10) as f32).powi(2)).sqrt();
+            assert!((val - expected).abs() < 1e-4);
+        }
+    }
+
+    /// Write Float32Complex (Mode 4), read back.
+    #[test]
+    fn roundtrip_complex_f32() {
+        let f = TempMrc::new("cpx_f32");
+        let nx = 4;
+        let ny = 4;
+        let nz = 2;
+        let total = nx * ny * nz;
+
+        let src: Vec<Float32Complex> = (0..total)
+            .map(|i| Float32Complex {
+                real: i as f32,
+                imag: (i as f32) * 1.5,
+            })
+            .collect();
+        {
+            let mut w = create(f.path())
+                .shape([nx, ny, nz])
+                .mode::<Float32Complex>()
+                .finish()
+                .unwrap();
+            w.write_block(&VoxelBlock::new([0, 0, 0], [nx, ny, nz], src.clone()).unwrap())
+                .unwrap();
+            w.finalize().unwrap();
+        }
+
+        let r = Reader::open(f.path()).unwrap();
+        let block = r.read_volume::<Float32Complex>().unwrap();
+        assert_eq!(block.data.len(), total);
+        for (a, b) in block.data.iter().zip(src.iter()) {
+            assert_eq!(a.real, b.real);
+            assert_eq!(a.imag, b.imag);
+        }
+    }
+
+    // ── MmapReader tests ──────────────────────────────────────────────────
+
+    #[cfg(feature = "mmap")]
+    #[test]
+    fn mmap_roundtrip_f32() {
+        let f = TempMrc::new("mmap_f32");
+        let nx = 16;
+        let ny = 8;
+        let nz = 4;
+        let total = nx * ny * nz;
+
+        let data: Vec<f32> = (0..total).map(|i| i as f32).collect();
+        {
+            let mut w = create(f.path())
+                .shape([nx, ny, nz])
+                .mode::<f32>()
+                .finish()
+                .unwrap();
+            w.write_block(&VoxelBlock::new([0, 0, 0], [nx, ny, nz], data.clone()).unwrap())
+                .unwrap();
+            w.finalize().unwrap();
+        }
+
+        let r = MmapReader::open(f.path()).unwrap();
+        let block = r.read_volume::<f32>().unwrap();
+        assert_eq!(block.data, data);
+
+        // Zero-copy slab_as
+        let slab: &[f32] = r.slab_as::<f32>(0, 1).unwrap();
+        assert_eq!(slab.len(), nx * ny);
+        assert_eq!(slab, &data[..nx * ny]);
+    }
+
+    // ── Bzip2 roundtrip test ──────────────────────────────────────────────
+
+    #[cfg(feature = "bzip2")]
+    #[test]
+    fn roundtrip_bzip2() {
+        let f = TempMrc::new("bzip2");
+        let nx = 8;
+        let ny = 8;
+        let nz = 4;
+
+        let data: Vec<f32> = (0..nx * ny * nz).map(|i| i as f32).collect();
+        {
+            let mut w = create(f.path())
+                .shape([nx, ny, nz])
+                .mode::<f32>()
+                .finish_bzip2()
+                .unwrap();
+            w.write_block(&VoxelBlock::new([0, 0, 0], [nx, ny, nz], data.clone()).unwrap())
+                .unwrap();
+            w.finalize().unwrap();
+        }
+
+        // Reader::open auto-detects bzip2
+        let r = Reader::open(f.path()).unwrap();
+        let block = r.read_volume::<f32>().unwrap();
+        assert_eq!(block.data, data);
+    }
+
+    // ── write_block_as roundtrip tests ────────────────────────────────────
+
+    #[test]
+    fn write_block_as_i16() {
+        let f = TempMrc::new("wba_i16");
+        let nx = 4;
+        let ny = 4;
+        let nz = 2;
+        let total = nx * ny * nz;
+
+        let src: Vec<f32> = (0..total).map(|i| (i as f32) - 8.0).collect();
+        let expected_i16: Vec<i16> = src.iter().map(|&v| v as i16).collect();
+        {
+            let mut w = WriterBuilder::new(f.path())
+                .shape([nx, ny, nz])
+                .mode::<i16>()
+                .finish()
+                .unwrap();
+            w.write_block_as(&VoxelBlock::new([0, 0, 0], [nx, ny, nz], src).unwrap())
+                .unwrap();
+            w.finalize().unwrap();
+        }
+
+        let r = Reader::open(f.path()).unwrap();
+        let block = r.read_volume::<i16>().unwrap();
+        assert_eq!(block.data, expected_i16);
+    }
+
+    #[test]
+    fn write_block_as_u16() {
+        let f = TempMrc::new("wba_u16");
+        let total = 32usize;
+        let src: Vec<f32> = (0..total).map(|i| (i * 100) as f32).collect();
+        let expected_u16: Vec<u16> = src.iter().map(|&v| v as u16).collect();
+        {
+            let mut w = WriterBuilder::new(f.path())
+                .shape([4, 4, 2])
+                .mode::<u16>()
+                .finish()
+                .unwrap();
+            w.write_block_as(&VoxelBlock::new([0, 0, 0], [4, 4, 2], src).unwrap())
+                .unwrap();
+            w.finalize().unwrap();
+        }
+
+        let r = Reader::open(f.path()).unwrap();
+        let block = r.read_volume::<u16>().unwrap();
+        assert_eq!(block.data, expected_u16);
+    }
+
+    #[test]
+    fn write_block_as_i8() {
+        let f = TempMrc::new("wba_i8");
+        let total = 32usize;
+        let src: Vec<f32> = (0..total).map(|i| (i as f32) - 16.0).collect();
+        let expected_i8: Vec<i8> = src.iter().map(|&v| v as i8).collect();
+        {
+            let mut w = WriterBuilder::new(f.path())
+                .shape([4, 4, 2])
+                .mode::<i8>()
+                .finish()
+                .unwrap();
+            w.write_block_as(&VoxelBlock::new([0, 0, 0], [4, 4, 2], src).unwrap())
+                .unwrap();
+            w.finalize().unwrap();
+        }
+
+        let r = Reader::open(f.path()).unwrap();
+        let block = r.read_volume::<i8>().unwrap();
+        assert_eq!(block.data, expected_i8);
+    }
+
+    // ── Volume stack test ─────────────────────────────────────────────────
+
+    /// Verify that `volumes()` on a non-stack file returns the expected error.
+    #[test]
+    fn volume_stack_error_on_plain_volume() {
+        let f = TempMrc::new("volstack_err");
+        {
+            let mut w = create(f.path())
+                .shape([8, 8, 4])
+                .mode::<f32>()
+                .finish()
+                .unwrap();
+            let data = vec![0.0f32; 8 * 8 * 4];
+            w.write_block(&VoxelBlock::new([0, 0, 0], [8, 8, 4], data).unwrap())
+                .unwrap();
+            w.finalize().unwrap();
+        }
+
+        let r = Reader::open(f.path()).unwrap();
+        match r.volumes::<f32>() {
+            Err(Error::NotAVolumeStack { .. }) => {} // expected
+            other => panic!("expected NotAVolumeStack, got {:?}", other.map(|_| ())),
+        }
+    }
+
+    // ── Permissive-mode edge case tests ───────────────────────────────────
+
+    #[test]
+    fn open_permissive_trailing_garbage() {
+        let f = TempMrc::new("perm_garbage");
+        {
+            let mut w = create(f.path())
+                .shape([4, 4, 1])
+                .mode::<f32>()
+                .finish()
+                .unwrap();
+            let data = vec![1.0f32; 16];
+            w.write_block(&VoxelBlock::new([0, 0, 0], [4, 4, 1], data).unwrap())
+                .unwrap();
+            w.finalize().unwrap();
+        }
+        // Append trailing garbage
+        {
+            use std::io::Write;
+            let mut file = std::fs::OpenOptions::new()
+                .append(true)
+                .open(f.path())
+                .unwrap();
+            file.write_all(b"TRAILING GARBAGE").unwrap();
+        }
+        // Strict mode should reject (file size mismatch)
+        assert!(Reader::open(f.path()).is_err());
+        // Permissive mode should still read correctly (ignores trailing data)
+        let (reader, _warnings) = Reader::open_permissive(f.path()).unwrap();
+        let block = reader.read_volume::<f32>().unwrap();
+        assert_eq!(block.data, vec![1.0f32; 16]);
+    }
+
+    #[test]
+    fn open_permissive_bad_map() {
+        let f = TempMrc::new("perm_map");
+        // Write a valid file, then patch the MAP field in the header
+        {
+            let mut w = create(f.path())
+                .shape([4, 4, 1])
+                .mode::<f32>()
+                .finish()
+                .unwrap();
+            let data = vec![0.0f32; 16];
+            w.write_block(&VoxelBlock::new([0, 0, 0], [4, 4, 1], data).unwrap())
+                .unwrap();
+            w.finalize().unwrap();
+        }
+        // Overwrite the MAP field (offset 208) with garbage
+        {
+            use std::io::{Seek, SeekFrom, Write};
+            let mut file = std::fs::OpenOptions::new()
+                .write(true)
+                .open(f.path())
+                .unwrap();
+            file.seek(SeekFrom::Start(208)).unwrap();
+            file.write_all(b"XYZ_").unwrap();
+        }
+
+        // Strict mode should reject
+        assert!(Reader::open(f.path()).is_err());
+        // Permissive mode should succeed with warning about MAP field
+        let (reader, warnings) = Reader::open_permissive(f.path()).unwrap();
+        assert_eq!(reader.shape().nx, 4);
+        let has_map_warning = warnings.iter().any(|w| w.contains("MAP"));
+        assert!(
+            has_map_warning,
+            "expected MAP warning in permissive mode, got: {:?}",
+            warnings
+        );
     }
 }

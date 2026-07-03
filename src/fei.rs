@@ -294,3 +294,113 @@ fn read_bytes<const N: usize>(bytes: &[u8], offset: usize) -> [u8; N] {
     arr.copy_from_slice(&bytes[offset..offset + N]);
     arr
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Build a synthetic FEI1 record buffer with recognisable values.
+    fn make_fei1_record() -> Vec<u8> {
+        let mut buf = vec![0u8; FEI1_RECORD_SIZE];
+        // metadata_size (offset 0, u32, big-endian)
+        buf[0..4].copy_from_slice(&768u32.to_be_bytes());
+        // metadata_version (offset 4, u32, big-endian)
+        buf[4..8].copy_from_slice(&1u32.to_be_bytes());
+        // bitmask_1 (offset 8, u32, little-endian — special case)
+        buf[8..12].copy_from_slice(&42u32.to_le_bytes());
+        // timestamp (offset 12, f64, big-endian)
+        buf[12..20].copy_from_slice(&123456.789f64.to_be_bytes());
+        // alpha_tilt (offset 100, f64, big-endian)
+        buf[100..108].copy_from_slice(&(-35.5f64).to_be_bytes());
+        // defocus (offset 220, f64, big-endian)
+        buf[220..228].copy_from_slice(&(2.5f64).to_be_bytes());
+        // ht (offset 84, f64, big-endian)
+        buf[84..92].copy_from_slice(&300000.0f64.to_be_bytes());
+        // dose (offset 92, f64, big-endian)
+        buf[92..100].copy_from_slice(&50.0f64.to_be_bytes());
+        // pixel_size_x (offset 156, f64, big-endian)
+        buf[156..164].copy_from_slice(&1.34f64.to_be_bytes());
+        // magnification (offset 289, f64, big-endian)
+        buf[289..297].copy_from_slice(&47000.0f64.to_be_bytes());
+        // spot_index (offset 309, i32, big-endian)
+        buf[309..313].copy_from_slice(&7i32.to_be_bytes());
+        // camera_name (offset 435, 16 bytes)
+        buf[435..451].copy_from_slice(b"Falcon 4        ");
+        // phase_plate (offset 518, bool)
+        buf[518] = 1;
+        // gain (offset 535, f64, big-endian)
+        buf[535..543].copy_from_slice(&2.5f64.to_be_bytes());
+        buf
+    }
+
+    #[test]
+    fn parse_fei1_known_values() {
+        let buf = make_fei1_record();
+        let records = parse_fei1_records(&buf).unwrap();
+        assert_eq!(records.len(), 1);
+        let r = &records[0];
+        assert_eq!(r.metadata_size, 768);
+        assert_eq!(r.metadata_version, 1);
+        assert_eq!(r.bitmask_1, 42);
+        assert!((r.timestamp - 123456.789).abs() < 1e-6);
+        assert!((r.alpha_tilt - (-35.5)).abs() < 1e-6);
+        assert!((r.defocus - 2.5).abs() < 1e-6);
+        assert!((r.ht - 300000.0).abs() < 1e-6);
+        assert!((r.dose - 50.0).abs() < 1e-6);
+        assert!((r.pixel_size_x - 1.34).abs() < 1e-6);
+        assert!((r.magnification - 47000.0).abs() < 1e-6);
+        assert_eq!(r.spot_index, 7);
+        assert_eq!(&r.camera_name[..7], b"Falcon ");
+        assert!(r.phase_plate);
+        assert!((r.gain - 2.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn parse_fei1_multiple_records() {
+        let mut buf = make_fei1_record();
+        buf.extend_from_slice(&make_fei1_record());
+        let records = parse_fei1_records(&buf).unwrap();
+        assert_eq!(records.len(), 2);
+    }
+
+    #[test]
+    fn parse_fei1_empty_bytes() {
+        assert!(parse_fei1_records(&[]).is_none());
+    }
+
+    #[test]
+    fn parse_fei1_misaligned_length() {
+        let buf = vec![0u8; FEI1_RECORD_SIZE + 1];
+        assert!(parse_fei1_records(&buf).is_none());
+    }
+
+    #[test]
+    fn parse_fei2_known_values() {
+        let mut buf = vec![0u8; FEI2_RECORD_SIZE];
+        // Fill FEI1 portion with recognisable values
+        buf[0..4].copy_from_slice(&768u32.to_be_bytes());
+        buf[4..8].copy_from_slice(&1u32.to_be_bytes());
+        buf[100..108].copy_from_slice(&(-35.5f64).to_be_bytes());
+        buf[220..228].copy_from_slice(&(2.5f64).to_be_bytes());
+        // FEI2-specific fields
+        buf[768..776].copy_from_slice(&(90.0f64).to_be_bytes()); // scan_rotation
+        buf[796..804].copy_from_slice(&1234567890i64.to_be_bytes()); // acquisition_time_stamp
+        buf[804..820].copy_from_slice(b"Falcon 4i       "); // detector_commercial_name
+
+        let records = parse_fei2_records(&buf).unwrap();
+        assert_eq!(records.len(), 1);
+        let r = &records[0];
+        assert!((r.scan_rotation - 90.0).abs() < 1e-6);
+        assert_eq!(r.acquisition_time_stamp, 1234567890);
+        assert_eq!(&r.detector_commercial_name[..9], b"Falcon 4i");
+        // FEI1 fields should also be accessible
+        assert!((r.fei1.alpha_tilt - (-35.5)).abs() < 1e-6);
+        assert!((r.fei1.defocus - 2.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn parse_fei2_short_buffer() {
+        let buf = vec![0u8; FEI1_RECORD_SIZE]; // too short for FEI2
+        assert!(parse_fei2_records(&buf).is_none());
+    }
+}

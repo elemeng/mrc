@@ -93,11 +93,26 @@ use crate::engine::block::{VolumeShape, VoxelBlock};
 use crate::engine::codec::encode_block_parallel;
 use crate::engine::codec::encode_slice;
 use crate::engine::endian::FileEndian;
+use crate::engine::stats::RunningStats;
 use crate::mode::Voxel;
 use crate::{Error, Header, Mode};
 
 use std::path::PathBuf;
 use std::vec::Vec;
+
+/// Update running stats from a typed voxel block, when the type is `f32`.
+/// For non-f32 modes the stats are not updated (fallback reads from disk).
+#[inline]
+fn update_running_stats_f32<T: Voxel>(rs: &mut Option<RunningStats>, data: &[T]) {
+    if T::MODE == Mode::Float32 {
+        if let Some(rs) = rs {
+            // SAFETY: T::MODE == Float32 guarantees T == f32 at runtime.
+            let f32_slice =
+                unsafe { core::slice::from_raw_parts(data.as_ptr() as *const f32, data.len()) };
+            rs.update(f32_slice);
+        }
+    }
+}
 
 macro_rules! builder_setters {
     () => {
@@ -273,6 +288,7 @@ pub struct Writer {
     data_offset: u64,
     bytes_per_voxel: usize,
     shape: VolumeShape,
+    running_stats: Option<RunningStats>,
 }
 
 impl Writer {
@@ -329,6 +345,7 @@ impl Writer {
             data_offset,
             bytes_per_voxel,
             shape,
+            running_stats: Some(RunningStats::new()),
         })
     }
 
@@ -387,6 +404,7 @@ impl Writer {
             use std::io::{Seek, SeekFrom, Write};
             self.file.seek(SeekFrom::Start(start_offset))?;
             self.file.write_all(&buffer)?;
+            update_running_stats_f32(&mut self.running_stats, &block.data);
             return Ok(());
         }
 
@@ -408,6 +426,7 @@ impl Writer {
                 self.file.write_all(&row_bytes)?;
             }
         }
+        update_running_stats_f32(&mut self.running_stats, &block.data);
         Ok(())
     }
 
@@ -594,9 +613,23 @@ impl Writer {
     /// [`MmapWriter::update_header_stats`](crate::MmapWriter::update_header_stats)
     /// alternative is zero-copy because the data is already in the memory map.
     ///
+    /// When running stats are available (accumulated during
+    /// [`write_block`](Self::write_block) calls), this method uses them instead
+    /// of re-reading from disk, making it essentially free.
+    ///
     /// This is an optional convenience; consider computing statistics at write
     /// time if the data volume is large.
     pub fn update_header_stats(&mut self) -> Result<(), Error> {
+        // Fast path: use running stats accumulated during write_block calls.
+        if let Some(ref rs) = self.running_stats {
+            let (dmin, dmax, dmean, rms) = rs.finalize();
+            self.header.dmin = dmin;
+            self.header.dmax = dmax;
+            self.header.dmean = dmean;
+            self.header.rms = rms;
+            return Ok(());
+        }
+        // Fallback: read from disk.
         use std::io::{Read, Seek, SeekFrom};
         let data_size = self.header.data_size().ok_or(Error::InvalidHeader)?;
         self.file.seek(SeekFrom::Start(self.data_offset))?;
@@ -664,6 +697,7 @@ pub struct MmapWriter {
     data_offset: usize,
     bytes_per_voxel: usize,
     shape: VolumeShape,
+    running_stats: Option<RunningStats>,
 }
 
 #[cfg(feature = "mmap")]
@@ -734,6 +768,7 @@ impl MmapWriter {
             data_offset,
             bytes_per_voxel,
             shape,
+            running_stats: Some(RunningStats::new()),
         })
     }
 
@@ -804,14 +839,16 @@ impl MmapWriter {
         }
 
         let file_endian = self.header.detect_endian();
-        crate::io::reader_common::encode_block_to_buf(
+        let result = crate::io::reader_common::encode_block_to_buf(
             block,
             self.shape,
             self.bytes_per_voxel,
             file_endian,
             self.data_offset,
             &mut self.mmap,
-        )
+        );
+        update_running_stats_f32(&mut self.running_stats, &block.data);
+        result
     }
 
     /// Write a block with parallel encoding to memory-mapped region.
@@ -904,7 +941,20 @@ impl MmapWriter {
     ///
     /// Unlike [`Writer::update_header_stats`], this does not need to read from
     /// disk because the data is already accessible via the memory map.
+    ///
+    /// When running stats are available (accumulated during
+    /// [`write_block`](Self::write_block) calls), this method uses them
+    /// instead, making it essentially free.
     pub fn update_header_stats(&mut self) -> Result<(), Error> {
+        // Fast path: use running stats accumulated during write_block calls.
+        if let Some(ref rs) = self.running_stats {
+            let (dmin, dmax, dmean, rms) = rs.finalize();
+            self.header.dmin = dmin;
+            self.header.dmax = dmax;
+            self.header.dmean = dmean;
+            self.header.rms = rms;
+            return Ok(());
+        }
         let data_size = self.header.data_size().ok_or(Error::InvalidHeader)?;
         let end = self
             .data_offset
@@ -982,6 +1032,7 @@ pub struct CompressedWriter<C: Compressor> {
     path: std::path::PathBuf,
     bytes_per_voxel: usize,
     shape: VolumeShape,
+    running_stats: Option<RunningStats>,
     _marker: std::marker::PhantomData<C>,
 }
 
@@ -1023,6 +1074,7 @@ impl<C: Compressor> CompressedWriter<C> {
             path: path.as_ref().to_path_buf(),
             bytes_per_voxel,
             shape,
+            running_stats: Some(RunningStats::new()),
             _marker: std::marker::PhantomData,
         })
     }
@@ -1066,14 +1118,16 @@ impl<C: Compressor> CompressedWriter<C> {
         let file_endian = self.header.detect_endian();
         // NOTE: self.data contains only the voxel data (not the header),
         // so data_offset is 0.
-        crate::io::reader_common::encode_block_to_buf(
+        let result = crate::io::reader_common::encode_block_to_buf(
             block,
             self.shape,
             self.bytes_per_voxel,
             file_endian,
             0,
             &mut self.data,
-        )
+        );
+        update_running_stats_f32(&mut self.running_stats, &block.data);
+        result
     }
 
     /// Write a block of `u8` data by automatically widening to `u16` (Mode 6).
@@ -1130,7 +1184,20 @@ impl<C: Compressor> CompressedWriter<C> {
     ///
     /// Unlike [`Writer::update_header_stats`], this does not need to read from
     /// disk because the data is already accessible in memory.
+    ///
+    /// When running stats are available (accumulated during
+    /// [`write_block`](Self::write_block) calls), this method uses them
+    /// instead, making it essentially free.
     pub fn update_header_stats(&mut self) -> Result<(), Error> {
+        // Fast path: use running stats accumulated during write_block calls.
+        if let Some(ref rs) = self.running_stats {
+            let (dmin, dmax, dmean, rms) = rs.finalize();
+            self.header.dmin = dmin;
+            self.header.dmax = dmax;
+            self.header.dmean = dmean;
+            self.header.rms = rms;
+            return Ok(());
+        }
         update_header_stats_from_bytes(&mut self.header, &self.data)
     }
 

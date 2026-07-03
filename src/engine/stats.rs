@@ -336,3 +336,176 @@ mod tests {
         assert!(validate_header_stats(&header, &bytes).is_ok());
     }
 }
+
+// ============================================================================
+// RunningStats — online Welford accumulator for writer-side statistics
+// ============================================================================
+
+/// Online single-pass statistics accumulator using Welford's algorithm.
+///
+/// Tracks `dmin`, `dmax`, `dmean`, and `rms` incrementally without storing
+/// all voxel values.  Call [`update`](RunningStats::update) for each block
+/// as it is written, then call [`finalize`](RunningStats::finalize) to
+/// produce the final (dmin, dmax, dmean, rms) tuple.
+///
+/// This avoids a full-file re-read when [`Writer::update_header_stats`]
+/// is called later.
+///
+/// [`Writer::update_header_stats`]: crate::Writer::update_header_stats
+#[derive(Debug, Clone)]
+pub(crate) struct RunningStats {
+    n: u64,
+    min: f64,
+    max: f64,
+    mean: f64,
+    m2: f64,
+}
+
+impl RunningStats {
+    /// Create a new accumulator in the initial (empty) state.
+    /// `dmin` is set to +∞ and `dmax` to −∞ so the first value sets both.
+    pub fn new() -> Self {
+        Self {
+            n: 0,
+            min: f64::INFINITY,
+            max: f64::NEG_INFINITY,
+            mean: 0.0,
+            m2: 0.0,
+        }
+    }
+
+    /// Update statistics with a slice of `f32` voxel values.
+    ///
+    /// Callers should convert their typed data to `f32` before calling
+    /// this method. All real-valued MRC types (`i8`, `i16`, `u16`, `f32`,
+    /// `f16`) can be losslessly widened to `f32`.
+    pub fn update(&mut self, data: &[f32]) {
+        for &v in data {
+            let x = v as f64;
+            self.n += 1;
+
+            if x < self.min {
+                self.min = x;
+            }
+            if x > self.max {
+                self.max = x;
+            }
+
+            let delta = x - self.mean;
+            self.mean += delta / self.n as f64;
+            let delta2 = x - self.mean;
+            self.m2 += delta * delta2;
+        }
+    }
+
+    /// Accumulate statistics from another `RunningStats` instance (for
+    /// parallel / chunked usage).
+    #[allow(dead_code)]
+    pub fn merge(&mut self, other: &Self) {
+        if other.n == 0 {
+            return;
+        }
+        if self.n == 0 {
+            *self = other.clone();
+            return;
+        }
+
+        let n1 = self.n as f64;
+        let n2 = other.n as f64;
+        let n_total = self.n + other.n;
+
+        let delta = other.mean - self.mean;
+        let new_mean = (n1 * self.mean + n2 * other.mean) / (n_total as f64);
+
+        let new_m2 = self.m2 + other.m2 + delta * delta * n1 * n2 / (n_total as f64);
+
+        self.n = n_total;
+        self.min = self.min.min(other.min);
+        self.max = self.max.max(other.max);
+        self.mean = new_mean;
+        self.m2 = new_m2;
+    }
+
+    /// Produce the final `(dmin, dmax, dmean, rms)` tuple.
+    ///
+    /// Returns sentinel values `(0.0, -1.0, -2.0, -1.0)` when no data has
+    /// been accumulated (matching the header default convention).
+    pub fn finalize(&self) -> (f32, f32, f32, f32) {
+        if self.n == 0 {
+            return (0.0, -1.0, -2.0, -1.0);
+        }
+        let rms = (self.m2 / self.n as f64).sqrt();
+        (
+            self.min as f32,
+            self.max as f32,
+            self.mean as f32,
+            rms as f32,
+        )
+    }
+}
+
+#[cfg(test)]
+mod running_stats_tests {
+    use super::*;
+
+    #[test]
+    fn running_stats_empty() {
+        let s = RunningStats::new();
+        let (dmin, dmax, dmean, rms) = s.finalize();
+        assert_eq!(dmin, 0.0);
+        assert_eq!(dmax, -1.0);
+        assert_eq!(dmean, -2.0);
+        assert_eq!(rms, -1.0);
+    }
+
+    #[test]
+    fn running_stats_known_values() {
+        let mut s = RunningStats::new();
+        let data: Vec<f32> = vec![1.0, 2.0, 3.0, 4.0];
+        s.update(&data);
+        let (dmin, dmax, dmean, rms) = s.finalize();
+        assert_eq!(dmin, 1.0);
+        assert_eq!(dmax, 4.0);
+        assert_eq!(dmean, 2.5);
+        assert!((rms - 1.118034).abs() < 1e-4);
+    }
+
+    #[test]
+    fn running_stats_i16() {
+        let mut s = RunningStats::new();
+        let data: Vec<i16> = vec![-100, 0, 100, 200];
+        let f32_data: Vec<f32> = data.iter().map(|&v| v as f32).collect();
+        s.update(&f32_data);
+        let (dmin, dmax, dmean, _) = s.finalize();
+        assert_eq!(dmin, -100.0);
+        assert_eq!(dmax, 200.0);
+        assert_eq!(dmean, 50.0);
+    }
+
+    #[test]
+    fn running_stats_u16() {
+        let mut s = RunningStats::new();
+        let data: Vec<u16> = vec![10, 20, 30];
+        let f32_data: Vec<f32> = data.iter().map(|&v| v as f32).collect();
+        s.update(&f32_data);
+        let (min, max, mean, _) = s.finalize();
+        assert_eq!(min, 10.0);
+        assert_eq!(max, 30.0);
+        assert_eq!(mean, 20.0);
+    }
+
+    #[test]
+    fn running_stats_merge() {
+        let mut a = RunningStats::new();
+        a.update(&[1.0f32, 2.0, 3.0]);
+
+        let mut b = RunningStats::new();
+        b.update(&[4.0f32, 5.0, 6.0]);
+
+        a.merge(&b);
+        let (min, max, mean, _) = a.finalize();
+        assert_eq!(min, 1.0);
+        assert_eq!(max, 6.0);
+        assert!((mean - 3.5).abs() < 1e-6);
+    }
+}
