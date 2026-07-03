@@ -658,6 +658,10 @@ magic bytes and decompresses the whole file into memory. A hard cap of
 [`DEFAULT_MAX_DECOMPRESSED_BYTES`] (256 GiB) prevents decompression bombs.
 Use `open_gzip_with_limit()` / `open_bzip2_with_limit()` for a custom limit.
 
+> **Large compressed files:** If the uncompressed data exceeds available RAM,
+> decompress with `gunzip` or `bunzip2` first, then use [`MmapReader`] for
+> zero-copy access — the OS pages data on demand.
+
 [`DEFAULT_MAX_DECOMPRESSED_BYTES`]: #top-level-functions
 
 **`finalize()` rewrites the header** — the header is written optimistically at

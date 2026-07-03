@@ -274,6 +274,11 @@
 //! Use [`Reader::open_gzip_with_limit`] or
 //! [`Reader::open_bzip2_with_limit`] for a custom limit.
 //!
+//! > **Large compressed files:** If the uncompressed data exceeds available RAM,
+//! > decompress with `gunzip` or `bunzip2` first, then use [`MmapReader`] for
+//! > zero-copy access — the OS pages data on demand without loading the whole
+//! > file into memory.
+//!
 //! ## FEI extended headers
 //!
 //! Data from Thermo Fisher / FEI microscopes often carries FEI1 or FEI2

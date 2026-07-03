@@ -284,7 +284,6 @@ Three binary targets are available (`src/bin/`):
 
 ### v0.3.x — Stabilization & Quality (current)
 
-- Streaming decompression (reduce RAM pressure for gzip/bzip2 files)
 - SIMD f32→i16/i8 clamping in write-hot paths
 - Richer error context (offset, mode in BoundsError / ModeMismatch)
 - Lazy `VoxelBlock` — `Cow<[T]>` data field to avoid copies in mmap paths
@@ -292,7 +291,6 @@ Three binary targets are available (`src/bin/`):
 ### v0.4.x — Ecosystem & Performance
 
 - `serde` support for `Header` serialization (JSON/YAML roundtrip)
-- Streaming compressed writer (reduce peak RAM on finalize)
 - Async I/O via `tokio` (non-blocking read/write)
 - Python bindings via PyO3 / `maturin`
 - Parallel reader (rayon-based volume iteration)
