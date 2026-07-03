@@ -9,8 +9,6 @@
 
 A high-performance, memory-efficient library for reading and writing MRC (Medical Research Council) format files used in cryo-electron microscopy and structural biology.
 
-**Note:** This crate is under active development. While most features are functional, occasional API changes are possible. Contributions welcome — please report issues and share your ideas!
-
 ## Installation
 
 ```toml
@@ -30,7 +28,8 @@ for slice in reader.convert::<f32>().slices() {
     let block = slice?;  // Vec<f32>
 }
 
-// Write — always call .finalize() or the header will be incomplete
+// Write — **always call .finalize()** or the header will be stale
+// (density statistics wrong, tools display garbage contrast)
 let mut writer = create("output.mrc")
     .shape([512, 512, 256])
     .mode::<f32>()
@@ -43,8 +42,8 @@ writer.finalize()?;
 
 ## Full Documentation
 
-See **[docs.rs/mrc](https://docs.rs/mrc)** for the complete API reference, including:
-(For API docs, see [APIs.md](APIs.md).)
+See **[docs.rs/mrc](https://docs.rs/mrc)** for the complete API reference, or
+**[APIs.md](APIs.md)** in this repository for a local API surface overview.
 
 - Reading files — `Reader`, `MmapReader`, compressed I/O, permissive mode,
   decompression bomb protection (256 GiB limit, configurable)
@@ -56,7 +55,8 @@ See **[docs.rs/mrc](https://docs.rs/mrc)** for the complete API reference, inclu
 - Data modes — `Mode` enum and compile-time `Voxel` trait, including Packed4Bit
   read/write via `slices_u8` / `write_u4_block`
 - Headers — `Header`, `HeaderBuilder`, validation, endianness
-- FEI extended headers — typed `Fei1Metadata` / `Fei2Metadata` parsing
+- Extended header parsers — FEI1/FEI2 metadata, CCP4 symmetry records,
+  MRCO legacy records, SerialEM records, Agard records
 - Error handling — `Error` and `HeaderValidationError`
 - Validation — `validate_full` / `validate_reader` / `ValidationReport`
 - **Real-world workflows** — tilt series, FEI metadata, volume stacks
@@ -106,7 +106,9 @@ v0.2 adds SIMD acceleration, parallel encoding, type conversion iterators, compr
 
 **v0.3.x** — Extended Features
 
-- [ ] Extended header parsing for CCP4, MRCO, SERI, AGAR formats
+- [x] Extended header parsing for CCP4, MRCO, SERI, AGAR formats
+
+**Note:** This crate is under active development. While most features are functional, occasional API changes are possible. Contributions welcome — please report issues and share your ideas!
 
 ## License
 

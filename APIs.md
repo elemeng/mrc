@@ -222,8 +222,8 @@ Additional builder methods behind feature flags:
 | `writer.write_u4_block(&block)` | Convenience: write `VoxelBlock<u8>` to a Packed4Bit file (auto-packs, values must be 0–15) |
 | `writer.write_block_as(&block)` | Write with auto-conversion to file's mode: `f32` → `i8`/`i16`/`u16`/`f16` (clamped) |
 | `writer.write_block_parallel::<T>(&block)` | Parallel-encoded write (feature `parallel`; contiguous XY slabs only) |
-| `writer.finalize()` | Rewrite header to disk (call when all blocks are written) |
-| `writer.update_header_stats()` | Scan all data, compute dmin/dmax/dmean/rms, update header |
+| `writer.finalize()` | **Required.** Rewrites the header with final metadata (updated stats, labels). The header is written optimistically at file creation and rewritten here — without it the header is stale and tools may display wrong contrast. |
+| `writer.update_header_stats()` | Scan all data from disk, compute dmin/dmax/dmean/rms, update header — ⚠️ re-reads entire data block from disk |
 
 ### `MmapWriter`
 
@@ -233,8 +233,8 @@ Requires `mmap` feature.
 Same API as `Writer` (`write_block`, `write_block_as`, `write_u8_block`,
 `write_u4_block`, `write_block_parallel`, `finalize`, `update_header_stats`).
 
-Key difference: `update_header_stats` does not re-read from disk since data is
-already in the memory map. `finalize` flushes the mmap instead of seeking.
+**`finalize()` is required** — flushes the mmap to disk. Without it the header
+is stale (density statistics missing, tools display wrong contrast).
 
 ### Compressed Writers
 
@@ -247,7 +247,8 @@ pub type Bzip2Writer = CompressedWriter<Bzip2Compressor>; // feature `bzip2`
 Created via `WriterBuilder::finish_gzip()` / `finish_bzip2()`.
 
 **Important:** Compressed writers buffer the **entire file** in memory and compress
-only on `finalize`. Not suitable for large volumes that exceed RAM.
+only on `finalize`. **`finalize()` is required** — without it nothing is written
+to disk. Not suitable for large volumes that exceed RAM.
 
 Full API: `shape()`, `mode()`, `header()`, `write_block()`, `write_block_as()`, `write_u4_block()`,
 `update_header_stats()` (reads from in-memory buffer),

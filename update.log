@@ -1,168 +1,65 @@
 # Update Log
 
-## 2026-01-12 - Memory Leak Fix with Proper Lifetimes
+## 2026-07-03 — v0.2.6 → v0.3.0
 
-### Fixed Issues
+~5,500 lines changed across 31 files. This release marks the API maturing past the
+"add everything" phase: conversion is gated through a single `ConvertReader` rather
+than a scatter of per-mode shortcut methods, and the public surface is tidied up
+with inherent forwarding.
 
-1. **Memory Leak in read_view() (src/mrcfile.rs)**
-   - Refactored to use proper Rust lifetime system instead of `'static` and `Box::leak()`
-   - Added `buffer: Vec<u8>` field to `MrcFile` struct to store data
-   - Updated `MrcFile::read_view()` to return `MrcView<'_>` with lifetime from `self`
-   - Removed all `Box::leak()` calls that caused permanent memory leaks
-   - Memory is now automatically freed when `MrcFile` goes out of scope
+### Breaking API Changes
 
-2. **Memory Leak in read_ext_header() (src/mrcfile.rs)**
-   - Changed to return `&[u8]` with lifetime from `self` instead of `Box<[u8]>`
-   - Returns slice directly from stored buffer
+| Removed | Replacement |
+|---------|-------------|
+| `reader.slices_f32()` | `reader.convert::<f32>().slices()` |
+| `reader.slabs_f32()` | `reader.convert::<f32>().slabs(k)` |
+| `reader.read_volume_f32()` | `reader.convert::<f32>().read_volume()` |
+| `slices_f32_body!` macro (internal) | `convert_iter` + `RawRegionIter` |
+| `ReaderExt` trait (mid-refactor artifact) | inherent methods via `impl_reader_forwarding!` |
 
-3. **Memory Leak in read_data() (src/mrcfile.rs)**
-   - Changed to return `&[u8]` with lifetime from `self` instead of `&'static [u8]`
-   - Returns slice directly from stored buffer
+### New Features
 
-4. **Memory Leak in MrcMmap (src/mrcfile.rs)**
-   - Refactored to store `memmap2::Mmap` directly instead of leaking it
-   - Updated `MrcMmap::read_view()` to return `MrcView<'_>` with lifetime from `self`
-   - Returns view directly from mmap buffer without copying
+- **Unified conversion API** — `ConvertReader` gating all mode conversions through
+  a single `.convert::<T>()` entry point, with builder-style configuration for
+  complex strategy and M0 interpretation
+- **Built-in `ndarray` support** — `reader.to_ndarray::<T>()` returns
+  `ndarray::Array3<T>` when the `ndarray` feature is enabled
+- **Extended header parsers** — typed parsing for CCP4 symmetry records, MRCO
+  legacy records, SerialEM records (with `alpha_tilt` field), and Agard records
+- **Inherent forwarding** — all `ReaderMethods` / `ConvertMethods` methods are
+  available as inherent methods on `Reader` and `MmapReader`; no trait imports
+  needed for normal use
+- **SIMD expansion** — added u16→f32, u8→f32, f16↔f32, byte-swap (2/4/8 byte),
+  and f32 statistics kernels; all with runtime feature detection
+- **Criterion benchmarks** — `benches/bench.rs` covering slices, mmap, write,
+  stats, and conversion hot paths
+- **Integration test suite** — `tests/integration.rs` with ~21 roundtrip tests
+  for all modes, compression, subregion reads, and edge cases
 
-### Implementation Details
+### Refinements
 
-**MrcFile struct changes:**
-```rust
-pub struct MrcFile {
-    file: File,
-    header: Header,
-    data_offset: u64,
-    data_size: usize,
-    ext_header_size: usize,
-    buffer: Vec<u8>,  // NEW: stores data with proper lifetime
-}
-```
+- **`#[cold]` on hot-path error branches** — `cold_bounds_error()` helper in
+  `encode_block_to_buf` / `write_block_bytes` hints LLVM to sink error branches
+- **Removed `TypeId` + `unsafe` pattern** — `update_running_stats_f32()` eliminated;
+  `update_header_stats()` now always reads from disk (Writer), mmap (MmapWriter),
+  or in-memory buffer (CompressedWriter). This removes the `std::any::TypeId` trick
+  and the `unsafe { core::slice::from_raw_parts }` transmute
+- **Added `clippy::perf` to deny** alongside `unwrap_used` and `expect_used`
 
-**MrcMmap struct changes:**
-```rust
-pub struct MrcMmap {
-    header: Header,
-    buffer: memmap2::Mmap,  // NEW: stores mmap directly
-    ext_header_size: usize,
-    data_offset: usize,
-    data_size: usize,
-}
-```
+### Doc Overhaul
 
-**API Changes:**
-- `MrcFile::read_view()` return type: `Result<MrcView<'static>>` → `Result<MrcView<'_>>`
-- `MrcFile::read_ext_header()` return type: `Result<Box<[u8]>>` → `Result<&[u8]>`
-- `MrcFile::read_data()` return type: `Result<&'static [u8]>` → `Result<&[u8]>`
-- `MrcMmap::read_view()` return type: `Result<MrcView<'static>>` → `Result<MrcView<'_>>`
-- `open_file()` return type: `Result<MrcView<'static>>` → `Result<MrcFile>`
-- `open_mmap()` return type: `Result<MrcView<'static>>` → `Result<MrcMmap>`
-
-**Usage Pattern:**
-```rust
-// Before (with leak):
-let map = MrcFile::open(path)?.read_view()?;  // leaked memory
-
-// After (proper lifetimes):
-let file = MrcFile::open(path)?;
-let map = file.read_view()?;  // file keeps buffer alive
-```
+- **README.md** — Fixed stale roadmap (CCP4/MRCO/SERI/AGAR were marked undone but
+  are implemented). Added extended header parsers to the feature list.
+- **AGENTS.md** — Synced dep versions to `Cargo.toml`. Updated clippy reference.
+  Bumped test counts (~80→~91 unit, clarified doc-test count).
+- **APIs.md** — Added disk-read performance note on `Writer::update_header_stats()`.
 
 ### Testing
 
-All 66 tests pass successfully. Updated tests to:
-- Keep `MrcFile` and `MrcMmap` alive while using views
-- Updated NVERSION test expectation (now 20141 instead of 0)
+91 unit tests, 21 integration tests, 33 doc-tests, clippy — all pass cleanly across
+debug, release, and --all-features builds.
 
-### Benefits
-
-✅ Eliminates all memory leaks completely
-✅ Uses idiomatic Rust lifetime system
-✅ No `unsafe` code or `Box::leak()` tricks
-✅ Automatic memory management via RAII
-✅ Clear ownership semantics
-✅ Simpler and safer than `MrcViewOwned` approach
-✅ Improved API semantic clarity with comprehensive documentation
-
-### API Design
-
-The `read_view()` method returns a `MrcView` that provides convenient access to all file components:
-- **Header**: Access via `view.header()`, `view.dimensions()`, `view.mode()`
-- **Extended Header**: Access via `view.ext_header()`
-- **Data Block**: Access via `view.data()`
-
-The view automatically splits the internal buffer into extended header and data based on the header's `nsymbt` field, providing a clean and unified API.
-
-### Known Limitations
-
-- None! All memory leaks in read operations have been fixed
-- Machine stamp nibble parsing not yet implemented
-- Extended header parsers for SERI, FEI1, FEI2 formats not yet implemented
 
 ### References
 
 - MRC2014 Specification: https://www.ccpem.ac.uk/mrc-format/mrc2014/
-- Analysis document: gaps.md
-
----
-
-## 2026-01-12 - High Priority Fixes
-
-### Fixed Issues
-
-1. **Endian Swapping Bug (src/header.rs:238-242)**
-   - Fixed incorrect machine stamp byte swapping logic
-   - Changed from `u32::from_le_bytes().swap_bytes().to_le_bytes()` to simple `reverse()`
-   - Previous implementation incorrectly reversed byte order twice
-
-2. **Memory Leak in read_ext_header() (src/mrcfile.rs:95-100)**
-   - Changed return type from `&'static [u8]` to `Box<[u8]>`
-   - Removed `Box::leak()` call that caused permanent memory leaks
-   - Now returns owned data that can be properly freed
-
-3. **Memory Leak in read_view() (src/mrcfile.rs:119-133)**
-   - Documented as known limitation requiring API change
-   - Current implementation uses `Box::leak()` for 'static lifetime requirement
-   - Future version will introduce owned data type to fix this
-
-4. **Missing MAP Field Validation (src/header.rs:177-182)**
-   - Added validation check `self.map == *b"MAP "` in `Header::validate()`
-   - Ensures file type identifier follows MRC2014 specification
-
-5. **Density Statistics Defaults (src/header.rs:131-135)**
-   - Fixed `dmin` to `f32::INFINITY` (was `f32::NEG_INFINITY`)
-   - Fixed `dmax` to `f32::NEG_INFINITY` (was `f32::INFINITY`)
-   - Fixed `dmean` to `f32::NEG_INFINITY` (was `0.0`)
-   - Now follows spec convention: DMAX < DMIN and DMEAN < both indicate "not well-determined"
-
-6. **RMS Default Value (src/header.rs:148)**
-   - Changed `rms` from `0.0` to `-1.0`
-   - Negative value indicates not well-determined per MRC2014 specification
-
-7. **NVERSION Default (src/header.rs:136-141)**
-   - Set NVERSION to 20141 (latest MRC2014 format version)
-   - Previously defaulted to 0 (no version specified)
-   - Encoded in extra[12..15] as little-endian: [0x49, 0x4E, 0x00, 0x00]
-
-### Testing
-
-All changes maintain backward compatibility with existing tests. The fixes address critical issues identified in gaps.md:
-- Correct byte order handling for cross-platform compatibility
-- Memory leak prevention
-- Full MRC2014 specification compliance
-
-### API Changes
-
-- `MrcFile::read_ext_header()` return type changed from `&'static [u8]` to `Box<[u8]>`
-  - Callers may need to update code to handle owned data instead of borrowed reference
-
-### Known Limitations
-
-- `MrcFile::read_view()` still uses `Box::leak()` due to 'static lifetime requirement
-  - Will be addressed in future version with new owned data type
-- Machine stamp nibble parsing not yet implemented
-- Extended header parsers for SERI, FEI1, FEI2 formats not yet implemented
-
-### References
-
-- MRC2014 Specification: https://www.ccpem.ac.uk/mrc-format/mrc2014/
-- Analysis document: gaps.md

@@ -403,7 +403,7 @@
 //! | `Io` error | File permissions, filesystem issue | Check the file path and permissions |
 //! | Values look wrong | Endianness mismatch | The endianness fallback handles most cases; try `mrc-validate` |
 
-#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
+#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used, clippy::perf))]
 
 mod engine;
 mod error;

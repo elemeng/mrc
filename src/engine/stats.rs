@@ -361,6 +361,7 @@ pub(crate) struct RunningStats {
     m2: f64,
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 impl RunningStats {
     /// Create a new accumulator in the initial (empty) state.
     /// `dmin` is set to +∞ and `dmax` to −∞ so the first value sets both.

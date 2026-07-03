@@ -758,6 +758,13 @@ impl_reader_forwarding!(crate::Reader);
 #[cfg(feature = "mmap")]
 impl_reader_forwarding!(crate::MmapReader);
 
+/// Cold path helper for bounds errors — hints LLVM to sink error branches out of hot paths.
+#[cold]
+#[inline(never)]
+fn cold_bounds_error() -> Error {
+    Error::BoundsError
+}
+
 /// Validate a block read/write request.
 ///
 /// Checks that the requested block is fully contained within the volume bounds
@@ -942,7 +949,7 @@ pub(crate) fn encode_block_to_buf<T: EndianCodec + Sync>(
         let byte_len = sx * sy * sz * b;
         let end_byte = start_byte + byte_len;
         if end_byte > buf.len() {
-            return Err(Error::BoundsError);
+            return Err(cold_bounds_error());
         }
         encode_slice(&block.data, &mut buf[start_byte..end_byte], file_endian)?;
         return Ok(());
@@ -955,12 +962,12 @@ pub(crate) fn encode_block_to_buf<T: EndianCodec + Sync>(
             let file_start = data_offset + file_linear * b;
             let block_idx = y * sx + z * sx * sy;
             if block_idx + sx > block.data.len() {
-                return Err(Error::BoundsError);
+                return Err(cold_bounds_error());
             }
             let row_values = &block.data[block_idx..block_idx + sx];
             let row_end = file_start + sx * b;
             if row_end > buf.len() {
-                return Err(Error::BoundsError);
+                return Err(cold_bounds_error());
             }
             encode_slice(row_values, &mut buf[file_start..row_end], file_endian)?;
         }
@@ -1000,7 +1007,7 @@ pub(crate) fn write_block_bytes(
         let byte_len = sz * slice_bytes;
         let end_byte = start_byte + byte_len;
         if end_byte > buf.len() {
-            return Err(Error::BoundsError);
+            return Err(cold_bounds_error());
         }
         buf[start_byte..end_byte].copy_from_slice(&packed[..byte_len]);
         return Ok(());
@@ -1015,12 +1022,12 @@ pub(crate) fn write_block_bytes(
             let file_start = data_offset + vol_row * file_row_bytes;
             let file_end = file_start + block_row_bytes;
             if file_end > buf.len() {
-                return Err(Error::BoundsError);
+                return Err(cold_bounds_error());
             }
             let packed_start = (y + z * sy) * block_row_bytes;
             let packed_end = packed_start + block_row_bytes;
             if packed_end > packed.len() {
-                return Err(Error::BoundsError);
+                return Err(cold_bounds_error());
             }
             buf[file_start..file_end].copy_from_slice(&packed[packed_start..packed_end]);
         }

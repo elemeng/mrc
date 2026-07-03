@@ -21,11 +21,11 @@ A reference Python implementation (`mrcfile`) is available on PyPI for specifica
 - **CI**: GitHub Actions (`.github/workflows/rust.yml`) — builds and tests on `ubuntu-latest` for pushes/PRs to `main`
 - **Error Handling**: `thiserror` 2.x (no-std compatible)
 - **No `unsafe` in public API**: All `unsafe` is internal; the public API is 100% safe Rust.
-- **Optional Dependencies**:
-  - `memmap2` — memory-mapped I/O (`mmap` feature)
-  - `rayon` 1.10 — parallel encoding (`parallel` feature)
-  - `half` 2.5 — half-precision f16 (`f16` feature)
-  - `flate2` 1.0 — gzip compression (`gzip` feature)
+- **Optional Dependencies** (as declared in `Cargo.toml`):
+  - `memmap2` 0.9 — memory-mapped I/O (`mmap` feature)
+  - `rayon` 1.12 — parallel encoding (`parallel` feature)
+  - `half` 2.7 — half-precision f16 (`f16` feature)
+  - `flate2` 1.1 — gzip compression (`gzip` feature)
   - `bzip2` 0.5 — bzip2 compression (`bzip2` feature)
 
 ## Build and Test Commands
@@ -176,7 +176,7 @@ where R: ReaderMethods + ConvertMethods + ... { ... }
 
 - **Language**: All comments, docs, and identifiers are in English.
 - **Formatting**: Standard `rustfmt`. No custom `rustfmt.toml`.
-- **Clippy**: The crate enforces `#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]` in `lib.rs`. Production code must not use `.unwrap()` or `.expect()`.
+- **Clippy**: The crate enforces `#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used, clippy::perf))]` in `lib.rs`. Production code must not use `.unwrap()` or `.expect()`, and performance lints are errors.
 - **Inlining**: Small accessor methods and hot-path conversion functions are marked `#[inline]`.
 - **Documentation**: Heavy use of `//!` module docs and `///` item docs. The crate-level doc (`lib.rs`) includes real-world workflow examples (tilt series, FEI metadata, volume stacks) and a troubleshooting table. Doc-tests are present and run with `cargo test` — ~33 doc-tests across `lib.rs`, `header.rs`, `validate.rs`, `error.rs`, `io/buffered.rs`, `io/writer.rs`, `io/mmap_reader.rs`, and `engine/codec.rs`.
 
@@ -224,8 +224,8 @@ where R: ReaderMethods + ConvertMethods + ... { ... }
 
 ## Testing Strategy
 
-- **Unit Tests**: ~80 tests in inline `mod tests` blocks inside source files (`header.rs`, `engine/simd.rs`, `engine/convert.rs`, `engine/endian.rs`, `engine/stats.rs`, `io/reader.rs`, `lib.rs`, `mode.rs`).
-- **Doc Tests**: ~33 doc-tests in `lib.rs`, `header.rs`, `validate.rs`, `error.rs`, `io/buffered.rs`, `io/writer.rs`, `io/mmap_reader.rs`, and `engine/codec.rs`.
+- **Unit Tests**: ~91 tests in inline `mod tests` blocks inside source files (`header.rs`, `engine/simd.rs`, `engine/convert.rs`, `engine/endian.rs`, `engine/stats.rs`, `io/reader.rs`, `lib.rs`, `mode.rs`).
+- **Doc Tests**: ~39 doc-tests (33 run, 6 ignored — for internal-only API patterns) in `lib.rs`, `header.rs`, `validate.rs`, `error.rs`, `io/buffered.rs`, `io/writer.rs`, `io/mmap_reader.rs`, and `engine/codec.rs`.
 - **Integration Tests**: ~21 integration tests in `tests/integration.rs` covering write-then-read roundtrips for Float32, Int16, Uint16, subregion reads, gzip/bzip2 compression, header statistics, MmapReader, Packed4Bit (Mode 101), complex modes, volume stacks, and permissive-mode edge cases.
 - **Benchmarks**: Criterion benchmarks live in `benches/bench.rs` (requires `--all-features` for mmap benchmarks).
 - **No External Fixtures**: Tests generate temporary MRC files programmatically (using `tempfile` in dev-dependencies) rather than checking large binary files into git.
