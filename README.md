@@ -113,7 +113,6 @@ v0.2 adds SIMD acceleration, parallel encoding, type conversion iterators, compr
 - [ ] `serde` support for `Header` serialization (JSON/YAML roundtrip)
 - [ ] Async I/O via `tokio` (non-blocking read/write)
 - [ ] Python bindings via PyO3 / `maturin`
-- [ ] Parallel reader (rayon-based volume iteration)
 - [ ] cross-platform CI with real EMDB test fixtures
 - [ ] Lazy voxel views — zero-copy `ArrayView3` / `&[T]` for native-endian files
 
