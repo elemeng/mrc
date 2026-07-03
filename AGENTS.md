@@ -288,8 +288,10 @@ All MRC-2014 format features are implemented and tested. Remaining polish:
 
 - Richer error context (offset, mode in BoundsError / ModeMismatch)
 
-### v0.4.x — no concrete plans yet. The crate is feature-complete for MRC-2014;
-future work will be driven by community needs.
+### v0.4.x — feature-complete for MRC-2014; no planned features.
+Future work driven by community needs.
+
+### v0.5.x — Python bindings via PyO3 / `maturin` (evaluate)
 
 ## When Modifying This File
 
