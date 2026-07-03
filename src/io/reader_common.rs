@@ -235,17 +235,20 @@ pub trait ReaderCore: VoxelSource {
 
 /// Iterator methods available on all MRC reader types.
 ///
-/// Import this trait to call methods like [`slices`](ReaderMethods::slices),
-/// [`slabs`](ReaderMethods::slabs), [`subregion`](ReaderMethods::subregion),
-/// [`read_volume`](ReaderMethods::read_volume), [`slices_u8`](ReaderMethods::slices_u8),
-/// and others on any reader.
+/// The methods on this trait (`slices`, `slabs`, `tiles`, `subregion`,
+/// `read_volume`, `slices_u8`, etc.) are also available as **inherent
+/// methods** on [`Reader`](crate::Reader) and [`MmapReader`](crate::MmapReader)
+/// — no trait import is needed for normal use.
+///
+/// Import this trait directly only when writing generic code over multiple
+/// reader types:
 ///
 /// ```ignore
 /// use mrc::{Reader, ReaderMethods};
 ///
-/// let reader = Reader::open("file.mrc")?;
-/// for slice in reader.slices::<f32>() { ... }
-/// # Ok::<_, mrc::Error>(())
+/// fn count_slices<R: ReaderMethods>(reader: &R) -> usize {
+///     reader.slices::<f32>().count()
+/// }
 /// ```
 pub trait ReaderMethods: VoxelSource + ReaderCore + Sized {
     /// Iterate over Z-slices (1 voxel thick along Z) as [`VoxelBlock`]s.
@@ -530,15 +533,19 @@ impl<R: VoxelSource + ReaderCore> ReaderMethods for R {}
 
 /// Adds `.convert::<T>()` method on reader types.
 ///
-/// Import this trait alongside [`ReaderMethods`] to enable automatic mode
-/// conversion on any reader.
+/// The method is also available as an **inherent method** on
+/// [`Reader`](crate::Reader) and [`MmapReader`](crate::MmapReader) — no
+/// trait import is needed for normal use.
+///
+/// Import this trait directly only when writing generic code over multiple
+/// reader types.
 ///
 /// ```ignore
 /// use mrc::{Reader, ConvertMethods};
 ///
-/// let reader = Reader::open("file.mrc")?;
-/// for slice in reader.convert::<f32>().slices() { ... }
-/// # Ok::<_, mrc::Error>(())
+/// fn convert_all<R: ConvertMethods>(reader: &R) {
+///     for slice in reader.convert::<f32>().slices() { ... }
+/// }
 /// ```
 pub trait ConvertMethods: VoxelSource + ReaderCore + Sized {
     /// Return a wrapper that auto-converts all reads to type `T`.
@@ -566,6 +573,92 @@ impl<R: VoxelSource + ReaderCore> ConvertMethods for R {
         }
     }
 }
+
+// ============================================================================
+// Forwarding inherent methods — trait methods available without an explicit
+// import.  The traits remain the single definition of each method body; the
+// inherent methods below simply delegate to them.
+// ============================================================================
+
+macro_rules! impl_reader_forwarding {
+    ($ty:ty) => {
+        impl $ty {
+            #[inline]
+            pub fn slices<T: Voxel>(&self) -> RegionIter<'_, T, $ty, SliceStepper> {
+                <Self as ReaderMethods>::slices(self)
+            }
+            #[inline]
+            pub fn slabs<T: Voxel>(&self, k: usize) -> RegionIter<'_, T, $ty, SlabStepper> {
+                <Self as ReaderMethods>::slabs(self, k)
+            }
+            #[inline]
+            pub fn tiles<T: Voxel>(
+                &self,
+                tile_shape: [usize; 3],
+            ) -> RegionIter<'_, T, $ty, TileStepper> {
+                <Self as ReaderMethods>::tiles(self, tile_shape)
+            }
+            #[inline]
+            pub fn volumes<T: Voxel>(
+                &self,
+            ) -> Result<RegionIter<'_, T, $ty, SlabStepper>, Error> {
+                <Self as ReaderMethods>::volumes(self)
+            }
+            #[inline]
+            pub fn subregion<T: Voxel>(
+                &self,
+                offset: [usize; 3],
+                shape: [usize; 3],
+            ) -> Result<VoxelBlock<T>, Error> {
+                <Self as ReaderMethods>::subregion(self, offset, shape)
+            }
+            #[inline]
+            pub fn read_volume<T: Voxel>(&self) -> Result<VoxelBlock<T>, Error> {
+                <Self as ReaderMethods>::read_volume(self)
+            }
+            #[inline]
+            #[cfg(feature = "ndarray")]
+            pub fn to_ndarray<T: Voxel>(&self) -> Result<ndarray::Array3<T>, Error> {
+                <Self as ReaderMethods>::to_ndarray(self)
+            }
+            #[inline]
+            pub fn read_volume_u8(&self) -> Result<VoxelBlock<u8>, Error> {
+                <Self as ReaderMethods>::read_volume_u8(self)
+            }
+            #[inline]
+            pub fn slices_u8(&self) -> VoxelIter<'_, u8> {
+                <Self as ReaderMethods>::slices_u8(self)
+            }
+            #[inline]
+            pub fn slabs_u8(&self, k: usize) -> VoxelIter<'_, u8> {
+                <Self as ReaderMethods>::slabs_u8(self, k)
+            }
+            #[inline]
+            pub fn slices_mode0(&self, interp: M0Interpretation) -> VoxelIter<'_, f32> {
+                <Self as ReaderMethods>::slices_mode0(self, interp)
+            }
+            #[inline]
+            pub fn slabs_mode0(&self, k: usize, interp: M0Interpretation) -> VoxelIter<'_, f32> {
+                <Self as ReaderMethods>::slabs_mode0(self, k, interp)
+            }
+            #[inline]
+            pub fn convert<T>(&self) -> ConvertReader<'_, $ty, T>
+            where
+                T: Voxel
+                    + crate::engine::convert::ConvertFrom<i8>
+                    + crate::engine::convert::ConvertFrom<i16>
+                    + crate::engine::convert::ConvertFrom<u16>
+                    + crate::engine::convert::ConvertFrom<f32>,
+            {
+                <Self as ConvertMethods>::convert(self)
+            }
+        }
+    };
+}
+
+impl_reader_forwarding!(crate::Reader);
+#[cfg(feature = "mmap")]
+impl_reader_forwarding!(crate::MmapReader);
 
 /// Validate a block read/write request.
 ///

@@ -9,7 +9,6 @@
 
 use crate::engine::block::VolumeShape;
 use crate::engine::endian::FileEndian;
-use crate::io::reader_common::ReaderMethods;
 use crate::mode::Voxel;
 use crate::{Error, Header, Mode};
 
@@ -26,7 +25,7 @@ use std::vec::Vec;
 /// # Example
 ///
 /// ```no_run
-/// use mrc::{Reader, ReaderMethods};
+/// use mrc::Reader;
 ///
 /// fn main() -> Result<(), Box<dyn std::error::Error>> {
 ///     let reader = Reader::open("protein.mrc")?;

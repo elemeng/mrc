@@ -8,7 +8,7 @@
 //! # Quick example
 //!
 //! ```no_run
-//! use mrc::{open, create, VoxelBlock, ConvertMethods};
+//! use mrc::{open, create, VoxelBlock};
 //!
 //! fn main() -> Result<(), Box<dyn std::error::Error>> {
 //!     // Read — auto-detects gzip/bzip2 compression
@@ -53,16 +53,15 @@
 //! * [`tiles`](ReaderMethods::tiles) — arbitrary 3D blocks
 //! * [`subregion`](ReaderMethods::subregion) — a single block by coordinate
 //!
-//! > **Trait imports:** Iterator methods require importing the [`ReaderMethods`]
-//! > trait; the `.convert()` auto-conversion API requires the [`ConvertMethods`]
-//! > trait. Both are re-exported from the crate root — just add
-//! > `use mrc::{ReaderMethods, ConvertMethods};`.
+//! > **Trait imports (optional):** Iterator and conversion methods are
+//! > available as inherent methods on `Reader` and `MmapReader` without any
+//! > import. The [`ReaderMethods`] and [`ConvertMethods`] traits are also
+//! > re-exported for advanced use (e.g. generic code over reader types).
 //!
 //! For automatic mode conversion, use [`convert`](ConvertMethods::convert):
 //!
 //! ```no_run
 //! # fn main() -> Result<(), mrc::Error> {
-//! # use mrc::ConvertMethods;
 //! # let reader = mrc::Reader::open("density.mrc")?;
 //! for slice in reader.convert::<f32>().slices() {
 //!     let block = slice?;
@@ -77,7 +76,6 @@
 //!
 //! ```no_run
 //! # fn main() -> Result<(), mrc::Error> {
-//! # use mrc::ConvertMethods;
 //! # let reader = mrc::Reader::open("density.mrc")?;
 //! let block = reader.convert::<f32>().read_volume()?;
 //! println!("read {} voxels", block.data.len());
@@ -88,7 +86,6 @@
 //!
 //! ```no_run
 //! # fn main() -> Result<(), mrc::Error> {
-//! # use mrc::{ConvertMethods, ReaderMethods};
 //! # let reader = mrc::Reader::open("density.mrc")?;
 //! let arr = reader.to_ndarray::<f32>()?;
 //! // arr is ndarray::Array3<f32> with shape [nz, ny, nx]
@@ -319,7 +316,7 @@
 //!
 //! ```no_run
 //! # fn main() -> Result<(), mrc::Error> {
-//! use mrc::{open, parse_fei1_records, ConvertMethods};
+//! use mrc::{open, parse_fei1_records};
 //!
 //! let reader = open("tiltseries.mrc")?;
 //! println!("{}×{}×{} voxels, mode {:?}",
@@ -383,7 +380,6 @@
 //!
 //! ```no_run
 //! # fn main() -> Result<(), mrc::Error> {
-//! # use mrc::ReaderMethods;
 //! # let reader = mrc::Reader::open("averages.mrc")?;
 //! for volume in reader.volumes::<f32>()? {
 //!     let vol = volume?;

@@ -34,7 +34,7 @@
 ## Quick Start
 
 ```rust
-use mrc::{open, create, VoxelBlock, Mode, ReaderMethods};
+use mrc::{open, create, VoxelBlock, Mode};
 
 // ── Reading (auto-detects gzip/bzip2) ──
 let reader = open("protein.mrc")?;
@@ -88,20 +88,13 @@ pub const DEFAULT_MAX_DECOMPRESSED_BYTES: u64 = 274_877_906_944;
 
 The standard buffered reader. Loads the **entire file** into a `Vec<u8>` on open.
 
-**Trait imports:** Iterator and conversion methods (`slices`, `slabs`, `tiles`,
-`subregion`, `read_volume`, `convert`, `slices_u8`, etc.) are defined on the
-[`ReaderMethods`] and [`ConvertMethods`] traits. Import them to use these
-methods:
+All iterator and conversion methods (`slices`, `slabs`, `tiles`,
+`subregion`, `read_volume`, `convert`, `slices_u8`, etc.) are available
+as **inherent methods** — no trait imports needed for normal use.
 
-```rust
-use mrc::{Reader, ReaderMethods, ConvertMethods};
-
-let reader = Reader::open("file.mrc")?;
-for slice in reader.slices::<f32>() { ... }
-for slice in reader.convert::<f32>().slices() { ... }
-```
-
-The table below lists inherent methods first, then the trait-provided methods.
+The [`ReaderMethods`] and [`ConvertMethods`] traits are also re-exported
+and can be used directly for generic code over reader types, but most
+callers will never need to import them.
 
 | Method | Returns | Description |
 |---|---|---|
@@ -125,7 +118,7 @@ The table below lists inherent methods first, then the trait-provided methods.
 | `reader.validate_header_stats()` | `Result<()>` | Cross-check header stats vs actual data (1% tolerance) |
 | `reader.is_truncated()` | `bool` | `true` if permissive-mode open found a truncated file |
 
-**Methods from [`ReaderMethods`] trait** (import `use mrc::ReaderMethods;`):
+**All methods (inherent — no trait import needed):**
 
 | Method | Returns | Description |
 |---|---|---|
@@ -140,11 +133,6 @@ The table below lists inherent methods first, then the trait-provided methods.
 | `reader.slabs_u8(k)` | iterator yielding `VoxelBlock<u8>` | Same as `slices_u8` but `k` planes at a time |
 | `reader.slices_mode0(interp)` | iterator yielding `VoxelBlock<f32>` | Mode 0 (Int8) only; signed or unsigned |
 | `reader.slabs_mode0(k, interp)` | iterator yielding `VoxelBlock<f32>` | Same as `slices_mode0` but `k` planes at a time |
-
-**Methods from [`ConvertMethods`] trait** (import `use mrc::ConvertMethods;`):
-
-| Method | Returns | Description |
-|---|---|---|
 | `reader.convert::<T>()` | [`ConvertReader`] | Returns a wrapper; all reads auto-convert to type `T` |
 
 Then use the wrapper's inherent methods:
@@ -160,9 +148,8 @@ Then use the wrapper's inherent methods:
 ### `MmapReader`
 
 Memory-mapped reader with **zero-copy** access for native-endian files.
-Requires the `mmap` feature.  Import the [`ReaderMethods`] and [`ConvertMethods`]
-traits for slice/subregion/convert methods (see [Reader](#reader) above for the
-full method list).
+Requires the `mmap` feature. All iterator and conversion methods are
+available as inherent methods (no trait import needed).
 
 | Method | Returns | Description |
 |---|---|---|
@@ -178,13 +165,12 @@ full method list).
 | `reader.slab_as::<T>(z, k)` | `Result<&[T]>` | **Zero-copy** typed access into the mmap (requires native endian + matching type) |
 | `reader.read_block_bytes(offset, shape)` | `Result<Vec<u8>>` | Read raw bytes for any sub-block |
 | `reader.read_block::<T>(offset, shape)` | `Result<VoxelBlock<T>>` | Deprecated, use `subregion` instead |
-| `reader.convert::<T>()` | [`ConvertReader`] | Returns a wrapper; all reads auto-convert to type `T` |
 | `reader.validate_header_stats()` | `Result<()>` | Cross-check header stats |
 
-`MmapReader` also has all the same **trait-provided methods** as `Reader`
-via [`ReaderMethods`] and [`ConvertMethods`] (`slices`, `slabs`, `tiles`,
-`convert`, `slices_u8`, `slabs_u8`, `slices_mode0`, `slabs_mode0`,
-`volumes`, `subregion`, `read_volume`, `read_volume_u8`, etc.).
+`MmapReader` also has all the same reader methods as `Reader` (`slices`,
+`slabs`, `tiles`, `convert`, `slices_u8`, `slabs_u8`, `slices_mode0`,
+`slabs_mode0`, `volumes`, `subregion`, `read_volume`, `read_volume_u8`,
+`to_ndarray`, etc.).
 
 **When to use `MmapReader` vs `Reader`:**
 
@@ -499,14 +485,9 @@ pub struct TileStepper;     // arbitrary 3D tiles
 | `TileStepper` | `TileStepper::new([sx, sy, sz])` | Raster-scans volume in `[sx, sy, sz]` tiles |
 
 You don't normally interact with `RegionIter` directly — just use the reader
-methods (from the [`ReaderMethods`] trait, imported via
-`use mrc::ReaderMethods;`):
+methods returned by `slices()`, `slabs()`, `tiles()` etc.:
 
 ```rust
-use mrc::{Reader, ReaderMethods};
-
-let reader = Reader::open("file.mrc")?;
-
 for slice in reader.slices::<f32>() {
     let block = slice?;
     // block.offset, block.shape, block.data
@@ -644,10 +625,9 @@ pub fn convert_u16_slice_to_u8(src: &[u16]) -> Result<Vec<u8>, Error>;
 ```
 
 These are convenience functions exposed from the crate root. The more comprehensive
-conversion infrastructure is used internally by [`convert::<T>()`](ConvertMethods::convert) which
+conversion infrastructure is used internally by `reader.convert::<T>()` which
 automatically converts any MRC mode to the target type via `.slices()`, `.slabs()`,
-`.tiles()`, `.subregion()`, and `.read_volume()`.  Import the
-[`ConvertMethods`] trait (`use mrc::ConvertMethods;`) to access `.convert()`.
+`.tiles()`, `.subregion()`, and `.read_volume()`.
 
 ---
 

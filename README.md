@@ -21,7 +21,7 @@ mrc = "0.2"
 ## Quick Start
 
 ```rust
-use mrc::{open, create, VoxelBlock, ConvertMethods};
+use mrc::{open, create, VoxelBlock};
 
 // Read (auto-detects compression; handles common microscope quirks
 // like NVERSION=0 and "MAP\0" automatically)

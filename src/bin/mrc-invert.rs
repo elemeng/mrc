@@ -12,7 +12,7 @@
 //! For each slice, the tool reads via `reader.convert::<f32>().slices()`, negates
 //! all values, and writes the result as an equivalent Float32 slice.
 
-use mrc::{ConvertMethods, VoxelBlock, create, open};
+use mrc::{VoxelBlock, create, open};
 use std::env;
 use std::process;
 

@@ -6,7 +6,7 @@
 //! ```
 
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
-use mrc::{ConvertMethods, ReaderMethods, VoxelBlock, create};
+use mrc::{VoxelBlock, create};
 
 // ============================================================================
 // Helpers — generate temp MRC files for benchmarking

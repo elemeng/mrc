@@ -7,7 +7,6 @@
 
 use crate::engine::block::{VolumeShape, VoxelBlock};
 use crate::engine::endian::FileEndian;
-use crate::io::reader_common::ReaderMethods;
 use crate::mode::Voxel;
 use crate::{Error, Header, Mode};
 
@@ -34,7 +33,7 @@ use std::vec::Vec;
 ///
 /// # Example
 /// ```no_run
-/// use mrc::{MmapReader, ReaderMethods};
+/// use mrc::MmapReader;
 ///
 /// fn main() -> Result<(), Box<dyn std::error::Error>> {
 ///     let reader = MmapReader::open("large_file.mrc")?;
