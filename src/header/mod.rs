@@ -40,6 +40,21 @@
 //! assert_eq!(raw, encoded);
 //! ```
 
+pub mod agar;
+pub mod ccp4;
+pub mod fei;
+pub mod mrco;
+pub mod seri;
+
+pub use agar::{AGAR_RECORD_SIZE, AgarRecord, parse_agar_records};
+pub use ccp4::{CCP4_RECORD_SIZE, Ccp4Record, parse_ccp4_records};
+pub use fei::{
+    FEI1_RECORD_SIZE, FEI2_RECORD_SIZE, Fei1Metadata, Fei2Metadata, parse_fei1_records,
+    parse_fei2_records,
+};
+pub use mrco::{MRCO_RECORD_SIZE, MrcoRecord, parse_mrco_records};
+pub use seri::{SERI_RECORD_SIZE, SeriRecord, parse_seri_records};
+
 use crate::Mode;
 
 // Header field offsets (MRC2014 format)

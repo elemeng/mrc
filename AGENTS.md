@@ -78,9 +78,13 @@ src/
 ├── lib.rs                 # Public API re-exports and convenience functions (open, create), plus integration tests
 ├── error.rs               # Top-level `Error` and `HeaderValidationError` enums (thiserror)
 ├── mode.rs                # `Mode` enum, `Voxel` trait, complex types (Int16Complex, Float32Complex), Packed4Bit mode handling
-├── header.rs              # `Header` struct (1024-byte MRC-2014 header), `HeaderBuilder`
-├── fei.rs                 # FEI1/FEI2 extended header parsers
-├── ext_header.rs          # CCP4/MRCO/SERI/AGAR extended header parsers
+├── header/
+│   ├── mod.rs             # `Header` struct (1024-byte MRC-2014 header), `HeaderBuilder`
+│   ├── fei.rs             # FEI1/FEI2 extended header parsers
+│   ├── ccp4.rs            # CCP4 symmetry record parser
+│   ├── mrco.rs            # MRCO legacy record parser
+│   ├── seri.rs            # SerialEM record parser (with alpha_tilt)
+│   └── agar.rs            # Agard record parser
 ├── validate.rs            # `ValidationReport`, `validate_full()`, `validate_reader()`
 ├── iter.rs                # Lazy iterators: `RegionIter<T, R, S>`, `SliceStepper`, `SlabStepper`, `TileStepper`
 ├── engine/

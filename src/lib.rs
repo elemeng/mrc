@@ -405,8 +405,6 @@
 
 mod engine;
 mod error;
-mod ext_header;
-mod fei;
 mod header;
 mod io;
 mod iter;
@@ -422,7 +420,13 @@ pub use engine::endian::FileEndian;
 pub use engine::convert::{convert_u8_slice_to_u16, convert_u16_slice_to_u8, reinterpret_m0};
 
 pub use error::{Error, HeaderValidationError};
-pub use header::{Header, HeaderBuilder};
+pub use header::{
+    AGAR_RECORD_SIZE, AgarRecord, CCP4_RECORD_SIZE, Ccp4Record, FEI1_RECORD_SIZE, FEI2_RECORD_SIZE,
+    Fei1Metadata, Fei2Metadata, Header, HeaderBuilder, MRCO_RECORD_SIZE, MrcoRecord,
+    SERI_RECORD_SIZE, SeriRecord, parse_agar_records, parse_ccp4_records, parse_fei1_records,
+    parse_fei2_records, parse_mrco_records, parse_seri_records,
+};
+
 pub use mode::{
     ComplexToRealStrategy, Float32Complex, Int16Complex, M0Interpretation, Mode, Voxel,
 };
@@ -455,19 +459,6 @@ pub use io::gzip::GzipWriter;
 /// Bzip2-compressed MRC writer (requires `bzip2` feature).
 #[cfg(feature = "bzip2")]
 pub use io::bzip2::Bzip2Writer;
-
-/// FEI extended header metadata types and parsers.
-pub use fei::{
-    FEI1_RECORD_SIZE, FEI2_RECORD_SIZE, Fei1Metadata, Fei2Metadata, parse_fei1_records,
-    parse_fei2_records,
-};
-
-/// Extended header types for CCP4, MRCO, SerialEM, and Agard formats.
-pub use ext_header::{
-    AGAR_RECORD_SIZE, AgarRecord, CCP4_RECORD_SIZE, Ccp4Record, MRCO_RECORD_SIZE, MrcoRecord,
-    SERI_RECORD_SIZE, SeriRecord, parse_agar_records, parse_ccp4_records, parse_mrco_records,
-    parse_seri_records,
-};
 
 /// Default decompression safety limit for gzip/bzip2 files (256 GiB).
 ///
