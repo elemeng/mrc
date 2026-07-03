@@ -105,7 +105,6 @@ v0.2 adds SIMD acceleration, parallel encoding, type conversion iterators, compr
 - [x] Criterion benchmark suite + integration tests
 - [x] Unified `ConvertReader` API with inherent forwarding
 - [x] `ndarray` feature for numpy-like volume access
-- [ ] Streaming decompression (reduce RAM for gzip/bzip2 files)
 - [ ] SIMD f32→i16/i8 clamping in write-hot paths
 - [ ] Richer error context (offset, mode in BoundsError / ModeMismatch)
 - [ ] Lazy `VoxelBlock` — `Cow<[T]>` data field to avoid copies in mmap paths
@@ -113,7 +112,6 @@ v0.2 adds SIMD acceleration, parallel encoding, type conversion iterators, compr
 **v0.4.x** — Ecosystem & Performance
 
 - [ ] `serde` support for `Header` serialization (JSON/YAML roundtrip)
-- [ ] Streaming compressed writer (reduce peak RAM on finalize)
 - [ ] Async I/O via `tokio` (non-blocking read/write)
 - [ ] Python bindings via PyO3 / `maturin`
 - [ ] Parallel reader (rayon-based volume iteration)
