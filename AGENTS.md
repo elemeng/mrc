@@ -10,7 +10,7 @@ This file contains project-specific context for AI coding agents working on the 
 - **Crate**: https://crates.io/crates/mrc
 - **Docs**: https://docs.rs/mrc
 - **License**: MIT
-- **Version**: 0.2.6 (check `Cargo.toml` for latest)
+- **Version**: 0.2.7 (check `Cargo.toml` for latest)
 
 A reference Python implementation (`mrcfile`) is available on PyPI for specification comparison, but this crate is a standalone Rust implementation. The MRC-2014 specification is available locally as `mrcfile-official.md`.
 
@@ -55,7 +55,7 @@ cargo build --release --bin mrc-header
 cargo build --release --bin mrc-invert
 ```
 
-There are **no integration test directories** (`tests/` or `benches/`). All tests are inline `#[cfg(test)]` modules inside source files. Criterion is in dev-dependencies but no `benches/` directory exists yet.
+All tests and benchmarks are inline: `#[cfg(test)]` modules inside source files for unit tests, and `benches/bench.rs` for criterion benchmarks.
 
 ## Feature Flags
 
@@ -217,11 +217,11 @@ where R: ReaderMethods + ConvertMethods + ... { ... }
 
 ## Testing Strategy
 
-- **Unit Tests**: ~61 tests in inline `mod tests` blocks inside source files (`header.rs`, `engine/simd.rs`, `engine/convert.rs`, `engine/endian.rs`, `engine/stats.rs`, `io/reader.rs`, `lib.rs`, `mode.rs`).
-- **Doc Tests**: ~31 doc-tests in `lib.rs`, `header.rs`, `validate.rs`, `error.rs`, `io/buffered.rs`, `io/writer.rs`, `io/mmap_reader.rs`, and `engine/codec.rs`.
+- **Unit Tests**: ~80 tests in inline `mod tests` blocks inside source files (`header.rs`, `engine/simd.rs`, `engine/convert.rs`, `engine/endian.rs`, `engine/stats.rs`, `io/reader.rs`, `lib.rs`, `mode.rs`).
+- **Doc Tests**: ~33 doc-tests in `lib.rs`, `header.rs`, `validate.rs`, `error.rs`, `io/buffered.rs`, `io/writer.rs`, `io/mmap_reader.rs`, and `engine/codec.rs`.
 - **Integration Tests**: Integration-level roundtrip tests live in `lib.rs` under `mod integration_tests`. They test write-then-read scenarios for Float32, Int16, Uint16, subregion reads, gzip compression, header statistics, and Packed4Bit (Mode 101) read/write.
+- **Benchmarks**: Criterion benchmarks live in `benches/bench.rs` (requires `--all-features` for mmap benchmarks).
 - **No External Fixtures**: Tests generate temporary MRC files programmatically (using `tempfile` in dev-dependencies) rather than checking large binary files into git.
-- **Coverage Gaps**: There is no dedicated benchmark suite (criterion is in dev-dependencies but no `benches/` directory exists).
 
 ## Safety and Unsafe Code
 
@@ -241,10 +241,9 @@ The crate contains a small amount of `unsafe` Rust, all justified by performance
 
 ## Known Issues and Technical Debt
 
-1. **`gather_block_bytes` fast-path assumes contiguous XY slabs**: For full-row slabs (`ox == 0 && sx == nx && oy == 0 && sy == ny`) a contiguous copy is used. Sub-XY blocks correctly use row-by-row scatter/gather.
-2. **`MmapReader::data_bytes()` silently truncates on undersized files in permissive mode**: When the file is smaller than the header claims, the method returns whatever bytes are available instead of signalling an error. In strict mode the file size is validated on open.
-3. **No benchmark suite**: Criterion is in dev-dependencies but there is no `benches/` directory.
-4. **`Packed4Bit` sub-block reads require even X-offset**: `validate_block_bounds` rejects odd `ox` for Mode 101 to avoid nibble-level read-modify-write in `gather_block_bytes`. Full-frame and byte-aligned sub-block reads work correctly.
+1. **`gather_block_bytes` fast-path assumes origin-aligned XY slabs**: For full-row slabs (`ox == 0 && sx == nx && oy == 0 && sy == ny`) a contiguous copy is used. Sub-XY blocks correctly use row-by-row scatter/gather. The fast-path comment was clarified in v0.2.7.
+2. **`MmapReader::data_bytes()` silently truncates on undersized files in permissive mode**: When the file is smaller than the header claims, the method returns whatever bytes are available. Use [`is_truncated()`](crate::MmapReader::is_truncated) to detect this. In strict mode the file size is validated on open.
+3. **`Packed4Bit` sub-block reads require even X-offset**: `validate_block_bounds` rejects odd `ox` for Mode 101 to avoid nibble-level read-modify-write in `gather_block_bytes`. Full-frame and byte-aligned sub-block reads work correctly.
 
 ## CLI Tools
 

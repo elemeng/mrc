@@ -137,7 +137,7 @@
 //!    `T` matches the file's mode — a compile-time check that prevents
 //!    accidentally treating bytes as the wrong kind of number.
 //!    Use [`write_block_as`](Writer::write_block_as) for automatic conversion
-//!    (e.g. write `f32` data to a Float16 file).
+//!    (e.g. write `f32` data to an Int16 or Float16 file).
 //! 2. Optionally call [`update_header_stats`](Writer::update_header_stats)
 //!    to fill in `dmin`/`dmax`/`dmean`/`rms`.
 //! 3. **Finalize** with [`finalize`](Writer::finalize) to rewrite the header

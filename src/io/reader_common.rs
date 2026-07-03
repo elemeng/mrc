@@ -599,9 +599,7 @@ macro_rules! impl_reader_forwarding {
                 <Self as ReaderMethods>::tiles(self, tile_shape)
             }
             #[inline]
-            pub fn volumes<T: Voxel>(
-                &self,
-            ) -> Result<RegionIter<'_, T, $ty, SlabStepper>, Error> {
+            pub fn volumes<T: Voxel>(&self) -> Result<RegionIter<'_, T, $ty, SlabStepper>, Error> {
                 <Self as ReaderMethods>::volumes(self)
             }
             #[inline]

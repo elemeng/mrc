@@ -49,8 +49,8 @@ See **[docs.rs/mrc](https://docs.rs/mrc)** for the complete API reference, inclu
 - Reading files — `Reader`, `MmapReader`, compressed I/O, permissive mode,
   decompression bomb protection (256 GiB limit, configurable)
 - Writing files — `Writer`, `MmapWriter`, `GzipWriter`, `Bzip2Writer`
-- Iterators — slices, slabs, tiles, volumes (import `ReaderMethods` trait)
-- Auto-conversion — `reader.convert::<T>().slices()` etc. (import `ConvertMethods` trait)
+- Iterators — slices, slabs, tiles, volumes
+- Auto-conversion — `reader.convert::<T>().slices()` etc.
 - Full-volume reads — `read_volume::<T>()`, `read_volume_u8()`,
   auto-conversion via `reader.convert::<T>().read_volume()`
 - Data modes — `Mode` enum and compile-time `Voxel` trait, including Packed4Bit

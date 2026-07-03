@@ -34,7 +34,7 @@
 ## Quick Start
 
 ```rust
-use mrc::{open, create, VoxelBlock, Mode};
+use mrc::{open, create, VoxelBlock};
 
 // ── Reading (auto-detects gzip/bzip2) ──
 let reader = open("protein.mrc")?;
@@ -116,7 +116,6 @@ callers will never need to import them.
 | `reader.read_block_bytes(offset, shape)` | `Result<Vec<u8>>` | Read raw bytes for any sub-block |
 | `reader.read_block::<T>(offset, shape)` | `Result<VoxelBlock<T>>` | Deprecated, use `subregion` instead |
 | `reader.validate_header_stats()` | `Result<()>` | Cross-check header stats vs actual data (1% tolerance) |
-| `reader.is_truncated()` | `bool` | `true` if permissive-mode open found a truncated file |
 
 **All methods (inherent — no trait import needed):**
 
@@ -250,7 +249,7 @@ Created via `WriterBuilder::finish_gzip()` / `finish_bzip2()`.
 **Important:** Compressed writers buffer the **entire file** in memory and compress
 only on `finalize`. Not suitable for large volumes that exceed RAM.
 
-Full API: `shape()`, `mode()`, `header()`, `write_block()`, `write_block_as()`, `write_u8_block()`,
+Full API: `shape()`, `mode()`, `header()`, `write_block()`, `write_block_as()`, `write_u4_block()`,
 `update_header_stats()` (reads from in-memory buffer),
 `finalize()` (takes `self` by value).
 
