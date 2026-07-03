@@ -284,7 +284,7 @@ Three binary targets are available (`src/bin/`):
 
 ### v0.3.x — Stabilization & Quality (current)
 
-- SIMD f32→i16/i8 clamping in write-hot paths
+- SIMD f32→i16/i8/u16 clamping in write-hot paths ✅
 - Richer error context (offset, mode in BoundsError / ModeMismatch)
 - Lazy `VoxelBlock` — `Cow<[T]>` data field to avoid copies in mmap paths
 
