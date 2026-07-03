@@ -284,15 +284,12 @@ Three binary targets are available (`src/bin/`):
 
 ### v0.3.x — Stabilization & Quality (current)
 
-- SIMD f32→i16/i8/u16 clamping in write-hot paths ✅
+All MRC-2014 format features are implemented and tested. Remaining polish:
+
 - Richer error context (offset, mode in BoundsError / ModeMismatch)
 
-### v0.4.x — Ecosystem & Performance
-
-- `serde` support for `Header` serialization (JSON/YAML roundtrip)
-- Python bindings via PyO3 / `maturin`
-- Cross-platform CI with real EMDB test fixtures
-- Lazy voxel views — zero-copy `ArrayView3` / `&[T]` for native-endian files
+### v0.4.x — no concrete plans yet. The crate is feature-complete for MRC-2014;
+future work will be driven by community needs.
 
 ## When Modifying This File
 

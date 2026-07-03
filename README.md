@@ -108,12 +108,14 @@ v0.2 adds SIMD acceleration, parallel encoding, type conversion iterators, compr
 - [x] SIMD f32→i16/i8 clamping in write-hot paths
 - [ ] Richer error context (offset, mode in BoundsError / ModeMismatch)
 
-**v0.4.x** — Ecosystem & Performance
+**v0.3.x** — Stabilization & Quality (current)
 
-- [ ] `serde` support for `Header` serialization (JSON/YAML roundtrip)
-- [ ] Python bindings via PyO3 / `maturin`
-- [ ] cross-platform CI with real EMDB test fixtures
-- [ ] Lazy voxel views — zero-copy `ArrayView3` / `&[T]` for native-endian files
+All MRC-2014 format features are implemented and tested. Remaining polish:
+
+- Richer error context (offset, mode in BoundsError / ModeMismatch)
+
+**v0.4.x** — no concrete plans yet. The crate is feature-complete for MRC-2014;
+future work will be driven by community needs.
 
 **Note:** This crate is under active development. While most features are functional, occasional API changes are possible. Contributions welcome — please report issues and share your ideas!
 
