@@ -106,9 +106,9 @@ v0.2 adds SIMD acceleration, parallel encoding, type conversion iterators, compr
 - [x] Unified `ConvertReader` API with inherent forwarding
 - [x] `ndarray` feature for numpy-like volume access
 - [ ] Streaming decompression (reduce RAM for gzip/bzip2 files)
-- [ ] `no_std` + `alloc` support for embedded / GPU contexts
 - [ ] SIMD f32→i16/i8 clamping in write-hot paths
 - [ ] Richer error context (offset, mode in BoundsError / ModeMismatch)
+- [ ] Lazy `VoxelBlock` — `Cow<[T]>` data field to avoid copies in mmap paths
 
 **v0.4.x** — Ecosystem & Performance
 
