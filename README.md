@@ -108,8 +108,17 @@ v0.2 adds SIMD acceleration, parallel encoding, type conversion iterators, compr
 - [x] SIMD f32→i16/i8 clamping in write-hot paths
 - [ ] Richer error context (offset, mode in BoundsError / ModeMismatch)
 
-**v0.4.x** — feature-complete for MRC-2014; no planned features.
-Future work driven by community needs.
+**v0.4.x** — Header & Extended Header API
+
+- [ ] Auto-dispatch extended header parsing — `reader.parse_extended_header()`
+  checks `exttyp` and routes to the correct parser automatically
+- [ ] Reader convenience methods — `reader.fei1_metadata()`,
+  `reader.ccp4_records()`, etc. (read + parse in one call)
+- [ ] Expand IMOD metadata with more fields from `extra` bytes
+- [ ] Richer `Header` convenience API — cell volume, better label
+  helpers, more validation utilities
+- [ ] `exttyp`-based dispatch enum for generic code over all extended
+  header formats
 
 **v0.5.x** — Python bindings via PyO3 / `maturin` (evaluate)
 
