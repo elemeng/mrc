@@ -97,13 +97,13 @@ use crate::engine::stats::RunningStats;
 use crate::mode::Voxel;
 use crate::{Error, Header, Mode};
 
+use std::any::TypeId;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::PathBuf;
 use std::vec::Vec;
 
 /// Update running stats from a typed voxel block, when the type is `f32`.
 /// For non-f32 modes the stats are not updated (fallback reads from disk).
-use std::any::TypeId;
 #[inline]
 fn update_running_stats_f32<T: Voxel>(rs: &mut Option<RunningStats>, data: &[T]) {
     if TypeId::of::<T>() == TypeId::of::<f32>() {
