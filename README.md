@@ -107,7 +107,6 @@ v0.2 adds SIMD acceleration, parallel encoding, type conversion iterators, compr
 - [x] `ndarray` feature for numpy-like volume access
 - [x] SIMD f32→i16/i8 clamping in write-hot paths
 - [ ] Richer error context (offset, mode in BoundsError / ModeMismatch)
-- [ ] Lazy `VoxelBlock` — `Cow<[T]>` data field to avoid copies in mmap paths
 
 **v0.4.x** — Ecosystem & Performance
 
