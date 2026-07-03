@@ -18,7 +18,7 @@ A reference Python implementation (`mrcfile`) is available on PyPI for specifica
 
 - **Language**: Rust, Edition 2024, MSRV 1.85
 - **Build Tool**: Cargo (no `rust-toolchain.toml` — uses system Rust)
-- **CI**: GitHub Actions (`.github/workflows/rust.yml`) — builds and tests on `ubuntu-latest` for pushes/PRs to `main`
+- **CI**: GitHub Actions (`.github/workflows/rust.yml`) — builds and tests on `ubuntu-latest`, `windows-latest`, `macos-latest`, and inside a `fedora:latest` container for pushes/PRs to `main`
 - **Error Handling**: `thiserror` 2.x (no-std compatible)
 - **No `unsafe` in public API**: All `unsafe` is internal; the public API is 100% safe Rust.
 - **Optional Dependencies** (as declared in `Cargo.toml`):
