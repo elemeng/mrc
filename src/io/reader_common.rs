@@ -127,15 +127,18 @@ where
     }
 
     /// Iterate over 3D tiles, auto-converting each to `T`.
-    pub fn tiles(&self, tile_shape: [usize; 3]) -> VoxelIter<'_, T> {
+    ///
+    /// # Errors
+    /// Returns [`Error::BoundsError`] if any dimension of `tile_shape` is zero.
+    pub fn tiles(&self, tile_shape: [usize; 3]) -> Result<VoxelIter<'_, T>, Error> {
         let shape = self.inner.shape();
-        Box::new(convert_iter::<_, TileStepper, T>(
-            RawRegionIter::new(self.inner, shape, TileStepper::new(tile_shape)),
+        Ok(Box::new(convert_iter::<_, TileStepper, T>(
+            RawRegionIter::new(self.inner, shape, TileStepper::new(tile_shape)?),
             self.inner.mode(),
             self.inner.endian(),
             shape.nx,
             shape.ny,
-        ))
+        )))
     }
 
     /// Read a sub-region, auto-converting to `T`.
@@ -273,8 +276,18 @@ pub trait ReaderMethods: VoxelSource + ReaderCore + Sized {
     /// The volume is partitioned into non-overlapping tiles of size
     /// `tile_shape`. Tiles at the trailing edges may be truncated to fit
     /// the volume bounds.
-    fn tiles<T: Voxel>(&self, tile_shape: [usize; 3]) -> RegionIter<'_, T, Self, TileStepper> {
-        RegionIter::with_stepper(self, self.shape(), TileStepper::new(tile_shape))
+    ///
+    /// # Errors
+    /// Returns [`Error::BoundsError`] if any dimension of `tile_shape` is zero.
+    fn tiles<T: Voxel>(
+        &self,
+        tile_shape: [usize; 3],
+    ) -> Result<RegionIter<'_, T, Self, TileStepper>, Error> {
+        Ok(RegionIter::with_stepper(
+            self,
+            self.shape(),
+            TileStepper::new(tile_shape)?,
+        ))
     }
 
     /// Iterate over sub-volumes of a volume-stack file.
@@ -595,7 +608,7 @@ macro_rules! impl_reader_forwarding {
             pub fn tiles<T: Voxel>(
                 &self,
                 tile_shape: [usize; 3],
-            ) -> RegionIter<'_, T, $ty, TileStepper> {
+            ) -> Result<RegionIter<'_, T, $ty, TileStepper>, Error> {
                 <Self as ReaderMethods>::tiles(self, tile_shape)
             }
             #[inline]
@@ -1025,6 +1038,8 @@ pub(crate) struct DecompressedMrc {
     pub endian: crate::FileEndian,
     /// Volume dimensions.
     pub shape: VolumeShape,
+    /// Validated voxel data mode.
+    pub mode: Mode,
 }
 
 /// Open a compressed MRC file (gzip or bzip2) from a decoder.
@@ -1109,6 +1124,7 @@ pub(crate) fn open_compressed<D: std::io::Read>(
         warnings,
         endian,
         shape,
+        mode: Mode::from_i32(header.mode).ok_or(crate::Error::UnsupportedMode)?,
     })
 }
 

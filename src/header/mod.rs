@@ -102,7 +102,7 @@ const DEFAULT_EXTRA: [u8; 100] = {
     e[15] = 0x00;
     e
 };
-
+// Official MRC2014 specification: https://www.ccpem.ac.uk/mrc-format/mrc2014/
 #[repr(C, align(4))]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Header {

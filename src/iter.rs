@@ -96,17 +96,16 @@ impl TileStepper {
     /// Create a new tile stepper that partitions the volume into tiles of the
     /// given shape.
     ///
-    /// # Panics
-    /// Panics if any dimension of `tile_shape` is zero.
-    pub fn new(tile_shape: [usize; 3]) -> Self {
-        assert!(
-            tile_shape[0] > 0 && tile_shape[1] > 0 && tile_shape[2] > 0,
-            "tile_shape must be positive in all dimensions"
-        );
-        Self {
+    /// # Errors
+    /// Returns [`crate::Error::BoundsError`] if any dimension of `tile_shape` is zero.
+    pub fn new(tile_shape: [usize; 3]) -> Result<Self, crate::Error> {
+        if tile_shape[0] == 0 || tile_shape[1] == 0 || tile_shape[2] == 0 {
+            return Err(crate::Error::BoundsError);
+        }
+        Ok(Self {
             position: [0, 0, 0],
             tile_shape,
-        }
+        })
     }
 }
 

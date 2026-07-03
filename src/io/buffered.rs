@@ -49,6 +49,7 @@ pub struct Reader {
     pub(crate) ext_header: Vec<u8>,
     pub(crate) data: Vec<u8>,
     pub(crate) endian: FileEndian,
+    pub(crate) mode: Mode,
     pub(crate) shape: VolumeShape,
 }
 
@@ -139,6 +140,7 @@ impl Reader {
         }
 
         let shape = VolumeShape::new(header.nx as usize, header.ny as usize, header.nz as usize);
+        let mode = Mode::from_i32(header.mode).ok_or(Error::UnsupportedMode)?;
 
         Ok((
             Self {
@@ -146,6 +148,7 @@ impl Reader {
                 ext_header,
                 data,
                 endian,
+                mode,
                 shape,
             },
             warnings,
@@ -158,11 +161,8 @@ impl Reader {
     }
 
     /// Voxel data mode of the opened file.
-    ///
-    /// Returns the mode stored in the header. If the mode value is not
-    /// recognised, falls back to [`Mode::Float32`] as a safe default.
     pub fn mode(&self) -> Mode {
-        Mode::from_i32(self.header.mode).unwrap_or(Mode::Float32)
+        self.mode
     }
 
     /// A reference to the parsed MRC header.

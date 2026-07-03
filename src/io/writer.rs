@@ -97,19 +97,22 @@ use crate::engine::stats::RunningStats;
 use crate::mode::Voxel;
 use crate::{Error, Header, Mode};
 
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::PathBuf;
 use std::vec::Vec;
 
 /// Update running stats from a typed voxel block, when the type is `f32`.
 /// For non-f32 modes the stats are not updated (fallback reads from disk).
+use std::any::TypeId;
 #[inline]
 fn update_running_stats_f32<T: Voxel>(rs: &mut Option<RunningStats>, data: &[T]) {
-    if T::MODE == Mode::Float32 {
+    if TypeId::of::<T>() == TypeId::of::<f32>() {
         if let Some(rs) = rs {
-            // SAFETY: T::MODE == Float32 guarantees T == f32 at runtime.
-            let f32_slice =
+            // SAFETY: TypeId::of::<T>() == TypeId::of::<f32>() guarantees T == f32
+            // at the monomorphised call site. The compiler optimises the branch away.
+            let f32_data: &[f32] =
                 unsafe { core::slice::from_raw_parts(data.as_ptr() as *const f32, data.len()) };
-            rs.update(f32_slice);
+            rs.update(f32_data);
         }
     }
 }
@@ -287,6 +290,7 @@ pub struct Writer {
     header: Header,
     data_offset: u64,
     bytes_per_voxel: usize,
+    mode: Mode,
     shape: VolumeShape,
     running_stats: Option<RunningStats>,
 }
@@ -297,8 +301,6 @@ impl Writer {
         mut header: Header,
         ext_header: &[u8],
     ) -> Result<Self, Error> {
-        use std::io::Write;
-
         // New files are always little-endian per crate policy
         header.set_file_endian(FileEndian::LittleEndian);
 
@@ -344,6 +346,7 @@ impl Writer {
             header,
             data_offset,
             bytes_per_voxel,
+            mode,
             shape,
             running_stats: Some(RunningStats::new()),
         })
@@ -355,10 +358,8 @@ impl Writer {
     }
 
     /// Voxel data mode for this writer.
-    ///
-    /// Falls back to [`Mode::Float32`] if the header mode value is not recognised.
     pub fn mode(&self) -> Mode {
-        Mode::from_i32(self.header.mode).unwrap_or(Mode::Float32)
+        self.mode
     }
 
     /// Reference to the current header.
@@ -401,7 +402,6 @@ impl Writer {
             let mut buffer = vec![0u8; byte_len_usize];
             encode_slice(&block.data, &mut buffer, file_endian)?;
 
-            use std::io::{Seek, SeekFrom, Write};
             self.file.seek(SeekFrom::Start(start_offset))?;
             self.file.write_all(&buffer)?;
             update_running_stats_f32(&mut self.running_stats, &block.data);
@@ -411,7 +411,6 @@ impl Writer {
         // Scatter path: write row by row.
         // Pre-allocate a single row buffer to avoid per-row allocation churn.
         let mut row_bytes = vec![0u8; sx * b];
-        use std::io::{Seek, SeekFrom, Write};
         for z in 0..sz {
             for y in 0..sy {
                 let file_linear = ox + (oy + y) * nx + (oz + z) * nx * ny;
@@ -515,7 +514,6 @@ impl Writer {
         let encoded_chunks = encode_block_parallel(&block.data, chunk_size, file_endian);
 
         // Write chunks sequentially (cross-platform)
-        use std::io::{Seek, SeekFrom, Write};
         for (chunk_idx, encoded) in encoded_chunks {
             let offset = base_offset
                 + (chunk_idx as u64) * (chunk_size as u64) * (self.bytes_per_voxel as u64);
@@ -543,7 +541,6 @@ impl Writer {
         offset: [usize; 3],
         shape: [usize; 3],
     ) -> Result<(), Error> {
-        use std::io::{Seek, SeekFrom, Write};
         let [nx, ny, _nz] = [self.shape.nx, self.shape.ny, self.shape.nz];
         let [ox, oy, oz] = offset;
         let [sx, sy, sz] = shape;
@@ -593,8 +590,6 @@ impl Writer {
     /// # Errors
     /// Returns [`Error::Io`] if seeking or writing fails.
     pub fn finalize(&mut self) -> Result<(), Error> {
-        use std::io::{Seek, SeekFrom, Write};
-
         // Rewrite header
         self.file.seek(SeekFrom::Start(0))?;
 
@@ -630,7 +625,6 @@ impl Writer {
             return Ok(());
         }
         // Fallback: read from disk.
-        use std::io::{Read, Seek, SeekFrom};
         let data_size = self.header.data_size().ok_or(Error::InvalidHeader)?;
         self.file.seek(SeekFrom::Start(self.data_offset))?;
         let mut buf = vec![0u8; data_size];
@@ -696,6 +690,7 @@ pub struct MmapWriter {
     header: Header,
     data_offset: usize,
     bytes_per_voxel: usize,
+    mode: Mode,
     shape: VolumeShape,
     running_stats: Option<RunningStats>,
 }
@@ -708,7 +703,6 @@ impl MmapWriter {
         ext_header: &[u8],
     ) -> Result<Self, Error> {
         use std::fs::OpenOptions;
-        use std::io::Write;
 
         // New files are always little-endian per crate policy
         header.set_file_endian(FileEndian::LittleEndian);
@@ -767,6 +761,7 @@ impl MmapWriter {
             header,
             data_offset,
             bytes_per_voxel,
+            mode,
             shape,
             running_stats: Some(RunningStats::new()),
         })
@@ -778,10 +773,8 @@ impl MmapWriter {
     }
 
     /// Voxel data mode for this writer.
-    ///
-    /// Falls back to [`Mode::Float32`] if the header mode value is not recognised.
     pub fn mode(&self) -> Mode {
-        Mode::from_i32(self.header.mode).unwrap_or(Mode::Float32)
+        self.mode
     }
 
     /// Reference to the current header.
@@ -894,18 +887,20 @@ impl MmapWriter {
             .ok_or(Error::BoundsError)?;
         let file_endian = self.header.detect_endian();
 
-        // Get raw pointer as usize for parallel writes
+        // Use a usize representation for the mmap base pointer so that it
+        // can be captured by the rayon closure (usize is `Send + Sync`).
+        // SAFETY: Each rayon chunk writes to a disjoint byte range of the
+        // mmap, and the chunks are non-overlapping because `par_chunks`
+        // partitions the data by contiguous index ranges.
         let mmap_ptr = self.mmap.as_mut_ptr() as usize;
-
-        // Encode and write to mmap in parallel
         block
             .data
             .par_chunks(chunk_size)
             .enumerate()
             .try_for_each(|(chunk_idx, chunk)| {
                 let start_offset = base_offset + chunk_idx * chunk_size * self.bytes_per_voxel;
-                let ptr = (mmap_ptr + start_offset) as *mut u8;
                 let dst = unsafe {
+                    let ptr = (mmap_ptr + start_offset) as *mut u8;
                     core::slice::from_raw_parts_mut(ptr, chunk.len() * self.bytes_per_voxel)
                 };
 
@@ -1031,6 +1026,7 @@ pub struct CompressedWriter<C: Compressor> {
     ext_header: Vec<u8>,
     path: std::path::PathBuf,
     bytes_per_voxel: usize,
+    mode: Mode,
     shape: VolumeShape,
     running_stats: Option<RunningStats>,
     _marker: std::marker::PhantomData<C>,
@@ -1073,6 +1069,7 @@ impl<C: Compressor> CompressedWriter<C> {
             ext_header: ext_header_stored,
             path: path.as_ref().to_path_buf(),
             bytes_per_voxel,
+            mode,
             shape,
             running_stats: Some(RunningStats::new()),
             _marker: std::marker::PhantomData,
@@ -1085,10 +1082,8 @@ impl<C: Compressor> CompressedWriter<C> {
     }
 
     /// Voxel data mode for this writer.
-    ///
-    /// Falls back to [`Mode::Float32`] if the header mode value is not recognised.
     pub fn mode(&self) -> Mode {
-        Mode::from_i32(self.header.mode).unwrap_or(Mode::Float32)
+        self.mode
     }
 
     /// Reference to the current header.

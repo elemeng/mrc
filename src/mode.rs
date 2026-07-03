@@ -145,20 +145,11 @@ impl Int16Complex {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 #[repr(C)]
 pub struct Float32Complex {
     pub real: f32,
     pub imag: f32,
-}
-
-impl Default for Float32Complex {
-    fn default() -> Self {
-        Self {
-            real: 0.0,
-            imag: 0.0,
-        }
-    }
 }
 
 impl Float32Complex {

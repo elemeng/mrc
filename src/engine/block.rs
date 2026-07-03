@@ -26,15 +26,13 @@ impl VolumeShape {
     /// Create a volume shape from an MRC header.
     ///
     /// Maps from the header's `nx`, `ny`, `nz` fields (stored as `i32`).
-    /// **Panics if any dimension is negative** (the `as usize` cast would
-    /// produce a huge value on 64-bit systems). Only call this on validated
-    /// headers.
-    pub fn from_header(header: &crate::Header) -> Self {
-        Self {
-            nx: header.nx as usize,
-            ny: header.ny as usize,
-            nz: header.nz as usize,
-        }
+    /// Returns `Err(Error::BoundsError)` if any dimension is negative.
+    pub fn from_header(header: &crate::Header) -> Result<Self, crate::Error> {
+        Ok(Self {
+            nx: usize::try_from(header.nx).map_err(|_| crate::Error::BoundsError)?,
+            ny: usize::try_from(header.ny).map_err(|_| crate::Error::BoundsError)?,
+            nz: usize::try_from(header.nz).map_err(|_| crate::Error::BoundsError)?,
+        })
     }
 
     /// Total number of voxels, or `None` if the calculation overflows.

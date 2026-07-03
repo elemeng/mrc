@@ -58,6 +58,7 @@ pub struct MmapReader {
     header: Header,
     data_offset: usize,
     endian: FileEndian,
+    mode: Mode,
     shape: VolumeShape,
     /// Set in permissive mode when the file is smaller than the header
     /// claims.  When `true`, [`data_bytes()`](Self::data_bytes) returns
@@ -132,13 +133,14 @@ impl MmapReader {
             mmap.len() < expected_size
         };
 
-        let _mode = Mode::from_i32(header.mode).ok_or(Error::UnsupportedMode)?;
+        let mode = Mode::from_i32(header.mode).ok_or(Error::UnsupportedMode)?;
         Ok((
             Self {
                 mmap,
                 header,
                 data_offset: header.data_offset(),
                 endian,
+                mode,
                 shape,
                 truncated,
             },
@@ -152,10 +154,8 @@ impl MmapReader {
     }
 
     /// Get the voxel mode (data type) of the file.
-    ///
-    /// Falls back to [`Mode::Float32`] if the header mode value is not recognised.
     pub fn mode(&self) -> Mode {
-        Mode::from_i32(self.header.mode).unwrap_or(Mode::Float32)
+        self.mode
     }
 
     /// Get a reference to the header.

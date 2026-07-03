@@ -65,6 +65,7 @@ impl crate::Reader {
                 ext_header: d.ext_header,
                 data: d.data,
                 endian: d.endian,
+                mode: d.mode,
                 shape: d.shape,
             },
             d.warnings,
