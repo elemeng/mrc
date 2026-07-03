@@ -199,7 +199,7 @@ where R: ReaderMethods + ConvertMethods + ... { ... }
 | 4 (Float32Complex) | `Float32Complex` | ✅ | Complex data |
 | 6 (Uint16) | `u16` | ✅ | Segmentation labels |
 | 12 (Float16) | `f16` (via `half` crate, feature `f16`) | ✅ | Half-precision storage |
-| 101 (Packed4Bit) | `u8` (via `slices_u8`/`read_volume_u8`) | ❌ (no Voxel impl) | 4-bit packed data; unified `slices_u8`/`slices_f32` API |
+| 101 (Packed4Bit) | `u8` (via `slices_u8`/`read_volume_u8`) | ❌ (no Voxel impl) | 4-bit packed data; use `convert::<f32>().slices()` for f32 conversion |
 
 ### File Endianness
 
@@ -251,7 +251,7 @@ Three binary targets are available (`src/bin/`):
 
 - **`mrc-validate`**: Comprehensive file validation. Supports `--permissive` (warnings instead of hard errors), `--field <name>` (filter to specific checks), and `--list-fields`. Exit code 0 = valid, 1 = validation failed, 2 = usage error.
 - **`mrc-header`**: Header inspector with key:value output. Uses `--permissive` for lenient opening, `--force` to skip validation and show raw values only.
-- **`mrc-invert`**: Contrast inverter. Reads any mode via `slices_f32()`, negates every voxel, writes Float32 output. Shows progress every 100 slices.
+- **`mrc-invert`**: Contrast inverter. Reads any mode via `convert::<f32>().slices()`, negates every voxel, writes Float32 output. Shows progress every 100 slices.
 
 ## Deployment and Release
 

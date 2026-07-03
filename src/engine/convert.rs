@@ -146,7 +146,7 @@ pub fn reinterpret_m0(data: &[u8], interp: M0Interpretation) -> Vec<f32> {
     }
 }
 
-// === Batch slice conversions (used by Reader::slices_f32 / slabs_f32) ===
+// === Batch slice conversions (used by convert::<f32>().slices()) ===
 
 /// Batch conversion from i8 to f32 using SIMD when available.
 #[cfg(feature = "simd")]
