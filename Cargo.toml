@@ -35,3 +35,8 @@ simd = []
 gzip = ["dep:flate2"]
 bzip2 = ["dep:bzip2"]
 ndarray = ["dep:ndarray"]
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+strip = true

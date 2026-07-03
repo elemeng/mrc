@@ -435,17 +435,22 @@ impl Header {
             ));
         }
 
-        if !(matches!(self.mapc, 1..=3)
-            && matches!(self.mapr, 1..=3)
-            && matches!(self.maps, 1..=3)
-            && self.mapc != self.mapr
-            && self.mapc != self.maps
-            && self.mapr != self.maps)
+        if !(self.mapc != 0
+            && self.mapc.abs() <= 3
+            && self.mapr != 0
+            && self.mapr.abs() <= 3
+            && self.maps != 0
+            && self.maps.abs() <= 3
+            && self.mapc.abs() != self.mapr.abs()
+            && self.mapc.abs() != self.maps.abs()
+            && self.mapr.abs() != self.maps.abs())
         {
             warnings.push(format!(
-                "Axis mapping ({}, {}, {}) is not a permutation of (1, 2, 3)",
+                "Axis mapping ({}, {}, {}) is not a valid permutation of axis indices",
                 self.mapc, self.mapr, self.maps
             ));
+        } else if self.mapr == -2 {
+            warnings.push("mapr = -2 indicates Y-inverted image data (IMOD convention)".into());
         }
 
         if self.nsymbt < 0 {
@@ -1028,6 +1033,141 @@ impl Header {
         // Write labels - ASCII, no endian conversion
         out[OFFSET_LABEL..1024].copy_from_slice(&self.label);
     }
+}
+
+/// IMOD-specific metadata parsed from the `extra` block (bytes 56-63).
+///
+/// IMOD stores metadata in the MRC-2014 `extra` free-form area at offsets
+/// 152-159. The `imodStamp` at offset 152 spells `"IMOD"` in ASCII and
+/// identifies the file as IMOD-created. The `imodFlags` at offset 156
+/// contain bit flags for signedness, origin convention, etc.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ImodInfo {
+    /// When `true`, Mode 0 (Int8) bytes are signed (matching MRC-2014).
+    /// When `false`, bytes are unsigned (IMOD legacy convention).
+    pub bytes_are_signed: bool,
+}
+
+impl Header {
+    /// Detect IMOD-specific metadata from the `extra` bytes.
+    ///
+    /// Returns `None` if the `imodStamp` is not present (file is not
+    /// IMOD-created or uses a very old IMOD version).
+    ///
+    /// When this returns `Some`, the `imodFlags` at `extra[60]` indicate
+    /// whether Mode 0 bytes are signed or unsigned:
+    /// - `bytes_are_signed: true` → bit 0 set → standard MRC-2014 signed bytes
+    /// - `bytes_are_signed: false` → bit 0 clear → IMOD legacy unsigned bytes
+    pub fn detect_imod(&self) -> Option<ImodInfo> {
+        // imodStamp at extra[56..60] = little-endian "IMOD" (1146047817)
+        if self.extra[56..60] == [0x49, 0x4D, 0x4F, 0x44] {
+            Some(ImodInfo {
+                bytes_are_signed: (self.extra[60] & 1) != 0,
+            })
+        } else {
+            None
+        }
+    }
+
+    /// Returns `true` when `mapr == -2`, indicating Y-inverted image data
+    /// (an IMOD convention not part of standard MRC-2014).
+    pub fn is_y_inverted(&self) -> bool {
+        self.mapr == -2
+    }
+}
+
+/// IMOD image type classification from the `idtype` field.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ImodImageType {
+    /// Single image or untitled stack.
+    Mono,
+    /// Single tilt series.
+    Tilt,
+    /// Multiple tilt series.
+    Tilts,
+    /// Linear interpolation data.
+    Lina,
+    /// Linear interpolation data with extra parameters.
+    Lins,
+}
+
+/// IMOD-specific metadata parsed from the main header's `extra` bytes.
+///
+/// Returned by [`parse_imod_metadata`]. Only populated when the `imodStamp`
+/// is present, indicating an IMOD-created file.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ImodMetadata {
+    /// Whether Mode 0 bytes are signed (true) or unsigned (false).
+    pub bytes_are_signed: bool,
+    /// Image stack type classification.
+    pub image_type: ImodImageType,
+    /// Tilt axis (1=X, 2=Y, 3=Z).
+    pub tilt_axis: u8,
+    /// Tilt increment in degrees (`vd1 / 100.0`).
+    pub tilt_increment: f32,
+    /// Starting tilt angle in degrees (`vd2 / 100.0`).
+    pub start_angle: f32,
+    /// Original tilt angles `[tilt_x, tilt_y, tilt_z]`.
+    pub original_angles: [f32; 3],
+    /// Current tilt angles `[tilt_x, tilt_y, tilt_z]`.
+    pub current_angles: [f32; 3],
+}
+
+/// Parse IMOD metadata from the main header's `extra` bytes.
+///
+/// Returns `None` if the `imodStamp` is not present (file is not IMOD-created).
+///
+/// Fields are decoded from little-endian integers and floats stored in the
+/// MRC-2014 `extra` free-form block (offsets 152–195).
+pub fn parse_imod_metadata(header: &Header) -> Option<ImodMetadata> {
+    // Check for imodStamp
+    if header.extra[56..60] != [0x49, 0x4D, 0x4F, 0x44] {
+        return None;
+    }
+
+    let le_i16 = |offset: usize| -> i16 {
+        i16::from_le_bytes([header.extra[offset], header.extra[offset + 1]])
+    };
+
+    let le_f32 = |offset: usize| -> f32 {
+        f32::from_le_bytes([
+            header.extra[offset],
+            header.extra[offset + 1],
+            header.extra[offset + 2],
+            header.extra[offset + 3],
+        ])
+    };
+
+    let idtype = le_i16(64);
+    let image_type = match idtype {
+        0 => ImodImageType::Mono,
+        1 => ImodImageType::Tilt,
+        2 => ImodImageType::Tilts,
+        3 => ImodImageType::Lina,
+        4 => ImodImageType::Lins,
+        _ => ImodImageType::Mono, // fallback
+    };
+
+    let flags = le_i16(60) as u16; // lower 2 bytes of imodFlags
+    let bytes_are_signed = (flags & 1) != 0;
+    let tilt_axis = le_i16(68).clamp(1, 3) as u8;
+    let tilt_increment = le_i16(72) as f32 / 100.0;
+    let start_angle = le_i16(74) as f32 / 100.0;
+
+    // tiltangles[6] at extra[76..100], 6 little-endian f32 values
+    let original_angles = [le_f32(76), le_f32(80), le_f32(84)];
+    let current_angles = [le_f32(88), le_f32(92), le_f32(96)];
+
+    Some(ImodMetadata {
+        bytes_are_signed,
+        image_type,
+        tilt_axis,
+        tilt_increment,
+        start_angle,
+        original_angles,
+        current_angles,
+    })
 }
 
 /// Builder for constructing validated MRC headers.

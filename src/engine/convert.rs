@@ -14,6 +14,23 @@ use crate::Voxel;
 use crate::mode::M0Interpretation;
 use std::vec::Vec;
 
+/// Reinterpret a `Vec<S>` as `Vec<T>` without copying.
+///
+/// # Safety
+/// The caller must ensure that `S` and `T` have the same size and alignment,
+/// and that the byte pattern of `S` is valid for `T`.  This is satisfied when
+/// the caller has verified `TypeId::of::<S>() == TypeId::of::<T>()` (which
+/// guarantees `S` and `T` are the same type at the monomorphised call site).
+unsafe fn reinterpret_vec<S, T>(v: Vec<S>) -> Vec<T> {
+    let ptr = v.as_ptr() as *mut T;
+    let len = v.len();
+    let cap = v.capacity();
+    core::mem::forget(v);
+    // SAFETY: This function is itself `unsafe`; the caller must uphold the
+    // invariants documented above.
+    unsafe { Vec::from_raw_parts(ptr, len, cap) }
+}
+
 #[cfg(feature = "simd")]
 use super::simd;
 
@@ -31,6 +48,13 @@ use crate::mode::{ComplexToRealStrategy, Float32Complex, Int16Complex, Mode};
 /// Used by [`convert_block`] to dispatch per-mode conversions at runtime.
 /// The source type is determined by the file's on-disk mode; `Self` is the
 /// target type requested by the caller.
+///
+/// Only the following target types are wired up:
+/// - **`f32`** — universal target, zero-copy identity when source is Float32
+/// - **`f16`** — via f32 hub (SIMD F16C/NEON), requires `f16` feature
+/// - **`i16`** — shortcut `i8↔i16`, `u16↔i16`; f32 hub for all other sources
+/// - **`u16`** — shortcut `i8↔u16`, `i16↔u16`; f32 hub for all other sources
+/// - **`i8`** — shortcut `i16↔i8`, `u16↔i8`; f32 hub for all other sources
 ///
 /// # Identity
 /// The blanket `impl<T: Voxel> ConvertFrom<T> for T` handles the case
@@ -73,6 +97,47 @@ impl ConvertFrom<u16> for f32 {
 impl ConvertFrom<crate::f16> for f32 {
     fn convert_from(src: &[crate::f16]) -> Vec<f32> {
         convert_f16_slice_to_f32(src)
+    }
+}
+
+/// Reverse conversion: f32 → f16 for the reader-side convert API.
+///
+/// Enables `reader.convert::<f16>()` for any source mode (reads, converts
+/// through f32 intermediate, then narrows to f16).
+#[cfg(feature = "f16")]
+impl ConvertFrom<f32> for crate::f16 {
+    fn convert_from(src: &[f32]) -> Vec<crate::f16> {
+        convert_f32_slice_to_f16(src)
+    }
+}
+
+/// f32 → i16 for the reader-side convert API.
+///
+/// Enables `reader.convert::<i16>()` for any source mode via the f32 hub.
+/// Uses SIMD when available (see [`convert_f32_slice_to_i16`]).
+impl ConvertFrom<f32> for i16 {
+    fn convert_from(src: &[f32]) -> Vec<i16> {
+        convert_f32_slice_to_i16(src)
+    }
+}
+
+/// f32 → u16 for the reader-side convert API.
+///
+/// Enables `reader.convert::<u16>()` for any source mode via the f32 hub.
+/// Uses SIMD when available (see [`convert_f32_slice_to_u16`]).
+impl ConvertFrom<f32> for u16 {
+    fn convert_from(src: &[f32]) -> Vec<u16> {
+        convert_f32_slice_to_u16(src)
+    }
+}
+
+/// f32 → i8 for the reader-side convert API.
+///
+/// Enables `reader.convert::<i8>()` for any source mode via the f32 hub.
+/// Uses SIMD when available (see [`convert_f32_slice_to_i8`]).
+impl ConvertFrom<f32> for i8 {
+    fn convert_from(src: &[f32]) -> Vec<i8> {
+        convert_f32_slice_to_i8(src)
     }
 }
 
@@ -137,7 +202,8 @@ pub(crate) fn pack_u8_to_u4_bytes(src: &[u8], nx: usize, ny: usize) -> Vec<u8> {
 pub fn reinterpret_m0(data: &[u8], interp: M0Interpretation) -> Vec<f32> {
     match interp {
         M0Interpretation::Signed => {
-            // Cast u8 bytes to i8, then batch-convert with SIMD when available
+            // SAFETY: `u8` and `i8` have the same size and alignment; the byte
+            // pattern is valid for `i8` because every bit pattern is valid for `i8`.
             let src: &[i8] =
                 unsafe { core::slice::from_raw_parts(data.as_ptr() as *const i8, data.len()) };
             convert_i8_slice_to_f32(src)
@@ -225,6 +291,13 @@ pub(crate) fn convert_f32_slice_to_f16(src: &[f32]) -> Vec<crate::f16> {
 // ============================================================================
 
 /// Convert `f32` values to `i16`, clamping to the representable range.
+#[cfg(feature = "simd")]
+pub(crate) fn convert_f32_slice_to_i16(src: &[f32]) -> Vec<i16> {
+    simd::convert_f32_to_i16_simd(src)
+}
+
+/// Convert `f32` values to `i16`, clamping to the representable range.
+#[cfg(not(feature = "simd"))]
 pub(crate) fn convert_f32_slice_to_i16(src: &[f32]) -> Vec<i16> {
     src.iter()
         .map(|&v| {
@@ -241,6 +314,14 @@ pub(crate) fn convert_f32_slice_to_i16(src: &[f32]) -> Vec<i16> {
 
 /// Convert `f32` values to `u16`, clamping to the representable range.
 /// Negative values are clamped to 0.
+#[cfg(feature = "simd")]
+pub(crate) fn convert_f32_slice_to_u16(src: &[f32]) -> Vec<u16> {
+    simd::convert_f32_to_u16_simd(src)
+}
+
+/// Convert `f32` values to `u16`, clamping to the representable range.
+/// Negative values are clamped to 0.
+#[cfg(not(feature = "simd"))]
 pub(crate) fn convert_f32_slice_to_u16(src: &[f32]) -> Vec<u16> {
     src.iter()
         .map(|&v| {
@@ -256,6 +337,13 @@ pub(crate) fn convert_f32_slice_to_u16(src: &[f32]) -> Vec<u16> {
 }
 
 /// Convert `f32` values to `i8`, clamping to the representable range.
+#[cfg(feature = "simd")]
+pub(crate) fn convert_f32_slice_to_i8(src: &[f32]) -> Vec<i8> {
+    simd::convert_f32_to_i8_simd(src)
+}
+
+/// Convert `f32` values to `i8`, clamping to the representable range.
+#[cfg(not(feature = "simd"))]
 pub(crate) fn convert_f32_slice_to_i8(src: &[f32]) -> Vec<i8> {
     src.iter()
         .map(|&v| {
@@ -271,21 +359,62 @@ pub(crate) fn convert_f32_slice_to_i8(src: &[f32]) -> Vec<i8> {
 }
 
 // ============================================================================
-// Generic conversion dispatcher — single match over all source modes
+// Integer↔integer direct conversions (avoid f32 intermediate)
 // ============================================================================
 
-/// Decode raw bytes as source type `Src` and convert to destination type `Dst`
-/// via the [`ConvertFrom`] trait.
-pub(crate) fn convert_with<Src: Voxel, Dst>(
-    bytes: &[u8],
-    endian: FileEndian,
-) -> Result<Vec<Dst>, Error>
-where
-    Dst: ConvertFrom<Src>,
-{
-    let src = decode_slice::<Src>(bytes, endian)?;
-    Ok(Dst::convert_from(&src))
+/// Widen `i8` to `i16` (always exact, no clamping needed).
+pub(crate) fn convert_i8_slice_to_i16(src: &[i8]) -> Vec<i16> {
+    src.iter().map(|&v| v as i16).collect()
 }
+
+/// Narrow `i16` to `i8`, clamping to the representable range.
+pub(crate) fn convert_i16_slice_to_i8(src: &[i16]) -> Vec<i8> {
+    src.iter()
+        .map(|&v| {
+            if v > i8::MAX as i16 {
+                i8::MAX
+            } else if v < i8::MIN as i16 {
+                i8::MIN
+            } else {
+                v as i8
+            }
+        })
+        .collect()
+}
+
+/// Convert `i8` to `u16` (negative values become 0, positive widen exactly).
+pub(crate) fn convert_i8_slice_to_u16(src: &[i8]) -> Vec<u16> {
+    src.iter().map(|&v| v.max(0) as u16).collect()
+}
+
+/// Convert `u16` to `i8`, clamping to the representable range.
+pub(crate) fn convert_u16_slice_to_i8(src: &[u16]) -> Vec<i8> {
+    src.iter()
+        .map(|&v| if v > i8::MAX as u16 { i8::MAX } else { v as i8 })
+        .collect()
+}
+
+/// Convert `i16` to `u16` (negative values become 0).
+pub(crate) fn convert_i16_slice_to_u16(src: &[i16]) -> Vec<u16> {
+    src.iter().map(|&v| v.max(0) as u16).collect()
+}
+
+/// Convert `u16` to `i16`, clamping to the representable range.
+pub(crate) fn convert_u16_slice_to_i16(src: &[u16]) -> Vec<i16> {
+    src.iter()
+        .map(|&v| {
+            if v > i16::MAX as u16 {
+                i16::MAX
+            } else {
+                v as i16
+            }
+        })
+        .collect()
+}
+
+// ============================================================================
+// Generic conversion dispatcher — single match over all source modes
+// ============================================================================
 
 /// Convert a raw byte slice from any MRC mode to target type `T`.
 ///
@@ -293,60 +422,130 @@ where
 /// The source mode is determined at runtime (from the file's header);
 /// the target type `T` is a compile-time generic.
 ///
-/// Handles all real-valued modes, complex modes (via magnitude), and
-/// Packed4Bit (via nibble unpack).
+/// # Dispatch
+/// 1. **Direct integer shortcut** — when source and target are both narrow
+///    integers (`i8↔i16`, `i8↔u16`, `i16↔u16`), the conversion skips the
+///    f32 intermediate entirely, saving one allocation.
+/// 2. **f32 hub fallback** — every other source mode (Float16, Float32,
+///    complex, Packed4Bit) is decoded to `Vec<f32>` first, then converted
+///    to `T` via [`ConvertFrom<f32>`]. Complex modes use the given
+///    `complex_strategy` (default: [`Magnitude`](ComplexToRealStrategy::Magnitude)).
 pub(crate) fn convert_block<T>(
     bytes: &[u8],
     mode: Mode,
     endian: FileEndian,
     nx: usize,
     ny: usize,
+    complex_strategy: ComplexToRealStrategy,
+    m0_interp: M0Interpretation,
 ) -> Result<Vec<T>, Error>
 where
-    T: Voxel + ConvertFrom<i8> + ConvertFrom<i16> + ConvertFrom<u16> + ConvertFrom<f32>,
+    T: Voxel + ConvertFrom<f32>,
 {
-    match mode {
-        Mode::Float16 => convert_block_float16(bytes, endian),
-        other => convert_block_inner(bytes, other, endian, nx, ny),
+    // Direct integer↔integer shortcuts — avoids the f32 intermediate
+    // (which would add 4N bytes of intermediate storage for narrow types).
+    // i16 → i8 shortcut also handles the m0_interp distinction for i8 target
+    // (i8 is always treated as signed in the integer domain; unsigned Mode 0
+    //  is a byte-interpretation issue that only matters in the f32 hub).
+    {
+        // i16 → i8
+        if mode == Mode::Int16 && core::any::TypeId::of::<T>() == core::any::TypeId::of::<i8>() {
+            let src = decode_slice::<i16>(bytes, endian)?;
+            let r = convert_i16_slice_to_i8(&src);
+            return Ok(unsafe { reinterpret_vec::<i8, T>(r) });
+        }
+        // i8 → i16
+        if mode == Mode::Int8 && core::any::TypeId::of::<T>() == core::any::TypeId::of::<i16>() {
+            let src = decode_slice::<i8>(bytes, endian)?;
+            let r = convert_i8_slice_to_i16(&src);
+            return Ok(unsafe { reinterpret_vec::<i16, T>(r) });
+        }
+        // u16 → i8
+        if mode == Mode::Uint16 && core::any::TypeId::of::<T>() == core::any::TypeId::of::<i8>() {
+            let src = decode_slice::<u16>(bytes, endian)?;
+            let r = convert_u16_slice_to_i8(&src);
+            return Ok(unsafe { reinterpret_vec::<i8, T>(r) });
+        }
+        // i8 → u16
+        if mode == Mode::Int8 && core::any::TypeId::of::<T>() == core::any::TypeId::of::<u16>() {
+            let src = decode_slice::<i8>(bytes, endian)?;
+            let r = convert_i8_slice_to_u16(&src);
+            return Ok(unsafe { reinterpret_vec::<u16, T>(r) });
+        }
+        // u16 → i16
+        if mode == Mode::Uint16 && core::any::TypeId::of::<T>() == core::any::TypeId::of::<i16>() {
+            let src = decode_slice::<u16>(bytes, endian)?;
+            let r = convert_u16_slice_to_i16(&src);
+            return Ok(unsafe { reinterpret_vec::<i16, T>(r) });
+        }
+        // i16 → u16
+        if mode == Mode::Int16 && core::any::TypeId::of::<T>() == core::any::TypeId::of::<u16>() {
+            let src = decode_slice::<i16>(bytes, endian)?;
+            let r = convert_i16_slice_to_u16(&src);
+            return Ok(unsafe { reinterpret_vec::<u16, T>(r) });
+        }
+    }
+
+    // Fall back to f32 hub
+    let f32_data = match mode {
+        Mode::Float16 => convert_block_float16(bytes, endian)?,
+        other => convert_block_inner(bytes, other, endian, nx, ny, complex_strategy, m0_interp)?,
+    };
+    // Avoid the identity-clone when T == f32 by reusing the allocation.
+    // SAFETY: The TypeId check guarantees T and f32 are the same type at the
+    // monomorphised call site; the compiler optimises the branch away.
+    if core::any::TypeId::of::<T>() == core::any::TypeId::of::<f32>() {
+        let ptr = f32_data.as_ptr() as *mut T;
+        let len = f32_data.len();
+        let cap = f32_data.capacity();
+        core::mem::forget(f32_data);
+        Ok(unsafe { Vec::from_raw_parts(ptr, len, cap) })
+    } else {
+        Ok(T::convert_from(&f32_data))
     }
 }
 
 /// Shared handler for the 7 modes that do not depend on the `f16` feature.
-fn convert_block_inner<T>(
+/// Always produces `Vec<f32>` as the intermediate representation.
+fn convert_block_inner(
     bytes: &[u8],
     mode: Mode,
     endian: FileEndian,
     nx: usize,
     ny: usize,
-) -> Result<Vec<T>, Error>
-where
-    T: Voxel + ConvertFrom<i8> + ConvertFrom<i16> + ConvertFrom<u16> + ConvertFrom<f32>,
-{
+    complex_strategy: ComplexToRealStrategy,
+    m0_interp: M0Interpretation,
+) -> Result<Vec<f32>, Error> {
     match mode {
-        Mode::Int8 => convert_with::<i8, T>(bytes, endian),
-        Mode::Int16 => convert_with::<i16, T>(bytes, endian),
-        Mode::Uint16 => convert_with::<u16, T>(bytes, endian),
-        Mode::Float32 => convert_with::<f32, T>(bytes, endian),
+        Mode::Int8 => match m0_interp {
+            M0Interpretation::Signed => {
+                let src = decode_slice::<i8>(bytes, endian)?;
+                Ok(convert_i8_slice_to_f32(&src))
+            }
+            M0Interpretation::Unsigned => Ok(reinterpret_m0(bytes, M0Interpretation::Unsigned)),
+        },
+        Mode::Int16 => {
+            let src = decode_slice::<i16>(bytes, endian)?;
+            Ok(convert_i16_slice_to_f32(&src))
+        }
+        Mode::Uint16 => {
+            let src = decode_slice::<u16>(bytes, endian)?;
+            Ok(convert_u16_slice_to_f32(&src))
+        }
+        Mode::Float32 => decode_slice::<f32>(bytes, endian),
         Mode::Float32Complex => {
             let src = decode_slice::<Float32Complex>(bytes, endian)?;
-            let mag: Vec<f32> = src
-                .iter()
-                .map(|c| c.to_real(ComplexToRealStrategy::Magnitude))
-                .collect();
-            Ok(T::convert_from(&mag))
+            let mag: Vec<f32> = src.iter().map(|c| c.to_real(complex_strategy)).collect();
+            Ok(mag)
         }
         Mode::Int16Complex => {
             let src = decode_slice::<Int16Complex>(bytes, endian)?;
-            let mag: Vec<f32> = src
-                .iter()
-                .map(|c| c.to_real(ComplexToRealStrategy::Magnitude))
-                .collect();
-            Ok(T::convert_from(&mag))
+            let mag: Vec<f32> = src.iter().map(|c| c.to_real(complex_strategy)).collect();
+            Ok(mag)
         }
         Mode::Packed4Bit => {
             let unpacked = unpack_u4_bytes_to_u8(bytes, nx, ny);
-            let f32_data = convert_u8_slice_to_f32(&unpacked);
-            Ok(T::convert_from(&f32_data))
+            Ok(convert_u8_slice_to_f32(&unpacked))
         }
         // Float16 handled separately by convert_block_float16
         Mode::Float16 => unreachable!("Float16 is dispatched via convert_block_float16"),
@@ -354,20 +553,17 @@ where
 }
 
 /// Handle Float16 mode conversion, which depends on the `f16` feature.
+/// Always returns `Vec<f32>` — the final conversion to `T` happens in
+/// [`convert_block`].
 #[cfg(feature = "f16")]
-fn convert_block_float16<T>(bytes: &[u8], endian: FileEndian) -> Result<Vec<T>, Error>
-where
-    T: Voxel + ConvertFrom<i8> + ConvertFrom<i16> + ConvertFrom<u16> + ConvertFrom<f32>,
-{
-    // Route through f32 to avoid requiring T: ConvertFrom<crate::f16>
+fn convert_block_float16(bytes: &[u8], endian: FileEndian) -> Result<Vec<f32>, Error> {
     let src = decode_slice::<crate::f16>(bytes, endian)?;
-    let f32_data = convert_f16_slice_to_f32(&src);
-    Ok(T::convert_from(&f32_data))
+    Ok(convert_f16_slice_to_f32(&src))
 }
 
 /// Float16 conversion unavailable — requires the `f16` feature.
 #[cfg(not(feature = "f16"))]
-fn convert_block_float16<T>(_bytes: &[u8], _endian: FileEndian) -> Result<Vec<T>, Error> {
+fn convert_block_float16(_bytes: &[u8], _endian: FileEndian) -> Result<Vec<f32>, Error> {
     Err(Error::UnsupportedMode)
 }
 
@@ -571,6 +767,9 @@ pub fn convert_u8_slice_to_u16(src: &[u8]) -> Vec<u16> {
 ///
 /// This is the reverse of [`convert_u8_slice_to_u16`] and is used when
 /// reading a Mode 6 file that was originally created from `u8` data.
+///
+/// # Errors
+/// Returns [`Error::TypeMismatch`](crate::Error::TypeMismatch) if any value exceeds 255.
 pub fn convert_u16_slice_to_u8(src: &[u16]) -> Result<Vec<u8>, crate::Error> {
     let mut out = Vec::with_capacity(src.len());
     for &v in src {

@@ -328,6 +328,9 @@ pub(crate) fn encode_slice<T: EndianCodec + Sync>(
 
     // Fast path: native endian is a simple memcpy.
     if endian == FileEndian::native() {
+        // SAFETY: `bytes.len() == values.len() * T::BYTE_SIZE` (checked above),
+        // both pointers are valid and non-overlapping (mutable bytes comes from
+        // a separate allocation, values is an immutable reference).
         unsafe {
             core::ptr::copy_nonoverlapping(
                 values.as_ptr() as *const u8,
@@ -339,6 +342,8 @@ pub(crate) fn encode_slice<T: EndianCodec + Sync>(
     }
 
     // Non-native endian: memcpy native bytes, then byte-swap in-place.
+    // SAFETY: same invariants as the native path — sizes match, buffers
+    // are non-overlapping; the swap functions read and write within bounds.
     unsafe {
         core::ptr::copy_nonoverlapping(
             values.as_ptr() as *const u8,
@@ -353,6 +358,9 @@ pub(crate) fn encode_slice<T: EndianCodec + Sync>(
                 let (src, dst) = (bytes.as_ptr(), bytes.as_mut_ptr());
                 let len = bytes.len();
                 crate::engine::simd::swap_2byte_simd(
+                    // SAFETY: `src`/`dst` point into `bytes`, which is a valid
+                    // mutable slice of known length. The SIMD function respects
+                    // bounds and writes every byte of the output.
                     unsafe { std::slice::from_raw_parts(src, len) },
                     unsafe { std::slice::from_raw_parts_mut(dst, len) },
                 );
@@ -404,6 +412,10 @@ fn per_element_decode<T: EndianCodec + Send>(
     {
         use rayon::prelude::*;
         const CHUNK_VOXELS: usize = 262_144;
+        // SAFETY: `result` was allocated with `Vec::with_capacity(n)`, so
+        // `as_mut_ptr()` points to at least `n` uninitialized slots and is
+        // properly aligned for `T`.  Every slot is written to below (through
+        // the mutable slice) before the caller calls `set_len(n)`.
         let result_slice = unsafe { std::slice::from_raw_parts_mut(result.as_mut_ptr(), n) };
         result_slice
             .par_chunks_mut(CHUNK_VOXELS)
@@ -416,6 +428,10 @@ fn per_element_decode<T: EndianCodec + Send>(
     }
     #[cfg(not(feature = "parallel"))]
     {
+        // SAFETY: `result` was allocated with `Vec::with_capacity(n)`, so
+        // `as_mut_ptr()` points to at least `n` uninitialized slots and is
+        // properly aligned for `T`.  Every slot is written to below before
+        // the caller calls `set_len(n)`.
         let result_slice = unsafe { std::slice::from_raw_parts_mut(result.as_mut_ptr(), n) };
         for (i, slot) in result_slice.iter_mut().enumerate() {
             *slot = T::from_bytes(bytes, i * T::BYTE_SIZE, endian);

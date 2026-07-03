@@ -90,7 +90,12 @@ impl<T> VoxelBlock<T> {
         Self::try_new(offset, shape, data)
     }
 
-    /// Create a new VoxelBlock, returning an error if the data length does not match the shape.
+    /// Create a new VoxelBlock, returning an error if the data length does not
+    /// match the shape.
+    ///
+    /// # Errors
+    /// Returns [`crate::Error::BoundsError`] if `shape` dimensions overflow `usize`.
+    /// Returns [`crate::Error::BlockShapeMismatch`] if `data.len()` does not match `shape`.
     pub fn try_new(
         offset: [usize; 3],
         shape: [usize; 3],

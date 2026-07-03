@@ -55,7 +55,7 @@ cargo build --release --bin mrc-header
 cargo build --release --bin mrc-invert
 ```
 
-All tests and benchmarks are inline: `#[cfg(test)]` modules inside source files for unit tests, and `benches/bench.rs` for criterion benchmarks.
+Unit tests are inline `#[cfg(test)]` modules inside source files; integration tests live in `tests/integration.rs`; and benchmarks are in `benches/bench.rs` (criterion).
 
 ## Feature Flags
 
@@ -75,7 +75,7 @@ The `simd` feature uses **runtime feature detection** (`is_x86_feature_detected!
 
 ```
 src/
-├── lib.rs                 # Public API re-exports and convenience functions (open, create), plus integration tests
+├── lib.rs                 # Public API re-exports and convenience functions (open, create)
 ├── error.rs               # Top-level `Error` and `HeaderValidationError` enums (thiserror)
 ├── mode.rs                # `Mode` enum, `Voxel` trait, complex types (Int16Complex, Float32Complex), Packed4Bit mode handling
 ├── header/
@@ -109,6 +109,8 @@ src/
     ├── mrc-header.rs      # CLI header inspector — key:value output with inline validation (`--force` to skip)
     └── mrc-invert.rs      # CLI contrast inverter — negates all voxel values, writes Float32 output
 ```
+tests/
+    └── integration.rs    # ~21 integration tests (roundtrip, compression, edge cases)
 
 ### Module Philosophy
 
@@ -224,7 +226,7 @@ where R: ReaderMethods + ConvertMethods + ... { ... }
 
 - **Unit Tests**: ~80 tests in inline `mod tests` blocks inside source files (`header.rs`, `engine/simd.rs`, `engine/convert.rs`, `engine/endian.rs`, `engine/stats.rs`, `io/reader.rs`, `lib.rs`, `mode.rs`).
 - **Doc Tests**: ~33 doc-tests in `lib.rs`, `header.rs`, `validate.rs`, `error.rs`, `io/buffered.rs`, `io/writer.rs`, `io/mmap_reader.rs`, and `engine/codec.rs`.
-- **Integration Tests**: Integration-level roundtrip tests live in `lib.rs` under `mod integration_tests`. They test write-then-read scenarios for Float32, Int16, Uint16, subregion reads, gzip compression, header statistics, and Packed4Bit (Mode 101) read/write.
+- **Integration Tests**: ~21 integration tests in `tests/integration.rs` covering write-then-read roundtrips for Float32, Int16, Uint16, subregion reads, gzip/bzip2 compression, header statistics, MmapReader, Packed4Bit (Mode 101), complex modes, volume stacks, and permissive-mode edge cases.
 - **Benchmarks**: Criterion benchmarks live in `benches/bench.rs` (requires `--all-features` for mmap benchmarks).
 - **No External Fixtures**: Tests generate temporary MRC files programmatically (using `tempfile` in dev-dependencies) rather than checking large binary files into git.
 

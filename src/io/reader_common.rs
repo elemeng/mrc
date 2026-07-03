@@ -59,17 +59,23 @@ pub(crate) fn convert_iter<'a, R: VoxelSource, S: Stepper + 'a, T>(
     endian: FileEndian,
     nx: usize,
     ny: usize,
+    complex_strategy: crate::ComplexToRealStrategy,
+    m0_interp: crate::M0Interpretation,
 ) -> impl Iterator<Item = Result<VoxelBlock<T>, Error>> + 'a
 where
-    T: crate::engine::convert::ConvertFrom<i8>
-        + crate::engine::convert::ConvertFrom<i16>
-        + crate::engine::convert::ConvertFrom<u16>
-        + crate::engine::convert::ConvertFrom<f32>
-        + Voxel,
+    T: crate::engine::convert::ConvertFrom<f32> + Voxel,
 {
     raw.map(move |result| {
         let (bytes, offset, shape) = result?;
-        let data = crate::engine::convert::convert_block::<T>(&bytes, mode, endian, nx, ny)?;
+        let data = crate::engine::convert::convert_block::<T>(
+            &bytes,
+            mode,
+            endian,
+            nx,
+            ny,
+            complex_strategy,
+            m0_interp,
+        )?;
         Ok(VoxelBlock {
             offset,
             shape,
@@ -84,25 +90,41 @@ where
 /// [`MmapReader::convert`](crate::MmapReader::convert).
 /// All iteration methods return [`VoxelBlock<T>`] with automatic mode conversion.
 ///
+/// Supported target types:
+/// * `f32` — universal target, zero-copy identity for Float32 files
+/// * `f16` — via f32 hub, SIMD-accelerated (requires `f16` feature)
+/// * `i16`, `u16`, `i8` — direct shortcuts for matching integer modes,
+///   f32 hub fallback for all other source modes
+///
+/// Complex source modes use [`ComplexToRealStrategy::Magnitude`] by default.
+/// Override with [`with_complex_strategy`](ConvertReader::with_complex_strategy).
+///
 /// ```ignore
 /// for slice in reader.convert::<f32>().slices() {
 ///     let block = slice?;  // VoxelBlock<f32>
 /// }
+///
+/// // Complex mode: extract phase instead of magnitude
+/// for slice in reader.convert::<f32>()
+///     .with_complex_strategy(mrc::ComplexToRealStrategy::Phase)
+///     .slices() { ... }
 /// ```
 pub struct ConvertReader<'a, R, T> {
     inner: &'a R,
+    complex_strategy: crate::ComplexToRealStrategy,
+    m0_interp: crate::M0Interpretation,
     _target: core::marker::PhantomData<T>,
 }
 
 impl<'a, R: VoxelSource + ReaderCore, T> ConvertReader<'a, R, T>
 where
-    T: Voxel
-        + crate::engine::convert::ConvertFrom<i8>
-        + crate::engine::convert::ConvertFrom<i16>
-        + crate::engine::convert::ConvertFrom<u16>
-        + crate::engine::convert::ConvertFrom<f32>,
+    T: Voxel + crate::engine::convert::ConvertFrom<f32>,
 {
     /// Iterate over Z-slices, auto-converting each to `T`.
+    ///
+    /// Complex modes use the strategy configured via
+    /// [`with_complex_strategy`](ConvertReader::with_complex_strategy)
+    /// (default: [`Magnitude`](crate::ComplexToRealStrategy::Magnitude)).
     pub fn slices(&self) -> VoxelIter<'_, T> {
         let shape = self.inner.shape();
         Box::new(convert_iter::<_, SliceStepper, T>(
@@ -111,10 +133,15 @@ where
             self.inner.endian(),
             shape.nx,
             shape.ny,
+            self.complex_strategy,
+            self.m0_interp,
         ))
     }
 
     /// Iterate over Z-slabs, auto-converting each to `T`.
+    ///
+    /// Complex modes use the strategy configured via
+    /// [`with_complex_strategy`](ConvertReader::with_complex_strategy).
     pub fn slabs(&self, k: usize) -> VoxelIter<'_, T> {
         let shape = self.inner.shape();
         Box::new(convert_iter::<_, SlabStepper, T>(
@@ -123,10 +150,15 @@ where
             self.inner.endian(),
             shape.nx,
             shape.ny,
+            self.complex_strategy,
+            self.m0_interp,
         ))
     }
 
     /// Iterate over 3D tiles, auto-converting each to `T`.
+    ///
+    /// Complex modes use the strategy configured via
+    /// [`with_complex_strategy`](ConvertReader::with_complex_strategy).
     ///
     /// # Errors
     /// Returns [`Error::BoundsError`] if any dimension of `tile_shape` is zero.
@@ -138,10 +170,15 @@ where
             self.inner.endian(),
             shape.nx,
             shape.ny,
+            self.complex_strategy,
+            self.m0_interp,
         )))
     }
 
     /// Read a sub-region, auto-converting to `T`.
+    ///
+    /// Complex modes use the strategy configured via
+    /// [`with_complex_strategy`](ConvertReader::with_complex_strategy).
     pub fn subregion(&self, offset: [usize; 3], shape: [usize; 3]) -> Result<VoxelBlock<T>, Error> {
         let bytes = self.inner.vs_read_block_bytes(offset, shape)?;
         let s = self.inner.shape();
@@ -151,12 +188,51 @@ where
             self.inner.endian(),
             s.nx,
             s.ny,
+            self.complex_strategy,
+            self.m0_interp,
         )?;
         Ok(VoxelBlock {
             offset,
             shape,
             data,
         })
+    }
+
+    /// Set the strategy for converting complex numbers to real values.
+    ///
+    /// The default is [`Magnitude`](crate::ComplexToRealStrategy::Magnitude).
+    ///
+    /// # Example
+    /// ```ignore
+    /// for slice in reader.convert::<f32>().with_complex_strategy(
+    ///     mrc::ComplexToRealStrategy::Phase
+    /// ).slices() {
+    ///     // block.data contains phase values for complex modes
+    /// }
+    /// ```
+    pub fn with_complex_strategy(mut self, strategy: crate::ComplexToRealStrategy) -> Self {
+        self.complex_strategy = strategy;
+        self
+    }
+
+    /// Set the interpretation for Mode 0 (Int8) data.
+    ///
+    /// The default is [`Signed`](crate::M0Interpretation::Signed), matching
+    /// the MRC-2014 standard.  Set to [`Unsigned`](crate::M0Interpretation::Unsigned)
+    /// for IMOD files that store Mode 0 as unsigned bytes.
+    ///
+    /// When opening via [`open_permissive`](crate::Reader::open_permissive),
+    /// IMOD files are auto-detected and this is set automatically.
+    ///
+    /// # Example
+    /// ```ignore
+    /// for slice in reader.convert::<f32>()
+    ///     .with_m0_interpretation(mrc::M0Interpretation::Unsigned)
+    ///     .slices() { ... }
+    /// ```
+    pub fn with_m0_interpretation(mut self, interp: crate::M0Interpretation) -> Self {
+        self.m0_interp = interp;
+        self
     }
 
     /// Read the entire volume, auto-converting to `T`.
@@ -550,6 +626,12 @@ impl<R: VoxelSource + ReaderCore> ReaderMethods for R {}
 /// [`Reader`](crate::Reader) and [`MmapReader`](crate::MmapReader) — no
 /// trait import is needed for normal use.
 ///
+/// Supported target types:
+/// * `f32` — zero-copy when source is already Float32
+/// * `f16` — via f32 hub, SIMD-accelerated (requires `f16` feature)
+/// * `i16`, `u16`, `i8` — direct shortcut for matching integer modes,
+///   f32 hub fallback for all other source modes
+///
 /// Import this trait directly only when writing generic code over multiple
 /// reader types.
 ///
@@ -564,24 +646,33 @@ pub trait ConvertMethods: VoxelSource + ReaderCore + Sized {
     /// Return a wrapper that auto-converts all reads to type `T`.
     fn convert<T>(&self) -> ConvertReader<'_, Self, T>
     where
-        T: Voxel
-            + crate::engine::convert::ConvertFrom<i8>
-            + crate::engine::convert::ConvertFrom<i16>
-            + crate::engine::convert::ConvertFrom<u16>
-            + crate::engine::convert::ConvertFrom<f32>;
+        T: Voxel + crate::engine::convert::ConvertFrom<f32>;
 }
 
 impl<R: VoxelSource + ReaderCore> ConvertMethods for R {
     fn convert<T>(&self) -> ConvertReader<'_, R, T>
     where
-        T: Voxel
-            + crate::engine::convert::ConvertFrom<i8>
-            + crate::engine::convert::ConvertFrom<i16>
-            + crate::engine::convert::ConvertFrom<u16>
-            + crate::engine::convert::ConvertFrom<f32>,
+        T: Voxel + crate::engine::convert::ConvertFrom<f32>,
     {
+        // Auto-detect IMOD unsigned Mode 0 from the header
+        let m0_interp = if self.mode() == Mode::Int8 {
+            if let Some(imod) = self.header().detect_imod() {
+                if !imod.bytes_are_signed {
+                    M0Interpretation::Unsigned
+                } else {
+                    M0Interpretation::Signed
+                }
+            } else {
+                M0Interpretation::Signed
+            }
+        } else {
+            M0Interpretation::Signed
+        };
+
         ConvertReader {
             inner: self,
+            complex_strategy: crate::ComplexToRealStrategy::Magnitude,
+            m0_interp,
             _target: core::marker::PhantomData,
         }
     }
@@ -655,11 +746,7 @@ macro_rules! impl_reader_forwarding {
             #[inline]
             pub fn convert<T>(&self) -> ConvertReader<'_, $ty, T>
             where
-                T: Voxel
-                    + crate::engine::convert::ConvertFrom<i8>
-                    + crate::engine::convert::ConvertFrom<i16>
-                    + crate::engine::convert::ConvertFrom<u16>
-                    + crate::engine::convert::ConvertFrom<f32>,
+                T: Voxel + crate::engine::convert::ConvertFrom<f32>,
             {
                 <Self as ConvertMethods>::convert(self)
             }
@@ -729,7 +816,8 @@ pub(crate) fn validate_block_bounds(
         let last_vol_row = (oz + sz - 1) * ny + (oy + sy - 1);
         let last_byte = last_vol_row
             .checked_mul(vol_row_bytes)
-            .and_then(|b| b.checked_add(start_byte_in_row + block_row_bytes))
+            .and_then(|b| b.checked_add(start_byte_in_row))
+            .and_then(|b| b.checked_add(block_row_bytes))
             .ok_or(Error::BoundsError)?;
         if last_byte > data_len {
             return Err(Error::BoundsError);
@@ -757,6 +845,11 @@ pub(crate) fn validate_block_bounds(
 ///
 /// For [`Mode::Packed4Bit`], the byte layout uses 2 voxels per byte; voxel index
 /// `v` maps to byte `v / 2` in the data array.
+///
+/// # Panics
+/// The caller must ensure that the requested block is within bounds
+/// (via [`validate_block_bounds`]) before calling this function.  Out-of-bounds
+/// offsets will panic on slice indexing.
 pub(crate) fn gather_block_bytes(
     data: &[u8],
     volume_shape: VolumeShape,
@@ -1116,6 +1209,21 @@ pub(crate) fn open_compressed<D: std::io::Read>(
         Vec::new()
     };
     let shape = VolumeShape::new(header.nx as usize, header.ny as usize, header.nz as usize);
+
+    // Detect IMOD unsigned Mode 0
+    if let Some(mode) = Mode::from_i32(header.mode) {
+        if mode == Mode::Int8 {
+            if let Some(imod) = header.detect_imod() {
+                if !imod.bytes_are_signed {
+                    warnings.push(
+                        "IMOD file with unsigned Mode 0 detected: use slices_mode0() \
+                         or convert::<f32>() for correct values"
+                            .into(),
+                    );
+                }
+            }
+        }
+    }
 
     Ok(DecompressedMrc {
         header,

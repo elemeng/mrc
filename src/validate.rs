@@ -2,7 +2,7 @@
 //!
 //! Provides [`validate_full`] for comprehensive file validation,
 //! [`validate_reader`] for validating an already-open reader, and
-//! [`ValidationReport`] for structured results with categorised issues.
+//! [`ValidationReport`] for structured results with categorized issues.
 //!
 //! # Quick check
 //!
@@ -334,6 +334,27 @@ pub fn validate_reader(
                 ));
             }
         }
+    } else if reader.mode() == Mode::Float32Complex {
+        match complex_float_mode_issues(data_bytes, endian) {
+            Ok(has_issues) => {
+                if has_issues.is_empty() {
+                    issues.push(ValidationIssue::info(
+                        "Data integrity",
+                        "All complex values are finite numbers".into(),
+                    ));
+                } else {
+                    for issue in has_issues {
+                        issues.push(ValidationIssue::warning("Data integrity", issue));
+                    }
+                }
+            }
+            Err(e) => {
+                issues.push(ValidationIssue::warning(
+                    "Data integrity",
+                    format!("Could not scan complex data: {e}"),
+                ));
+            }
+        }
     }
 
     // ── 6. Volume info ──
@@ -462,6 +483,53 @@ fn float_mode_issues(
         issues.push(format!(
             "{neg_inf_count} -Inf values found ({:.2}%)",
             neg_inf_count as f64 / data.len() as f64 * 100.0
+        ));
+    }
+    Ok(issues)
+}
+
+/// Scan Float32Complex data for NaN/Inf values in both real and imaginary parts.
+fn complex_float_mode_issues(data_bytes: &[u8], endian: FileEndian) -> Result<Vec<String>, Error> {
+    use crate::engine::codec::decode_slice;
+    let data: Vec<crate::mode::Float32Complex> =
+        decode_slice::<crate::mode::Float32Complex>(data_bytes, endian)?;
+
+    let mut issues = Vec::new();
+    let mut nan_count = 0usize;
+    let mut inf_count = 0usize;
+    let mut neg_inf_count = 0usize;
+
+    for c in &data {
+        for &v in &[c.real, c.imag] {
+            if v.is_nan() {
+                nan_count += 1;
+            } else if v.is_infinite() {
+                if v.is_sign_negative() {
+                    neg_inf_count += 1;
+                } else {
+                    inf_count += 1;
+                }
+            }
+        }
+    }
+
+    let total_components = data.len() * 2;
+    if nan_count > 0 {
+        issues.push(format!(
+            "{nan_count} NaN values found in complex components ({:.2}%)",
+            nan_count as f64 / total_components as f64 * 100.0
+        ));
+    }
+    if inf_count > 0 {
+        issues.push(format!(
+            "{inf_count} +Inf values found in complex components ({:.2}%)",
+            inf_count as f64 / total_components as f64 * 100.0
+        ));
+    }
+    if neg_inf_count > 0 {
+        issues.push(format!(
+            "{neg_inf_count} -Inf values found in complex components ({:.2}%)",
+            neg_inf_count as f64 / total_components as f64 * 100.0
         ));
     }
     Ok(issues)

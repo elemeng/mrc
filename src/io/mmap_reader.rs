@@ -134,6 +134,21 @@ impl MmapReader {
         };
 
         let mode = Mode::from_i32(header.mode).ok_or(Error::UnsupportedMode)?;
+
+        // Detect IMOD unsigned Mode 0
+        let mut warnings = warnings;
+        if mode == Mode::Int8 {
+            if let Some(imod) = header.detect_imod() {
+                if !imod.bytes_are_signed {
+                    warnings.push(
+                        "IMOD file with unsigned Mode 0 detected: use slices_mode0() \
+                         or convert::<f32>() for correct values"
+                            .into(),
+                    );
+                }
+            }
+        }
+
         Ok((
             Self {
                 mmap,

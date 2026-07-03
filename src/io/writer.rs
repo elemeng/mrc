@@ -27,10 +27,7 @@ macro_rules! write_u4_block_body {
         }
         for &v in &$block.data {
             if v > 15 {
-                return Err(crate::Error::TypeMismatch {
-                    expected: 4,
-                    actual: 8,
-                });
+                return Err(crate::Error::BoundsError);
             }
         }
         let nx = $block.shape[0];
@@ -83,6 +80,16 @@ macro_rules! write_block_as_body {
                     data,
                 })
             }
+            Mode::Float32 => {
+                // f32 → Float32: pass through directly
+                $self.write_block::<f32>(&VoxelBlock {
+                    offset: $block.offset,
+                    shape: $block.shape,
+                    data: $block.data.clone(),
+                })
+            }
+            // Complex modes and Packed4Bit are not convertible from real f32 data.
+            // Use write_block::<T>() with the matching complex type directly.
             _ => Err(Error::UnsupportedMode),
         }
     }};
@@ -459,17 +466,14 @@ impl Writer {
     ///
     /// | File mode | Conversion |
     /// |-----------|------------|
-    /// | [`Int8`](Mode::Int8) | `f32` → `i8` (clamped) |
-    /// | [`Int16`](Mode::Int16) | `f32` → `i16` (clamped) |
-    /// | [`Uint16`](Mode::Uint16) | `f32` → `u16` (clamped) |
-    /// | [`Float16`](Mode::Float16) | `f32` → `f16` (requires `f16` feature) |
+    /// | [`Int8`](Mode::Int8) | `f32` → `i8` (clamped, SIMD) |
+    /// | [`Int16`](Mode::Int16) | `f32` → `i16` (clamped, SIMD) |
+    /// | [`Uint16`](Mode::Uint16) | `f32` → `u16` (clamped, SIMD) |
+    /// | [`Float32`](Mode::Float32) | `f32` → `f32` (pass-through) |
+    /// | [`Float16`](Mode::Float16) | `f32` → `f16` (SIMD, requires `f16` feature) |
     ///
-    /// ```ignore
-    /// writer.write_block_as(&f32_block)?;
-    /// ```
-    ///
-    /// # Errors
-    /// Returns [`Error::ModeMismatch`] if no conversion is available for the
+    /// Complex modes and Packed4Bit are not convertible from real f32 data.
+    /// Use [`write_block`](Writer::write_block) with the matching complex type instead.
     /// file's mode.
     pub fn write_block_as(&mut self, block: &VoxelBlock<f32>) -> Result<(), Error> {
         write_block_as_body!(self, block)
@@ -534,6 +538,9 @@ impl Writer {
 
     /// Write raw packed bytes at the given block offset.
     ///
+    /// Only full-row writes (`ox == 0`) are supported; sub-XY blocks with
+    /// non-zero X-offset return [`Error::BoundsError`].
+    ///
     /// Internal helper used by [`write_u4_block`](Self::write_u4_block).
     fn write_block_bytes(
         &mut self,
@@ -547,7 +554,9 @@ impl Writer {
         let file_row_bytes = nx.div_ceil(2);
         let block_row_bytes = sx.div_ceil(2);
 
-        debug_assert!(ox == 0, "write_block_bytes requires ox == 0");
+        if ox != 0 {
+            return Err(Error::BoundsError);
+        }
 
         // Fast path: full XY slab is contiguous.
         if sx == nx && oy == 0 && sy == ny {

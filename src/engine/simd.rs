@@ -1224,6 +1224,371 @@ unsafe fn stats_f32_neon(data: &[f32]) -> (f32, f32, f32, f32) {
 }
 
 // =============================================================================
+// Write-side SIMD conversions — f32 → i8 / i16 / u16
+// =============================================================================
+
+/// Convert a slice of f32 values to i16 using SIMD acceleration.
+///
+/// Values are clamped to the representable range of i16 before conversion.
+#[cfg(feature = "simd")]
+pub(crate) fn convert_f32_to_i16_simd(src: &[f32]) -> Vec<i16> {
+    #[cfg(target_arch = "x86_64")]
+    {
+        if is_x86_feature_detected!("avx2") {
+            return unsafe { convert_f32_to_i16_avx2(src) };
+        }
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    {
+        if core::arch::is_aarch64_feature_detected!("neon") {
+            return unsafe { convert_f32_to_i16_neon(src) };
+        }
+    }
+
+    // Fallback to scalar
+    src.iter()
+        .map(|&v| {
+            if v >= i16::MAX as f32 {
+                i16::MAX
+            } else if v <= i16::MIN as f32 {
+                i16::MIN
+            } else {
+                v as i16
+            }
+        })
+        .collect()
+}
+
+/// Convert a slice of f32 values to u16 using SIMD acceleration.
+///
+/// Values are clamped to [0, u16::MAX] before conversion.
+#[cfg(feature = "simd")]
+pub(crate) fn convert_f32_to_u16_simd(src: &[f32]) -> Vec<u16> {
+    #[cfg(target_arch = "x86_64")]
+    {
+        if is_x86_feature_detected!("avx2") {
+            return unsafe { convert_f32_to_u16_avx2(src) };
+        }
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    {
+        if core::arch::is_aarch64_feature_detected!("neon") {
+            return unsafe { convert_f32_to_u16_neon(src) };
+        }
+    }
+
+    // Fallback to scalar
+    src.iter()
+        .map(|&v| {
+            if v >= u16::MAX as f32 {
+                u16::MAX
+            } else if v <= 0.0 {
+                0
+            } else {
+                v as u16
+            }
+        })
+        .collect()
+}
+
+/// Convert a slice of f32 values to i8 using SIMD acceleration.
+///
+/// Values are clamped to the representable range of i8 before conversion.
+#[cfg(feature = "simd")]
+pub(crate) fn convert_f32_to_i8_simd(src: &[f32]) -> Vec<i8> {
+    #[cfg(target_arch = "x86_64")]
+    {
+        if is_x86_feature_detected!("avx2") {
+            return unsafe { convert_f32_to_i8_avx2(src) };
+        }
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    {
+        if core::arch::is_aarch64_feature_detected!("neon") {
+            return unsafe { convert_f32_to_i8_neon(src) };
+        }
+    }
+
+    // Fallback to scalar
+    src.iter()
+        .map(|&v| {
+            if v >= i8::MAX as f32 {
+                i8::MAX
+            } else if v <= i8::MIN as f32 {
+                i8::MIN
+            } else {
+                v as i8
+            }
+        })
+        .collect()
+}
+
+// ── AVX2 implementations ─────────────────────────────────────────────
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+/// SAFETY: Caller must ensure AVX2 is available. All elements initialized before set_len.
+unsafe fn convert_f32_to_i16_avx2(src: &[f32]) -> Vec<i16> {
+    unsafe {
+        use core::arch::x86_64::*;
+
+        let mut dst: Vec<i16> = Vec::with_capacity(src.len());
+        let dst_ptr = dst.as_mut_ptr();
+        let mut i = 0;
+        let vmin = _mm256_set1_ps(i16::MIN as f32);
+        let vmax = _mm256_set1_ps(i16::MAX as f32);
+        let zero = _mm256_setzero_ps();
+
+        while i + 8 <= src.len() {
+            let v = _mm256_loadu_ps(src.as_ptr().add(i));
+            // Zero out NaN values (cmp + blend)
+            let nan = _mm256_cmp_ps(v, v, _CMP_UNORD_Q);
+            let v_ok = _mm256_blendv_ps(v, zero, nan);
+            // Clamp and convert to i32
+            let clamped = _mm256_min_ps(_mm256_max_ps(v_ok, vmin), vmax);
+            let i32x8 = _mm256_cvtps_epi32(clamped);
+            // Narrow i32→i16 with signed saturation via SSE2 pack
+            let lo = _mm256_castsi256_si128(i32x8);
+            let hi = _mm256_extracti128_si256(i32x8, 1);
+            let i16x8 = _mm_packs_epi32(lo, hi);
+            _mm_storeu_si128(dst_ptr.add(i) as *mut __m128i, i16x8);
+            i += 8;
+        }
+
+        for (j, &v) in src.iter().enumerate().skip(i) {
+            *dst_ptr.add(j) = if v.is_nan() {
+                0
+            } else {
+                v.clamp(i16::MIN as f32, i16::MAX as f32) as i16
+            };
+        }
+
+        dst.set_len(src.len());
+        dst
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+/// SAFETY: Caller must ensure AVX2 is available. All elements initialized before set_len.
+unsafe fn convert_f32_to_u16_avx2(src: &[f32]) -> Vec<u16> {
+    unsafe {
+        use core::arch::x86_64::*;
+
+        let mut dst: Vec<u16> = Vec::with_capacity(src.len());
+        let dst_ptr = dst.as_mut_ptr();
+        let mut i = 0;
+        let vmax = _mm256_set1_ps(u16::MAX as f32);
+        let zero = _mm256_setzero_ps();
+
+        while i + 8 <= src.len() {
+            let v = _mm256_loadu_ps(src.as_ptr().add(i));
+            // Zero out NaN, clamp to [0, u16::MAX]
+            let nan = _mm256_cmp_ps(v, v, _CMP_UNORD_Q);
+            let v_ok = _mm256_blendv_ps(v, zero, nan);
+            let clamped = _mm256_min_ps(_mm256_max_ps(v_ok, zero), vmax);
+            let i32x8 = _mm256_cvtps_epi32(clamped);
+            let lo = _mm256_castsi256_si128(i32x8);
+            let hi = _mm256_extracti128_si256(i32x8, 1);
+            // Unsigned saturation i32→u16
+            let u16x8 = _mm_packus_epi32(lo, hi);
+            _mm_storeu_si128(dst_ptr.add(i) as *mut __m128i, u16x8);
+            i += 8;
+        }
+
+        for (j, &v) in src.iter().enumerate().skip(i) {
+            *dst_ptr.add(j) = if v.is_nan() {
+                0
+            } else {
+                v.clamp(0.0, u16::MAX as f32) as u16
+            };
+        }
+
+        dst.set_len(src.len());
+        dst
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+/// SAFETY: Caller must ensure AVX2 is available. All elements initialized before set_len.
+unsafe fn convert_f32_to_i8_avx2(src: &[f32]) -> Vec<i8> {
+    unsafe {
+        use core::arch::x86_64::*;
+
+        let mut dst: Vec<i8> = Vec::with_capacity(src.len());
+        let dst_ptr = dst.as_mut_ptr();
+        let mut i = 0;
+        let vmin = _mm256_set1_ps(i8::MIN as f32);
+        let vmax = _mm256_set1_ps(i8::MAX as f32);
+        let zero = _mm256_setzero_ps();
+
+        // Process 16 elements at a time (two rounds of narrowing)
+        while i + 16 <= src.len() {
+            // First 8
+            let v0 = _mm256_loadu_ps(src.as_ptr().add(i));
+            let nan0 = _mm256_cmp_ps(v0, v0, _CMP_UNORD_Q);
+            let v0_ok = _mm256_blendv_ps(v0, zero, nan0);
+            let c0 = _mm256_min_ps(_mm256_max_ps(v0_ok, vmin), vmax);
+            let i32_0 = _mm256_cvtps_epi32(c0);
+
+            // Second 8
+            let v1 = _mm256_loadu_ps(src.as_ptr().add(i + 8));
+            let nan1 = _mm256_cmp_ps(v1, v1, _CMP_UNORD_Q);
+            let v1_ok = _mm256_blendv_ps(v1, zero, nan1);
+            let c1 = _mm256_min_ps(_mm256_max_ps(v1_ok, vmin), vmax);
+            let i32_1 = _mm256_cvtps_epi32(c1);
+
+            // Narrow: 16 i32 → 16 i16 (signed sat) → 16 i8 (signed sat)
+            let i16_lo = _mm_packs_epi32(
+                _mm256_castsi256_si128(i32_0),
+                _mm256_extracti128_si256(i32_0, 1),
+            );
+            let i16_hi = _mm_packs_epi32(
+                _mm256_castsi256_si128(i32_1),
+                _mm256_extracti128_si256(i32_1, 1),
+            );
+            let i8x16 = _mm_packs_epi16(i16_lo, i16_hi);
+            _mm_storeu_si128(dst_ptr.add(i) as *mut __m128i, i8x16);
+            i += 16;
+        }
+
+        for (j, &v) in src.iter().enumerate().skip(i) {
+            *dst_ptr.add(j) = if v.is_nan() {
+                0
+            } else {
+                v.clamp(i8::MIN as f32, i8::MAX as f32) as i8
+            };
+        }
+
+        dst.set_len(src.len());
+        dst
+    }
+}
+
+// ── NEON implementations ────────────────────────────────────────────
+
+#[cfg(target_arch = "aarch64")]
+#[target_feature(enable = "neon")]
+/// SAFETY: Caller must ensure NEON is available. All elements initialized before set_len.
+unsafe fn convert_f32_to_i16_neon(src: &[f32]) -> Vec<i16> {
+    use core::arch::aarch64::*;
+
+    let mut dst: Vec<i16> = Vec::with_capacity(src.len());
+    let dst_ptr = dst.as_mut_ptr();
+    let mut i = 0;
+    let vmin = vdupq_n_f32(i16::MIN as f32);
+    let vmax = vdupq_n_f32(i16::MAX as f32);
+
+    while i + 4 <= src.len() {
+        let v = vld1q_f32(src.as_ptr().add(i));
+        // Replace NaN with 0 using the fact that NaN != NaN
+        let isnan = vreinterpretq_u32_f32(vcgtzq_f32(vsubq_f32(v, v)));
+        let v_ok = vreinterpretq_f32_u32(vbicq_u32(vreinterpretq_u32_f32(v), isnan));
+        // Clamp and convert
+        let clamped = vminq_f32(vmaxq_f32(v_ok, vmin), vmax);
+        let i32x4 = vcvtq_s32_f32(clamped);
+        let i16x4 = vqmovn_s32(i32x4); // signed saturate i32→i16
+        vst1_s16(dst_ptr.add(i), i16x4);
+        i += 4;
+    }
+
+    for (j, &v) in src.iter().enumerate().skip(i) {
+        *dst_ptr.add(j) = if v.is_nan() {
+            0
+        } else {
+            v.clamp(i16::MIN as f32, i16::MAX as f32) as i16
+        };
+    }
+
+    dst.set_len(src.len());
+    dst
+}
+
+#[cfg(target_arch = "aarch64")]
+#[target_feature(enable = "neon")]
+/// SAFETY: Caller must ensure NEON is available. All elements initialized before set_len.
+unsafe fn convert_f32_to_u16_neon(src: &[f32]) -> Vec<u16> {
+    use core::arch::aarch64::*;
+
+    let mut dst: Vec<u16> = Vec::with_capacity(src.len());
+    let dst_ptr = dst.as_mut_ptr();
+    let mut i = 0;
+    let vmax = vdupq_n_f32(u16::MAX as f32);
+    let zero = vdupq_n_f32(0.0);
+
+    while i + 4 <= src.len() {
+        let v = vld1q_f32(src.as_ptr().add(i));
+        let isnan = vreinterpretq_u32_f32(vcgtzq_f32(vsubq_f32(v, v)));
+        let v_ok = vreinterpretq_f32_u32(vbicq_u32(vreinterpretq_u32_f32(v), isnan));
+        let clamped = vmaxq_f32(vminq_f32(v_ok, vmax), zero);
+        let i32x4 = vcvtq_s32_f32(clamped);
+        let u16x4 = vqmovun_s32(i32x4); // unsigned saturate i32→u16
+        vst1_u16(dst_ptr.add(i), u16x4);
+        i += 4;
+    }
+
+    for (j, &v) in src.iter().enumerate().skip(i) {
+        *dst_ptr.add(j) = if v.is_nan() {
+            0
+        } else {
+            v.clamp(0.0, u16::MAX as f32) as u16
+        };
+    }
+
+    dst.set_len(src.len());
+    dst
+}
+
+#[cfg(target_arch = "aarch64")]
+#[target_feature(enable = "neon")]
+/// SAFETY: Caller must ensure NEON is available. All elements initialized before set_len.
+unsafe fn convert_f32_to_i8_neon(src: &[f32]) -> Vec<i8> {
+    use core::arch::aarch64::*;
+
+    let mut dst: Vec<i8> = Vec::with_capacity(src.len());
+    let dst_ptr = dst.as_mut_ptr();
+    let mut i = 0;
+    let vmin = vdupq_n_f32(i8::MIN as f32);
+    let vmax = vdupq_n_f32(i8::MAX as f32);
+
+    // Process 8 elements at a time (narrow i32→i16→i8)
+    while i + 8 <= src.len() {
+        let v0 = vld1q_f32(src.as_ptr().add(i));
+        let isnan0 = vreinterpretq_u32_f32(vcgtzq_f32(vsubq_f32(v0, v0)));
+        let v0_ok = vreinterpretq_f32_u32(vbicq_u32(vreinterpretq_u32_f32(v0), isnan0));
+        let c0 = vminq_f32(vmaxq_f32(v0_ok, vmin), vmax);
+        let i32_0 = vcvtq_s32_f32(c0);
+
+        let v1 = vld1q_f32(src.as_ptr().add(i + 4));
+        let isnan1 = vreinterpretq_u32_f32(vcgtzq_f32(vsubq_f32(v1, v1)));
+        let v1_ok = vreinterpretq_f32_u32(vbicq_u32(vreinterpretq_u32_f32(v1), isnan1));
+        let c1 = vminq_f32(vmaxq_f32(v1_ok, vmin), vmax);
+        let i32_1 = vcvtq_s32_f32(c1);
+
+        // Narrow: 8 i32 → 8 i16 → 8 i8
+        let i16x8 = vcombine_s16(vqmovn_s32(i32_0), vqmovn_s32(i32_1));
+        let i8x8 = vqmovn_s16(i16x8);
+        vst1_s8(dst_ptr.add(i), i8x8);
+        i += 8;
+    }
+
+    for (j, &v) in src.iter().enumerate().skip(i) {
+        *dst_ptr.add(j) = if v.is_nan() {
+            0
+        } else {
+            v.clamp(i8::MIN as f32, i8::MAX as f32) as i8
+        };
+    }
+
+    dst.set_len(src.len());
+    dst
+}
+
+// =============================================================================
 // Tests
 // =============================================================================
 

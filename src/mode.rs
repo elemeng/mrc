@@ -9,17 +9,27 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ComplexToRealStrategy {
+    /// Use the real component as the output value.
     RealPart,
+    /// Use the imaginary component as the output value.
     ImaginaryPart,
+    /// Compute `sqrt(real² + imag²)`.
     Magnitude,
+    /// Compute `atan2(imag, real)`.
     Phase,
 }
 
 /// Interpretation of Mode 0 (8-bit) data for legacy files.
+///
+/// Some MRC files store unsigned 8-bit data under Mode 0 (which normally
+/// represents `i8`). Use this enum to select the correct interpretation
+/// when reading such files.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum M0Interpretation {
+    /// Treat bytes as signed `i8` values (standard Mode 0).
     Signed,
+    /// Treat bytes as unsigned `u8` values (legacy convention).
     Unsigned,
 }
 
@@ -51,16 +61,25 @@ pub enum Mode {
     Uint16 = 6,
     /// 16-bit floating point (Mode 12).
     Float16 = 12,
-    /// 4-bit data packed two values per byte (mode 101)
+    /// 4-bit data packed two values per byte (Mode 101).
+    ///
+    /// Each byte stores two 4-bit nibbles: low nibble = first pixel,
+    /// high nibble = second pixel. Read via [`slices_u8`](crate::ReaderMethods::slices_u8)
+    /// or [`convert::<f32>()`](crate::ConvertMethods::convert); write via
+    /// [`write_u4_block`](crate::Writer::write_u4_block).
     Packed4Bit = 101,
 }
 
 impl Mode {
+    /// Return the MRC mode constant as an `i32` value.
     #[inline]
     pub const fn as_i32(self) -> i32 {
         self as i32
     }
 
+    /// Convert an MRC mode integer to a [`Mode`] enum value.
+    ///
+    /// Returns `None` for unrecognised mode values.
     #[inline]
     pub fn from_i32(mode: i32) -> Option<Self> {
         match mode {
@@ -76,6 +95,10 @@ impl Mode {
         }
     }
 
+    /// Number of bytes required to store one voxel in this mode.
+    ///
+    /// For [`Packed4Bit`](Mode::Packed4Bit) this returns `1` (two voxels per byte);
+    /// use [`byte_size_for_count`](Mode::byte_size_for_count) for per-voxel sizing.
     #[inline]
     pub fn byte_size(&self) -> usize {
         match self {
@@ -90,11 +113,13 @@ impl Mode {
         }
     }
 
+    /// Returns `true` if this mode stores complex numbers (real + imaginary components).
     #[inline]
     pub fn is_complex(&self) -> bool {
         matches!(self, Self::Int16Complex | Self::Float32Complex)
     }
 
+    /// Returns `true` if this mode stores integer-valued data (including complex integers).
     #[inline]
     pub fn is_integer(&self) -> bool {
         matches!(
@@ -103,6 +128,7 @@ impl Mode {
         )
     }
 
+    /// Returns `true` if this mode stores floating-point data (including complex float).
     #[inline]
     pub fn is_float(&self) -> bool {
         matches!(self, Self::Float32 | Self::Float32Complex | Self::Float16)
@@ -121,10 +147,16 @@ impl Mode {
     }
 }
 
+/// A complex number with 16-bit signed integer real and imaginary components.
+///
+/// Corresponds to MRC Mode 3. The byte layout is `[real i16, imag i16]`
+/// (4 bytes total), stored in file byte order.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 #[repr(C)]
 pub struct Int16Complex {
+    /// Real component.
     pub real: i16,
+    /// Imaginary component.
     pub imag: i16,
 }
 
@@ -145,10 +177,16 @@ impl Int16Complex {
     }
 }
 
+/// A complex number with 32-bit float real and imaginary components.
+///
+/// Corresponds to MRC Mode 4. The byte layout is `[real f32, imag f32]`
+/// (8 bytes total), stored in file byte order.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 #[repr(C)]
 pub struct Float32Complex {
+    /// Real component.
     pub real: f32,
+    /// Imaginary component.
     pub imag: f32,
 }
 
