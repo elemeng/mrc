@@ -18,9 +18,10 @@ mrc = "0.2"
 
 ## Quick Start
 
-```rust
+```rust,no_run
 use mrc::{open, create, VoxelBlock};
 
+# fn main() -> Result<(), Box<dyn std::error::Error>> {
 // Read (auto-detects compression; handles common microscope quirks
 // like NVERSION=0 and "MAP\0" automatically)
 let reader = open("protein.mrc")?;
@@ -38,6 +39,7 @@ writer.write_block(&VoxelBlock::new(
     [0, 0, 0], [512, 512, 1], vec![0.0f32; 512 * 512],
 )?)?;
 writer.finalize()?;
+# Ok(()) }
 ```
 
 ## Full Documentation
@@ -89,7 +91,7 @@ v0.2 adds SIMD acceleration, parallel encoding, type conversion iterators, compr
 
 ## Roadmap
 
-**v0.3.x** — Stabilization & Quality (current)
+**v0.3.x** — Stabilization & Quality ✅
 
 - [x] Complete MRC-2014 format support
 - [x] Iterator-centric API (slices, slabs, tiles)
@@ -106,19 +108,21 @@ v0.2 adds SIMD acceleration, parallel encoding, type conversion iterators, compr
 - [x] Unified `ConvertReader` API with inherent forwarding
 - [x] `ndarray` feature for numpy-like volume access
 - [x] SIMD f32→i16/i8 clamping in write-hot paths
-- [ ] Richer error context (offset, mode in BoundsError / ModeMismatch)
+- [x] Richer error context (offset, mode in BoundsError / ModeMismatch)
 
-**v0.4.x** — Header & Extended Header API
+**v0.4.x** — Quality, Header API & Polish ✅
 
-- [ ] Auto-dispatch extended header parsing — `reader.parse_extended_header()`
-  checks `exttyp` and routes to the correct parser automatically
-- [ ] Reader convenience methods — `reader.fei1_metadata()`,
-  `reader.ccp4_records()`, etc. (read + parse in one call)
-- [ ] Expand IMOD metadata with more fields from `extra` bytes
-- [ ] Richer `Header` convenience API — cell volume, better label
-  helpers, more validation utilities
-- [ ] `exttyp`-based dispatch enum for generic code over all extended
-  header formats
+- [x] Optional serde support (`serde` feature) for public types
+- [x] `tracing` facade replacing `eprintln!` (library diagnostics)
+- [x] Auto-dispatch extended header parsing — `reader.parse_extended_header()`
+- [x] Reader convenience methods — `reader.fei1_metadata()`, `reader.ccp4_records()`, etc.
+- [x] Expand IMOD metadata with more fields from `extra` bytes
+- [x] Richer `Header` convenience API — `cell_volume()`, `label_at()`, `density_stats()`, etc.
+- [x] `ExtHeaderType` + `ExtHeaderData` dispatch enum
+- [x] Miri CI job in GitHub Actions
+- [x] Extended clippy linting (`cargo`, `missing_docs`)
+- [x] Richer error context (offset, mode) in BoundsError / ModeMismatch
+- [x] `#[must_use]` audit on builder and accessor methods
 
 **v0.5.x** — Python bindings via PyO3 / `maturin` (evaluate)
 
@@ -126,7 +130,7 @@ v0.2 adds SIMD acceleration, parallel encoding, type conversion iterators, compr
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT — see the LICENSE file.
 
 ## Acknowledgments
 

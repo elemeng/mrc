@@ -5,7 +5,11 @@
 //! and the [`Voxel`] trait connects Rust types to their corresponding modes
 //! at compile time for type-safe I/O.
 
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
+
 /// Strategy for converting complex numbers to real values.
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ComplexToRealStrategy {
@@ -24,6 +28,7 @@ pub enum ComplexToRealStrategy {
 /// Some MRC files store unsigned 8-bit data under Mode 0 (which normally
 /// represents `i8`). Use this enum to select the correct interpretation
 /// when reading such files.
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum M0Interpretation {
@@ -34,6 +39,7 @@ pub enum M0Interpretation {
 }
 
 /// MRC data mode defining the on-disk representation of voxel values.
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Mode {
@@ -153,6 +159,7 @@ impl Mode {
 /// (4 bytes total), stored in file byte order.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 #[repr(C)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct Int16Complex {
     /// Real component.
     pub real: i16,
@@ -183,6 +190,7 @@ impl Int16Complex {
 /// (8 bytes total), stored in file byte order.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 #[repr(C)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct Float32Complex {
     /// Real component.
     pub real: f32,

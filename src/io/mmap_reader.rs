@@ -229,6 +229,7 @@ impl MmapReader {
             return Err(Error::ModeMismatch {
                 file_mode: self.mode(),
                 requested_mode: T::MODE,
+                offset: None,
             });
         }
         if !self.endian.is_native() {
@@ -242,7 +243,7 @@ impl MmapReader {
         let [nx, ny, nz] = [self.shape.nx, self.shape.ny, self.shape.nz];
 
         if k == 0 || z + k > nz {
-            return Err(Error::BoundsError);
+            return Err(Error::bounds_err());
         }
 
         let linear_start = z * nx * ny;
@@ -251,7 +252,7 @@ impl MmapReader {
         let byte_end = byte_start + count * b;
 
         if byte_end > self.mmap.len() {
-            return Err(Error::BoundsError);
+            return Err(Error::bounds_err());
         }
 
         // Verify that the data region is sufficiently aligned for `T`.

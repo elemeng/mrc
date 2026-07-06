@@ -57,6 +57,121 @@ pub use seri::{SERI_RECORD_SIZE, SeriRecord, parse_seri_records};
 
 use crate::Mode;
 
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
+
+/// Known extended header types identified by the 4-byte EXTTYP field.
+///
+/// This enum maps the `exttyp` identifier stored in `extra[8..12]` of the
+/// MRC-2014 header to a Rust type for dispatch.  Unknown identifiers are
+/// captured as [`Unknown`](ExtHeaderType::Unknown) with the raw bytes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[non_exhaustive]
+pub enum ExtHeaderType {
+    /// CCP4 symmetry records (`"CCP4"`).
+    Ccp4,
+    /// Legacy MRCO format records (`"MRCO"`).
+    Mrco,
+    /// SerialEM tilt-series records (`"SERI"`).
+    Seri,
+    /// Agard microscope records (`"AGAR"`).
+    Agar,
+    /// FEI/Thermo Fisher Type 1 metadata (`"FEI1"`).
+    Fei1,
+    /// FEI/Thermo Fisher Type 2 metadata (`"FEI2"`).
+    Fei2,
+    /// HDF5-based extended header (`"HDF5"`).
+    Hdf5,
+    /// Any unrecognised extended header type.
+    Unknown([u8; 4]),
+}
+
+impl ExtHeaderType {
+    /// Detect the extended header type from a 4-byte EXTTYP identifier.
+    pub fn from_exttyp(exttyp: [u8; 4]) -> Self {
+        match &exttyp {
+            b"CCP4" => Self::Ccp4,
+            b"MRCO" => Self::Mrco,
+            b"SERI" => Self::Seri,
+            b"AGAR" => Self::Agar,
+            b"FEI1" => Self::Fei1,
+            b"FEI2" => Self::Fei2,
+            b"HDF5" => Self::Hdf5,
+            _ => Self::Unknown(exttyp),
+        }
+    }
+
+    /// Detect the extended header type from a [`Header`].
+    #[inline]
+    pub fn from_header(header: &Header) -> Self {
+        Self::from_exttyp(header.exttyp())
+    }
+}
+
+/// Parsed extended header data, dispatched by [`ExtHeaderType`].
+///
+/// Returned by [`Reader::parse_extended_header`](crate::Reader::parse_extended_header).
+/// Each variant wraps the fully-parsed records for that extended header type.
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[non_exhaustive]
+pub enum ExtHeaderData {
+    /// CCP4 symmetry records.
+    Ccp4(Vec<Ccp4Record>),
+    /// Legacy MRCO format records.
+    Mrco(Vec<MrcoRecord>),
+    /// SerialEM tilt-series records.
+    Seri(Vec<SeriRecord>),
+    /// Agard microscope records.
+    Agar(Vec<AgarRecord>),
+    /// FEI/Thermo Fisher Type 1 metadata records.
+    Fei1(Vec<Fei1Metadata>),
+    /// FEI/Thermo Fisher Type 2 metadata records.
+    Fei2(Vec<Fei2Metadata>),
+    /// No extended header data (nsymbt == 0) or unrecognised type.
+    None,
+}
+
+impl ExtHeaderData {
+    /// Parse extended header bytes according to the given [`ExtHeaderType`].
+    ///
+    /// Returns [`None`](ExtHeaderData::None) when `bytes` is empty or the
+    /// extended header type is unknown.
+    pub fn parse(ext_type: ExtHeaderType, bytes: &[u8]) -> Self {
+        if bytes.is_empty() {
+            return Self::None;
+        }
+        match ext_type {
+            ExtHeaderType::Ccp4 => parse_ccp4_records(bytes)
+                .map(Self::Ccp4)
+                .unwrap_or(Self::None),
+            ExtHeaderType::Mrco => parse_mrco_records(bytes)
+                .map(Self::Mrco)
+                .unwrap_or(Self::None),
+            ExtHeaderType::Seri => parse_seri_records(bytes)
+                .map(Self::Seri)
+                .unwrap_or(Self::None),
+            ExtHeaderType::Agar => parse_agar_records(bytes)
+                .map(Self::Agar)
+                .unwrap_or(Self::None),
+            ExtHeaderType::Fei1 => parse_fei1_records(bytes)
+                .map(Self::Fei1)
+                .unwrap_or(Self::None),
+            ExtHeaderType::Fei2 => parse_fei2_records(bytes)
+                .map(Self::Fei2)
+                .unwrap_or(Self::None),
+            ExtHeaderType::Hdf5 | ExtHeaderType::Unknown(_) => Self::None,
+        }
+    }
+
+    /// Parse using the [`ExtHeaderType`] detected from a [`Header`].
+    #[inline]
+    pub fn from_header(header: &Header, bytes: &[u8]) -> Self {
+        Self::parse(ExtHeaderType::from_header(header), bytes)
+    }
+}
+
 // Header field offsets (MRC2014 format)
 const OFFSET_NX: usize = 0;
 const OFFSET_NY: usize = 4;
@@ -102,8 +217,18 @@ const DEFAULT_EXTRA: [u8; 100] = {
     e[15] = 0x00;
     e
 };
-// Official MRC2014 specification: https://www.ccpem.ac.uk/mrc-format/mrc2014/
+/// Mirror of the 1024-byte MRC-2014 fixed header.
+///
+/// Every field is a typed public member — dimensions, cell parameters,
+/// axis mapping, density statistics, text labels, and more.
+///
+/// Construct via [`Header::new()`] or [`HeaderBuilder`], decode from raw
+/// bytes via [`Header::decode_from_bytes`], and encode via
+/// [`Header::encode_to_bytes`].
+///
+/// # Official MRC2014 specification: <https://www.ccpem.ac.uk/mrc-format/mrc2014/>
 #[repr(C, align(4))]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Header {
     /// Number of columns in 3D data array (fast axis)
@@ -160,6 +285,7 @@ pub struct Header {
     pub nsymbt: i32,
     /// Extra space used for anything.
     /// Bytes 8–11 hold EXTTYP, 12–15 NVERSION.
+    #[cfg_attr(feature = "serde", serde(with = "crate::serde_byte_array"))]
     pub extra: [u8; 100],
     /// Volume/phase origin (pixels/voxels) or origin of subvolume
     pub origin: [f32; 3],
@@ -174,6 +300,7 @@ pub struct Header {
     /// Number of valid labels in `label` field (0–10)
     pub nlabl: i32,
     /// Ten text labels of 80 bytes each.
+    #[cfg_attr(feature = "serde", serde(with = "crate::serde_byte_array"))]
     pub label: [u8; 800],
 }
 
@@ -194,6 +321,7 @@ impl Header {
     /// Per crate policy, new MRC files are always written in little-endian format.
     /// This constructor sets `machst` to little-endian by default and initialises
     /// `nversion` to `20141` (latest MRC2014 update).
+    #[must_use]
     pub const fn new() -> Self {
         Self {
             nx: 0,
@@ -834,6 +962,70 @@ impl Header {
         }
     }
 
+    /// Sampling rates (mx, my, mz).
+    #[inline]
+    pub fn sampling(&self) -> [i32; 3] {
+        [self.mx, self.my, self.mz]
+    }
+
+    /// Header density statistics `(dmin, dmax, dmean, rms)`.
+    #[inline]
+    pub fn density_stats(&self) -> (f32, f32, f32, f32) {
+        (self.dmin, self.dmax, self.dmean, self.rms)
+    }
+
+    /// Returns `true` when the MAP field is exactly `"MAP "` (MRC-2014 standard).
+    #[inline]
+    pub fn is_standard_map(&self) -> bool {
+        self.map == *b"MAP "
+    }
+
+    /// Get the i-th text label as a trimmed `&str`, or `None` if the label slot
+    /// is empty or `i >= nlabl`.
+    ///
+    /// Labels are 80-byte fixed-width fields.  Trailing whitespace is trimmed.
+    /// Non-UTF-8 bytes are replaced with `U+FFFD` (this is rare in practice).
+    pub fn label_at(&self, index: usize) -> Option<&str> {
+        if index >= self.nlabl.clamp(0, 10) as usize || self.label_is_empty(index) {
+            return None;
+        }
+        let start = index * 80;
+        let end = start
+            + self.label[start..start + 80]
+                .iter()
+                .rposition(|&b| b != b' ')
+                .map_or(0, |p| p + 1);
+        let trimmed = core::str::from_utf8(&self.label[start..end]).unwrap_or("<invalid utf-8>");
+        Some(trimmed)
+    }
+
+    /// Compute the unit cell volume in cubic ångströms.
+    ///
+    /// Uses the general formula for a triclinic cell:
+    ///
+    /// `V = a * b * c * sqrt(1 - cos²α - cos²β - cos²γ + 2 * cosα * cosβ * cosγ)`
+    ///
+    /// where `a`, `b`, `c` are cell lengths and `α`, `β`, `γ` are cell angles.
+    /// Returns `0.0` for degenerate cells (any length ≤ 0).
+    pub fn cell_volume(&self) -> f64 {
+        let a = self.xlen as f64;
+        let b = self.ylen as f64;
+        let c = self.zlen as f64;
+        if a <= 0.0 || b <= 0.0 || c <= 0.0 {
+            return 0.0;
+        }
+        let alpha = self.alpha as f64 * (core::f64::consts::PI / 180.0);
+        let beta = self.beta as f64 * (core::f64::consts::PI / 180.0);
+        let gamma = self.gamma as f64 * (core::f64::consts::PI / 180.0);
+        let cos_a = alpha.cos();
+        let cos_b = beta.cos();
+        let cos_g = gamma.cos();
+        a * b
+            * c
+            * (1.0 - cos_a * cos_a - cos_b * cos_b - cos_g * cos_g + 2.0 * cos_a * cos_b * cos_g)
+                .sqrt()
+    }
+
     /// Decode header from raw bytes with correct endianness.
     ///
     /// Endianness is detected from the MACHST field and applied automatically.
@@ -1078,6 +1270,7 @@ impl Header {
 
 /// IMOD image type classification from the `idtype` field.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[non_exhaustive]
 pub enum ImodImageType {
     /// Single image or untitled stack.
@@ -1097,9 +1290,12 @@ pub enum ImodImageType {
 /// Returned by [`parse_imod_metadata`]. Only populated when the `imodStamp`
 /// is present, indicating an IMOD-created file.
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct ImodMetadata {
     /// Whether Mode 0 bytes are signed (true) or unsigned (false).
     pub bytes_are_signed: bool,
+    /// Raw IMOD flags from `extra[60..62]` (bit 0 = signed mode 0).
+    pub imod_flags: u16,
     /// Image stack type classification.
     pub image_type: ImodImageType,
     /// Tilt axis (1=X, 2=Y, 3=Z).
@@ -1112,6 +1308,18 @@ pub struct ImodMetadata {
     pub original_angles: [f32; 3],
     /// Current tilt angles `[tilt_x, tilt_y, tilt_z]`.
     pub current_angles: [f32; 3],
+    /// X origin in pixels (`extra[0..4]` as f32 LE).
+    pub x_origin: f32,
+    /// Y origin in pixels (`extra[4..8]` as f32 LE).
+    pub y_origin: f32,
+    /// Z origin in pixels (`extra[8..12]` as f32 LE).
+    pub z_origin: f32,
+    /// Cell size in X dimension in Å (`extra[12..16]` as f32 LE).
+    pub x_cell_size: f32,
+    /// Cell size in Y dimension in Å (`extra[16..20]` as f32 LE).
+    pub y_cell_size: f32,
+    /// Cell size in Z dimension in Å (`extra[20..24]` as f32 LE).
+    pub z_cell_size: f32,
 }
 
 /// Parse IMOD metadata from the main header's `extra` bytes.
@@ -1159,14 +1367,29 @@ pub fn parse_imod_metadata(header: &Header) -> Option<ImodMetadata> {
     let original_angles = [le_f32(76), le_f32(80), le_f32(84)];
     let current_angles = [le_f32(88), le_f32(92), le_f32(96)];
 
+    // IMOD origin and cell size from the beginning of extra bytes
+    let x_origin = le_f32(0);
+    let y_origin = le_f32(4);
+    let z_origin = le_f32(8);
+    let x_cell_size = le_f32(12);
+    let y_cell_size = le_f32(16);
+    let z_cell_size = le_f32(20);
+
     Some(ImodMetadata {
         bytes_are_signed,
+        imod_flags: flags,
         image_type,
         tilt_axis,
         tilt_increment,
         start_angle,
         original_angles,
         current_angles,
+        x_origin,
+        y_origin,
+        z_origin,
+        x_cell_size,
+        y_cell_size,
+        z_cell_size,
     })
 }
 
@@ -1189,6 +1412,7 @@ pub struct HeaderBuilder {
 
 impl HeaderBuilder {
     /// Create a new header builder with sensible defaults.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             header: Header::new(),
@@ -1199,6 +1423,7 @@ impl HeaderBuilder {
     ///
     /// Also synchronises `mx`, `my`, `mz` to match `nx`, `ny`, `nz`, following
     /// the convention used by the reference Python `mrcfile` library.
+    #[must_use]
     pub fn shape(mut self, shape: [usize; 3]) -> Self {
         self.header.nx = shape[0] as i32;
         self.header.ny = shape[1] as i32;
@@ -1210,12 +1435,14 @@ impl HeaderBuilder {
     }
 
     /// Set the voxel mode from a Rust type.
+    #[must_use]
     pub fn mode<T: crate::mode::Voxel>(mut self) -> Self {
         self.header.mode = T::MODE.as_i32();
         self
     }
 
     /// Set the cell dimensions in Angstroms.
+    #[must_use]
     pub fn cell_lengths(mut self, xlen: f32, ylen: f32, zlen: f32) -> Self {
         self.header.xlen = xlen;
         self.header.ylen = ylen;
@@ -1224,6 +1451,7 @@ impl HeaderBuilder {
     }
 
     /// Set the cell angles in degrees (alpha, beta, gamma).
+    #[must_use]
     pub fn cell_angles(mut self, alpha: f32, beta: f32, gamma: f32) -> Self {
         self.header.alpha = alpha;
         self.header.beta = beta;
@@ -1232,24 +1460,28 @@ impl HeaderBuilder {
     }
 
     /// Set the space group number.
+    #[must_use]
     pub fn ispg(mut self, ispg: i32) -> Self {
         self.header.ispg = ispg;
         self
     }
 
     /// Set the extended header type (4-byte ASCII identifier).
+    #[must_use]
     pub fn exttyp(mut self, exttyp: [u8; 4]) -> Self {
         self.header.set_exttyp(exttyp);
         self
     }
 
     /// Set the extended header size in bytes.
+    #[must_use]
     pub fn nsymbt(mut self, nsymbt: i32) -> Self {
         self.header.nsymbt = nsymbt;
         self
     }
 
     /// Set the origin coordinates.
+    #[must_use]
     pub fn origin(mut self, origin: [f32; 3]) -> Self {
         self.header.origin = origin;
         self

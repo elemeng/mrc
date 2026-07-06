@@ -6,7 +6,11 @@
 
 use std::vec::Vec;
 
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
+
 /// Volume geometry in voxels.
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct VolumeShape {
     /// Number of columns — the fastest-changing (X) axis.
@@ -19,6 +23,7 @@ pub struct VolumeShape {
 
 impl VolumeShape {
     /// Create a new volume shape.
+    #[must_use]
     pub const fn new(nx: usize, ny: usize, nz: usize) -> Self {
         Self { nx, ny, nz }
     }
@@ -26,12 +31,12 @@ impl VolumeShape {
     /// Create a volume shape from an MRC header.
     ///
     /// Maps from the header's `nx`, `ny`, `nz` fields (stored as `i32`).
-    /// Returns `Err(Error::BoundsError)` if any dimension is negative.
+    /// Returns `Err(Error::bounds_err())` if any dimension is negative.
     pub fn from_header(header: &crate::Header) -> Result<Self, crate::Error> {
         Ok(Self {
-            nx: usize::try_from(header.nx).map_err(|_| crate::Error::BoundsError)?,
-            ny: usize::try_from(header.ny).map_err(|_| crate::Error::BoundsError)?,
-            nz: usize::try_from(header.nz).map_err(|_| crate::Error::BoundsError)?,
+            nx: usize::try_from(header.nx).map_err(|_| crate::Error::bounds_err())?,
+            ny: usize::try_from(header.ny).map_err(|_| crate::Error::bounds_err())?,
+            nz: usize::try_from(header.nz).map_err(|_| crate::Error::bounds_err())?,
         })
     }
 
@@ -70,6 +75,7 @@ impl VolumeShape {
 ///
 /// Created by [`VoxelBlock::new`] or returned by reader methods such as
 /// [`Reader::slices`](crate::ReaderMethods::slices) and [`Reader::subregion`](crate::ReaderMethods::subregion).
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone)]
 pub struct VoxelBlock<T> {
     /// Corner of the block within the volume, in voxels `[x, y, z]`.
@@ -104,7 +110,7 @@ impl<T> VoxelBlock<T> {
         let expected = shape[0]
             .checked_mul(shape[1])
             .and_then(|v| v.checked_mul(shape[2]))
-            .ok_or(crate::Error::BoundsError)?;
+            .ok_or(crate::Error::bounds_err())?;
         if data.len() != expected {
             return Err(crate::Error::BlockShapeMismatch {
                 expected,

@@ -26,11 +26,15 @@ use crate::engine::stats::compute_stats;
 use crate::{Error, HeaderValidationError, Mode, Reader};
 use std::path::Path;
 
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
+
 // ============================================================================
 // Issue types
 // ============================================================================
 
 /// Severity of a validation issue.
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Severity {
     /// The file cannot be used as-is (corrupt header, data mismatch, etc.).
@@ -42,11 +46,13 @@ pub enum Severity {
 }
 
 /// A single validation issue found during file inspection.
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone)]
 pub struct ValidationIssue {
     /// How serious the issue is.
     pub severity: Severity,
     /// Short category label, e.g. `"Header"`, `"Statistics"`, `"Endianness"`.
+    #[cfg_attr(feature = "serde", serde(skip))]
     pub category: &'static str,
     /// Human-readable description of the issue.
     pub message: String,
@@ -84,19 +90,22 @@ impl ValidationIssue {
 ///
 /// Returned by [`validate_full`].  The file passes validation when
 /// no [`Severity::Error`] issues are present.
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone)]
 pub struct ValidationReport {
     /// Path to the validated file.
     pub path: String,
     /// Detected compression format.
     pub compression: String,
-    /// Volume dimensions.
+    /// Number of columns.
     pub nx: i32,
+    /// Number of rows.
     pub ny: i32,
+    /// Number of sections.
     pub nz: i32,
-    /// MRC data mode.
+    /// MRC data mode value.
     pub mode: i32,
-    /// All issues discovered (errors + warnings + info).
+    /// All issues discovered during validation.
     pub issues: Vec<ValidationIssue>,
 }
 

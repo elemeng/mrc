@@ -282,23 +282,31 @@ Three binary targets are available (`src/bin/`):
 
 ## Roadmap
 
-### v0.3.x — Stabilization & Quality (current)
+### v0.3.x — Stabilization & Quality ✅
 
-All MRC-2014 format features are implemented and tested. Remaining polish:
+All MRC-2014 format features are implemented and tested.
 
-- Richer error context (offset, mode in BoundsError / ModeMismatch)
+### v0.4.x — Quality, Header API & Polish ✅
 
-### v0.4.x — Header & Extended Header API
-
-- Auto-dispatch extended header parsing — `reader.parse_extended_header()`
+- [x] Optional serde support (`#[cfg(feature = "serde")]`) for `Header`,
+  `Mode`, `VolumeShape`, `ValidationReport`, and other public types
+- [x] Replace `eprintln!("Warning: Mode 3...")` with `tracing::warn!` via
+  the `tracing` facade (library never installs a subscriber)
+- [x] Auto-dispatch extended header parsing — `reader.parse_extended_header()`
   checks `exttyp` and routes to the correct parser automatically
-- Reader convenience methods — `reader.fei1_metadata()`,
+- [x] Reader convenience methods — `reader.fei1_metadata()`,
   `reader.ccp4_records()`, etc. (read + parse in one call)
-- Expand IMOD metadata with more fields from `extra` bytes
-- Richer `Header` convenience API — cell volume, better label
+- [x] Expand IMOD metadata with more fields from `extra` bytes
+- [x] Richer `Header` convenience API — cell volume, better label
   helpers, more validation utilities
-- `exttyp`-based dispatch enum for generic code over all extended
+- [x] `exttyp`-based dispatch enum for generic code over all extended
   header formats
+- [x] Add Miri CI job in GitHub Actions (`cargo miri test`) for all
+  unsafe code paths (SIMD kernels, mmap, Vec::set_len, reinterpreting)
+- [x] Extend clippy linting: `clippy::cargo`, selective `clippy::pedantic`,
+  selective `clippy::nursery`, and `missing_docs` (warn)
+- [x] Richer error context (offset, mode) in BoundsError / ModeMismatch
+- [x] `#[must_use]` audit on all builder and accessor methods
 
 ### v0.5.x — Python bindings via PyO3 / `maturin` (evaluate)
 

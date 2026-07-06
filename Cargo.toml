@@ -1,6 +1,6 @@
 [package]
 name = "mrc"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2024"
 rust-version = "1.85"
 description = "MRC-2014 file format reader/writer for cryo-EM — SIMD-accelerated, mmap-enabled"
@@ -20,6 +20,8 @@ half = { version = "2.7", optional = true }
 flate2 = { version = "1.1", optional = true }
 bzip2 = { version = "0.5", optional = true }
 ndarray = { version = "0.16", optional = true }
+serde = { version = "1", optional = true, default-features = false, features = ["derive", "std"] }
+tracing = { version = "0.1", default-features = false, features = ["std"] }
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
@@ -35,6 +37,7 @@ simd = []
 gzip = ["dep:flate2"]
 bzip2 = ["dep:bzip2"]
 ndarray = ["dep:ndarray"]
+serde = ["dep:serde"]
 
 [profile.release]
 lto = "fat"

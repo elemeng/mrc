@@ -20,14 +20,15 @@ macro_rules! write_u4_block_body {
             return Err(Error::ModeMismatch {
                 file_mode: $self.mode(),
                 requested_mode: Mode::Packed4Bit,
+                offset: None,
             });
         }
         if !$self.shape().contains_block($block.offset, $block.shape) {
-            return Err(Error::BoundsError);
+            return Err(Error::bounds_err());
         }
         for &v in &$block.data {
             if v > 15 {
-                return Err(crate::Error::BoundsError);
+                return Err(crate::Error::bounds_err());
             }
         }
         let nx = $block.shape[0];
@@ -44,7 +45,7 @@ macro_rules! write_u4_block_body {
 macro_rules! write_block_as_body {
     ($self:ident, $block:ident) => {{
         if !$self.shape().contains_block($block.offset, $block.shape) {
-            return Err(Error::BoundsError);
+            return Err(Error::bounds_err());
         }
         match $self.mode() {
             Mode::Int8 => {
@@ -112,6 +113,7 @@ macro_rules! builder_setters {
         /// Set the volume dimensions.
         ///
         /// Also synchronises `mx`, `my`, `mz` to match `nx`, `ny`, `nz`.
+        #[must_use]
         pub fn shape(mut self, shape: [usize; 3]) -> Self {
             self.header.nx = shape[0] as i32;
             self.header.ny = shape[1] as i32;
@@ -123,6 +125,7 @@ macro_rules! builder_setters {
         }
 
         /// Set the voxel data mode.
+        #[must_use]
         pub fn mode<T: Voxel>(mut self) -> Self {
             self.header.mode = T::MODE.as_i32();
             self
@@ -133,12 +136,14 @@ macro_rules! builder_setters {
         /// This is primarily useful for [`Mode::Packed4Bit`] (mode 101) which does not
         /// implement `Voxel`.  Invalid mode constants are caught by header validation
         /// at `finish()` time.
+        #[must_use]
         pub fn mode_raw(mut self, mode: i32) -> Self {
             self.header.mode = mode;
             self
         }
 
         /// Set the cell dimensions in Angstroms.
+        #[must_use]
         pub fn cell_lengths(mut self, xlen: f32, ylen: f32, zlen: f32) -> Self {
             self.header.xlen = xlen;
             self.header.ylen = ylen;
@@ -147,24 +152,28 @@ macro_rules! builder_setters {
         }
 
         /// Set the space group number.
+        #[must_use]
         pub fn ispg(mut self, ispg: i32) -> Self {
             self.header.ispg = ispg;
             self
         }
 
         /// Set the extended header type (4-byte ASCII identifier).
+        #[must_use]
         pub fn exttyp(mut self, exttyp: [u8; 4]) -> Self {
             self.header.set_exttyp(exttyp);
             self
         }
 
         /// Set the extended header size in bytes.
+        #[must_use]
         pub fn nsymbt(mut self, nsymbt: i32) -> Self {
             self.header.nsymbt = nsymbt;
             self
         }
 
         /// Set the origin coordinates.
+        #[must_use]
         pub fn origin(mut self, origin: [f32; 3]) -> Self {
             self.header.origin = origin;
             self
@@ -202,6 +211,7 @@ pub struct WriterBuilder {
 
 impl WriterBuilder {
     /// Create a new builder with default header values.
+    #[must_use]
     pub fn new<P: AsRef<std::path::Path>>(path: P) -> Self {
         Self {
             path: path.as_ref().to_path_buf(),
@@ -322,8 +332,8 @@ impl Writer {
         let data_offset = header.data_offset() as u64;
         let mode = Mode::from_i32(header.mode).ok_or(Error::UnsupportedMode)?;
         if mode == Mode::Int16Complex {
-            eprintln!(
-                "Warning: Mode 3 (Int16Complex) is obsolete and should not be used for writing new files."
+            tracing::warn!(
+                "Mode 3 (Int16Complex) is obsolete and should not be used for writing new files."
             );
         }
         let bytes_per_voxel = mode.byte_size();
@@ -367,11 +377,12 @@ impl Writer {
             return Err(Error::ModeMismatch {
                 file_mode: self.mode(),
                 requested_mode: T::MODE,
+                offset: None,
             });
         }
 
         if !self.shape.contains_block(block.offset, block.shape) {
-            return Err(Error::BoundsError);
+            return Err(Error::bounds_err());
         }
 
         let [nx, ny, _nz] = [self.shape.nx, self.shape.ny, self.shape.nz];
@@ -386,7 +397,7 @@ impl Writer {
                 (ox as u64) + (oy as u64) * (nx as u64) + (oz as u64) * (nx as u64) * (ny as u64);
             let start_offset = self.data_offset + linear * (b as u64);
             let byte_len = (sx as u64) * (sy as u64) * (sz as u64) * (b as u64);
-            let byte_len_usize = byte_len.try_into().map_err(|_| Error::BoundsError)?;
+            let byte_len_usize = byte_len.try_into().map_err(|_| Error::bounds_err())?;
             let mut buffer = vec![0u8; byte_len_usize];
             encode_slice(&block.data, &mut buffer, file_endian)?;
 
@@ -404,7 +415,7 @@ impl Writer {
                 let file_offset = self.data_offset + (file_linear as u64) * (b as u64);
                 let block_idx = y * sx + z * sx * sy;
                 if block_idx + sx > block.data.len() {
-                    return Err(Error::BoundsError);
+                    return Err(Error::bounds_err());
                 }
                 let row_values = &block.data[block_idx..block_idx + sx];
                 encode_slice(row_values, &mut row_bytes, file_endian)?;
@@ -428,6 +439,7 @@ impl Writer {
             return Err(Error::ModeMismatch {
                 file_mode: self.mode(),
                 requested_mode: Mode::Uint16,
+                offset: None,
             });
         }
         let widened = crate::engine::convert::convert_u8_slice_to_u16(&block.data);
@@ -471,11 +483,12 @@ impl Writer {
             return Err(Error::ModeMismatch {
                 file_mode: self.mode(),
                 requested_mode: T::MODE,
+                offset: None,
             });
         }
 
         if !self.shape.contains_block(block.offset, block.shape) {
-            return Err(Error::BoundsError);
+            return Err(Error::bounds_err());
         }
 
         let [nx, ny, _nz] = [self.shape.nx, self.shape.ny, self.shape.nz];
@@ -534,7 +547,7 @@ impl Writer {
         let block_row_bytes = sx.div_ceil(2);
 
         if ox != 0 {
-            return Err(Error::BoundsError);
+            return Err(Error::bounds_err());
         }
 
         // Fast path: full XY slab is contiguous.
@@ -544,7 +557,7 @@ impl Writer {
             let byte_len = sz * slice_bytes;
             let end_offset = start_offset + byte_len;
             if end_offset > (self.data_offset as usize) + self.header.data_size().unwrap_or(0) {
-                return Err(Error::BoundsError);
+                return Err(Error::bounds_err());
             }
             self.file.seek(SeekFrom::Start(start_offset as u64))?;
             self.file.write_all(&packed[..byte_len])?;
@@ -559,7 +572,7 @@ impl Writer {
                 let packed_start = (y + z * sy) * block_row_bytes;
                 let packed_end = packed_start + block_row_bytes;
                 if packed_end > packed.len() {
-                    return Err(Error::BoundsError);
+                    return Err(Error::bounds_err());
                 }
                 self.file.seek(SeekFrom::Start(file_offset as u64))?;
                 self.file.write_all(&packed[packed_start..packed_end])?;
@@ -719,8 +732,8 @@ impl MmapWriter {
         let data_offset = header.data_offset();
         let mode = Mode::from_i32(header.mode).ok_or(Error::UnsupportedMode)?;
         if mode == Mode::Int16Complex {
-            eprintln!(
-                "Warning: Mode 3 (Int16Complex) is obsolete and should not be used for writing new files."
+            tracing::warn!(
+                "Mode 3 (Int16Complex) is obsolete and should not be used for writing new files."
             );
         }
         let bytes_per_voxel = mode.byte_size();
@@ -768,6 +781,7 @@ impl MmapWriter {
             return Err(Error::ModeMismatch {
                 file_mode: self.mode(),
                 requested_mode: Mode::Uint16,
+                offset: None,
             });
         }
         let widened = crate::engine::convert::convert_u8_slice_to_u16(&block.data);
@@ -794,11 +808,12 @@ impl MmapWriter {
             return Err(Error::ModeMismatch {
                 file_mode: self.mode(),
                 requested_mode: T::MODE,
+                offset: None,
             });
         }
 
         if !self.shape.contains_block(block.offset, block.shape) {
-            return Err(Error::BoundsError);
+            return Err(Error::bounds_err());
         }
 
         let file_endian = self.header.detect_endian();
@@ -824,11 +839,12 @@ impl MmapWriter {
             return Err(Error::ModeMismatch {
                 file_mode: self.mode(),
                 requested_mode: T::MODE,
+                offset: None,
             });
         }
 
         if !self.shape.contains_block(block.offset, block.shape) {
-            return Err(Error::BoundsError);
+            return Err(Error::bounds_err());
         }
 
         let [nx, ny, _nz] = [self.shape.nx, self.shape.ny, self.shape.nz];
@@ -844,15 +860,15 @@ impl MmapWriter {
         let linear = self
             .shape
             .checked_linear_index(block.offset)
-            .ok_or(Error::BoundsError)?;
+            .ok_or(Error::bounds_err())?;
         let base_offset = self
             .data_offset
             .checked_add(
                 linear
                     .checked_mul(self.bytes_per_voxel)
-                    .ok_or(Error::BoundsError)?,
+                    .ok_or(Error::bounds_err())?,
             )
-            .ok_or(Error::BoundsError)?;
+            .ok_or(Error::bounds_err())?;
         let file_endian = self.header.detect_endian();
 
         // Use a usize representation for the mmap base pointer so that it
@@ -911,7 +927,7 @@ impl MmapWriter {
             .checked_add(data_size)
             .ok_or(Error::InvalidHeader)?;
         if end > self.mmap.len() {
-            return Err(Error::BoundsError);
+            return Err(Error::bounds_err());
         }
         update_header_stats_from_bytes(&mut self.header, &self.mmap[self.data_offset..end])?;
         Ok(())
@@ -1056,11 +1072,12 @@ impl<C: Compressor> CompressedWriter<C> {
             return Err(Error::ModeMismatch {
                 file_mode: self.mode(),
                 requested_mode: T::MODE,
+                offset: None,
             });
         }
 
         if !self.shape.contains_block(block.offset, block.shape) {
-            return Err(Error::BoundsError);
+            return Err(Error::bounds_err());
         }
 
         let file_endian = self.header.detect_endian();
@@ -1086,6 +1103,7 @@ impl<C: Compressor> CompressedWriter<C> {
             return Err(Error::ModeMismatch {
                 file_mode: self.mode(),
                 requested_mode: Mode::Uint16,
+                offset: None,
             });
         }
         let widened = crate::engine::convert::convert_u8_slice_to_u16(&block.data);

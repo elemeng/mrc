@@ -2,6 +2,9 @@
 // SERI — SerialEM format
 // ============================================================================
 
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
+
 /// Size of a single SERI (SerialEM) record, in bytes.
 pub const SERI_RECORD_SIZE: usize = 256;
 
@@ -14,16 +17,19 @@ pub const SERI_RECORD_SIZE: usize = 256;
 /// The tilt angle at bytes 0–3 (little-endian `f32`) is the most commonly
 /// accessed field and is exposed directly.  All other fields are accessible
 /// via the [`raw`](SeriRecord::raw) byte array.
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone, PartialEq)]
 pub struct SeriRecord {
     /// Tilt angle in degrees, read from bytes 0–3 as little-endian `f32`.
     /// This is the single most commonly accessed field in SerialEM records.
     pub alpha_tilt: f32,
     /// Raw 256-byte record — access unparsed fields via this slice.
+    #[cfg_attr(feature = "serde", serde(with = "crate::serde_byte_array"))]
     pub raw: [u8; SERI_RECORD_SIZE],
 }
 
 impl SeriRecord {
+    /// Parse a single SerialEM record from bytes.
     pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
         if bytes.len() < SERI_RECORD_SIZE {
             return None;

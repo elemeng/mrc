@@ -5,30 +5,32 @@
 //! access so you can focus on your science. It's fast (SIMD, parallel
 //! encoding) and works with plain, gzip, and bzip2 files out of the box.
 //!
+//! See the [README](https://github.com/elemeng/mrc#readme) for installation
+//! instructions, CLI tools, and the project roadmap.
+//!
 //! # Quick example
 //!
 //! ```no_run
 //! use mrc::{open, create, VoxelBlock};
 //!
-//! fn main() -> Result<(), Box<dyn std::error::Error>> {
-//!     // Read — auto-detects gzip/bzip2 compression
-//!     let reader = open("density.mrc")?;
-//!     for slice in reader.convert::<f32>().slices() {
-//!         let _block = slice?; // VoxelBlock<f32>
-//!     }
-//!
-//!     // Write
-//!     let mut writer = create("output.mrc")
-//!         .shape([512, 512, 256])
-//!         .mode::<f32>()
-//!         .finish()?;
-//!     writer.write_block(&VoxelBlock::new(
-//!         [0, 0, 0], [512, 512, 1],
-//!         vec![0.0f32; 512 * 512],
-//!     )?)?;
-//!     writer.finalize()?;
-//!     Ok(())
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! // Read — auto-detects gzip/bzip2 compression
+//! let reader = open("density.mrc")?;
+//! for slice in reader.convert::<f32>().slices() {
+//!     let _block = slice?; // VoxelBlock<f32>
 //! }
+//!
+//! // Write
+//! let mut writer = create("output.mrc")
+//!     .shape([512, 512, 256])
+//!     .mode::<f32>()
+//!     .finish()?;
+//! writer.write_block(&VoxelBlock::new(
+//!     [0, 0, 0], [512, 512, 1],
+//!     vec![0.0f32; 512 * 512],
+//! )?)?;
+//! writer.finalize()?;
+//! # Ok(()) }
 //! ```
 //!
 //! # Reading files
@@ -229,6 +231,7 @@
 //! | `gzip` | Gzip-compressed I/O | ✅ |
 //! | `bzip2` | Bzip2-compressed I/O | ❌ |
 //! | `ndarray` | Return volumes as `ndarray::Array3<T>` via `to_ndarray()` | ❌ |
+//! | `serde` | Serialize/Deserialize support via `serde` | ❌ |
 //!
 //! # Advanced topics
 //!
@@ -408,7 +411,11 @@
 //! | `Io` error | File permissions, filesystem issue | Check the file path and permissions |
 //! | Values look wrong | Endianness mismatch | The endianness fallback handles most cases; try `mrc-validate` |
 
-#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used, clippy::perf))]
+#![cfg_attr(
+    not(test),
+    deny(clippy::unwrap_used, clippy::expect_used, clippy::perf)
+)]
+#![warn(missing_docs, clippy::cargo)]
 
 mod engine;
 mod error;
@@ -417,6 +424,9 @@ mod io;
 mod iter;
 mod mode;
 pub mod validate;
+
+#[cfg(feature = "serde")]
+mod serde_byte_array;
 
 // Re-export core types
 pub use engine::block::{VolumeShape, VoxelBlock};
@@ -428,11 +438,11 @@ pub use engine::convert::{convert_u8_slice_to_u16, convert_u16_slice_to_u8, rein
 
 pub use error::{Error, HeaderValidationError};
 pub use header::{
-    AGAR_RECORD_SIZE, AgarRecord, CCP4_RECORD_SIZE, Ccp4Record, FEI1_RECORD_SIZE, FEI2_RECORD_SIZE,
-    Fei1Metadata, Fei2Metadata, Header, HeaderBuilder, ImodImageType, ImodInfo, ImodMetadata,
-    MRCO_RECORD_SIZE, MrcoRecord, SERI_RECORD_SIZE, SeriRecord, parse_agar_records,
-    parse_ccp4_records, parse_fei1_records, parse_fei2_records, parse_imod_metadata,
-    parse_mrco_records, parse_seri_records,
+    AGAR_RECORD_SIZE, AgarRecord, CCP4_RECORD_SIZE, Ccp4Record, ExtHeaderData, ExtHeaderType,
+    FEI1_RECORD_SIZE, FEI2_RECORD_SIZE, Fei1Metadata, Fei2Metadata, Header, HeaderBuilder,
+    ImodImageType, ImodInfo, ImodMetadata, MRCO_RECORD_SIZE, MrcoRecord, SERI_RECORD_SIZE,
+    SeriRecord, parse_agar_records, parse_ccp4_records, parse_fei1_records, parse_fei2_records,
+    parse_imod_metadata, parse_mrco_records, parse_seri_records,
 };
 
 pub use mode::{

@@ -2,6 +2,9 @@
 // MRCO — legacy MRC format
 // ============================================================================
 
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
+
 /// Size of a single MRCO record, in bytes.
 pub const MRCO_RECORD_SIZE: usize = 80;
 
@@ -11,13 +14,16 @@ pub const MRCO_RECORD_SIZE: usize = 80;
 /// different metadata.  The exact byte layout is not fully standardised
 /// across implementations; this struct stores the raw bytes for
 /// interpretation by the caller.
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone, PartialEq)]
 pub struct MrcoRecord {
     /// Raw 80-byte MRCO record.
+    #[cfg_attr(feature = "serde", serde(with = "crate::serde_byte_array"))]
     pub raw: [u8; MRCO_RECORD_SIZE],
 }
 
 impl MrcoRecord {
+    /// Parse a single MRCO record from bytes.
     pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
         if bytes.len() < MRCO_RECORD_SIZE {
             return None;

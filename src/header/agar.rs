@@ -2,6 +2,9 @@
 // AGAR — Agard format
 // ============================================================================
 
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
+
 /// Size of a single AGAR record, in bytes.
 pub const AGAR_RECORD_SIZE: usize = 1024;
 
@@ -9,13 +12,16 @@ pub const AGAR_RECORD_SIZE: usize = 1024;
 ///
 /// Agard extended headers use 1024-byte records.  This format is used by
 /// older Agard-style microscopes.  Access the raw bytes for field parsing.
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone, PartialEq)]
 pub struct AgarRecord {
     /// Raw 1024-byte record.
+    #[cfg_attr(feature = "serde", serde(with = "crate::serde_byte_array"))]
     pub raw: [u8; AGAR_RECORD_SIZE],
 }
 
 impl AgarRecord {
+    /// Parse a single Agard record from bytes.
     pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
         if bytes.len() < AGAR_RECORD_SIZE {
             return None;

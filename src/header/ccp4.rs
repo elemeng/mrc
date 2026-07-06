@@ -2,6 +2,9 @@
 // CCP4 symmetry records
 // ============================================================================
 
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
+
 /// Size of a single CCP4 symmetry record, in bytes.
 pub const CCP4_RECORD_SIZE: usize = 80;
 
@@ -12,10 +15,12 @@ pub const CCP4_RECORD_SIZE: usize = 80;
 /// as human-readable text, one operator per line, separated by `*` (asterisk)
 /// and grouped into 80-character lines.  This struct stores the raw text
 /// of each line.
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone, PartialEq)]
 pub struct Ccp4Record {
     /// Raw 80-byte symmetry line (may contain multiple operators separated
     /// by `*`, padded with spaces).
+    #[cfg_attr(feature = "serde", serde(with = "crate::serde_byte_array"))]
     pub raw: [u8; CCP4_RECORD_SIZE],
 }
 

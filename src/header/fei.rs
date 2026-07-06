@@ -4,6 +4,9 @@
 //! This module provides typed access to the most commonly used fields.
 //! For fields not yet covered, use the raw byte slice directly.
 
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
+
 /// Size of a single FEI1 metadata record, in bytes.
 pub const FEI1_RECORD_SIZE: usize = 768;
 
@@ -16,7 +19,9 @@ pub const FEI2_RECORD_SIZE: usize = 888;
 /// MRC-2014 specification. Not all 185 fields are exposed; only the most
 /// frequently used cryo-EM metadata is included. Access raw bytes for
 /// unsupported fields.
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone, PartialEq)]
+#[allow(missing_docs)]
 pub struct Fei1Metadata {
     pub metadata_size: u32,
     pub metadata_version: u32,
@@ -138,7 +143,9 @@ impl Fei1Metadata {
 }
 
 /// FEI2 metadata extends FEI1 with additional v2 fields.
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone, PartialEq)]
+#[allow(missing_docs)]
 pub struct Fei2Metadata {
     pub fei1: Fei1Metadata,
     pub scan_rotation: f64,

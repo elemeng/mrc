@@ -392,7 +392,7 @@ dependencies = [
 
 [[package]]
 name = "mrc"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "bzip2",
  "criterion",
@@ -401,8 +401,10 @@ dependencies = [
  "memmap2",
  "ndarray",
  "rayon",
+ "serde",
  "tempfile",
  "thiserror",
+ "tracing",
 ]
 
 [[package]]
@@ -734,6 +736,25 @@ checksum = "be4d6b5f19ff7664e8c98d03e2139cb510db9b0a60b55f8e8709b689d939b6bc"
 dependencies = [
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "tracing"
+version = "0.1.44"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "63e71662fa4b2a2c3a26f570f037eb95bb1f85397f3cd8076caed2f026a6d100"
+dependencies = [
+ "pin-project-lite",
+ "tracing-core",
+]
+
+[[package]]
+name = "tracing-core"
+version = "0.1.36"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "db97caf9d906fbde555dd62fa95ddba9eecfd14cb388e4f491a66d74cd5fb79a"
+dependencies = [
+ "once_cell",
 ]
 
 [[package]]

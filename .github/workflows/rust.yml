@@ -27,6 +27,17 @@ jobs:
     - name: Clippy
       run: cargo clippy --all-features
 
+  miri:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Install nightly + Miri
+      run: |
+        rustup toolchain install nightly --component miri
+        rustup run nightly cargo miri setup
+    - name: Run Miri tests (no SIMD/mmap — Miri incompatibility)
+      run: rustup run nightly cargo miri test --no-default-features --features "f16,parallel,gzip"
+
   fedora:
     runs-on: ubuntu-latest
     container: fedora:latest

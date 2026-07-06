@@ -251,7 +251,7 @@ where
         let block = self.read_volume()?;
         let s = self.inner.shape();
         ndarray::Array3::from_shape_vec([s.nz, s.ny, s.nx], block.data)
-            .map_err(|_| Error::BoundsError)
+            .map_err(|_| Error::bounds_err())
     }
 }
 
@@ -306,6 +306,58 @@ pub trait ReaderCore: VoxelSource {
 
     /// Extended header bytes (empty slice if no extended header).
     fn ext_header_bytes(&self) -> &[u8];
+
+    /// Parse the extended header by auto-detecting the type from EXTTYP.
+    ///
+    /// Routes to the correct parser based on the 4-byte `exttyp` identifier
+    /// stored in the header's `extra[8..12]` field. Returns
+    /// [`ExtHeaderData::None`] when the type is unrecognised or the extended
+    /// header is empty.
+    fn parse_extended_header(&self) -> crate::ExtHeaderData {
+        let bytes = self.ext_header_bytes();
+        crate::ExtHeaderData::from_header(self.header(), bytes)
+    }
+
+    /// Parse FEI1 metadata records from the extended header.
+    fn fei1_metadata(&self) -> Option<Vec<crate::Fei1Metadata>> {
+        let bytes = self.ext_header_bytes();
+        crate::parse_fei1_records(bytes)
+    }
+
+    /// Parse FEI2 metadata records from the extended header.
+    fn fei2_metadata(&self) -> Option<Vec<crate::Fei2Metadata>> {
+        let bytes = self.ext_header_bytes();
+        crate::parse_fei2_records(bytes)
+    }
+
+    /// Parse CCP4 symmetry records from the extended header.
+    fn ccp4_records(&self) -> Option<Vec<crate::Ccp4Record>> {
+        let bytes = self.ext_header_bytes();
+        crate::parse_ccp4_records(bytes)
+    }
+
+    /// Parse MRCO legacy records from the extended header.
+    fn mrco_records(&self) -> Option<Vec<crate::MrcoRecord>> {
+        let bytes = self.ext_header_bytes();
+        crate::parse_mrco_records(bytes)
+    }
+
+    /// Parse SerialEM records from the extended header.
+    fn seri_records(&self) -> Option<Vec<crate::SeriRecord>> {
+        let bytes = self.ext_header_bytes();
+        crate::parse_seri_records(bytes)
+    }
+
+    /// Parse Agard records from the extended header.
+    fn agar_records(&self) -> Option<Vec<crate::AgarRecord>> {
+        let bytes = self.ext_header_bytes();
+        crate::parse_agar_records(bytes)
+    }
+
+    /// Parse IMOD metadata from the main header.
+    fn imod_metadata(&self) -> Option<crate::ImodMetadata> {
+        crate::parse_imod_metadata(self.header())
+    }
 }
 
 // ============================================================================
@@ -434,7 +486,7 @@ pub trait ReaderMethods: VoxelSource + ReaderCore + Sized {
         let block = self.read_volume::<T>()?;
         let s = self.shape();
         ndarray::Array3::from_shape_vec([s.nz, s.ny, s.nx], block.data)
-            .map_err(|_| Error::BoundsError)
+            .map_err(|_| Error::bounds_err())
     }
 
     /// Read the entire volume as `u8`, unpacking from Mode 101 (Packed4Bit).
@@ -448,6 +500,7 @@ pub trait ReaderMethods: VoxelSource + ReaderCore + Sized {
             return Err(Error::ModeMismatch {
                 file_mode: self.mode(),
                 requested_mode: Mode::Packed4Bit,
+                offset: None,
             });
         }
         let shape = self.shape();
@@ -491,6 +544,7 @@ pub trait ReaderMethods: VoxelSource + ReaderCore + Sized {
             return Box::new(std::iter::once(Err(Error::ModeMismatch {
                 file_mode: self.mode(),
                 requested_mode: Mode::Uint16,
+                offset: None,
             })));
         }
         Box::new(self.slices::<u16>().map(|b| {
@@ -537,6 +591,7 @@ pub trait ReaderMethods: VoxelSource + ReaderCore + Sized {
             return Box::new(std::iter::once(Err(Error::ModeMismatch {
                 file_mode: self.mode(),
                 requested_mode: Mode::Uint16,
+                offset: None,
             })));
         }
         let k = k.max(1);
@@ -562,6 +617,7 @@ pub trait ReaderMethods: VoxelSource + ReaderCore + Sized {
             return Box::new(std::iter::once(Err(Error::ModeMismatch {
                 file_mode: self.mode(),
                 requested_mode: Mode::Int8,
+                offset: None,
             })));
         }
         let volume_shape = self.shape();
@@ -589,6 +645,7 @@ pub trait ReaderMethods: VoxelSource + ReaderCore + Sized {
             return Box::new(std::iter::once(Err(Error::ModeMismatch {
                 file_mode: self.mode(),
                 requested_mode: Mode::Int8,
+                offset: None,
             })));
         }
         let volume_shape = self.shape();
@@ -687,14 +744,17 @@ impl<R: VoxelSource + ReaderCore> ConvertMethods for R {
 macro_rules! impl_reader_forwarding {
     ($ty:ty) => {
         impl $ty {
+            #[allow(missing_docs)]
             #[inline]
             pub fn slices<T: Voxel>(&self) -> RegionIter<'_, T, $ty, SliceStepper> {
                 <Self as ReaderMethods>::slices(self)
             }
+            #[allow(missing_docs)]
             #[inline]
             pub fn slabs<T: Voxel>(&self, k: usize) -> RegionIter<'_, T, $ty, SlabStepper> {
                 <Self as ReaderMethods>::slabs(self, k)
             }
+            #[allow(missing_docs)]
             #[inline]
             pub fn tiles<T: Voxel>(
                 &self,
@@ -702,10 +762,12 @@ macro_rules! impl_reader_forwarding {
             ) -> Result<RegionIter<'_, T, $ty, TileStepper>, Error> {
                 <Self as ReaderMethods>::tiles(self, tile_shape)
             }
+            #[allow(missing_docs)]
             #[inline]
             pub fn volumes<T: Voxel>(&self) -> Result<RegionIter<'_, T, $ty, SlabStepper>, Error> {
                 <Self as ReaderMethods>::volumes(self)
             }
+            #[allow(missing_docs)]
             #[inline]
             pub fn subregion<T: Voxel>(
                 &self,
@@ -714,41 +776,92 @@ macro_rules! impl_reader_forwarding {
             ) -> Result<VoxelBlock<T>, Error> {
                 <Self as ReaderMethods>::subregion(self, offset, shape)
             }
+            #[allow(missing_docs)]
             #[inline]
             pub fn read_volume<T: Voxel>(&self) -> Result<VoxelBlock<T>, Error> {
                 <Self as ReaderMethods>::read_volume(self)
             }
+            #[allow(missing_docs)]
             #[inline]
             #[cfg(feature = "ndarray")]
             pub fn to_ndarray<T: Voxel>(&self) -> Result<ndarray::Array3<T>, Error> {
                 <Self as ReaderMethods>::to_ndarray(self)
             }
+            #[allow(missing_docs)]
             #[inline]
             pub fn read_volume_u8(&self) -> Result<VoxelBlock<u8>, Error> {
                 <Self as ReaderMethods>::read_volume_u8(self)
             }
+            #[allow(missing_docs)]
             #[inline]
             pub fn slices_u8(&self) -> VoxelIter<'_, u8> {
                 <Self as ReaderMethods>::slices_u8(self)
             }
+            #[allow(missing_docs)]
             #[inline]
             pub fn slabs_u8(&self, k: usize) -> VoxelIter<'_, u8> {
                 <Self as ReaderMethods>::slabs_u8(self, k)
             }
+            #[allow(missing_docs)]
             #[inline]
             pub fn slices_mode0(&self, interp: M0Interpretation) -> VoxelIter<'_, f32> {
                 <Self as ReaderMethods>::slices_mode0(self, interp)
             }
+            #[allow(missing_docs)]
             #[inline]
             pub fn slabs_mode0(&self, k: usize, interp: M0Interpretation) -> VoxelIter<'_, f32> {
                 <Self as ReaderMethods>::slabs_mode0(self, k, interp)
             }
+            #[allow(missing_docs)]
             #[inline]
             pub fn convert<T>(&self) -> ConvertReader<'_, $ty, T>
             where
                 T: Voxel + crate::engine::convert::ConvertFrom<f32>,
             {
                 <Self as ConvertMethods>::convert(self)
+            }
+
+            // ── Extended header convenience methods (ReaderCore forwarding) ──
+
+            #[allow(missing_docs)]
+            #[inline]
+            pub fn parse_extended_header(&self) -> crate::ExtHeaderData {
+                <Self as ReaderCore>::parse_extended_header(self)
+            }
+            #[allow(missing_docs)]
+            #[inline]
+            pub fn fei1_metadata(&self) -> Option<Vec<crate::Fei1Metadata>> {
+                <Self as ReaderCore>::fei1_metadata(self)
+            }
+            #[allow(missing_docs)]
+            #[inline]
+            pub fn fei2_metadata(&self) -> Option<Vec<crate::Fei2Metadata>> {
+                <Self as ReaderCore>::fei2_metadata(self)
+            }
+            #[allow(missing_docs)]
+            #[inline]
+            pub fn ccp4_records(&self) -> Option<Vec<crate::Ccp4Record>> {
+                <Self as ReaderCore>::ccp4_records(self)
+            }
+            #[allow(missing_docs)]
+            #[inline]
+            pub fn mrco_records(&self) -> Option<Vec<crate::MrcoRecord>> {
+                <Self as ReaderCore>::mrco_records(self)
+            }
+            #[allow(missing_docs)]
+            #[inline]
+            pub fn seri_records(&self) -> Option<Vec<crate::SeriRecord>> {
+                <Self as ReaderCore>::seri_records(self)
+            }
+            #[allow(missing_docs)]
+            #[inline]
+            pub fn agar_records(&self) -> Option<Vec<crate::AgarRecord>> {
+                <Self as ReaderCore>::agar_records(self)
+            }
+            #[allow(missing_docs)]
+            #[inline]
+            pub fn imod_metadata(&self) -> Option<crate::ImodMetadata> {
+                <Self as ReaderCore>::imod_metadata(self)
             }
         }
     };
@@ -762,7 +875,7 @@ impl_reader_forwarding!(crate::MmapReader);
 #[cold]
 #[inline(never)]
 fn cold_bounds_error() -> Error {
-    Error::BoundsError
+    Error::bounds_err()
 }
 
 /// Validate a block read/write request.
@@ -785,24 +898,31 @@ pub(crate) fn validate_block_bounds(
     let [ox, oy, oz] = offset;
     let [sx, sy, sz] = block_shape;
 
+    // Enriched bounds error with full context for this validation site.
+    let bounds_err = || Error::BoundsError {
+        offset: Some(offset),
+        shape: Some(block_shape),
+        volume: Some([nx, ny, nz]),
+    };
+
     // Use checked arithmetic to avoid wrap-around on maliciously large offsets.
     if ox.checked_add(sx).is_none_or(|end| end > nx)
         || oy.checked_add(sy).is_none_or(|end| end > ny)
         || oz.checked_add(sz).is_none_or(|end| end > nz)
     {
-        return Err(Error::BoundsError);
+        return Err(bounds_err());
     }
 
     let count = sx
         .checked_mul(sy)
         .and_then(|v| v.checked_mul(sz))
-        .ok_or(Error::BoundsError)?;
+        .ok_or_else(bounds_err)?;
     let block_row_bytes = sx.div_ceil(2);
     let byte_len = if mode == Mode::Packed4Bit {
         block_row_bytes
             .checked_mul(sy)
             .and_then(|v| v.checked_mul(sz))
-            .ok_or(Error::BoundsError)?
+            .ok_or_else(bounds_err)?
     } else {
         mode.byte_size_for_count(count)
     };
@@ -816,7 +936,7 @@ pub(crate) fn validate_block_bounds(
         // Only byte-aligned X-offsets are supported (ox even) to avoid
         // nibble-level read-modify-write in gather/write paths.
         if ox % 2 != 0 {
-            return Err(Error::BoundsError);
+            return Err(bounds_err());
         }
         let vol_row_bytes = nx.div_ceil(2);
         let start_byte_in_row = ox / 2;
@@ -825,20 +945,20 @@ pub(crate) fn validate_block_bounds(
             .checked_mul(vol_row_bytes)
             .and_then(|b| b.checked_add(start_byte_in_row))
             .and_then(|b| b.checked_add(block_row_bytes))
-            .ok_or(Error::BoundsError)?;
+            .ok_or_else(bounds_err)?;
         if last_byte > data_len {
-            return Err(Error::BoundsError);
+            return Err(bounds_err());
         }
     } else {
         let last_row_start = volume_shape
             .checked_linear_index([ox, oy + sy - 1, oz + sz - 1])
-            .ok_or(Error::BoundsError)?;
+            .ok_or_else(bounds_err)?;
         let last_byte = last_row_start
             .checked_add(sx)
             .map(|end| mode.byte_size_for_count(end))
-            .ok_or(Error::BoundsError)?;
+            .ok_or_else(bounds_err)?;
         if last_byte > data_len {
-            return Err(Error::BoundsError);
+            return Err(bounds_err());
         }
     }
 
@@ -1048,6 +1168,7 @@ pub(crate) fn decode_block<T: Voxel>(
         return Err(Error::ModeMismatch {
             file_mode,
             requested_mode: T::MODE,
+            offset: None,
         });
     }
 
