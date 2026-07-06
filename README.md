@@ -13,7 +13,7 @@ A high-performance, memory-efficient library for reading and writing MRC (Medica
 
 ```toml
 [dependencies]
-mrc = "0.2"
+mrc = "0.4"
 ```
 
 ## Quick Start

@@ -10,7 +10,7 @@ This file contains project-specific context for AI coding agents working on the 
 - **Crate**: https://crates.io/crates/mrc
 - **Docs**: https://docs.rs/mrc
 - **License**: MIT
-- **Version**: 0.3.0 (check `Cargo.toml` for latest)
+- **Version**: 0.4.0 (check `Cargo.toml` for latest)
 
 A reference Python implementation (`mrcfile`) is available on PyPI for specification comparison, but this crate is a standalone Rust implementation. The MRC-2014 specification is available locally as `mrcfile-official.md`.
 
@@ -27,6 +27,8 @@ A reference Python implementation (`mrcfile`) is available on PyPI for specifica
   - `half` 2.7 — half-precision f16 (`f16` feature)
   - `flate2` 1.1 — gzip compression (`gzip` feature)
   - `bzip2` 0.5 — bzip2 compression (`bzip2` feature)
+  - `serde` 1 — serialization/deserialization (`serde` feature)
+- **Hard Dependencies**: `thiserror` 2.x, `tracing` 0.1
 
 ## Build and Test Commands
 
@@ -68,6 +70,7 @@ Unit tests are inline `#[cfg(test)]` modules inside source files; integration te
 | `gzip` | `flate2` | Gzip-compressed MRC I/O | ✅ |
 | `bzip2` | `bzip2` | Bzip2-compressed MRC I/O | ❌ |
 | `ndarray` | `ndarray` | Return volumes as `ndarray::Array3` via `to_ndarray()` | ❌ |
+| `serde` | `serde` | Serialize/Deserialize for public types | ❌ |
 
 The `simd` feature uses **runtime feature detection** (`is_x86_feature_detected!("avx2")` / `is_aarch64_feature_detected!("neon")`) — it never assumes the ISA is available at compile time. Scalar fallbacks are always present.
 
@@ -86,6 +89,7 @@ src/
 │   ├── seri.rs            # SerialEM record parser (with alpha_tilt)
 │   └── agar.rs            # Agard record parser
 ├── validate.rs            # `ValidationReport`, `validate_full()`, `validate_reader()`
+├── serde_byte_array.rs    # (private) serde helpers for fixed-size byte arrays > 32
 ├── iter.rs                # Lazy iterators: `RegionIter<T, R, S>`, `SliceStepper`, `SlabStepper`, `TileStepper`
 ├── engine/
 │   ├── mod.rs
@@ -142,8 +146,8 @@ The top-level `lib.rs` is the *only* public entry point. Internal modules (`engi
 
 | Visibility | Items |
 |------------|-------|
-| **Public (in lib.rs)** | `open`, `create`, `Reader`, `WriterBuilder`, `Writer`, `Header`, `HeaderBuilder`, `Mode`, `Voxel`, `VoxelBlock`, `VolumeShape`, `RegionIter`, `SliceStepper`, `SlabStepper`, `TileStepper`, `FileEndian`, `Error`, `HeaderValidationError`, `MmapReader`, `MmapWriter`, `GzipWriter`, `Bzip2Writer`, `validate_full`, `validate_reader`, `ValidationReport`, `ValidationIssue`, `Severity`, FEI types, CCP4/MRCO/SERI/AGAR types, `ComplexToRealStrategy`, `M0Interpretation`, `Int16Complex`, `Float32Complex`, `convert_u8_slice_to_u16`, `convert_u16_slice_to_u8`, `reinterpret_m0`, `DEFAULT_MAX_DECOMPRESSED_BYTES`, `ReaderMethods`, `ConvertMethods` |
-| **`#[doc(hidden)]`** | `VoxelSource`, `ReaderCore`, `EndianCodec`, `Compressor`, `MachstInfo`, `CompressionType`, `detect_compression`, `GzipCompressor`, `Bzip2Compressor`, `EndianFallbackWarning` |
+| **Public (in lib.rs)** | `open`, `create`, `Reader`, `WriterBuilder`, `Writer`, `Header`, `HeaderBuilder`, `Mode`, `Voxel`, `VoxelBlock`, `VolumeShape`, `RegionIter`, `SliceStepper`, `SlabStepper`, `TileStepper`, `FileEndian`, `Error`, `HeaderValidationError`, `MmapReader`, `MmapWriter`, `GzipWriter`, `Bzip2Writer`, `validate_full`, `validate_reader`, `ValidationReport`, `ValidationIssue`, `Severity`, FEI types, CCP4/MRCO/SERI/AGAR types, IMOD types, `ComplexToRealStrategy`, `M0Interpretation`, `Int16Complex`, `Float32Complex`, `convert_u8_slice_to_u16`, `convert_u16_slice_to_u8`, `reinterpret_m0`, `DEFAULT_MAX_DECOMPRESSED_BYTES`, `ReaderMethods`, `ConvertMethods`, `ExtHeaderType`, `ExtHeaderData` |
+| **`#[doc(hidden)]`** | `VoxelSource`, `ReaderCore`, `EndianCodec`, `Compressor`, `MachstInfo`, `CompressionType`, `detect_compression`, `GzipCompressor`, `Bzip2Compressor`, `EndianFallbackWarning`, `serde_byte_array` |
 | **`pub(crate)` only** | `validate_block_bounds`, `gather_block_bytes`, `encode_block_to_buf`, `decode_block`, `decode_native_endian`, `decode_slice`, `encode_slice`, `encode_block_parallel`, `parse_header`, `DecompressedMrc`, `open_compressed`, `compute_stats`, `validate_header_stats`, `unpack_u4_bytes_to_u8`, `convert_i8_slice_to_f32`, `convert_i16_slice_to_f32`, `convert_u16_slice_to_f32`, `convert_f32_slice_to_i16`, `convert_f32_slice_to_u16`, `convert_f32_slice_to_i8` |
 
 ## Usage Note — Trait Imports (Optional)
@@ -176,7 +180,7 @@ where R: ReaderMethods + ConvertMethods + ... { ... }
 
 - **Language**: All comments, docs, and identifiers are in English.
 - **Formatting**: Standard `rustfmt`. No custom `rustfmt.toml`.
-- **Clippy**: The crate enforces `#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used, clippy::perf))]` in `lib.rs`. Production code must not use `.unwrap()` or `.expect()`, and performance lints are errors.
+- **Clippy**: The crate enforces `#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used, clippy::perf))]` and `#![warn(missing_docs, clippy::cargo)]` in `lib.rs`. Production code must not use `.unwrap()` or `.expect()`, performance lints are errors, all public items require documentation, and cargo metadata is checked.
 - **Inlining**: Small accessor methods and hot-path conversion functions are marked `#[inline]`.
 - **Documentation**: Heavy use of `//!` module docs and `///` item docs. The crate-level doc (`lib.rs`) includes real-world workflow examples (tilt series, FEI metadata, volume stacks) and a troubleshooting table. Doc-tests are present and run with `cargo test` — ~33 doc-tests across `lib.rs`, `header.rs`, `validate.rs`, `error.rs`, `io/buffered.rs`, `io/writer.rs`, `io/mmap_reader.rs`, and `engine/codec.rs`.
 

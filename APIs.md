@@ -116,6 +116,14 @@ callers will never need to import them.
 | `reader.read_block_bytes(offset, shape)` | `Result<Vec<u8>>` | Read raw bytes for any sub-block |
 | `reader.read_block::<T>(offset, shape)` | `Result<VoxelBlock<T>>` | Deprecated, use `subregion` instead |
 | `reader.validate_header_stats()` | `Result<()>` | Cross-check header stats vs actual data (1% tolerance) |
+| `reader.parse_extended_header()` | `ExtHeaderData` | Auto-detect EXTTYP and parse extended header bytes |
+| `reader.fei1_metadata()` | `Option<Vec<Fei1Metadata>>` | Parse FEI1 records from extended header |
+| `reader.fei2_metadata()` | `Option<Vec<Fei2Metadata>>` | Parse FEI2 records from extended header |
+| `reader.ccp4_records()` | `Option<Vec<Ccp4Record>>` | Parse CCP4 symmetry records |
+| `reader.mrco_records()` | `Option<Vec<MrcoRecord>>` | Parse MRCO legacy records |
+| `reader.seri_records()` | `Option<Vec<SeriRecord>>` | Parse SerialEM records |
+| `reader.agar_records()` | `Option<Vec<AgarRecord>>` | Parse Agard records |
+| `reader.imod_metadata()` | `Option<ImodMetadata>` | Parse IMOD metadata from header `extra` bytes |
 
 **All methods (inherent — no trait import needed):**
 
@@ -313,6 +321,11 @@ The 1024-byte MRC-2014 header. Every field is a public `struct` member.
 | `header.set_volume()` | `()` | Set as single volume |
 | `header.set_volume_stack(mz)` | `()` | Set as volume stack with sub-volume size `mz` |
 | `header.voxel_size()` | `[f32; 3]` | Å/pixel = `cella / mxyz` |
+| `header.sampling()` | `[i32; 3]` | `[mx, my, mz]` |
+| `header.density_stats()` | `(f32, f32, f32, f32)` | `(dmin, dmax, dmean, rms)` |
+| `header.is_standard_map()` | `bool` | `true` when MAP field is exactly `"MAP "` |
+| `header.label_at(i)` | `Option<&str>` | Trimmed label at index `i`, or `None` if empty |
+| `header.cell_volume()` | `f64` | Unit cell volume in Å³ (triclinic formula) |
 | `header.nstart()` | `[i32; 3]` | `[nxstart, nystart, nzstart]` |
 | `header.cell_lengths()` | `[f32; 3]` | `[xlen, ylen, zlen]` |
 | `header.cell_angles()` | `[f32; 3]` | `[alpha, beta, gamma]` |
@@ -324,6 +337,7 @@ The 1024-byte MRC-2014 header. Every field is a public `struct` member.
 HeaderBuilder::new()
     .shape([nx, ny, nz])         // set dimensions + mx,my,mz
     .mode::<f32>()               // set voxel type → mode
+    .mode_raw(101)               // set mode by integer (e.g. Packed4Bit)
     .cell_lengths(x, y, z)       // cell dimensions in Å
     .cell_angles(a, b, g)        // cell angles in degrees
     .ispg(n)                     // space group
@@ -461,6 +475,70 @@ pub enum M0Interpretation { Signed, Unsigned }
 
 `M0Interpretation` controls how Mode 0 (8-bit) data is read: `Signed` treats raw bytes as `i8`, `Unsigned` as `u8`.
 
+### Extended Header Types
+
+```rust
+pub enum ExtHeaderType { Ccp4, Mrco, Seri, Agar, Fei1, Fei2, Hdf5, Unknown([u8; 4]) }
+
+impl ExtHeaderType {
+    pub fn from_exttyp(exttyp: [u8; 4]) -> Self;
+    pub fn from_header(header: &Header) -> Self;
+}
+```
+
+Maps the 4-byte EXTTYP identifier from `extra[8..12]` to a Rust enum for generic dispatch.
+`Unknown` captures any unrecognised identifier.
+
+```rust
+pub enum ExtHeaderData {
+    Ccp4(Vec<Ccp4Record>),
+    Mrco(Vec<MrcoRecord>),
+    Seri(Vec<SeriRecord>),
+    Agar(Vec<AgarRecord>),
+    Fei1(Vec<Fei1Metadata>),
+    Fei2(Vec<Fei2Metadata>),
+    None,
+}
+
+impl ExtHeaderData {
+    pub fn parse(ext_type: ExtHeaderType, bytes: &[u8]) -> Self;
+    pub fn from_header(header: &Header, bytes: &[u8]) -> Self;
+}
+```
+
+Returned by `reader.parse_extended_header()`. Auto-routes to the correct parser based
+on the `exttyp` detected from the header.
+
+### IMOD Metadata
+
+```rust
+pub struct ImodInfo { pub bytes_are_signed: bool }
+
+pub enum ImodImageType { Mono, Tilt, Tilts, Lina, Lins }
+
+pub struct ImodMetadata {
+    pub bytes_are_signed: bool,
+    pub imod_flags: u16,
+    pub image_type: ImodImageType,
+    pub tilt_axis: u8,
+    pub tilt_increment: f32,
+    pub start_angle: f32,
+    pub original_angles: [f32; 3],
+    pub current_angles: [f32; 3],
+    pub x_origin: f32,
+    pub y_origin: f32,
+    pub z_origin: f32,
+    pub x_cell_size: f32,
+    pub y_cell_size: f32,
+    pub z_cell_size: f32,
+}
+
+pub fn parse_imod_metadata(header: &Header) -> Option<ImodMetadata>;
+```
+
+Parsed from the MRC header `extra` bytes when the IMOD stamp is present.
+Accessible via `reader.imod_metadata()` on any reader.
+
 ---
 
 ## Iterators
@@ -591,10 +669,10 @@ impl Fei2Metadata {
 | `Io(std::io::Error)` | Underlying I/O failure |
 | `InvalidHeader` | Malformed header |
 | `UnsupportedMode` | Mode not recognised |
-| `BoundsError` | Block outside volume bounds |
+| `BoundsError { offset?, shape?, volume? }` | Block outside volume bounds (optional context) |
 | `TypeMismatch { expected, actual }` | Byte size mismatch |
 | `BlockShapeMismatch { expected, actual }` | Data length ≠ block volume |
-| `ModeMismatch { file_mode, requested_mode }` | Requested type ≠ file mode |
+| `ModeMismatch { file_mode, requested_mode, offset? }` | Requested type ≠ file mode (optional offset) |
 | `InvalidHeaderDetailed(HeaderValidationError)` | Specific validation failure |
 | `StatsMismatch { claimed_*, actual_* }` | Header stats don't match data |
 | `Mmap` (feature `mmap`) | Memory mapping failed |
@@ -642,6 +720,7 @@ automatically converts any MRC mode to the target type via `.slices()`, `.slabs(
 | `gzip` | ✅ | Gzip auto-detection, `Reader::open_gzip()`, `GzipWriter` |
 | `bzip2` | ❌ | Bzip2 auto-detection, `Reader::open_bzip2()`, `Bzip2Writer` |
 | `ndarray` | ❌ | Return volumes as `ndarray::Array3<T>` via `to_ndarray()` |
+| `serde` | ❌ | Serialize/Deserialize for `Header`, `Mode`, `VolumeShape`, `ValidationReport`, and other public types |
 
 ---
 
