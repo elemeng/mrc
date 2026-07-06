@@ -494,6 +494,7 @@ unsafe fn convert_u8_to_f32_avx2(src: &[u8]) -> Vec<f32> {
     }
 }
 
+#[cfg(feature = "f16")]
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "f16c")]
 /// SAFETY: Caller must ensure F16C is available at runtime. All `src.len()`
@@ -534,6 +535,7 @@ unsafe fn convert_f16_to_f32_avx2(src: &[crate::f16]) -> Vec<f32> {
     }
 }
 
+#[cfg(feature = "f16")]
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "f16c")]
 /// SAFETY: Caller must ensure F16C is available at runtime. All `src.len()`
@@ -960,6 +962,7 @@ unsafe fn convert_u8_to_f32_neon(src: &[u8]) -> Vec<f32> {
     dst
 }
 
+#[cfg(feature = "f16")]
 #[cfg(target_arch = "aarch64")]
 #[target_feature(enable = "fp16")]
 /// SAFETY: Caller must ensure fp16 is available at runtime. All `src.len()`
@@ -1000,6 +1003,7 @@ unsafe fn convert_f16_to_f32_neon(src: &[crate::f16]) -> Vec<f32> {
     dst
 }
 
+#[cfg(feature = "f16")]
 #[cfg(target_arch = "aarch64")]
 #[target_feature(enable = "fp16")]
 /// SAFETY: Caller must ensure fp16 is available at runtime. All `src.len()`

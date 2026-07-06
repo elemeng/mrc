@@ -213,12 +213,114 @@
 //! * [`validate_permissive`](Header::validate_permissive) — warnings for
 //!   non-critical issues
 //!
-//! # Philosophy
+//! ### Convenience API
 //!
-//! This crate does **one thing** — read and write MRC files. It does not
-//! do array arithmetic, image processing, or type conversion beyond a few
-//! MRC-specific shortcuts (`convert::<f32>()`, `slices_mode0`, `slices_u8`).
-//! Leave those to crates like `ndarray`, or your own code.
+//! The [`Header`] provides computed properties for common queries:
+//!
+//! ```rust
+//! use mrc::Header;
+//! let h = Header::new();
+//! let vol = h.cell_volume();      // unit cell volume in Å³
+//! let (dmin, dmax, dmean, rms) = h.density_stats();
+//! let sampling = h.sampling();    // [mx, my, mz]
+//! let label = h.label_at(0);      // first label, or None
+//! assert!(h.is_standard_map());   // MAP field is "MAP "
+//! ```
+//!
+//! ### Manual header parsing
+//!
+//! Decode a raw 1024-byte header block with automatic endianness detection:
+//!
+//! ```rust
+//! use mrc::Header;
+//! let raw = [0u8; 1024];
+//! // ... fill raw bytes from file ...
+//! let header = Header::decode_from_bytes(&raw);
+//! ```
+//!
+//! When the MACHST byte-order stamp is wrong (common in some EPU files),
+//! the decoder tries the opposite endianness automatically:
+//!
+//! ```rust
+//! # use mrc::Header;
+//! # let raw = [0u8; 1024];
+//! let (header, warning) = Header::decode_from_bytes_with_info(&raw);
+//! if let Some(w) = warning {
+//!     eprintln!("byte-order fallback used: {w}");
+//! }
+//! ```
+//!
+//! # Extended headers
+//!
+//! Many MRC files carry additional metadata after the 1024-byte fixed header
+//! in an **extended header** region. The type is identified by the 4-byte
+//! `exttyp` field in the header's `extra[8..12]`.
+//!
+//! The [`ExtHeaderType`] enum identifies the format without parsing:
+//!
+//! ```rust
+//! use mrc::{Header, ExtHeaderType};
+//! let header = Header::new();
+//! match ExtHeaderType::from_header(&header) {
+//!     ExtHeaderType::Fei1 => println!("FEI Type 1"),
+//!     ExtHeaderType::Ccp4 => println!("CCP4"),
+//!     ExtHeaderType::Unknown(id) => {
+//!         println!("Unknown: {:?}", std::str::from_utf8(&id));
+//!     }
+//!     _ => {}
+//! }
+//! ```
+//!
+//! Instead of calling individual parser functions, use the auto-dispatch
+//! method on any open reader:
+//!
+//! ```no_run
+//! # fn main() -> Result<(), mrc::Error> {
+//! # let reader = mrc::Reader::open("file.mrc")?;
+//! use mrc::ExtHeaderData;
+//!
+//! match reader.parse_extended_header() {
+//!     ExtHeaderData::Fei1(records) => {
+//!         println!("FEI1 tilt series ({} records)", records.len());
+//!         for r in &records {
+//!             println!("  tilt {:.1}°, defocus {:.1} µm",
+//!                 r.alpha_tilt, r.defocus);
+//!         }
+//!     }
+//!     ExtHeaderData::Ccp4(records) => {
+//!         println!("CCP4 symmetry ({} records)", records.len());
+//!     }
+//!     ExtHeaderData::Seri(records) => {
+//!         println!("  first tilt: {:.1}°", records[0].alpha_tilt);
+//!     }
+//!     ExtHeaderData::None => println!("No recognised extended header"),
+//!     _ => {}
+//! }
+//! # Ok(()) }
+//! ```
+//!
+//! Typed convenience methods give direct access without pattern matching:
+//!
+//! ```no_run
+//! # fn main() -> Result<(), mrc::Error> {
+//! # let reader = mrc::Reader::open("file.mrc")?;
+//! if let Some(records) = reader.fei1_metadata() {
+//!     println!("{} FEI1 records", records.len());
+//! }
+//! if let Some(imod) = reader.imod_metadata() {
+//!     println!("IMOD type {:?}, tilt increment {:.1}°",
+//!         imod.image_type, imod.tilt_increment);
+//! }
+//! # Ok(()) }
+//! ```
+//!
+//! Available: [`fei1_metadata`](crate::Reader::fei1_metadata),
+//! [`fei2_metadata`](crate::Reader::fei2_metadata),
+//! [`ccp4_records`](crate::Reader::ccp4_records),
+//! [`mrco_records`](crate::Reader::mrco_records),
+//! [`seri_records`](crate::Reader::seri_records),
+//! [`agar_records`](crate::Reader::agar_records),
+//! [`imod_metadata`](crate::Reader::imod_metadata).
 //!
 //! # Feature flags
 //!
@@ -282,26 +384,6 @@
 //! > zero-copy access — the OS pages data on demand without loading the whole
 //! > file into memory.
 //!
-//! ## FEI extended headers
-//!
-//! Data from Thermo Fisher / FEI microscopes often carries FEI1 or FEI2
-//! extended headers — one metadata record per image section.
-//! [`Fei1Metadata`] and [`Fei2Metadata`] parse these into named fields
-//! (dose, defocus, stage position, pixel size, magnification ...).
-//!
-//! ```no_run
-//! # fn main() -> Result<(), mrc::Error> {
-//! use mrc::parse_fei1_records;
-//! # let reader = mrc::Reader::open("tilt_series.mrc")?;
-//! let bytes = reader.ext_header_bytes();
-//! if let Some(records) = parse_fei1_records(bytes) {
-//!     for r in &records {
-//!         println!("tilt {:.1}°, defocus {:.1} µm", r.alpha_tilt, r.defocus);
-//!     }
-//! }
-//! # Ok(()) }
-//! ```
-//!
 //! ## File validation
 //!
 //! [`validate_full`](validate::validate_full) runs comprehensive checks
@@ -315,14 +397,10 @@
 //!
 //! # Real-world workflows
 //!
-//! ## 1. Process a tilt series from a microscope
+//! ## 1. Process a tilt series
 //!
-//! Files from Thermo Fisher / FEI microscopes often have quirks (NVERSION
-//! left at 0, `"MAP\0"` instead of `"MAP "`). The crate handles these
-//! transparently — [`open()`] works without special flags.
-//!
-//! A common pipeline: open a tilt series, read the FEI metadata (tilt
-//! angles, defocus), then iterate over slices:
+//! A common cryo-EM workflow: open a tilt series, read the FEI metadata,
+//! then iterate over slices:
 //!
 //! ```no_run
 //! # fn main() -> Result<(), mrc::Error> {
@@ -349,15 +427,14 @@
 //! # Ok(()) }
 //! ```
 //!
-//! If a file still fails to open, use
-//! [`open_permissive`](Reader::open_permissive) for lenient header handling,
-//! or [`validate_full`](validate::validate_full) to diagnose the issue.
+//! If a file fails to open, try [`open_permissive`](Reader::open_permissive)
+//! for lenient header handling, or [`validate_full`](validate::validate_full)
+//! to diagnose the issue.
 //!
 //! ## 2. Write a processed map
 //!
 //! Always call [`finalize`](Writer::finalize) — without it the header is
-//! stale and density statistics will be wrong, so tools like IMOD or
-//! UCSF Chimera may display garbage contrast.
+//! stale and density statistics will be wrong (tools display wrong contrast).
 //!
 //! ```no_run
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -375,10 +452,7 @@
 //!     )?)?;
 //! }
 //!
-//! // ⚠️ Compute and store header density statistics
 //! writer.update_header_stats()?;
-//!
-//! // ⚠️ REQUIRED: rewrites the header with final metadata
 //! writer.finalize()?;
 //! # Ok(()) }
 //! ```
@@ -410,6 +484,13 @@
 //! | [`UnsupportedMode`](Error::UnsupportedMode) | Unrecognised mode, or mode needs the `f16` feature | Enable `f16` feature or convert with another tool |
 //! | `Io` error | File permissions, filesystem issue | Check the file path and permissions |
 //! | Values look wrong | Endianness mismatch | The endianness fallback handles most cases; try `mrc-validate` |
+//!
+//! # Philosophy
+//!
+//! This crate does **one thing** — read and write MRC files. It does no array
+//! arithmetic, image processing, or type conversion beyond MRC-specific
+//! shortcuts (`convert::<f32>()`, `slices_mode0`, `slices_u8`).
+//! Leave those to crates like `ndarray`, or your own code.
 
 #![cfg_attr(
     not(test),
