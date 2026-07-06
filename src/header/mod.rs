@@ -1487,6 +1487,58 @@ impl HeaderBuilder {
         self
     }
 
+    /// Set the sub-volume origin in pixels (`nxstart`, `nystart`, `nzstart`).
+    ///
+    /// This is the starting point of the image data within the unit cell.
+    /// Commonly used in IMOD and tilt-series metadata.
+    #[must_use]
+    pub fn nstart(mut self, nstart: [i32; 3]) -> Self {
+        self.header.nxstart = nstart[0];
+        self.header.nystart = nstart[1];
+        self.header.nzstart = nstart[2];
+        self
+    }
+
+    /// Set the sampling rates (`mx`, `my`, `mz`) independently of the volume
+    /// dimensions.
+    ///
+    /// By default [`shape`](Self::shape) syncs `mx`, `my`, `mz` to `nx`, `ny`,
+    /// `nz`.  Use this method to override them when the cell sampling differs
+    /// from the pixel dimensions.
+    #[must_use]
+    pub fn sampling(mut self, sampling: [i32; 3]) -> Self {
+        self.header.mx = sampling[0];
+        self.header.my = sampling[1];
+        self.header.mz = sampling[2];
+        self
+    }
+
+    /// Set the axis mapping (`mapc`, `mapr`, `maps`) — a permutation of
+    /// `1` (X), `2` (Y), `3` (Z) that defines which axis is column, row,
+    /// and section.
+    ///
+    /// The default is `[1, 2, 3]` (X=column, Y=row, Z=section), which
+    /// covers nearly all MRC files.  Override only when you need a
+    /// non-standard axis layout.
+    #[must_use]
+    pub fn axis_mapping(mut self, mapping: [i32; 3]) -> Self {
+        self.header.mapc = mapping[0];
+        self.header.mapr = mapping[1];
+        self.header.maps = mapping[2];
+        self
+    }
+
+    /// Append a text label.
+    ///
+    /// Delegates to [`Header::add_label`].  Labels are stored in the
+    /// 800-byte label field (up to 10 labels).  When full, the oldest
+    /// label is dropped (FIFO).
+    #[must_use]
+    pub fn add_label(mut self, text: &str) -> Self {
+        self.header.add_label(text);
+        self
+    }
+
     /// Consume the builder and return the header.
     pub fn build(self) -> Result<Header, crate::HeaderValidationError> {
         self.header.validate_detailed()?;

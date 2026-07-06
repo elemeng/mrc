@@ -201,6 +201,12 @@
 //! let header = HeaderBuilder::new()
 //!     .shape([512, 512, 256])
 //!     .mode::<f32>()
+//!     .cell_lengths(1.0, 1.0, 1.0)
+//!     .cell_angles(90.0, 90.0, 90.0)
+//!     .origin([0.0, 0.0, 0.0])
+//!     .nstart([0, 0, 0])
+//!     .sampling([512, 512, 256])
+//!     .add_label("reconstructed map")
 //!     .build()?;
 //! # Ok::<_, mrc::HeaderValidationError>(())
 //! ```

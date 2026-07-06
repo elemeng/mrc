@@ -204,7 +204,6 @@ let writer = create("out.mrc")
     .shape([nx, ny, nz])          // volume dimensions (also sets mx,my,mz)
     .mode::<f32>()                // voxel type (i8, i16, u16, f32, etc.)
     .cell_lengths(xlen, ylen, zlen) // unit cell in Å
-    .cell_angles(alpha, beta, gamma) // cell angles in degrees
     .ispg(1)                      // space group
     .exttyp(*b"CCP4")             // 4-byte extended header type
     .nsymbt(1024)                 // extended header size in bytes
@@ -307,6 +306,8 @@ The 1024-byte MRC-2014 header. Every field is a public `struct` member.
 | `header.encode_to_bytes(&mut [u8; 1024])` | `()` | Encode to raw bytes |
 | `header.exttyp()` | `[u8; 4]` | Extended header type from `extra[8..12]` |
 | `header.set_exttyp(value)` | `()` | Set extended header type |
+| `header.exttyp_str()` | `Result<&str>` | Extended header type as string (`exttyp` decoded as UTF-8) |
+| `header.set_exttyp_str(value)` | `Result<()>` | Set extended header type from a string |
 | `header.nversion()` | `i32` | NVERSION from `extra[12..16]` |
 | `header.set_nversion(value)` | `()` | Set NVERSION |
 | `header.get_labels()` | `Vec<String>` | Read up to `nlabl` non-empty labels |
@@ -330,6 +331,8 @@ The 1024-byte MRC-2014 header. Every field is a public `struct` member.
 | `header.cell_lengths()` | `[f32; 3]` | `[xlen, ylen, zlen]` |
 | `header.cell_angles()` | `[f32; 3]` | `[alpha, beta, gamma]` |
 | `header.logical_shape()` | `[usize; 4]` | Python-style `(nvolumes, mz, ny, nx)` |
+| `header.detect_imod()` | `Option<ImodInfo>` | Detect IMOD stamp in `extra` bytes |
+| `header.is_y_inverted()` | `bool` | `true` when `mapr == -2` (IMOD convention) |
 
 **`HeaderBuilder` methods:**
 
@@ -337,13 +340,16 @@ The 1024-byte MRC-2014 header. Every field is a public `struct` member.
 HeaderBuilder::new()
     .shape([nx, ny, nz])         // set dimensions + mx,my,mz
     .mode::<f32>()               // set voxel type → mode
-    .mode_raw(101)               // set mode by integer (e.g. Packed4Bit)
     .cell_lengths(x, y, z)       // cell dimensions in Å
     .cell_angles(a, b, g)        // cell angles in degrees
     .ispg(n)                     // space group
     .exttyp(*b"CCP4")            // extended header type
     .nsymbt(n)                   // extended header size
     .origin([x, y, z])           // origin
+    .nstart([x, y, z])           // sub-volume origin in pixels (nxstart..)
+    .sampling([mx, my, mz])      // cell sampling rates (independent of shape)
+    .axis_mapping([1, 2, 3])     // column/row/section axis mapping (mapc/r/s)
+    .add_label("my volume")      // append a text label
     .build()?                    // → Result<Header>
 ```
 
@@ -360,7 +366,7 @@ pub struct VolumeShape {
 | Method | Returns | Description |
 |---|---|---|
 | `VolumeShape::new(nx, ny, nz)` | `VolumeShape` | New shape |
-| `VolumeShape::from_header(&Header)` | `VolumeShape` | From parsed header |
+| `VolumeShape::from_header(&Header)` | `Result<VolumeShape>` | From parsed header (negative dims → `Err`) |
 | `shape.total_voxels()` | `Option<usize>` | `nx * ny * nz` (checked) |
 | `shape.is_empty()` | `bool` | Any dimension is zero |
 | `shape.contains_block(offset, shape)` | `bool` | Check sub-block fits |
@@ -377,6 +383,7 @@ pub struct VoxelBlock<T> {
 | Method | Returns | Description |
 |---|---|---|
 | `VoxelBlock::new(offset, shape, data)` | `Result<Self>` | Validates data length matches shape |
+| `VoxelBlock::try_new(offset, shape, data, err_fn)` | `Result<Self>` | Like `new`, with a custom error factory |
 | `block.len()` | `usize` | Number of voxels |
 | `block.is_empty()` | `bool` | Zero voxels |
 | `block.is_full_volume(&VolumeShape)` | `bool` | Covers entire volume from origin |
