@@ -467,13 +467,12 @@ fn per_element_encode<T: EndianCodec + Sync>(values: &[T], bytes: &mut [u8], end
 // Parallel Block Encoding
 // ============================================================================
 
-#[cfg(feature = "parallel")]
-thread_local! {
-    static ENCODE_BUFFER: std::cell::RefCell<Vec<u8>> =
-        std::cell::RefCell::new(Vec::with_capacity(4 * 1024 * 1024));
-}
-
-/// Encode a block with parallel processing and thread-local buffers.
+/// Encode a block with parallel processing.
+///
+/// Each chunk allocates a fresh buffer to avoid contention on thread-local
+/// state and the extra clone that a shared buffer would require.  The
+/// allocator reuses the same-sized memory across chunks, so the cost is
+/// negligible compared to the encode work itself.
 #[cfg(feature = "parallel")]
 pub(crate) fn encode_block_parallel<T: EndianCodec + Sync>(
     values: &[T],
@@ -491,17 +490,13 @@ pub(crate) fn encode_block_parallel<T: EndianCodec + Sync>(
             let end = (start + chunk_size).min(values.len());
             let chunk = &values[start..end];
 
-            ENCODE_BUFFER.with(|buf| {
-                let mut buffer = buf.borrow_mut();
-                buffer.clear();
-                buffer.resize(chunk.len() * T::BYTE_SIZE, 0);
+            let mut buffer = vec![0u8; chunk.len() * T::BYTE_SIZE];
 
-                for (i, val) in chunk.iter().enumerate() {
-                    val.to_bytes(&mut buffer, i * T::BYTE_SIZE, endian);
-                }
+            for (i, val) in chunk.iter().enumerate() {
+                val.to_bytes(&mut buffer, i * T::BYTE_SIZE, endian);
+            }
 
-                (chunk_idx, buffer.clone())
-            })
+            (chunk_idx, buffer)
         })
         .collect()
 }

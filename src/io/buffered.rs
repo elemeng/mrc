@@ -72,13 +72,43 @@ impl Reader {
     ///
     /// [`DEFAULT_MAX_DECOMPRESSED_BYTES`]: crate::DEFAULT_MAX_DECOMPRESSED_BYTES
     pub fn open<P: AsRef<std::path::Path>>(path: P) -> Result<Self, Error> {
-        match crate::io::reader::detect_compression(&path)? {
-            crate::io::reader::CompressionType::Plain => Self::open_plain(path),
-            #[cfg(feature = "gzip")]
-            crate::io::reader::CompressionType::Gzip => Self::open_gzip(path),
-            #[cfg(feature = "bzip2")]
-            crate::io::reader::CompressionType::Bzip2 => Self::open_bzip2(path),
+        use std::io::{Read, Seek};
+
+        // Open the file once and peek at the magic bytes to avoid a redundant
+        // File::open in the plain / compressed constructors below.
+        let mut file = std::fs::File::open(&path)?;
+        let mut magic = [0u8; 2];
+        let n = file.read(&mut magic)?;
+
+        if n >= 2 {
+            match magic {
+                #[cfg(feature = "gzip")]
+                [0x1f, 0x8b] => {
+                    let _ = file.seek(std::io::SeekFrom::Start(0));
+                    return Self::_open_gzip_file(
+                        file,
+                        false,
+                        crate::io::reader_common::DEFAULT_MAX_DECOMPRESSED_BYTES,
+                    )
+                    .map(|(r, _)| r);
+                }
+                #[cfg(feature = "bzip2")]
+                [b'B', b'Z'] => {
+                    let _ = file.seek(std::io::SeekFrom::Start(0));
+                    return Self::_open_bzip2_file(
+                        file,
+                        false,
+                        crate::io::reader_common::DEFAULT_MAX_DECOMPRESSED_BYTES,
+                    )
+                    .map(|(r, _)| r);
+                }
+                _ => {}
+            }
         }
+
+        // Plain file — seek back to the start and parse.
+        let _ = file.seek(std::io::SeekFrom::Start(0));
+        Self::_open_plain_file(file, false).map(|(r, _)| r)
     }
 
     /// Open a plain (uncompressed) MRC file.
@@ -95,23 +125,46 @@ impl Reader {
     pub fn open_permissive<P: AsRef<std::path::Path>>(
         path: P,
     ) -> Result<(Self, Vec<String>), Error> {
-        match crate::io::reader::detect_compression(&path)? {
-            crate::io::reader::CompressionType::Plain => Self::_open_plain(path, true),
-            #[cfg(feature = "gzip")]
-            crate::io::reader::CompressionType::Gzip => Self::open_gzip_permissive(path),
-            #[cfg(feature = "bzip2")]
-            crate::io::reader::CompressionType::Bzip2 => Self::open_bzip2_permissive(path),
+        use std::io::{Read, Seek};
+
+        let mut file = std::fs::File::open(&path)?;
+        let mut magic = [0u8; 2];
+        let n = file.read(&mut magic)?;
+
+        if n >= 2 {
+            match magic {
+                #[cfg(feature = "gzip")]
+                [0x1f, 0x8b] => {
+                    let _ = file.seek(std::io::SeekFrom::Start(0));
+                    return Self::_open_gzip_file(
+                        file,
+                        true,
+                        crate::io::reader_common::DEFAULT_MAX_DECOMPRESSED_BYTES,
+                    );
+                }
+                #[cfg(feature = "bzip2")]
+                [b'B', b'Z'] => {
+                    let _ = file.seek(std::io::SeekFrom::Start(0));
+                    return Self::_open_bzip2_file(
+                        file,
+                        true,
+                        crate::io::reader_common::DEFAULT_MAX_DECOMPRESSED_BYTES,
+                    );
+                }
+                _ => {}
+            }
         }
+
+        let _ = file.seek(std::io::SeekFrom::Start(0));
+        Self::_open_plain_file(file, true)
     }
 
-    fn _open_plain<P: AsRef<std::path::Path>>(
-        path: P,
+    /// Parse a plain (uncompressed) MRC file from an already-opened file handle.
+    fn _open_plain_file(
+        mut file: std::fs::File,
         permissive: bool,
     ) -> Result<(Self, Vec<String>), Error> {
-        use std::fs::File;
         use std::io::Read;
-
-        let mut file = File::open(path)?;
 
         let mut header_bytes = [0u8; 1024];
         file.read_exact(&mut header_bytes)?;
@@ -167,6 +220,13 @@ impl Reader {
             },
             warnings,
         ))
+    }
+
+    fn _open_plain<P: AsRef<std::path::Path>>(
+        path: P,
+        permissive: bool,
+    ) -> Result<(Self, Vec<String>), Error> {
+        Self::_open_plain_file(std::fs::File::open(path)?, permissive)
     }
 
     /// Volume dimensions of the opened file.

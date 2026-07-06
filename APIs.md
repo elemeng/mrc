@@ -464,7 +464,8 @@ by the unified API:
 - Reading: [`slices_u8`](ReaderMethods::slices_u8) / [`slabs_u8`](ReaderMethods::slabs_u8) /
   [`read_volume_u8`](ReaderMethods::read_volume_u8) unpack nibbles to `u8` (0–15);
   [`convert::<f32>()`](ConvertMethods::convert) / [`convert::<T>()`](ConvertMethods::convert)
-  convert directly to `f32` or any target type via `.slices()` / `.read_volume()`.
+  convert directly to `f32` or any target type via `.slices()` / `.read_volume()` /
+  `.subregion()` — correctly handles multi-slice volumes and sub-block shapes.
 - Writing: [`write_u4_block`](Writer::write_u4_block) packs `u8` values
   two-per-byte.
 

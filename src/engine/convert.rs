@@ -22,12 +22,15 @@ use std::vec::Vec;
 /// the caller has verified `TypeId::of::<S>() == TypeId::of::<T>()` (which
 /// guarantees `S` and `T` are the same type at the monomorphised call site).
 unsafe fn reinterpret_vec<S, T>(v: Vec<S>) -> Vec<T> {
+    debug_assert_eq!(core::mem::size_of::<S>(), core::mem::size_of::<T>());
+    debug_assert_eq!(core::mem::align_of::<S>(), core::mem::align_of::<T>());
     let ptr = v.as_ptr() as *mut T;
     let len = v.len();
     let cap = v.capacity();
     core::mem::forget(v);
     // SAFETY: This function is itself `unsafe`; the caller must uphold the
-    // invariants documented above.
+    // invariants documented above.  The debug_assert_eq! calls above verify
+    // size and alignment parity at runtime in debug builds.
     unsafe { Vec::from_raw_parts(ptr, len, cap) }
 }
 
@@ -422,6 +425,14 @@ pub(crate) fn convert_u16_slice_to_i16(src: &[u16]) -> Vec<i16> {
 /// The source mode is determined at runtime (from the file's header);
 /// the target type `T` is a compile-time generic.
 ///
+/// # Parameters
+/// - `bytes` — raw voxel data bytes for the block
+/// - `mode` — the file's on-disk mode
+/// - `endian` — detected file endianness
+/// - `block_shape` — dimensions `[sx, sy, sz]` of the block.  For Packed4Bit
+///   this is used to compute the nibble-unpack row stride (`sx`) and total
+///   row count (`sy × sz`).  For other modes it is unused.
+///
 /// # Dispatch
 /// 1. **Direct integer shortcut** — when source and target are both narrow
 ///    integers (`i8↔i16`, `i8↔u16`, `i16↔u16`), the conversion skips the
@@ -430,12 +441,14 @@ pub(crate) fn convert_u16_slice_to_i16(src: &[u16]) -> Vec<i16> {
 ///    complex, Packed4Bit) is decoded to `Vec<f32>` first, then converted
 ///    to `T` via [`ConvertFrom<f32>`]. Complex modes use the given
 ///    `complex_strategy` (default: [`Magnitude`](ComplexToRealStrategy::Magnitude)).
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn convert_block<T>(
     bytes: &[u8],
     mode: Mode,
     endian: FileEndian,
     nx: usize,
     ny: usize,
+    block_shape: [usize; 3],
     complex_strategy: ComplexToRealStrategy,
     m0_interp: M0Interpretation,
 ) -> Result<Vec<T>, Error>
@@ -487,7 +500,18 @@ where
     }
 
     // Fall back to f32 hub
+    //
+    // Packed4Bit is handled here (not in convert_block_inner) because the
+    // nibble-unpack step needs the block's actual dimensions (sx, sy × sz),
+    // not the volume's (nx, ny).  Passing volume dims would miscompute the
+    // row stride and row count for sub-block or multi-slice reads.
     let f32_data = match mode {
+        Mode::Packed4Bit => {
+            let sx = block_shape[0];
+            let total_rows = block_shape[1] * block_shape[2];
+            let unpacked = unpack_u4_bytes_to_u8(bytes, sx, total_rows);
+            convert_u8_slice_to_f32(&unpacked)
+        }
         Mode::Float16 => convert_block_float16(bytes, endian)?,
         other => convert_block_inner(bytes, other, endian, nx, ny, complex_strategy, m0_interp)?,
     };
@@ -505,14 +529,17 @@ where
     }
 }
 
-/// Shared handler for the 7 modes that do not depend on the `f16` feature.
+/// Shared handler for the 6 modes that do not depend on the `f16` feature.
 /// Always produces `Vec<f32>` as the intermediate representation.
+///
+/// Packed4Bit is handled in [`convert_block`] instead, because its nibble
+/// unpack needs the block's actual dimensions, not the volume's.
 fn convert_block_inner(
     bytes: &[u8],
     mode: Mode,
     endian: FileEndian,
-    nx: usize,
-    ny: usize,
+    _nx: usize,
+    _ny: usize,
     complex_strategy: ComplexToRealStrategy,
     m0_interp: M0Interpretation,
 ) -> Result<Vec<f32>, Error> {
@@ -543,12 +570,10 @@ fn convert_block_inner(
             let mag: Vec<f32> = src.iter().map(|c| c.to_real(complex_strategy)).collect();
             Ok(mag)
         }
-        Mode::Packed4Bit => {
-            let unpacked = unpack_u4_bytes_to_u8(bytes, nx, ny);
-            Ok(convert_u8_slice_to_f32(&unpacked))
-        }
-        // Float16 handled separately by convert_block_float16
-        Mode::Float16 => unreachable!("Float16 is dispatched via convert_block_float16"),
+            Mode::Packed4Bit => unreachable!(
+                "Packed4Bit is dispatched via convert_block before convert_block_inner"
+            ),
+            Mode::Float16 => unreachable!("Float16 is dispatched via convert_block_float16"),
     }
 }
 

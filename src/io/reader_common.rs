@@ -73,6 +73,7 @@ where
             endian,
             nx,
             ny,
+            shape,
             complex_strategy,
             m0_interp,
         )?;
@@ -188,6 +189,7 @@ where
             self.inner.endian(),
             s.nx,
             s.ny,
+            shape,
             self.complex_strategy,
             self.m0_interp,
         )?;
@@ -744,17 +746,17 @@ impl<R: VoxelSource + ReaderCore> ConvertMethods for R {
 macro_rules! impl_reader_forwarding {
     ($ty:ty) => {
         impl $ty {
-            #[allow(missing_docs)]
+            #[doc = "See [`ReaderMethods::slices`]"]
             #[inline]
             pub fn slices<T: Voxel>(&self) -> RegionIter<'_, T, $ty, SliceStepper> {
                 <Self as ReaderMethods>::slices(self)
             }
-            #[allow(missing_docs)]
+            #[doc = "See [`ReaderMethods::slabs`]"]
             #[inline]
             pub fn slabs<T: Voxel>(&self, k: usize) -> RegionIter<'_, T, $ty, SlabStepper> {
                 <Self as ReaderMethods>::slabs(self, k)
             }
-            #[allow(missing_docs)]
+            #[doc = "See [`ReaderMethods::tiles`]"]
             #[inline]
             pub fn tiles<T: Voxel>(
                 &self,
@@ -762,12 +764,12 @@ macro_rules! impl_reader_forwarding {
             ) -> Result<RegionIter<'_, T, $ty, TileStepper>, Error> {
                 <Self as ReaderMethods>::tiles(self, tile_shape)
             }
-            #[allow(missing_docs)]
+            #[doc = "See [`ReaderMethods::volumes`]"]
             #[inline]
             pub fn volumes<T: Voxel>(&self) -> Result<RegionIter<'_, T, $ty, SlabStepper>, Error> {
                 <Self as ReaderMethods>::volumes(self)
             }
-            #[allow(missing_docs)]
+            #[doc = "See [`ReaderMethods::subregion`]"]
             #[inline]
             pub fn subregion<T: Voxel>(
                 &self,
@@ -776,43 +778,43 @@ macro_rules! impl_reader_forwarding {
             ) -> Result<VoxelBlock<T>, Error> {
                 <Self as ReaderMethods>::subregion(self, offset, shape)
             }
-            #[allow(missing_docs)]
+            #[doc = "See [`ReaderMethods::read_volume`]"]
             #[inline]
             pub fn read_volume<T: Voxel>(&self) -> Result<VoxelBlock<T>, Error> {
                 <Self as ReaderMethods>::read_volume(self)
             }
-            #[allow(missing_docs)]
+            #[doc = "See [`ReaderMethods::to_ndarray`]"]
             #[inline]
             #[cfg(feature = "ndarray")]
             pub fn to_ndarray<T: Voxel>(&self) -> Result<ndarray::Array3<T>, Error> {
                 <Self as ReaderMethods>::to_ndarray(self)
             }
-            #[allow(missing_docs)]
+            #[doc = "See [`ReaderMethods::read_volume_u8`]"]
             #[inline]
             pub fn read_volume_u8(&self) -> Result<VoxelBlock<u8>, Error> {
                 <Self as ReaderMethods>::read_volume_u8(self)
             }
-            #[allow(missing_docs)]
+            #[doc = "See [`ReaderMethods::slices_u8`]"]
             #[inline]
             pub fn slices_u8(&self) -> VoxelIter<'_, u8> {
                 <Self as ReaderMethods>::slices_u8(self)
             }
-            #[allow(missing_docs)]
+            #[doc = "See [`ReaderMethods::slabs_u8`]"]
             #[inline]
             pub fn slabs_u8(&self, k: usize) -> VoxelIter<'_, u8> {
                 <Self as ReaderMethods>::slabs_u8(self, k)
             }
-            #[allow(missing_docs)]
+            #[doc = "See [`ReaderMethods::slices_mode0`]"]
             #[inline]
             pub fn slices_mode0(&self, interp: M0Interpretation) -> VoxelIter<'_, f32> {
                 <Self as ReaderMethods>::slices_mode0(self, interp)
             }
-            #[allow(missing_docs)]
+            #[doc = "See [`ReaderMethods::slabs_mode0`]"]
             #[inline]
             pub fn slabs_mode0(&self, k: usize, interp: M0Interpretation) -> VoxelIter<'_, f32> {
                 <Self as ReaderMethods>::slabs_mode0(self, k, interp)
             }
-            #[allow(missing_docs)]
+            #[doc = "See [`ConvertMethods::convert`]"]
             #[inline]
             pub fn convert<T>(&self) -> ConvertReader<'_, $ty, T>
             where
@@ -823,42 +825,42 @@ macro_rules! impl_reader_forwarding {
 
             // ── Extended header convenience methods (ReaderCore forwarding) ──
 
-            #[allow(missing_docs)]
+            #[doc = "See [`ReaderCore::parse_extended_header`]"]
             #[inline]
             pub fn parse_extended_header(&self) -> crate::ExtHeaderData {
                 <Self as ReaderCore>::parse_extended_header(self)
             }
-            #[allow(missing_docs)]
+            #[doc = "See [`ReaderCore::fei1_metadata`]"]
             #[inline]
             pub fn fei1_metadata(&self) -> Option<Vec<crate::Fei1Metadata>> {
                 <Self as ReaderCore>::fei1_metadata(self)
             }
-            #[allow(missing_docs)]
+            #[doc = "See [`ReaderCore::fei2_metadata`]"]
             #[inline]
             pub fn fei2_metadata(&self) -> Option<Vec<crate::Fei2Metadata>> {
                 <Self as ReaderCore>::fei2_metadata(self)
             }
-            #[allow(missing_docs)]
+            #[doc = "See [`ReaderCore::ccp4_records`]"]
             #[inline]
             pub fn ccp4_records(&self) -> Option<Vec<crate::Ccp4Record>> {
                 <Self as ReaderCore>::ccp4_records(self)
             }
-            #[allow(missing_docs)]
+            #[doc = "See [`ReaderCore::mrco_records`]"]
             #[inline]
             pub fn mrco_records(&self) -> Option<Vec<crate::MrcoRecord>> {
                 <Self as ReaderCore>::mrco_records(self)
             }
-            #[allow(missing_docs)]
+            #[doc = "See [`ReaderCore::seri_records`]"]
             #[inline]
             pub fn seri_records(&self) -> Option<Vec<crate::SeriRecord>> {
                 <Self as ReaderCore>::seri_records(self)
             }
-            #[allow(missing_docs)]
+            #[doc = "See [`ReaderCore::agar_records`]"]
             #[inline]
             pub fn agar_records(&self) -> Option<Vec<crate::AgarRecord>> {
                 <Self as ReaderCore>::agar_records(self)
             }
-            #[allow(missing_docs)]
+            #[doc = "See [`ReaderCore::imod_metadata`]"]
             #[inline]
             pub fn imod_metadata(&self) -> Option<crate::ImodMetadata> {
                 <Self as ReaderCore>::imod_metadata(self)

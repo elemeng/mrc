@@ -56,7 +56,16 @@ impl crate::Reader {
         permissive: bool,
         max_bytes: u64,
     ) -> Result<(Self, Vec<String>), Error> {
-        let file = File::open(path)?;
+        Self::_open_gzip_file(File::open(path)?, permissive, max_bytes)
+    }
+
+    /// Internal: parse from an already-opened file handle (avoids redundant
+    /// `File::open` when the caller has already peeked at magic bytes).
+    pub(crate) fn _open_gzip_file(
+        file: File,
+        permissive: bool,
+        max_bytes: u64,
+    ) -> Result<(Self, Vec<String>), Error> {
         let decoder = flate2::read::GzDecoder::new(file);
         let d = crate::io::reader_common::open_compressed(decoder, permissive, max_bytes)?;
         Ok((
