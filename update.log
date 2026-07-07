@@ -1,5 +1,87 @@
 # Update Log
 
+## 2026-07-07 — v0.3.x → v0.4.1
+
+~3,200 lines changed across ~40 files. This release focuses on API quality, header ergonomics,
+and safety hardening — with the first `serde` support, richer error diagnostics, and systematic
+cleanup of technical debt.
+
+### New Features
+
+- **Optional `serde` support** — `Header`, `Mode`, `VolumeShape`, `ValidationReport` and all
+  public types derive `Serialize`/`Deserialize` when the `serde` feature is enabled
+- **Auto-dispatch extended header parsing** — `reader.parse_extended_header()` checks the
+  4-byte `exttyp` field and routes to the correct parser (FEI1, FEI2, CCP4, MRCO, SERI, AGAR)
+  automatically. Returns `ExtHeaderData` enum for generic code over all format types
+- **Reader convenience methods** — one-call access to every extended header parser:
+  `reader.fei1_metadata()`, `reader.ccp4_records()`, `reader.seri_records()`, etc.
+- **`ExtHeaderType` enum** — identifies the extended header format without parsing data,
+  enabling format-based dispatch in user code
+- **Richer `Header` convenience API** — `header.cell_volume()`, `header.sampling()`,
+  `header.density_stats()`, `header.label_at(i)`, `header.is_standard_map()`,
+  `header.is_image_stack()`, `header.is_single_image()`, `header.nversion()`
+- **Expanded IMOD metadata** — `ImodMetadata` now includes `image_type` (enum:
+  Mono/Tilt/Tilts/Nav), `tilt_increment`, plus IMOD-origin detection in permissive mode
+- **`ValueOutOfRange` error variant** — dedicated error for value-overflow conditions
+  (replaces the previous misuse of `TypeMismatch` for u16→u8 narrowing)
+- **MSRV CI job** — GitHub Actions validates builds against Rust 1.85 (declared MSRV)
+
+### Breaking Changes
+
+- **Removed deprecated `read_block()`** — both `Reader::read_block()` and
+  `MmapReader::read_block()`, deprecated since v0.2.4, have been removed.
+  Use `subregion()` instead (identical behaviour, available on all reader types).
+
+### Safety & Correctness
+
+- **Miri CI** — new GitHub Actions job runs `cargo miri test` on all unsafe code paths
+  (SIMD kernels, mmap ops, `Vec::set_len`, pointer reinterpretation)
+- **`#[must_use]` audit** — all builder methods and key accessors are annotated,
+  preventing silent drops of un-finished writers
+- **Richer error context** — `BoundsError` now carries optional `offset`, `shape`, and
+  `volume` fields; `ModeMismatch` carries optional `offset` — significantly better
+  diagnostics during debugging
+- **`tracing::warn!` replaces `eprintln!`** — library diagnostics go through the
+  `tracing` facade; users control output via their subscriber setup, not stderr
+- **`ValueOutOfRange` added** — prevents overloading `TypeMismatch` for value-overflow
+  errors; now used by `convert_u16_slice_to_u8()`
+
+### Quality & Cleanup
+
+- **Dead code removed** — `RunningStats` (entire struct + impl) moved under `#[cfg(test)]`;
+  it was unused in production since v0.3's stats rewrite
+- **Redundant imports purged** — `use std::vec::Vec` removed from 7 files (Vec is in the
+  prelude since Rust 1.0)
+- **`ok_or` → `ok_or_else`** — eager `bounds_err()` calls replaced with lazy evaluation
+  in checked-arithmetic hot paths
+- **Unreadable literals fixed** — digit separators added to floating-point constants
+  throughout (`1.118034` → `1.118_034`, `300000.0` → `300_000.0`, etc.)
+- **`SliceStepper::new()` removed** — identical to `SliceStepper::default()`, kept only
+  the derived `Default`
+- **`.gitignore` overhaul** — removed stale self-reference, redundant patterns covered
+  by `/target`, fixed `mrc` → `*.mrc` pattern
+- **16 doc warnings fixed** — intra-doc links in `impl_reader_forwarding!` macro now
+  point to public return types instead of `#[doc(hidden)]` trait items
+
+### Linting & Formatting
+
+- **Extended clippy** — added `clippy::cargo` (warn), `missing_docs` (warn), and
+  selective `clippy::pedantic` / `clippy::nursery` lints
+- **`cargo fmt` applied** — 3 formatting drift fixes across `convert.rs`, `simd/mod.rs`,
+  and `reader.rs`
+
+### Testing
+
+- **New unit tests** (9 added) — `VolumeShape::from_header` with negative i32,
+  `contains_block` boundary cases, `checked_linear_index` arithmetic + overflow,
+  `VoxelBlock` shape mismatch, `is_full_volume` detection
+- **New integration tests** (2 added, total 23) — Float16 (Mode 12) roundtrip with
+  direct and `convert::<f32>()` paths; `volumes()` iteration over a volume-stack file
+- 91 unit tests, 23 integration tests, 38 doc-tests — all pass cleanly across debug,
+  release, and --all-features builds
+
+---
+
 ## 2026-07-03 — v0.2.6 → v0.3.0
 
 ~5,500 lines changed across 31 files. This release marks the API maturing past the
@@ -59,6 +141,7 @@ with inherent forwarding.
 91 unit tests, 21 integration tests, 33 doc-tests, clippy — all pass cleanly across
 debug, release, and --all-features builds.
 
+---
 
 ### References
 
