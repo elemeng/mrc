@@ -19,6 +19,36 @@ pub enum CompressionType {
     Bzip2,
 }
 
+/// Peek at a byte slice to determine its compression format.
+///
+/// | Magic bytes | Format |
+/// |-------------|--------|
+/// | `\x1f\x8b` | Gzip |
+/// | `BZ` | Bzip2 |
+/// | anything else | Plain |
+///
+/// Returns [`CompressionType::Plain`] if fewer than 2 bytes are provided.
+#[doc(hidden)]
+pub fn detect_compression_from_bytes(bytes: &[u8]) -> CompressionType {
+    if bytes.len() < 2 {
+        return CompressionType::Plain;
+    }
+
+    let magic = [bytes[0], bytes[1]];
+
+    #[cfg(feature = "gzip")]
+    if magic == [0x1f, 0x8b] {
+        return CompressionType::Gzip;
+    }
+
+    #[cfg(feature = "bzip2")]
+    if magic == [b'B', b'Z'] {
+        return CompressionType::Bzip2;
+    }
+
+    CompressionType::Plain
+}
+
 /// Peek at the first bytes of a file to determine its compression format.
 ///
 /// | Magic bytes | Format |
@@ -33,23 +63,9 @@ pub fn detect_compression<P: AsRef<Path>>(path: P) -> Result<CompressionType, Er
     use std::io::Read;
 
     let mut file = File::open(path)?;
-    let mut magic = [0u8; 2];
-    let n = file.read(&mut magic)?;
-    if n < 2 {
-        return Ok(CompressionType::Plain);
-    }
-
-    #[cfg(feature = "gzip")]
-    if magic == [0x1f, 0x8b] {
-        return Ok(CompressionType::Gzip);
-    }
-
-    #[cfg(feature = "bzip2")]
-    if magic == [b'B', b'Z'] {
-        return Ok(CompressionType::Bzip2);
-    }
-
-    Ok(CompressionType::Plain)
+    let mut buf = [0u8; 2];
+    let n = file.read(&mut buf)?;
+    Ok(detect_compression_from_bytes(&buf[..n]))
 }
 
 #[cfg(test)]
@@ -58,10 +74,16 @@ mod tests {
 
     #[test]
     fn test_detect_compression_plain() {
-        let tmp = tempfile::NamedTempFile::new().unwrap();
-        std::fs::write(tmp.path(), b"MAP ").unwrap();
         assert_eq!(
-            detect_compression(tmp.path()).unwrap(),
+            detect_compression_from_bytes(b"MAP "),
+            CompressionType::Plain
+        );
+        assert_eq!(
+            detect_compression_from_bytes(b""),
+            CompressionType::Plain
+        );
+        assert_eq!(
+            detect_compression_from_bytes(b"\x00\x00"),
             CompressionType::Plain
         );
     }
@@ -69,13 +91,8 @@ mod tests {
     #[test]
     #[cfg(feature = "gzip")]
     fn test_detect_compression_gzip() {
-        use std::io::Write;
-        let tmp = tempfile::NamedTempFile::new().unwrap();
-        let mut file = std::fs::File::create(tmp.path()).unwrap();
-        file.write_all(&[0x1f, 0x8b, 0x08, 0x00]).unwrap();
-        drop(file);
         assert_eq!(
-            detect_compression(tmp.path()).unwrap(),
+            detect_compression_from_bytes(&[0x1f, 0x8b, 0x08, 0x00]),
             CompressionType::Gzip
         );
     }
@@ -83,13 +100,8 @@ mod tests {
     #[test]
     #[cfg(feature = "bzip2")]
     fn test_detect_compression_bzip2() {
-        use std::io::Write;
-        let tmp = tempfile::NamedTempFile::new().unwrap();
-        let mut file = std::fs::File::create(tmp.path()).unwrap();
-        file.write_all(b"BZh").unwrap();
-        drop(file);
         assert_eq!(
-            detect_compression(tmp.path()).unwrap(),
+            detect_compression_from_bytes(b"BZh"),
             CompressionType::Bzip2
         );
     }
