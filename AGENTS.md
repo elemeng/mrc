@@ -328,9 +328,9 @@ where R: ReaderMethods + ConvertMethods + ... { ... }
 
 - Fallible functions return `Result<T, Error>`.
 - `Error` is a central enum using `thiserror` for `#[from]` conversions.
-- Specific error variants: `Io`, `InvalidHeader`, `UnsupportedMode`, `BoundsError`, `TypeMismatch`, `BlockShapeMismatch`, `ModeMismatch`, `InvalidHeaderDetailed`, `StatsMismatch`, `Mmap`, `FileSizeMismatch`, `NotAVolumeStack`.
+- Specific error variants: `Io`, `InvalidHeader`, `UnsupportedMode`, `BoundsError`, `TypeMismatch`, `BlockShapeMismatch`, `ModeMismatch`, `InvalidHeaderDetailed`, `StatsMismatch`, `Mmap`, `FileSizeMismatch`, `NotAVolumeStack`, `ValueOutOfRange`.
 - `HeaderValidationError` provides granular diagnostics for header validation.
-- `ModeMismatch` and `TypeMismatch` errors are preferred over silent data corruption.
+- `ModeMismatch`, `TypeMismatch`, and `ValueOutOfRange` errors are preferred over silent data corruption.
 - Bounds checking on `VoxelBlock` shapes is mandatory.
 
 ### Type Safety

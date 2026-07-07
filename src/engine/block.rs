@@ -4,8 +4,6 @@
 //! [`VoxelBlock`] is the universal container for a contiguous chunk of
 //! voxel data with a known 3D offset and shape.
 
-use std::vec::Vec;
-
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
@@ -110,7 +108,7 @@ impl<T> VoxelBlock<T> {
         let expected = shape[0]
             .checked_mul(shape[1])
             .and_then(|v| v.checked_mul(shape[2]))
-            .ok_or(crate::Error::bounds_err())?;
+            .ok_or_else(crate::Error::bounds_err)?;
         if data.len() != expected {
             return Err(crate::Error::BlockShapeMismatch {
                 expected,
@@ -138,5 +136,90 @@ impl<T> VoxelBlock<T> {
     pub fn is_full_volume(&self, volume_shape: &VolumeShape) -> bool {
         self.offset == [0, 0, 0]
             && self.shape == [volume_shape.nx, volume_shape.ny, volume_shape.nz]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::Header;
+
+    #[test]
+    fn volume_shape_from_header_ok() {
+        let mut h = Header::new();
+        h.nx = 64;
+        h.ny = 128;
+        h.nz = 256;
+        let vs = VolumeShape::from_header(&h).unwrap();
+        assert_eq!(vs.nx, 64);
+        assert_eq!(vs.ny, 128);
+        assert_eq!(vs.nz, 256);
+    }
+
+    #[test]
+    fn volume_shape_from_header_negative_nx() {
+        let mut h = Header::new();
+        h.nx = -1;
+        assert!(VolumeShape::from_header(&h).is_err());
+    }
+
+    #[test]
+    fn volume_shape_from_header_negative_ny() {
+        let mut h = Header::new();
+        h.ny = -100;
+        assert!(VolumeShape::from_header(&h).is_err());
+    }
+
+    #[test]
+    fn volume_shape_from_header_negative_nz() {
+        let mut h = Header::new();
+        h.nz = -1;
+        assert!(VolumeShape::from_header(&h).is_err());
+    }
+
+    #[test]
+    fn volume_shape_empty() {
+        let vs = VolumeShape::new(0, 0, 0);
+        assert!(vs.is_empty());
+    }
+
+    #[test]
+    fn volume_shape_contains_block() {
+        let vs = VolumeShape::new(10, 10, 10);
+        assert!(vs.contains_block([0, 0, 0], [5, 5, 5]));
+        assert!(vs.contains_block([5, 5, 5], [5, 5, 5]));
+        assert!(!vs.contains_block([0, 0, 0], [11, 1, 1]));
+        assert!(!vs.contains_block([0, 0, 0], [1, 11, 1]));
+        assert!(!vs.contains_block([0, 0, 0], [1, 1, 11]));
+    }
+
+    #[test]
+    fn volume_shape_checked_linear_index() {
+        let vs = VolumeShape::new(4, 3, 2);
+        // origin
+        assert_eq!(vs.checked_linear_index([0, 0, 0]), Some(0));
+        // last voxel
+        assert_eq!(vs.checked_linear_index([3, 2, 1]), Some(4 * 3 * 2 - 1));
+        // first row, first slice
+        assert_eq!(vs.checked_linear_index([2, 1, 0]), Some(6));
+        // second slice
+        assert_eq!(vs.checked_linear_index([0, 0, 1]), Some(12));
+        // overflow should return None
+        assert_eq!(vs.checked_linear_index([0, 0, usize::MAX]), None);
+    }
+
+    #[test]
+    fn voxel_block_shape_mismatch() {
+        let err = VoxelBlock::<f32>::new([0, 0, 0], [2, 2, 2], vec![0.0f32; 5]).unwrap_err();
+        assert!(matches!(err, crate::Error::BlockShapeMismatch { .. }));
+    }
+
+    #[test]
+    fn voxel_block_is_full_volume() {
+        let vs = VolumeShape::new(4, 4, 4);
+        let block = VoxelBlock::new([0, 0, 0], [4, 4, 4], vec![0.0f32; 64]).unwrap();
+        assert!(block.is_full_volume(&vs));
+        let offset_block = VoxelBlock::new([1, 0, 0], [3, 4, 4], vec![0.0f32; 48]).unwrap();
+        assert!(!offset_block.is_full_volume(&vs));
     }
 }

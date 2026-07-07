@@ -145,6 +145,18 @@ pub enum Error {
         /// The MZ (sampling along Z) value from the header.
         mz: i32,
     },
+    /// A value exceeds the representable range of the target type.
+    ///
+    /// Raised by [`convert_u16_slice_to_u8`](crate::convert_u16_slice_to_u8)
+    /// when a `u16` value exceeds 255.
+    #[error("Value out of range: {value} exceeds maximum of {max}")]
+    #[cfg_attr(feature = "serde", serde(skip))]
+    ValueOutOfRange {
+        /// The value that exceeded the range.
+        value: u64,
+        /// The maximum allowed value for the target type.
+        max: u64,
+    },
 }
 
 impl Error {

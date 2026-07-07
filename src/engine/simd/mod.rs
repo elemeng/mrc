@@ -20,15 +20,13 @@
 //! SIMD conversions typically achieve 4-8x speedup over scalar implementations
 //! on modern x86_64 and AArch64 processors.
 
-use std::vec::Vec;
-
 #[cfg(target_arch = "x86_64")]
 use std::arch::is_x86_feature_detected;
 
-#[cfg(target_arch = "x86_64")]
-mod x86;
 #[cfg(target_arch = "aarch64")]
 mod aarch64;
+#[cfg(target_arch = "x86_64")]
+mod x86;
 
 /// Convert a slice of i8 values to f32 using SIMD acceleration.
 ///

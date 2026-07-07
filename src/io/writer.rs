@@ -106,7 +106,6 @@ use crate::{Error, Header, Mode};
 
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::PathBuf;
-use std::vec::Vec;
 
 macro_rules! builder_setters {
     () => {
@@ -860,15 +859,15 @@ impl MmapWriter {
         let linear = self
             .shape
             .checked_linear_index(block.offset)
-            .ok_or(Error::bounds_err())?;
+            .ok_or_else(Error::bounds_err)?;
         let base_offset = self
             .data_offset
             .checked_add(
                 linear
                     .checked_mul(self.bytes_per_voxel)
-                    .ok_or(Error::bounds_err())?,
+                    .ok_or_else(Error::bounds_err)?,
             )
-            .ok_or(Error::bounds_err())?;
+            .ok_or_else(Error::bounds_err)?;
         let file_endian = self.header.detect_endian();
 
         // Use a usize representation for the mmap base pointer so that it

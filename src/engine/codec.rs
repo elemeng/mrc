@@ -8,8 +8,6 @@
 use super::endian::FileEndian;
 use crate::mode::{Float32Complex, Int16Complex};
 
-use std::vec::Vec;
-
 // ============================================================================
 // EndianCodec Trait - Bidirectional endian conversion
 // ============================================================================
@@ -66,7 +64,7 @@ impl EndianCodec for i8 {
 
     #[inline]
     fn from_bytes(bytes: &[u8], offset: usize, _endian: FileEndian) -> Self {
-        bytes[offset] as i8
+        bytes[offset] as Self
     }
 
     #[inline]
@@ -249,7 +247,7 @@ impl EndianCodec for crate::f16 {
 ///
 /// # Errors
 /// Returns `Error::TypeMismatch` if `bytes.len()` is not a multiple of `T::BYTE_SIZE`.
-pub(crate) fn decode_slice<T: EndianCodec + Send + Copy>(
+pub fn decode_slice<T: EndianCodec + Send + Copy>(
     bytes: &[u8],
     endian: FileEndian,
 ) -> Result<Vec<T>, crate::Error> {
@@ -314,7 +312,7 @@ pub(crate) fn decode_slice<T: EndianCodec + Send + Copy>(
 ///
 /// # Errors
 /// Returns `Error::TypeMismatch` if `bytes.len()` does not match `values.len() * T::BYTE_SIZE`.
-pub(crate) fn encode_slice<T: EndianCodec + Sync>(
+pub fn encode_slice<T: EndianCodec + Sync>(
     values: &[T],
     bytes: &mut [u8],
     endian: FileEndian,
@@ -474,7 +472,7 @@ fn per_element_encode<T: EndianCodec + Sync>(values: &[T], bytes: &mut [u8], end
 /// allocator reuses the same-sized memory across chunks, so the cost is
 /// negligible compared to the encode work itself.
 #[cfg(feature = "parallel")]
-pub(crate) fn encode_block_parallel<T: EndianCodec + Sync>(
+pub fn encode_block_parallel<T: EndianCodec + Sync>(
     values: &[T],
     chunk_size: usize,
     endian: FileEndian,

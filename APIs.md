@@ -566,7 +566,7 @@ pub struct TileStepper;     // arbitrary 3D tiles
 
 | Stepper | Construct | Behaviour |
 |---|---|---|
-| `SliceStepper` | `SliceStepper::new()` (or default) | Steps `z` from 0..nz, block shape = `[nx, ny, 1]` |
+| `SliceStepper` | `SliceStepper::default()` | Steps `z` from 0..nz, block shape = `[nx, ny, 1]` |
 | `SlabStepper` | `SlabStepper::new(k)` | Steps `k` slices at a time, block shape = `[nx, ny, k]` |
 | `TileStepper` | `TileStepper::new([sx, sy, sz])` | Raster-scans volume in `[sx, sy, sz]` tiles |
 
@@ -679,6 +679,7 @@ impl Fei2Metadata {
 | `UnsupportedMode` | Mode not recognised |
 | `BoundsError { offset?, shape?, volume? }` | Block outside volume bounds (optional context) |
 | `TypeMismatch { expected, actual }` | Byte size mismatch |
+| `ValueOutOfRange { value, max }` | Voxel value exceeds target type range |
 | `BlockShapeMismatch { expected, actual }` | Data length ≠ block volume |
 | `ModeMismatch { file_mode, requested_mode, offset? }` | Requested type ≠ file mode (optional offset) |
 | `InvalidHeaderDetailed(HeaderValidationError)` | Specific validation failure |

@@ -5,12 +5,10 @@
 //! demand, making this ideal for very large files or when only a small subset
 //! of slices needs to be accessed.
 
-use crate::engine::block::{VolumeShape, VoxelBlock};
+use crate::engine::block::VolumeShape;
 use crate::engine::endian::FileEndian;
 use crate::mode::Voxel;
 use crate::{Error, Header, Mode};
-
-use std::vec::Vec;
 
 /// Memory-mapped MRC file reader.
 ///
@@ -353,21 +351,6 @@ impl MmapReader {
                 shape,
             ),
         ))
-    }
-
-    /// Read and decode a block of voxels to the specified type.
-    ///
-    /// Returns an error if `T` does not match the file's voxel mode.
-    ///
-    /// Use [`subregion`](crate::ReaderMethods::subregion) instead — it is
-    /// available on all reader types and behaves identically.
-    #[deprecated(since = "0.2.4", note = "use `subregion` instead")]
-    pub fn read_block<T: Voxel>(
-        &self,
-        offset: [usize; 3],
-        shape: [usize; 3],
-    ) -> Result<VoxelBlock<T>, Error> {
-        self.subregion(offset, shape)
     }
 
     /// Decode a block of voxels to the specified type.

@@ -632,3 +632,104 @@ fn open_permissive_bad_map() {
         warnings
     );
 }
+
+// ── Float16 (Mode 12) roundtrip ───────────────────────────────────────
+
+/// Write Float16 volume, read it back via convert::<f32>() and directly.
+#[test]
+#[cfg(feature = "f16")]
+fn roundtrip_f16() {
+    let f = TempMrc::new("f16");
+    let nx = 8;
+    let ny = 6;
+    let nz = 3;
+    let total = nx * ny * nz;
+
+    let src_f32: Vec<f32> = (0..total).map(|i| i as f32 * 1.25).collect();
+    let src_f16: Vec<half::f16> = src_f32.iter().map(|&v| half::f16::from_f32(v)).collect();
+    {
+        let mut w = create(f.path())
+            .shape([nx, ny, nz])
+            .mode::<half::f16>()
+            .finish()
+            .unwrap();
+        w.write_block(&VoxelBlock::new([0, 0, 0], [nx, ny, nz], src_f16.clone()).unwrap())
+            .unwrap();
+        w.finalize().unwrap();
+    }
+
+    // Read back as f16 directly
+    let r = Reader::open(f.path()).unwrap();
+    let block_f16 = r.read_volume::<half::f16>().unwrap();
+    assert_eq!(block_f16.data, src_f16);
+
+    // Read back via convert::<f32>()
+    let block_f32 = r.convert::<f32>().read_volume().unwrap();
+    assert_eq!(block_f32.shape, [nx, ny, nz]);
+    for (got, expected) in block_f32.data.iter().zip(src_f32.iter()) {
+        let tol = (expected.abs() * 0.001).max(0.001);
+        assert!(
+            (got - expected).abs() <= tol,
+            "f16→f32 mismatch: expected {expected}, got {got}"
+        );
+    }
+}
+
+// ── Volume stack ──────────────────────────────────────────────────────
+
+/// Write a volume-stack file and iterate sub-volumes.
+#[test]
+fn volumes_iterator() {
+    let f = TempMrc::new("volstack");
+    let nx = 4;
+    let ny = 4;
+    let nz = 8;
+    let subvol_slices = 2; // mz
+    let nvol = nz / subvol_slices; // 4 sub-volumes
+
+    let all_data: Vec<f32> = (0..nx * ny * nz).map(|i| i as f32).collect();
+    {
+        let mut w = create(f.path())
+            .shape([nx, ny, nz])
+            .mode::<f32>()
+            .ispg(401) // volume stack space group
+            .finish()
+            .unwrap();
+        w.write_block(&VoxelBlock::new([0, 0, 0], [nx, ny, nz], all_data.clone()).unwrap())
+            .unwrap();
+        w.finalize().unwrap();
+    }
+
+    // Manually set mz in the header (WriterBuilder sets mx=my=mz=nx by default,
+    // but mz should be the sub-volume thickness, not the total Z)
+    {
+        use std::io::{Seek, SeekFrom, Write};
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .open(f.path())
+            .unwrap();
+        // mz is stored as i32 at header offset 36 (OFFSET_MZ)
+        file.seek(SeekFrom::Start(36)).unwrap();
+        file.write_all(&(subvol_slices as i32).to_le_bytes())
+            .unwrap();
+    }
+
+    let r = Reader::open(f.path()).unwrap();
+    assert!(
+        r.header().is_volume_stack(),
+        "file should be a volume stack"
+    );
+    assert_eq!(r.header().mz, subvol_slices as i32, "mz should be patched");
+
+    let mut vol_count = 0;
+    for result in r.volumes::<f32>().unwrap() {
+        let vol = result.unwrap();
+        assert_eq!(vol.shape, [nx, ny, subvol_slices]);
+        // Verify data for this sub-volume
+        let z_start = vol_count * subvol_slices;
+        let expected_slice = &all_data[z_start * nx * ny..(z_start + subvol_slices) * nx * ny];
+        assert_eq!(&vol.data, expected_slice);
+        vol_count += 1;
+    }
+    assert_eq!(vol_count, nvol, "expected {nvol} sub-volumes");
+}

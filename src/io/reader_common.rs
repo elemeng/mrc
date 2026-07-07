@@ -129,7 +129,7 @@ where
     pub fn slices(&self) -> VoxelIter<'_, T> {
         let shape = self.inner.shape();
         Box::new(convert_iter::<_, SliceStepper, T>(
-            RawRegionIter::new(self.inner, shape, SliceStepper::new()),
+            RawRegionIter::new(self.inner, shape, SliceStepper::default()),
             self.inner.mode(),
             self.inner.endian(),
             shape.nx,
@@ -389,7 +389,7 @@ pub trait ReaderMethods: VoxelSource + ReaderCore + Sized {
     /// Each item is a contiguous full-XY slab at one Z position.
     /// See also [`convert`](ConvertMethods::convert) for automatic mode conversion.
     fn slices<T: Voxel>(&self) -> RegionIter<'_, T, Self, SliceStepper> {
-        RegionIter::with_stepper(self, self.shape(), SliceStepper::new())
+        RegionIter::with_stepper(self, self.shape(), SliceStepper::default())
     }
 
     /// Iterate over Z-slabs of `k` slices as [`VoxelBlock`]s.
@@ -825,42 +825,42 @@ macro_rules! impl_reader_forwarding {
 
             // ── Extended header convenience methods (ReaderCore forwarding) ──
 
-            #[doc = "See [`ReaderCore::parse_extended_header`]"]
+            #[doc = "Auto-dispatch extended header parsing. Returns [`crate::ExtHeaderData`]."]
             #[inline]
             pub fn parse_extended_header(&self) -> crate::ExtHeaderData {
                 <Self as ReaderCore>::parse_extended_header(self)
             }
-            #[doc = "See [`ReaderCore::fei1_metadata`]"]
+            #[doc = "Parse FEI1 metadata from the extended header. Returns [`crate::Fei1Metadata`] records."]
             #[inline]
             pub fn fei1_metadata(&self) -> Option<Vec<crate::Fei1Metadata>> {
                 <Self as ReaderCore>::fei1_metadata(self)
             }
-            #[doc = "See [`ReaderCore::fei2_metadata`]"]
+            #[doc = "Parse FEI2 metadata from the extended header. Returns [`crate::Fei2Metadata`] records."]
             #[inline]
             pub fn fei2_metadata(&self) -> Option<Vec<crate::Fei2Metadata>> {
                 <Self as ReaderCore>::fei2_metadata(self)
             }
-            #[doc = "See [`ReaderCore::ccp4_records`]"]
+            #[doc = "Parse CCP4 symmetry records from the extended header. Returns [`crate::Ccp4Record`] entries."]
             #[inline]
             pub fn ccp4_records(&self) -> Option<Vec<crate::Ccp4Record>> {
                 <Self as ReaderCore>::ccp4_records(self)
             }
-            #[doc = "See [`ReaderCore::mrco_records`]"]
+            #[doc = "Parse MRCO legacy records from the extended header. Returns [`crate::MrcoRecord`] entries."]
             #[inline]
             pub fn mrco_records(&self) -> Option<Vec<crate::MrcoRecord>> {
                 <Self as ReaderCore>::mrco_records(self)
             }
-            #[doc = "See [`ReaderCore::seri_records`]"]
+            #[doc = "Parse SerialEM records from the extended header. Returns [`crate::SeriRecord`] entries."]
             #[inline]
             pub fn seri_records(&self) -> Option<Vec<crate::SeriRecord>> {
                 <Self as ReaderCore>::seri_records(self)
             }
-            #[doc = "See [`ReaderCore::agar_records`]"]
+            #[doc = "Parse Agard records from the extended header. Returns [`crate::AgarRecord`] entries."]
             #[inline]
             pub fn agar_records(&self) -> Option<Vec<crate::AgarRecord>> {
                 <Self as ReaderCore>::agar_records(self)
             }
-            #[doc = "See [`ReaderCore::imod_metadata`]"]
+            #[doc = "Parse IMOD metadata from the main header. Returns [`crate::ImodMetadata`]."]
             #[inline]
             pub fn imod_metadata(&self) -> Option<crate::ImodMetadata> {
                 <Self as ReaderCore>::imod_metadata(self)

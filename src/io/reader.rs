@@ -78,10 +78,7 @@ mod tests {
             detect_compression_from_bytes(b"MAP "),
             CompressionType::Plain
         );
-        assert_eq!(
-            detect_compression_from_bytes(b""),
-            CompressionType::Plain
-        );
+        assert_eq!(detect_compression_from_bytes(b""), CompressionType::Plain);
         assert_eq!(
             detect_compression_from_bytes(b"\x00\x00"),
             CompressionType::Plain

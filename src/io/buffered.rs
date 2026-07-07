@@ -12,8 +12,6 @@ use crate::engine::endian::FileEndian;
 use crate::mode::Voxel;
 use crate::{Error, Header, Mode};
 
-use std::vec::Vec;
-
 /// In-memory buffered MRC file reader.
 ///
 /// The entire file is read into memory on open, making this suitable for
@@ -267,21 +265,6 @@ impl Reader {
             offset,
             shape,
         ))
-    }
-
-    /// Read and decode a block of voxels to the specified type.
-    ///
-    /// Returns an error if `T` does not match the file's voxel mode.
-    ///
-    /// Use [`subregion`](crate::ReaderMethods::subregion) instead — it is
-    /// available on all reader types and behaves identically.
-    #[deprecated(since = "0.2.4", note = "use `subregion` instead")]
-    pub fn read_block<T: Voxel>(
-        &self,
-        offset: [usize; 3],
-        shape: [usize; 3],
-    ) -> Result<crate::engine::block::VoxelBlock<T>, Error> {
-        self.subregion(offset, shape)
     }
 
     /// Decode a block of voxels to the specified type.

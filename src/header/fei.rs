@@ -316,13 +316,13 @@ mod tests {
         // bitmask_1 (offset 8, u32, little-endian — special case)
         buf[8..12].copy_from_slice(&42u32.to_le_bytes());
         // timestamp (offset 12, f64, big-endian)
-        buf[12..20].copy_from_slice(&123456.789f64.to_be_bytes());
+        buf[12..20].copy_from_slice(&123_456.789_f64.to_be_bytes());
         // alpha_tilt (offset 100, f64, big-endian)
         buf[100..108].copy_from_slice(&(-35.5f64).to_be_bytes());
         // defocus (offset 220, f64, big-endian)
         buf[220..228].copy_from_slice(&(2.5f64).to_be_bytes());
         // ht (offset 84, f64, big-endian)
-        buf[84..92].copy_from_slice(&300000.0f64.to_be_bytes());
+        buf[84..92].copy_from_slice(&300_000.0_f64.to_be_bytes());
         // dose (offset 92, f64, big-endian)
         buf[92..100].copy_from_slice(&50.0f64.to_be_bytes());
         // pixel_size_x (offset 156, f64, big-endian)

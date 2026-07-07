@@ -38,13 +38,6 @@ pub struct SliceStepper {
     z: usize,
 }
 
-impl SliceStepper {
-    /// Create a new slice stepper that yields one Z-plane per step.
-    pub fn new() -> Self {
-        Self::default()
-    }
-}
-
 impl Stepper for SliceStepper {
     fn next(&mut self, volume_shape: VolumeShape) -> Option<([usize; 3], [usize; 3])> {
         if self.z >= volume_shape.nz {

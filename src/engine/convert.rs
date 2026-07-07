@@ -12,7 +12,6 @@
 
 use crate::Voxel;
 use crate::mode::M0Interpretation;
-use std::vec::Vec;
 
 /// Reinterpret a `Vec<S>` as `Vec<T>` without copying.
 ///
@@ -570,10 +569,10 @@ fn convert_block_inner(
             let mag: Vec<f32> = src.iter().map(|c| c.to_real(complex_strategy)).collect();
             Ok(mag)
         }
-            Mode::Packed4Bit => unreachable!(
-                "Packed4Bit is dispatched via convert_block before convert_block_inner"
-            ),
-            Mode::Float16 => unreachable!("Float16 is dispatched via convert_block_float16"),
+        Mode::Packed4Bit => {
+            unreachable!("Packed4Bit is dispatched via convert_block before convert_block_inner")
+        }
+        Mode::Float16 => unreachable!("Float16 is dispatched via convert_block_float16"),
     }
 }
 
@@ -771,7 +770,7 @@ mod tests {
         assert_eq!(c.to_real(ComplexToRealStrategy::ImaginaryPart), 4.0);
         assert_eq!(c.to_real(ComplexToRealStrategy::Magnitude), 5.0);
         let phase = c.to_real(ComplexToRealStrategy::Phase);
-        assert!((phase - 0.9272952).abs() < 1e-6);
+        assert!((phase - 0.927_295_2).abs() < 1e-6);
     }
 }
 
@@ -794,14 +793,14 @@ pub fn convert_u8_slice_to_u16(src: &[u8]) -> Vec<u16> {
 /// reading a Mode 6 file that was originally created from `u8` data.
 ///
 /// # Errors
-/// Returns [`Error::TypeMismatch`](crate::Error::TypeMismatch) if any value exceeds 255.
+/// Returns [`Error::ValueOutOfRange`](crate::Error::ValueOutOfRange) if any value exceeds 255.
 pub fn convert_u16_slice_to_u8(src: &[u16]) -> Result<Vec<u8>, crate::Error> {
     let mut out = Vec::with_capacity(src.len());
     for &v in src {
         if v > 255 {
-            return Err(crate::Error::TypeMismatch {
-                expected: 1,
-                actual: 2,
+            return Err(crate::Error::ValueOutOfRange {
+                value: v as u64,
+                max: 255,
             });
         }
         out.push(v as u8);
