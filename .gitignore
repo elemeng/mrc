@@ -29,6 +29,6 @@ lcov.info
 
 # Large test data
 mrcs/
-mrc
+*.mrc
 # RTK tool state
 .rtk/
