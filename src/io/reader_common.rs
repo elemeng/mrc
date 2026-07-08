@@ -529,7 +529,6 @@ pub(crate) fn open_compressed<D: std::io::Read>(
     } else {
         Vec::new()
     };
-    let _shape = VolumeShape::new(header.nx as usize, header.ny as usize, header.nz as usize);
 
     if let Some(mode) = Mode::from_i32(header.mode) {
         if mode == Mode::Int8 {

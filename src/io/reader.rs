@@ -640,7 +640,6 @@ impl Reader {
                 let [nx, ny, _nz] = [self.shape.nx, self.shape.ny, self.shape.nz];
                 let [ox, oy, oz] = offset;
                 let [sx, sy, sz] = shape;
-                let _b = self.mode().byte_size();
                 let data_len = map.len().saturating_sub(*data_offset);
                 crate::io::reader_common::validate_block_bounds(
                     self.shape,
@@ -655,8 +654,8 @@ impl Reader {
                         let row_bytes = nx.div_ceil(2);
                         (data_offset + oz * ny * row_bytes, row_bytes * ny * sz)
                     } else {
-                        let b = self.mode.byte_size();
                         let linear = oz * nx * ny;
+                        let b = self.mode.byte_size();
                         (data_offset + linear * b, sx * sy * sz * b)
                     };
                     return Ok(Cow::Borrowed(&map[start_offset..start_offset + byte_len]));
