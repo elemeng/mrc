@@ -1477,6 +1477,17 @@ impl HeaderBuilder {
         self
     }
 
+    /// Configure as a volume stack with the given sub-volume thickness.
+    ///
+    /// Shorthand for calling [`ispg(401)`](Self::ispg) and setting
+    /// `mz` to the given value.  `nz` must be divisible by `mz` for
+    /// the header to validate.
+    #[must_use]
+    pub fn set_volume_stack(mut self, mz: i32) -> Self {
+        self.header.set_volume_stack(mz);
+        self
+    }
+
     /// Set the extended header type (4-byte ASCII identifier).
     #[must_use]
     pub fn exttyp(mut self, exttyp: [u8; 4]) -> Self {

@@ -167,7 +167,7 @@ fn reader_from_bytes_permissive() {
     // Truncate data — keep header + extended header, cut 100 bytes of voxel data
     let data_offset = 1024; // no extended header for this file
     bytes.truncate(data_offset + (16 * 4 / 2)); // keep header + half the data
-    let (r, warnings) = Reader::from_bytes_permissive(bytes).unwrap();
+    let (r, _warnings) = Reader::from_bytes_permissive(bytes).unwrap();
     assert!(r.is_truncated());
     // Warnings may be empty if header itself validated OK
     // but the truncated data should be detectable
@@ -811,3 +811,88 @@ fn decompression_bomb_limit() {
         Ok(_) => panic!("expected error for tiny limit"),
     }
 }
+
+// ── 13. Volume stack convenience ─────────────────────────────────────────────
+
+#[test]
+fn writer_set_volume_stack() {
+    let f = TempMrc::new("set_volstack");
+    let nx = 4; let ny = 4; let nz = 8; let subvol = 2;
+    let total = nx * ny * nz;
+    let data: Vec<f32> = (0..total).map(|i| i as f32).collect();
+    {
+        let mut w = create(f.path())
+            .shape([nx, ny, nz])
+            .mode::<f32>()
+            .set_volume_stack(subvol)
+            .finish().unwrap();
+        w.write_block(&VoxelBlock::new([0, 0, 0], [nx, ny, nz], data.clone()).unwrap()).unwrap();
+        w.finalize().unwrap();
+    }
+    let r = Reader::open(f.path()).unwrap();
+    assert!(r.header().is_volume_stack());
+    assert_eq!(r.header().mz, subvol as i32);
+    let nvol = nz / subvol as usize;
+    let count = r.volumes::<f32>().unwrap().count();
+    assert_eq!(count, nvol);
+}
+
+// ── 14. Writer::from_writer_mmap / _gzip / _bzip2 ────────────────────────────
+
+#[test]
+fn writer_from_writer_mmap() {
+    #[cfg(feature = "mmap")]
+    {
+        let f = TempMrc::new("from_writer_mmap");
+        let mut h = Header::new();
+        h.nx = 4; h.ny = 4; h.nz = 1;
+        h.mx = 4; h.my = 4; h.mz = 1;
+        h.mode = 2;
+        h.nlabl = 0;
+        let mut w = Writer::from_writer_mmap(f.path(), h, &[]).unwrap();
+        let data = vec![42.0f32; 16];
+        w.write_block(&VoxelBlock::new([0, 0, 0], [4, 4, 1], data.clone()).unwrap()).unwrap();
+        w.finalize().unwrap();
+        let r = Reader::open(f.path()).unwrap();
+        assert_eq!(r.read_volume::<f32>().unwrap().data, data);
+    }
+}
+
+#[test]
+fn writer_from_writer_gzip() {
+    #[cfg(feature = "gzip")]
+    {
+        let f = TempMrc::new("from_writer_gzip");
+        let mut h = Header::new();
+        h.nx = 4; h.ny = 4; h.nz = 1;
+        h.mx = 4; h.my = 4; h.mz = 1;
+        h.mode = 2;
+        h.nlabl = 0;
+        let mut w = Writer::from_writer_gzip(f.path(), h, &[], Compression::Balanced).unwrap();
+        let data = vec![1.0f32; 16];
+        w.write_block(&VoxelBlock::new([0, 0, 0], [4, 4, 1], data.clone()).unwrap()).unwrap();
+        w.finalize().unwrap();
+        let r = Reader::open(f.path()).unwrap();
+        assert_eq!(r.read_volume::<f32>().unwrap().data, data);
+    }
+}
+
+#[test]
+fn writer_from_writer_bzip2() {
+    #[cfg(feature = "bzip2")]
+    {
+        let f = TempMrc::new("from_writer_bzip2");
+        let mut h = Header::new();
+        h.nx = 4; h.ny = 4; h.nz = 1;
+        h.mx = 4; h.my = 4; h.mz = 1;
+        h.mode = 2;
+        h.nlabl = 0;
+        let mut w = Writer::from_writer_bzip2(f.path(), h, &[], Compression::Fast).unwrap();
+        let data = vec![2.0f32; 16];
+        w.write_block(&VoxelBlock::new([0, 0, 0], [4, 4, 1], data.clone()).unwrap()).unwrap();
+        w.finalize().unwrap();
+        let r = Reader::open(f.path()).unwrap();
+        assert_eq!(r.read_volume::<f32>().unwrap().data, data);
+    }
+}
+

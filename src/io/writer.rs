@@ -218,6 +218,20 @@ macro_rules! builder_setters {
             self
         }
 
+        /// Configure as a volume stack with the given sub-volume thickness.
+        ///
+        /// Shorthand for calling [`ispg(401)`](Self::ispg) and
+        /// [`sampling([nx, ny, mz])`](Self::sampling).  `nz` must be divisible
+        /// by `mz` for the header to validate.
+        ///
+        /// Call **after** [`shape`](Self::shape) so that `nx` and `ny` are
+        /// already set and only `mz` is overridden.
+        #[must_use]
+        pub fn set_volume_stack(mut self, mz: i32) -> Self {
+            self.header.set_volume_stack(mz);
+            self
+        }
+
         /// Set the extended header type (4-byte ASCII identifier).
         #[must_use]
         pub fn exttyp(mut self, exttyp: [u8; 4]) -> Self {
@@ -483,6 +497,52 @@ impl Writer {
     ) -> Result<Self, Error> {
         // New files are always little-endian per crate policy
         Self::_create(Box::new(writer), header, ext_header)
+    }
+
+    /// Create a memory-mapped writer from a [`Header`] directly.
+    ///
+    /// Like [`from_writer`](Self::from_writer) but uses a memory-mapped file
+    /// instead of a file handle. Requires the `mmap` feature.
+    ///
+    /// The file is truncated to the exact size needed for the header, extended
+    /// header, and voxel data.
+    #[cfg(feature = "mmap")]
+    pub fn from_writer_mmap<P: AsRef<std::path::Path>>(
+        path: P,
+        header: Header,
+        ext_header: &[u8],
+    ) -> Result<Self, Error> {
+        Self::create_mmap(path, header, ext_header)
+    }
+
+    /// Create a gzip-compressed writer from a [`Header`] directly.
+    ///
+    /// Like [`from_writer`](Self::from_writer) but buffers the entire file in
+    /// memory and gzip-compresses it on [`finalize`](Self::finalize).
+    /// Requires the `gzip` feature.
+    #[cfg(feature = "gzip")]
+    pub fn from_writer_gzip<P: AsRef<std::path::Path>>(
+        path: P,
+        header: Header,
+        ext_header: &[u8],
+        compression: Compression,
+    ) -> Result<Self, Error> {
+        Self::create_compressed(path, header, ext_header, compression, true)
+    }
+
+    /// Create a bzip2-compressed writer from a [`Header`] directly.
+    ///
+    /// Like [`from_writer`](Self::from_writer) but buffers the entire file in
+    /// memory and bzip2-compresses it on [`finalize`](Self::finalize).
+    /// Requires the `bzip2` feature.
+    #[cfg(feature = "bzip2")]
+    pub fn from_writer_bzip2<P: AsRef<std::path::Path>>(
+        path: P,
+        header: Header,
+        ext_header: &[u8],
+        compression: Compression,
+    ) -> Result<Self, Error> {
+        Self::create_compressed(path, header, ext_header, compression, false)
     }
 
     pub(crate) fn create<P: AsRef<std::path::Path>>(
