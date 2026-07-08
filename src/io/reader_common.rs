@@ -1287,10 +1287,10 @@ pub(crate) fn open_compressed<D: std::io::Read>(
     permissive: bool,
     max_bytes: u64,
 ) -> Result<DecompressedMrc, crate::Error> {
-    // Read up to max_bytes + 1 so we can detect truncation by the cap.
-    // If the stream exceeds max_bytes we return an error immediately,
-    // before the header is ever inspected.
-    let limit = max_bytes + 1;
+    // Read up to (max_bytes + 1) so we can detect truncation by the cap.
+    // Uses saturating_add to avoid overflow when max_bytes = u64::MAX
+    // (which disables the cap — see Reader::open_gzip_with_limit docs).
+    let limit = max_bytes.saturating_add(1);
     let mut buf = Vec::with_capacity(limit.min(1024 * 1024) as usize);
     decoder.by_ref().take(limit).read_to_end(&mut buf)?;
 
