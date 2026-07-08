@@ -267,12 +267,7 @@ impl Reader {
             }
         }
 
-        Ok(Self::_build(
-            header,
-            ext_header,
-            DataSource::Buffered(data),
-            warnings,
-        ))
+        Self::_build(header, ext_header, DataSource::Buffered(data), warnings)
     }
 
     fn _read_from_buf(data: Vec<u8>, permissive: bool) -> Result<(Self, Vec<String>), Error> {
@@ -307,12 +302,12 @@ impl Reader {
             });
         }
 
-        Ok(Self::_build(
+        Self::_build(
             header,
             ext_header,
             DataSource::Buffered(voxel_data),
             warnings,
-        ))
+        )
     }
 
     #[cfg(feature = "mmap")]
@@ -362,7 +357,7 @@ impl Reader {
         };
 
         // IMOD detection is done in _build; warnings passed through
-        Ok(Self::_build(
+        Self::_build(
             header,
             Vec::new(), // ext_header read from mmap on demand
             DataSource::Mmap {
@@ -371,7 +366,7 @@ impl Reader {
                 truncated,
             },
             warnings,
-        ))
+        )
     }
 
     /// Common path: build a Reader from parsed header + data source.
@@ -380,9 +375,9 @@ impl Reader {
         ext_header: Vec<u8>,
         source: DataSource,
         warnings: Vec<String>,
-    ) -> (Self, Vec<String>) {
+    ) -> Result<(Self, Vec<String>), Error> {
         let shape = VolumeShape::new(header.nx as usize, header.ny as usize, header.nz as usize);
-        let mode = Mode::from_i32(header.mode).unwrap_or(Mode::Float32);
+        let mode = Mode::from_i32(header.mode).ok_or(Error::UnsupportedMode)?;
         let endian = header.detect_endian();
 
         let mut warnings = warnings;
@@ -398,7 +393,7 @@ impl Reader {
             }
         }
 
-        (
+        Ok((
             Self {
                 header,
                 ext_header,
@@ -408,13 +403,13 @@ impl Reader {
                 source,
             },
             warnings,
-        )
+        ))
     }
 
     /// Construct a Reader from a decompressed MRC (used by gzip/bzip2 readers).
     pub(crate) fn _from_decompressed(
         d: crate::io::reader_common::DecompressedMrc,
-    ) -> (Self, Vec<String>) {
+    ) -> Result<(Self, Vec<String>), Error> {
         Self::_build(
             d.header,
             d.ext_header,

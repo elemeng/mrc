@@ -68,7 +68,7 @@ impl crate::Reader {
     ) -> Result<(Self, Vec<String>), Error> {
         let decoder = bzip2::read::BzDecoder::new(file);
         let d = crate::io::reader_common::open_compressed(decoder, permissive, max_bytes)?;
-        Ok(Self::_from_decompressed(d))
+        Self::_from_decompressed(d)
     }
 }
 
