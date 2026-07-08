@@ -34,6 +34,15 @@ use serde::{Deserialize, Serialize};
 // ============================================================================
 
 /// Severity of a validation issue.
+///
+/// # Example
+///
+/// ```rust
+/// use mrc::validate::Severity;
+///
+/// let s = Severity::Error;
+/// assert!(matches!(s, Severity::Error));
+/// ```
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Severity {
@@ -46,6 +55,19 @@ pub enum Severity {
 }
 
 /// A single validation issue found during file inspection.
+///
+/// # Example
+///
+/// ```rust
+/// use mrc::validate::{Severity, ValidationIssue};
+///
+/// let issue = ValidationIssue {
+///     severity: Severity::Warning,
+///     category: "Header",
+///     message: "Non-standard MACHST stamp".into(),
+/// };
+/// assert_eq!(issue.severity, Severity::Warning);
+/// ```
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone)]
 pub struct ValidationIssue {
@@ -90,6 +112,21 @@ impl ValidationIssue {
 ///
 /// Returned by [`validate_full`].  The file passes validation when
 /// no [`Severity::Error`] issues are present.
+///
+/// # Example
+///
+/// ```rust
+/// use mrc::validate::{ValidationReport, Severity, ValidationIssue};
+///
+/// let report = ValidationReport {
+///     path: "test.mrc".into(),
+///     compression: "plain".into(),
+///     nx: 10, ny: 10, nz: 10,
+///     mode: 2,
+///     issues: vec![],
+/// };
+/// assert!(report.is_valid());
+/// ```
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone)]
 pub struct ValidationReport {
@@ -111,11 +148,48 @@ pub struct ValidationReport {
 
 impl ValidationReport {
     /// `true` when no error-severity issues were found.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use mrc::validate::{ValidationReport, Severity, ValidationIssue};
+    ///
+    /// let report = ValidationReport {
+    ///     path: "test.mrc".into(),
+    ///     compression: "plain".into(),
+    ///     nx: 10, ny: 10, nz: 10, mode: 2,
+    ///     issues: vec![ValidationIssue {
+    ///         severity: Severity::Error,
+    ///         category: "Header",
+    ///         message: "bad header".into(),
+    ///     }],
+    /// };
+    /// assert!(!report.is_valid());
+    /// ```
     pub fn is_valid(&self) -> bool {
         !self.issues.iter().any(|i| i.severity == Severity::Error)
     }
 
     /// All issues at a given severity level.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use mrc::validate::{ValidationReport, Severity, ValidationIssue};
+    ///
+    /// let report = ValidationReport {
+    ///     path: "test.mrc".into(),
+    ///     compression: "plain".into(),
+    ///     nx: 10, ny: 10, nz: 10, mode: 2,
+    ///     issues: vec![ValidationIssue {
+    ///         severity: Severity::Warning,
+    ///         category: "Endianness",
+    ///         message: "Non-native byte order".into(),
+    ///     }],
+    /// };
+    /// let warnings: Vec<_> = report.by_severity(Severity::Warning).collect();
+    /// assert_eq!(warnings.len(), 1);
+    /// ```
     pub fn by_severity(&self, severity: Severity) -> impl Iterator<Item = &ValidationIssue> {
         self.issues.iter().filter(move |i| i.severity == severity)
     }
@@ -136,6 +210,20 @@ impl ValidationReport {
 ///
 /// # Errors
 /// Returns `Err` only when reading or computing statistics fails.
+///
+/// # Example
+///
+/// ```no_run
+/// use mrc::Reader;
+/// use mrc::validate::validate_reader;
+///
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// let reader = Reader::open("protein.mrc")?;
+/// let report = validate_reader(&reader, "protein.mrc", "plain", &[])?;
+/// println!("Is valid: {}", report.is_valid());
+/// # Ok(())
+/// # }
+/// ```
 pub fn validate_reader(
     reader: &Reader,
     path: &str,
@@ -415,6 +503,20 @@ pub fn validate_reader(
 ///
 /// # Errors
 /// Returns `Err` only when the file cannot be opened or read at all.
+///
+/// # Example
+///
+/// ```no_run
+/// use mrc::validate::validate_full;
+///
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// let report = validate_full("protein.mrc", false)?;
+/// if report.is_valid() {
+///     println!("File is valid");
+/// }
+/// # Ok(())
+/// # }
+/// ```
 pub fn validate_full<P: AsRef<Path>>(path: P, permissive: bool) -> Result<ValidationReport, Error> {
     let path_str = path.as_ref().to_string_lossy().into_owned();
 

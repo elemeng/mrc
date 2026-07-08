@@ -8,6 +8,14 @@
 use serde::{Deserialize, Serialize};
 
 /// Volume geometry in voxels.
+///
+/// # Examples
+///
+/// ```rust
+/// use mrc::VolumeShape;
+/// let shape = VolumeShape::new(64, 64, 64);
+/// assert_eq!(shape.total_voxels(), Some(262_144));
+/// ```
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct VolumeShape {
@@ -21,6 +29,16 @@ pub struct VolumeShape {
 
 impl VolumeShape {
     /// Create a new volume shape.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use mrc::VolumeShape;
+    /// let shape = VolumeShape::new(10, 20, 30);
+    /// assert_eq!(shape.nx, 10);
+    /// assert_eq!(shape.ny, 20);
+    /// assert_eq!(shape.nz, 30);
+    /// ```
     #[must_use]
     pub const fn new(nx: usize, ny: usize, nz: usize) -> Self {
         Self { nx, ny, nz }
@@ -30,6 +48,19 @@ impl VolumeShape {
     ///
     /// Maps from the header's `nx`, `ny`, `nz` fields (stored as `i32`).
     /// Returns `Err(Error::bounds_err())` if any dimension is negative.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use mrc::VolumeShape;
+    /// use mrc::Header;
+    /// let mut header = Header::new();
+    /// header.nx = 64;
+    /// header.ny = 128;
+    /// header.nz = 256;
+    /// let shape = VolumeShape::from_header(&header).unwrap();
+    /// assert_eq!(shape.total_voxels(), Some(64 * 128 * 256));
+    /// ```
     pub fn from_header(header: &crate::Header) -> Result<Self, crate::Error> {
         Ok(Self {
             nx: usize::try_from(header.nx).map_err(|_| crate::Error::bounds_err())?,
@@ -39,17 +70,46 @@ impl VolumeShape {
     }
 
     /// Total number of voxels, or `None` if the calculation overflows.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use mrc::VolumeShape;
+    /// let shape = VolumeShape::new(4, 5, 6);
+    /// assert_eq!(shape.total_voxels(), Some(120));
+    /// let empty = VolumeShape::new(4, 5, 0);
+    /// assert_eq!(empty.total_voxels(), Some(0));
+    /// ```
     pub fn total_voxels(&self) -> Option<usize> {
         self.nx.checked_mul(self.ny)?.checked_mul(self.nz)
     }
 
     /// Returns `true` if any dimension is zero.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use mrc::VolumeShape;
+    /// let shape = VolumeShape::new(10, 10, 10);
+    /// assert!(!shape.is_empty());
+    /// let empty = VolumeShape::new(0, 10, 10);
+    /// assert!(empty.is_empty());
+    /// ```
     pub const fn is_empty(&self) -> bool {
         self.nx == 0 || self.ny == 0 || self.nz == 0
     }
 
     /// Check if a block with given offset and shape fits within this volume.
     /// Returns true if the block is completely within bounds.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use mrc::VolumeShape;
+    /// let shape = VolumeShape::new(10, 10, 10);
+    /// assert!(shape.contains_block([0, 0, 0], [5, 5, 5]));
+    /// assert!(!shape.contains_block([5, 5, 5], [6, 5, 5]));
+    /// ```
     pub fn contains_block(&self, offset: [usize; 3], shape: [usize; 3]) -> bool {
         let [ox, oy, oz] = offset;
         let [sx, sy, sz] = shape;
@@ -60,6 +120,16 @@ impl VolumeShape {
 
     /// Compute the linear voxel index for a given 3D offset.
     /// Returns `None` if the calculation overflows `usize`.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use mrc::VolumeShape;
+    /// let shape = VolumeShape::new(4, 3, 2);
+    /// assert_eq!(shape.checked_linear_index([0, 0, 0]), Some(0));
+    /// assert_eq!(shape.checked_linear_index([3, 2, 1]), Some(23));
+    /// assert_eq!(shape.checked_linear_index([0, 0, usize::MAX]), None);
+    /// ```
     pub fn checked_linear_index(&self, offset: [usize; 3]) -> Option<usize> {
         let [ox, oy, oz] = offset;
         ox.checked_add(
@@ -73,6 +143,14 @@ impl VolumeShape {
 ///
 /// Created by [`VoxelBlock::new`] or returned by reader methods such as
 /// [`crate::Reader::slices`] and [`crate::Reader::subregion`].
+///
+/// # Examples
+///
+/// ```rust
+/// use mrc::{VoxelBlock, VolumeShape};
+/// let block = VoxelBlock::new([0, 0, 0], [2, 2, 2], vec![0u8; 8]).unwrap();
+/// assert_eq!(block.len(), 8);
+/// ```
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone)]
 pub struct VoxelBlock<T> {
@@ -90,6 +168,14 @@ impl<T> VoxelBlock<T> {
     /// # Errors
     /// Returns [`crate::Error::BoundsError`] if `shape` dimensions overflow `usize`.
     /// Returns [`crate::Error::BlockShapeMismatch`] if `data.len()` does not match `shape`.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use mrc::VoxelBlock;
+    /// let block = VoxelBlock::new([1, 2, 3], [4, 4, 4], vec![0i16; 64]).unwrap();
+    /// assert_eq!(block.offset, [1, 2, 3]);
+    /// ```
     pub fn new(offset: [usize; 3], shape: [usize; 3], data: Vec<T>) -> Result<Self, crate::Error> {
         Self::try_new(offset, shape, data)
     }
@@ -100,6 +186,15 @@ impl<T> VoxelBlock<T> {
     /// # Errors
     /// Returns [`crate::Error::BoundsError`] if `shape` dimensions overflow `usize`.
     /// Returns [`crate::Error::BlockShapeMismatch`] if `data.len()` does not match `shape`.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use mrc::VoxelBlock;
+    /// let block = VoxelBlock::try_new([0, 0, 0], [2, 2, 2], vec![1.0f32; 8]).unwrap();
+    /// assert_eq!(block.len(), 8);
+    /// assert!(VoxelBlock::<f32>::try_new([0, 0, 0], [2, 2, 2], vec![1.0f32; 7]).is_err());
+    /// ```
     pub fn try_new(
         offset: [usize; 3],
         shape: [usize; 3],
@@ -123,16 +218,45 @@ impl<T> VoxelBlock<T> {
     }
 
     /// Number of voxel values in this block.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use mrc::VoxelBlock;
+    /// let block = VoxelBlock::new([0, 0, 0], [3, 3, 3], vec![0u16; 27]).unwrap();
+    /// assert_eq!(block.len(), 27);
+    /// ```
     pub fn len(&self) -> usize {
         self.data.len()
     }
 
     /// Returns `true` if this block contains no voxels.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use mrc::VoxelBlock;
+    /// let block = VoxelBlock::new([0, 0, 0], [1, 1, 1], vec![0u8; 1]).unwrap();
+    /// assert!(!block.is_empty());
+    /// let empty = VoxelBlock::<u8>::new([0, 0, 0], [0, 0, 0], vec![]).unwrap();
+    /// assert!(empty.is_empty());
+    /// ```
     pub fn is_empty(&self) -> bool {
         self.data.is_empty()
     }
 
     /// Returns `true` if this block covers the entire volume starting at the origin.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use mrc::{VoxelBlock, VolumeShape};
+    /// let vol = VolumeShape::new(4, 4, 4);
+    /// let full = VoxelBlock::new([0, 0, 0], [4, 4, 4], vec![0u8; 64]).unwrap();
+    /// assert!(full.is_full_volume(&vol));
+    /// let partial = VoxelBlock::new([1, 0, 0], [3, 4, 4], vec![0u8; 48]).unwrap();
+    /// assert!(!partial.is_full_volume(&vol));
+    /// ```
     pub fn is_full_volume(&self, volume_shape: &VolumeShape) -> bool {
         self.offset == [0, 0, 0]
             && self.shape == [volume_shape.nx, volume_shape.ny, volume_shape.nz]

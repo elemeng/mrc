@@ -9,6 +9,15 @@
 use serde::{Deserialize, Serialize};
 
 /// Strategy for converting complex numbers to real values.
+///
+/// # Example
+///
+/// ```rust
+/// use mrc::ComplexToRealStrategy;
+///
+/// let s = ComplexToRealStrategy::Magnitude;
+/// assert!(matches!(s, ComplexToRealStrategy::Magnitude));
+/// ```
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
@@ -28,6 +37,15 @@ pub enum ComplexToRealStrategy {
 /// Some MRC files store unsigned 8-bit data under Mode 0 (which normally
 /// represents `i8`). Use this enum to select the correct interpretation
 /// when reading such files.
+///
+/// # Example
+///
+/// ```rust
+/// use mrc::M0Interpretation;
+///
+/// let interp = M0Interpretation::Unsigned;
+/// assert!(matches!(interp, M0Interpretation::Unsigned));
+/// ```
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
@@ -39,6 +57,17 @@ pub enum M0Interpretation {
 }
 
 /// MRC data mode defining the on-disk representation of voxel values.
+///
+/// # Example
+///
+/// ```rust
+/// use mrc::Mode;
+///
+/// let mode = Mode::Float32;
+/// assert_eq!(mode.byte_size(), 4);
+/// assert!(mode.is_float());
+/// assert!(!mode.is_integer());
+/// ```
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
@@ -78,6 +107,15 @@ pub enum Mode {
 
 impl Mode {
     /// Return the MRC mode constant as an `i32` value.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use mrc::Mode;
+    ///
+    /// assert_eq!(Mode::Int8.as_i32(), 0);
+    /// assert_eq!(Mode::Float32.as_i32(), 2);
+    /// ```
     #[inline]
     pub const fn as_i32(self) -> i32 {
         self as i32
@@ -86,6 +124,15 @@ impl Mode {
     /// Convert an MRC mode integer to a [`Mode`] enum value.
     ///
     /// Returns `None` for unrecognized mode values.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use mrc::Mode;
+    ///
+    /// assert_eq!(Mode::from_i32(2), Some(Mode::Float32));
+    /// assert_eq!(Mode::from_i32(99), None);
+    /// ```
     #[inline]
     pub fn from_i32(mode: i32) -> Option<Self> {
         match mode {
@@ -105,6 +152,15 @@ impl Mode {
     ///
     /// For [`Packed4Bit`](Mode::Packed4Bit) this returns `1` (two voxels per byte);
     /// use [`byte_size_for_count`](Mode::byte_size_for_count) for per-voxel sizing.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use mrc::Mode;
+    ///
+    /// assert_eq!(Mode::Int16.byte_size(), 2);
+    /// assert_eq!(Mode::Float32Complex.byte_size(), 8);
+    /// ```
     #[inline]
     pub fn byte_size(&self) -> usize {
         match self {
@@ -120,12 +176,30 @@ impl Mode {
     }
 
     /// Returns `true` if this mode stores complex numbers (real + imaginary components).
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use mrc::Mode;
+    ///
+    /// assert!(Mode::Int16Complex.is_complex());
+    /// assert!(!Mode::Float32.is_complex());
+    /// ```
     #[inline]
     pub fn is_complex(&self) -> bool {
         matches!(self, Self::Int16Complex | Self::Float32Complex)
     }
 
     /// Returns `true` if this mode stores integer-valued data (including complex integers).
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use mrc::Mode;
+    ///
+    /// assert!(Mode::Uint16.is_integer());
+    /// assert!(!Mode::Float32.is_integer());
+    /// ```
     #[inline]
     pub fn is_integer(&self) -> bool {
         matches!(
@@ -135,6 +209,15 @@ impl Mode {
     }
 
     /// Returns `true` if this mode stores floating-point data (including complex float).
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use mrc::Mode;
+    ///
+    /// assert!(Mode::Float16.is_float());
+    /// assert!(!Mode::Int8.is_float());
+    /// ```
     #[inline]
     pub fn is_float(&self) -> bool {
         matches!(self, Self::Float32 | Self::Float32Complex | Self::Float16)
@@ -144,6 +227,15 @@ impl Mode {
     ///
     /// For most modes this is `n * byte_size()`, but `Packed4Bit`
     /// stores two voxels per byte so the result is `n.div_ceil(2)`.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use mrc::Mode;
+    ///
+    /// assert_eq!(Mode::Int16.byte_size_for_count(3), 6);
+    /// assert_eq!(Mode::Packed4Bit.byte_size_for_count(3), 2);
+    /// ```
     #[inline]
     pub fn byte_size_for_count(&self, n: usize) -> usize {
         match self {
@@ -169,6 +261,15 @@ pub struct Int16Complex {
 
 impl Int16Complex {
     /// Convert this complex number to a real value using the given strategy.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use mrc::{Int16Complex, ComplexToRealStrategy};
+    ///
+    /// let c = Int16Complex { real: 3, imag: 4 };
+    /// assert_eq!(c.to_real(ComplexToRealStrategy::RealPart), 3.0);
+    /// ```
     #[inline]
     pub fn to_real(&self, strategy: ComplexToRealStrategy) -> f32 {
         match strategy {
@@ -200,6 +301,16 @@ pub struct Float32Complex {
 
 impl Float32Complex {
     /// Convert this complex number to a real value using the given strategy.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use mrc::{Float32Complex, ComplexToRealStrategy};
+    ///
+    /// let c = Float32Complex { real: 3.0, imag: 4.0 };
+    /// let mag = c.to_real(ComplexToRealStrategy::Magnitude);
+    /// assert!((mag - 5.0).abs() < 1e-6);
+    /// ```
     #[inline]
     pub fn to_real(&self, strategy: ComplexToRealStrategy) -> f32 {
         match strategy {

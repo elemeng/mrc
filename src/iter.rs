@@ -29,6 +29,14 @@ pub trait Stepper {
 }
 
 /// Step one Z-plane at a time (`[nx, ny, 1]`).
+///
+/// # Examples
+///
+/// ```rust
+/// use mrc::SliceStepper;
+/// let stepper = SliceStepper::default();
+/// assert_eq!(format!("{:?}", stepper), "SliceStepper { z: 0 }");
+/// ```
 #[derive(Debug, Clone, Copy, Default)]
 pub struct SliceStepper {
     z: usize,
@@ -46,6 +54,14 @@ impl Stepper for SliceStepper {
 }
 
 /// Step `k` contiguous Z-slices at a time (`[nx, ny, k]`).
+///
+/// # Examples
+///
+/// ```rust
+/// use mrc::SlabStepper;
+/// let stepper = SlabStepper::new(16);
+/// assert_eq!(format!("{:?}", stepper), "SlabStepper { z: 0, k: 16 }");
+/// ```
 #[derive(Debug, Clone, Copy)]
 pub struct SlabStepper {
     z: usize,
@@ -57,6 +73,17 @@ impl SlabStepper {
     ///
     /// `k` is clamped to at least 1. The final slab may be shorter near the
     /// end of the volume.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use mrc::SlabStepper;
+    /// let stepper = SlabStepper::new(10);
+    /// assert_eq!(format!("{:?}", stepper), "SlabStepper { z: 0, k: 10 }");
+    /// // k=0 is clamped to 1
+    /// let clamped = SlabStepper::new(0);
+    /// assert_eq!(format!("{:?}", clamped), "SlabStepper { z: 0, k: 1 }");
+    /// ```
     pub fn new(k: usize) -> Self {
         Self { z: 0, k: k.max(1) }
     }
@@ -75,6 +102,17 @@ impl Stepper for SlabStepper {
 }
 
 /// Step arbitrary 3D tiles across a volume.
+///
+/// # Examples
+///
+/// ```rust
+/// use mrc::TileStepper;
+/// let stepper = TileStepper::new([64, 64, 64]).unwrap();
+/// assert_eq!(
+///     format!("{:?}", stepper),
+///     "TileStepper { position: [0, 0, 0], tile_shape: [64, 64, 64] }"
+/// );
+/// ```
 #[derive(Debug, Clone, Copy)]
 pub struct TileStepper {
     position: [usize; 3],
@@ -87,6 +125,20 @@ impl TileStepper {
     ///
     /// # Errors
     /// Returns [`crate::Error::BoundsError`] if any dimension of `tile_shape` is zero.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use mrc::TileStepper;
+    /// let stepper = TileStepper::new([64, 64, 64])?;
+    /// assert_eq!(
+    ///     format!("{:?}", stepper),
+    ///     "TileStepper { position: [0, 0, 0], tile_shape: [64, 64, 64] }"
+    /// );
+    /// // Zero dimensions are rejected
+    /// assert!(TileStepper::new([0, 64, 64]).is_err());
+    /// # Ok::<_, mrc::Error>(())
+    /// ```
     pub fn new(tile_shape: [usize; 3]) -> Result<Self, crate::Error> {
         if tile_shape[0] == 0 || tile_shape[1] == 0 || tile_shape[2] == 0 {
             return Err(crate::Error::bounds_err());
@@ -135,6 +187,20 @@ impl Stepper for TileStepper {
 ///
 /// The stepping strategy (slices, slabs, tiles) is determined by the `S`
 /// type parameter.
+///
+/// # Examples
+///
+/// ```no_run
+/// use mrc::open;
+///
+/// let reader = open("density.mrc")?;
+/// for slice in reader.slices::<f32>() {
+///     let block = slice?;
+///     println!("z={} shape={:?}x{:?}x{:?}",
+///         block.offset[2], block.shape[0], block.shape[1], block.shape[2]);
+/// }
+/// # Ok::<_, mrc::Error>(())
+/// ```
 #[derive(Debug)]
 pub struct RegionIter<'a, T, S> {
     reader: &'a Reader,

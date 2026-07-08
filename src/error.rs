@@ -35,6 +35,15 @@ use serde::{Deserialize, Serialize};
 /// This enum is `#[non_exhaustive]` — new variants may be added in minor
 /// releases without breaking exhaustive matches. Use a wildcard arm (`_`)
 /// when matching all variants.
+///
+/// # Example — constructing and displaying an error
+///
+/// ```rust
+/// use mrc::Error;
+///
+/// let err = Error::InvalidHeader;
+/// assert_eq!(err.to_string(), "Invalid MRC header");
+/// ```
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(thiserror::Error, Debug)]
 #[non_exhaustive]
@@ -193,6 +202,15 @@ impl From<Error> for std::io::Error {
 ///
 /// These are returned by [`Header::validate_detailed`](crate::Header::validate_detailed)
 /// and surfaced through [`Error::InvalidHeaderDetailed`](crate::Error::InvalidHeaderDetailed).
+///
+/// # Example
+///
+/// ```rust
+/// use mrc::HeaderValidationError;
+///
+/// let err = HeaderValidationError::UnsupportedMode(99);
+/// assert!(err.to_string().contains("99"));
+/// ```
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(thiserror::Error, Debug, Clone, PartialEq)]
 pub enum HeaderValidationError {

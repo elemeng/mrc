@@ -5,6 +5,14 @@
 //! defines the [`MachstInfo`] metadata type.
 
 /// Endianness of MRC file data.
+///
+/// # Examples
+///
+/// ```rust
+/// use mrc::FileEndian;
+/// let le = FileEndian::LittleEndian;
+/// assert_eq!(le.to_machst(), [0x44, 0x44, 0x00, 0x00]);
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FileEndian {
     /// Little-endian byte order.
@@ -21,11 +29,30 @@ impl FileEndian {
     /// `0x44 0x41`. Any unknown stamp falls back to little-endian.
     /// Use [`from_machst_with_info`](Self::from_machst_with_info) to
     /// inspect whether the stamp was non-standard.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use mrc::FileEndian;
+    /// let le = FileEndian::from_machst(&[0x44, 0x44, 0x00, 0x00]);
+    /// assert_eq!(le, FileEndian::LittleEndian);
+    /// let be = FileEndian::from_machst(&[0x11, 0x11, 0x00, 0x00]);
+    /// assert_eq!(be, FileEndian::BigEndian);
+    /// ```
     pub fn from_machst(machst: &[u8; 4]) -> Self {
         Self::from_machst_with_info(machst).endian
     }
 
     /// Detect endianness and return metadata about the stamp.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use mrc::FileEndian;
+    /// let info = FileEndian::from_machst_with_info(&[0x44, 0x44, 0x00, 0x00]);
+    /// assert_eq!(info.endian, FileEndian::LittleEndian);
+    /// assert!(info.is_standard);
+    /// ```
     pub fn from_machst_with_info(machst: &[u8; 4]) -> MachstInfo {
         if machst[0] == 0x44 && machst[1] == 0x44 {
             MachstInfo {
@@ -55,6 +82,14 @@ impl FileEndian {
     }
 
     /// Returns the 4-byte MACHST stamp for this endianness.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use mrc::FileEndian;
+    /// let stamp = FileEndian::BigEndian.to_machst();
+    /// assert_eq!(stamp, [0x11, 0x11, 0x00, 0x00]);
+    /// ```
     pub fn to_machst(self) -> [u8; 4] {
         match self {
             FileEndian::LittleEndian => [0x44, 0x44, 0x00, 0x00],
@@ -63,6 +98,14 @@ impl FileEndian {
     }
 
     /// Return the opposite endianness.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use mrc::FileEndian;
+    /// assert_eq!(FileEndian::LittleEndian.opposite(), FileEndian::BigEndian);
+    /// assert_eq!(FileEndian::BigEndian.opposite(), FileEndian::LittleEndian);
+    /// ```
     pub fn opposite(self) -> Self {
         match self {
             FileEndian::LittleEndian => FileEndian::BigEndian,
@@ -71,6 +114,14 @@ impl FileEndian {
     }
 
     /// Returns the native endianness of the host platform.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use mrc::FileEndian;
+    /// let native = FileEndian::native();
+    /// assert!(native == FileEndian::LittleEndian || native == FileEndian::BigEndian);
+    /// ```
     #[inline]
     pub fn native() -> Self {
         #[cfg(target_endian = "little")]
@@ -84,6 +135,13 @@ impl FileEndian {
     }
 
     /// Returns `true` if this endianness matches the host platform.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use mrc::FileEndian;
+    /// assert!(FileEndian::native().is_native());
+    /// ```
     #[inline]
     pub fn is_native(self) -> bool {
         self == Self::native()
