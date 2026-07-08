@@ -173,6 +173,12 @@ macro_rules! builder_setters {
         /// Set the volume dimensions.
         ///
         /// Also synchronises `mx`, `my`, `mz` to match `nx`, `ny`, `nz`.
+        ///
+        /// # Examples
+        /// ```
+        /// use mrc::create;
+        /// let builder = create("output.mrc").shape([256, 256, 128]);
+        /// ```
         #[must_use]
         pub fn shape(mut self, shape: [usize; 3]) -> Self {
             self.header.nx = shape[0] as i32;
@@ -185,6 +191,12 @@ macro_rules! builder_setters {
         }
 
         /// Set the voxel data mode.
+        ///
+        /// # Examples
+        /// ```
+        /// use mrc::create;
+        /// let builder = create("output.mrc").mode::<f32>();
+        /// ```
         #[must_use]
         pub fn mode<T: Voxel>(mut self) -> Self {
             self.header.mode = T::MODE.as_i32();
@@ -196,6 +208,12 @@ macro_rules! builder_setters {
         /// This is primarily useful for [`Mode::Packed4Bit`] (mode 101) which does not
         /// implement `Voxel`.  Invalid mode constants are caught by header validation
         /// at `finish()` time.
+        ///
+        /// # Examples
+        /// ```
+        /// use mrc::create;
+        /// let builder = create("output.mrc").mode_raw(2);
+        /// ```
         #[must_use]
         pub fn mode_raw(mut self, mode: i32) -> Self {
             self.header.mode = mode;
@@ -203,6 +221,14 @@ macro_rules! builder_setters {
         }
 
         /// Set the cell dimensions in Angstroms.
+        ///
+        /// # Examples
+        /// ```
+        /// use mrc::create;
+        /// let builder = create("output.mrc")
+        ///     .shape([64, 64, 64])
+        ///     .cell_lengths(100.0, 100.0, 200.0);
+        /// ```
         #[must_use]
         pub fn cell_lengths(mut self, xlen: f32, ylen: f32, zlen: f32) -> Self {
             self.header.xlen = xlen;
@@ -212,6 +238,12 @@ macro_rules! builder_setters {
         }
 
         /// Set the space group number.
+        ///
+        /// # Examples
+        /// ```
+        /// use mrc::create;
+        /// let builder = create("output.mrc").ispg(1);
+        /// ```
         #[must_use]
         pub fn ispg(mut self, ispg: i32) -> Self {
             self.header.ispg = ispg;
@@ -226,6 +258,14 @@ macro_rules! builder_setters {
         ///
         /// Call **after** [`shape`](Self::shape) so that `nx` and `ny` are
         /// already set and only `mz` is overridden.
+        ///
+        /// # Examples
+        /// ```
+        /// use mrc::create;
+        /// let builder = create("output.mrc")
+        ///     .shape([64, 64, 64])
+        ///     .set_volume_stack(32);
+        /// ```
         #[must_use]
         pub fn set_volume_stack(mut self, mz: i32) -> Self {
             self.header.set_volume_stack(mz);
@@ -233,6 +273,12 @@ macro_rules! builder_setters {
         }
 
         /// Set the extended header type (4-byte ASCII identifier).
+        ///
+        /// # Examples
+        /// ```
+        /// use mrc::create;
+        /// let builder = create("output.mrc").exttyp(*b"FEI1");
+        /// ```
         #[must_use]
         pub fn exttyp(mut self, exttyp: [u8; 4]) -> Self {
             self.header.set_exttyp(exttyp);
@@ -240,6 +286,12 @@ macro_rules! builder_setters {
         }
 
         /// Set the extended header size in bytes.
+        ///
+        /// # Examples
+        /// ```
+        /// use mrc::create;
+        /// let builder = create("output.mrc").nsymbt(256);
+        /// ```
         #[must_use]
         pub fn nsymbt(mut self, nsymbt: i32) -> Self {
             self.header.nsymbt = nsymbt;
@@ -247,6 +299,12 @@ macro_rules! builder_setters {
         }
 
         /// Set the origin coordinates.
+        ///
+        /// # Examples
+        /// ```
+        /// use mrc::create;
+        /// let builder = create("output.mrc").origin([0.0, 0.0, 0.0]);
+        /// ```
         #[must_use]
         pub fn origin(mut self, origin: [f32; 3]) -> Self {
             self.header.origin = origin;
@@ -254,6 +312,12 @@ macro_rules! builder_setters {
         }
 
         /// Set the cell angles in degrees (alpha, beta, gamma).
+        ///
+        /// # Examples
+        /// ```
+        /// use mrc::create;
+        /// let builder = create("output.mrc").cell_angles(90.0, 90.0, 90.0);
+        /// ```
         #[must_use]
         pub fn cell_angles(mut self, alpha: f32, beta: f32, gamma: f32) -> Self {
             self.header.alpha = alpha;
@@ -263,6 +327,12 @@ macro_rules! builder_setters {
         }
 
         /// Set the sub-volume origin in pixels (`nxstart`, `nystart`, `nzstart`).
+        ///
+        /// # Examples
+        /// ```
+        /// use mrc::create;
+        /// let builder = create("output.mrc").nstart([0, 0, 0]);
+        /// ```
         #[must_use]
         pub fn nstart(mut self, nstart: [i32; 3]) -> Self {
             self.header.nxstart = nstart[0];
@@ -277,6 +347,14 @@ macro_rules! builder_setters {
         /// By default [`shape`](Self::shape) syncs `mx`, `my`, `mz` to `nx`, `ny`,
         /// `nz`.  Use this method to override them when the cell sampling differs
         /// from the pixel dimensions.
+        ///
+        /// # Examples
+        /// ```
+        /// use mrc::create;
+        /// let builder = create("output.mrc")
+        ///     .shape([64, 64, 64])
+        ///     .sampling([32, 32, 32]);
+        /// ```
         #[must_use]
         pub fn sampling(mut self, sampling: [i32; 3]) -> Self {
             self.header.mx = sampling[0];
@@ -288,6 +366,12 @@ macro_rules! builder_setters {
         /// Set the axis mapping (`mapc`, `mapr`, `maps`) — a permutation of
         /// `1` (X), `2` (Y), `3` (Z) that defines which axis is column, row,
         /// and section.
+        ///
+        /// # Examples
+        /// ```
+        /// use mrc::create;
+        /// let builder = create("output.mrc").axis_mapping([1, 2, 3]);
+        /// ```
         #[must_use]
         pub fn axis_mapping(mut self, mapping: [i32; 3]) -> Self {
             self.header.mapc = mapping[0];
@@ -297,6 +381,12 @@ macro_rules! builder_setters {
         }
 
         /// Append a text label (up to 10 labels, FIFO eviction when full).
+        ///
+        /// # Examples
+        /// ```
+        /// use mrc::create;
+        /// let builder = create("output.mrc").add_label("example dataset");
+        /// ```
         #[must_use]
         pub fn add_label(mut self, text: &str) -> Self {
             self.header.add_label(text);
@@ -336,6 +426,14 @@ pub struct WriterBuilder {
 
 impl WriterBuilder {
     /// Create a new builder with default header values.
+    ///
+    /// # Examples
+    /// ```no_run
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// use mrc::WriterBuilder;
+    /// let builder = WriterBuilder::new("output.mrc");
+    /// # Ok(()) }
+    /// ```
     #[must_use]
     pub fn new<P: AsRef<std::path::Path>>(path: P) -> Self {
         Self {
@@ -353,6 +451,18 @@ impl WriterBuilder {
     /// [`finish`](Self::finish) (plain) or [`finish_mmap`](Self::finish_mmap).
     ///
     /// Default: [`Compression::Balanced`].
+    ///
+    /// # Examples
+    /// ```no_run
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// use mrc::{WriterBuilder, Compression};
+    /// let mut writer = WriterBuilder::new("output.mrc.gz")
+    ///     .shape([64, 64, 64])
+    ///     .mode::<f32>()
+    ///     .compression(Compression::Best)
+    ///     .finish_gzip()?;
+    /// # Ok(()) }
+    /// ```
     #[must_use]
     pub fn compression(mut self, compression: Compression) -> Self {
         self.compression = compression;
@@ -366,6 +476,18 @@ impl WriterBuilder {
     /// When provided, `nsymbt` is automatically updated to match the byte
     /// length. Pass an empty `Vec` (or omit) to write zeros for the extended
     /// header region.
+    ///
+    /// # Examples
+    /// ```no_run
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// use mrc::WriterBuilder;
+    /// let mut writer = WriterBuilder::new("output.mrc")
+    ///     .shape([64, 64, 64])
+    ///     .mode::<f32>()
+    ///     .ext_header_bytes(vec![0u8; 256])
+    ///     .finish()?;
+    /// # Ok(()) }
+    /// ```
     #[must_use]
     pub fn ext_header_bytes(mut self, bytes: Vec<u8>) -> Self {
         self.header.nsymbt = bytes.len() as i32;
@@ -382,6 +504,17 @@ impl WriterBuilder {
     /// # Errors
     /// Returns [`Error::InvalidHeaderDetailed`] if the header fails validation.
     /// Returns [`Error::Io`] if the file cannot be created or written.
+    ///
+    /// # Examples
+    /// ```no_run
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// use mrc::WriterBuilder;
+    /// let mut writer = WriterBuilder::new("output.mrc")
+    ///     .shape([64, 64, 64])
+    ///     .mode::<f32>()
+    ///     .finish()?;
+    /// # Ok(()) }
+    /// ```
     pub fn finish(self) -> Result<Writer, Error> {
         Writer::create(self.path, self.header, &self.ext_header)
     }
@@ -390,6 +523,17 @@ impl WriterBuilder {
     ///
     /// Equivalent to [`finish`](Self::finish) but uses memory-mapped output
     /// (requires the `mmap` feature).
+    ///
+    /// # Examples
+    /// ```no_run
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// use mrc::WriterBuilder;
+    /// let mut writer = WriterBuilder::new("output.mrc")
+    ///     .shape([64, 64, 64])
+    ///     .mode::<f32>()
+    ///     .finish_mmap()?;
+    /// # Ok(()) }
+    /// ```
     #[cfg(feature = "mmap")]
     pub fn finish_mmap(self) -> Result<Writer, Error> {
         Writer::create_mmap(self.path, self.header, &self.ext_header)
@@ -400,6 +544,17 @@ impl WriterBuilder {
     /// Because gzip does not support random access, the entire file is buffered
     /// in memory and compressed only on finalize.
     /// For large volumes consider using [`finish`](Self::finish) instead.
+    ///
+    /// # Examples
+    /// ```no_run
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// use mrc::WriterBuilder;
+    /// let mut writer = WriterBuilder::new("output.mrc.gz")
+    ///     .shape([64, 64, 64])
+    ///     .mode::<f32>()
+    ///     .finish_gzip()?;
+    /// # Ok(()) }
+    /// ```
     #[cfg(feature = "gzip")]
     pub fn finish_gzip(self) -> Result<Writer, Error> {
         Writer::create_compressed(
@@ -416,6 +571,17 @@ impl WriterBuilder {
     /// Because bzip2 does not support random access, the entire file is buffered
     /// in memory and compressed only on finalize.
     /// For large volumes consider using [`finish`](Self::finish) instead.
+    ///
+    /// # Examples
+    /// ```no_run
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// use mrc::WriterBuilder;
+    /// let mut writer = WriterBuilder::new("output.mrc.bz2")
+    ///     .shape([64, 64, 64])
+    ///     .mode::<f32>()
+    ///     .finish_bzip2()?;
+    /// # Ok(()) }
+    /// ```
     #[cfg(feature = "bzip2")]
     pub fn finish_bzip2(self) -> Result<Writer, Error> {
         Writer::create_compressed(
@@ -506,6 +672,15 @@ impl Writer {
     ///
     /// The file is truncated to the exact size needed for the header, extended
     /// header, and voxel data.
+    ///
+    /// # Examples
+    /// ```no_run
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// use mrc::{Header, Writer};
+    /// let header = Header::new();
+    /// let mut writer = Writer::from_writer_mmap("output.mrc", header, &[])?;
+    /// # Ok(()) }
+    /// ```
     #[cfg(feature = "mmap")]
     pub fn from_writer_mmap<P: AsRef<std::path::Path>>(
         path: P,
@@ -520,6 +695,15 @@ impl Writer {
     /// Like [`from_writer`](Self::from_writer) but buffers the entire file in
     /// memory and gzip-compresses it on [`finalize`](Self::finalize).
     /// Requires the `gzip` feature.
+    ///
+    /// # Examples
+    /// ```no_run
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// use mrc::{Header, Writer, Compression};
+    /// let header = Header::new();
+    /// let mut writer = Writer::from_writer_gzip("output.mrc.gz", header, &[], Compression::Balanced)?;
+    /// # Ok(()) }
+    /// ```
     #[cfg(feature = "gzip")]
     pub fn from_writer_gzip<P: AsRef<std::path::Path>>(
         path: P,
@@ -535,6 +719,15 @@ impl Writer {
     /// Like [`from_writer`](Self::from_writer) but buffers the entire file in
     /// memory and bzip2-compresses it on [`finalize`](Self::finalize).
     /// Requires the `bzip2` feature.
+    ///
+    /// # Examples
+    /// ```no_run
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// use mrc::{Header, Writer, Compression};
+    /// let header = Header::new();
+    /// let mut writer = Writer::from_writer_bzip2("output.mrc.bz2", header, &[], Compression::Balanced)?;
+    /// # Ok(()) }
+    /// ```
     #[cfg(feature = "bzip2")]
     pub fn from_writer_bzip2<P: AsRef<std::path::Path>>(
         path: P,
@@ -724,11 +917,35 @@ impl Writer {
     }
 
     /// Volume dimensions for this writer.
+    ///
+    /// # Examples
+    /// ```no_run
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// use mrc::create;
+    /// let mut writer = create("output.mrc")
+    ///     .shape([64, 64, 64])
+    ///     .mode::<f32>()
+    ///     .finish()?;
+    /// assert_eq!(writer.shape().nx, 64);
+    /// # Ok(()) }
+    /// ```
     pub fn shape(&self) -> VolumeShape {
         self.shape
     }
 
     /// Voxel data mode for this writer.
+    ///
+    /// # Examples
+    /// ```no_run
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// use mrc::create;
+    /// let mut writer = create("output.mrc")
+    ///     .shape([64, 64, 64])
+    ///     .mode::<f32>()
+    ///     .finish()?;
+    /// assert_eq!(writer.mode(), mrc::Mode::Float32);
+    /// # Ok(()) }
+    /// ```
     pub fn mode(&self) -> Mode {
         self.mode
     }
@@ -738,6 +955,19 @@ impl Writer {
     /// For mutable access, use [`header_mut`](Self::header_mut).
     /// Modify header fields before calling [`finalize`](Self::finalize) to
     /// change what gets written to disk.
+    ///
+    /// # Examples
+    /// ```no_run
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// use mrc::create;
+    /// let mut writer = create("output.mrc")
+    ///     .shape([64, 64, 64])
+    ///     .mode::<f32>()
+    ///     .finish()?;
+    /// let h = writer.header();
+    /// assert_eq!(h.nx, 64);
+    /// # Ok(()) }
+    /// ```
     pub fn header(&self) -> &Header {
         &self.header
     }
@@ -746,6 +976,18 @@ impl Writer {
     ///
     /// Allows modifying header fields (e.g. labels, density statistics)
     /// between writing blocks and calling [`finalize`](Self::finalize).
+    ///
+    /// # Examples
+    /// ```no_run
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// use mrc::create;
+    /// let mut writer = create("output.mrc")
+    ///     .shape([64, 64, 64])
+    ///     .mode::<f32>()
+    ///     .finish()?;
+    /// writer.header_mut().ispg = 1;
+    /// # Ok(()) }
+    /// ```
     pub fn header_mut(&mut self) -> &mut Header {
         &mut self.header
     }
@@ -754,6 +996,19 @@ impl Writer {
     ///
     /// The type `T` must match the file's voxel mode exactly.
     /// Supports arbitrary sub-blocks by scattering row-by-row when necessary.
+    ///
+    /// # Examples
+    /// ```no_run
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// use mrc::{create, VoxelBlock};
+    /// let mut writer = create("output.mrc")
+    ///     .shape([64, 64, 1])
+    ///     .mode::<f32>()
+    ///     .finish()?;
+    /// let block = VoxelBlock::new([0, 0, 0], [64, 64, 1], vec![0.0f32; 64 * 64])?;
+    /// writer.write_block(&block)?;
+    /// # Ok(()) }
+    /// ```
     pub fn write_block<T: Voxel>(&mut self, block: &VoxelBlock<T>) -> Result<(), Error> {
         if T::MODE != self.mode() {
             return Err(Error::ModeMismatch {
@@ -859,6 +1114,19 @@ impl Writer {
     ///
     /// # Errors
     /// Returns [`Error::ModeMismatch`] if the file mode is not `Uint16`.
+    ///
+    /// # Examples
+    /// ```no_run
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// use mrc::{create, VoxelBlock};
+    /// let mut writer = create("output.mrc")
+    ///     .shape([64, 64, 1])
+    ///     .mode::<u16>()
+    ///     .finish()?;
+    /// let block = VoxelBlock::new([0, 0, 0], [64, 64, 1], vec![0u8; 64 * 64])?;
+    /// writer.write_u8_block(&block)?;
+    /// # Ok(()) }
+    /// ```
     pub fn write_u8_block(&mut self, block: &VoxelBlock<u8>) -> Result<(), Error> {
         if self.mode() != Mode::Uint16 {
             return Err(Error::ModeMismatch {
@@ -889,6 +1157,19 @@ impl Writer {
     ///
     /// Complex modes and Packed4Bit are not convertible from real f32 data.
     /// Use [`write_block`](Writer::write_block) with the matching complex type instead.
+    ///
+    /// # Examples
+    /// ```no_run
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// use mrc::{create, VoxelBlock};
+    /// let mut writer = create("output.mrc")
+    ///     .shape([64, 64, 1])
+    ///     .mode::<u16>()
+    ///     .finish()?;
+    /// let block = VoxelBlock::new([0, 0, 0], [64, 64, 1], vec![0.0f32; 64 * 64])?;
+    /// writer.write_block_as(&block)?;
+    /// # Ok(()) }
+    /// ```
     pub fn write_block_as(&mut self, block: &VoxelBlock<f32>) -> Result<(), Error> {
         write_block_as_body!(self, block)
     }
@@ -900,6 +1181,19 @@ impl Writer {
     ///
     /// For non-contiguous blocks (sub-XY slabs), this falls back to the serial
     /// [`write_block`](Self::write_block) implementation.
+    ///
+    /// # Examples
+    /// ```no_run
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// use mrc::{create, VoxelBlock};
+    /// let mut writer = create("output.mrc")
+    ///     .shape([64, 64, 1])
+    ///     .mode::<f32>()
+    ///     .finish()?;
+    /// let block = VoxelBlock::new([0, 0, 0], [64, 64, 1], vec![0.0f32; 64 * 64])?;
+    /// writer.write_block_parallel(&block)?;
+    /// # Ok(()) }
+    /// ```
     #[cfg(feature = "parallel")]
     pub fn write_block_parallel<T: Voxel>(&mut self, block: &VoxelBlock<T>) -> Result<(), Error> {
         if T::MODE != self.mode() {
@@ -947,6 +1241,20 @@ impl Writer {
     ///
     /// The file must have been created with [`Mode::Packed4Bit`]. Each `u8` value
     /// is checked to be in the range 0–15; values exceeding 15 produce an error.
+    ///
+    /// # Examples
+    /// ```no_run
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// use mrc::{create, VoxelBlock};
+    /// let mut writer = create("output.mrc")
+    ///     .shape([64, 64, 1])
+    ///     .mode_raw(101)  // Packed4Bit
+    ///     .finish()?;
+    /// let data = vec![0u8; 64 * 64];
+    /// let block = VoxelBlock::new([0, 0, 0], [64, 64, 1], data)?;
+    /// writer.write_u4_block(&block)?;
+    /// # Ok(()) }
+    /// ```
     pub fn write_u4_block(&mut self, block: &VoxelBlock<u8>) -> Result<(), Error> {
         write_u4_block_body!(self, block)
     }
@@ -1017,6 +1325,20 @@ impl Writer {
     }
 
     /// Finalize the MRC file by rewriting the header.
+    ///
+    /// # Examples
+    /// ```no_run
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// use mrc::{create, VoxelBlock};
+    /// let mut writer = create("output.mrc")
+    ///     .shape([64, 64, 1])
+    ///     .mode::<f32>()
+    ///     .finish()?;
+    /// let block = VoxelBlock::new([0, 0, 0], [64, 64, 1], vec![0.0f32; 64 * 64])?;
+    /// writer.write_block(&block)?;
+    /// writer.finalize()?;
+    /// # Ok(()) }
+    /// ```
     pub fn finalize(&mut self) -> Result<(), Error> {
         let mut header_bytes = [0u8; 1024];
         self.header.encode_to_bytes(&mut header_bytes);
@@ -1048,6 +1370,21 @@ impl Writer {
     }
 
     /// Scan the written data block and update header statistics.
+    ///
+    /// # Examples
+    /// ```no_run
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// use mrc::{create, VoxelBlock};
+    /// let mut writer = create("output.mrc")
+    ///     .shape([64, 64, 1])
+    ///     .mode::<f32>()
+    ///     .finish()?;
+    /// let block = VoxelBlock::new([0, 0, 0], [64, 64, 1], vec![0.0f32; 64 * 64])?;
+    /// writer.write_block(&block)?;
+    /// writer.update_header_stats()?;
+    /// writer.finalize()?;
+    /// # Ok(()) }
+    /// ```
     pub fn update_header_stats(&mut self) -> Result<(), Error> {
         let (data_offset, data_size) = {
             let ds = self.header.data_size().ok_or(Error::InvalidHeader)?;

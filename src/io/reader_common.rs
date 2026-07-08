@@ -382,7 +382,9 @@ pub(crate) fn write_block_bytes(
     let [sx, sy, sz] = block_shape;
     let file_row_bytes = nx.div_ceil(2);
     let block_row_bytes = sx.div_ceil(2);
-    assert!(ox == 0, "write_block_bytes requires ox == 0");
+    if ox != 0 {
+        return Err(crate::Error::bounds_err());
+    }
 
     if sx == nx && oy == 0 && sy == ny {
         let slice_bytes = ny * file_row_bytes;

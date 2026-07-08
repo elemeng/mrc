@@ -129,6 +129,16 @@ impl Reader {
     ///
     /// For plain files, selects memory-mapped I/O when available (the `mmap`
     /// feature) and falls back to buffered I/O otherwise.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # fn main() -> Result<(), mrc::Error> {
+    /// let reader = mrc::Reader::open("density.mrc")?;
+    /// println!("Dimensions: {}x{}x{}", reader.shape().nx, reader.shape().ny, reader.shape().nz);
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn open<P: AsRef<std::path::Path>>(path: P) -> Result<Self, Error> {
         Self::_open_detect(path.as_ref(), false).map(|(r, _)| r)
     }
@@ -136,6 +146,18 @@ impl Reader {
     /// Open in **permissive** mode.
     ///
     /// Non-fatal header issues are collected as warnings instead of errors.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # fn main() -> Result<(), mrc::Error> {
+    /// let (reader, warnings) = mrc::Reader::open_permissive("density.mrc")?;
+    /// for w in &warnings {
+    ///     eprintln!("Warning: {w}");
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn open_permissive<P: AsRef<std::path::Path>>(
         path: P,
     ) -> Result<(Self, Vec<String>), Error> {
@@ -143,6 +165,16 @@ impl Reader {
     }
 
     /// Open a plain (uncompressed) MRC file via buffered I/O.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # fn main() -> Result<(), mrc::Error> {
+    /// let reader = mrc::Reader::open_plain("density.mrc")?;
+    /// println!("Shape: {:?}", reader.shape());
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn open_plain<P: AsRef<std::path::Path>>(path: P) -> Result<Self, Error> {
         Self::_open_plain(path, false).map(|(r, _)| r)
     }
@@ -150,6 +182,24 @@ impl Reader {
     /// Read an MRC file from any [`std::io::Read`] source.
     ///
     /// The entire source is read into memory, then parsed.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # fn main() -> Result<(), mrc::Error> {
+    /// use std::io::Cursor;
+    /// # let mut h = mrc::Header::new();
+    /// # h.nx = 4; h.ny = 4; h.nz = 1;
+    /// # h.mx = 4; h.my = 4; h.mz = 1;
+    /// # let mut raw = [0u8; 1024];
+    /// # h.encode_to_bytes(&mut raw);
+    /// # let data = vec![0u8; 64];
+    /// # let buf: Vec<u8> = raw.into_iter().chain(data).collect();
+    /// let reader = mrc::Reader::from_reader(Cursor::new(buf))?;
+    /// assert_eq!(reader.shape().nx, 4);
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn from_reader<R: std::io::Read>(mut reader: R) -> Result<Self, Error> {
         let mut buf = Vec::new();
         reader.read_to_end(&mut buf)?;
@@ -157,6 +207,24 @@ impl Reader {
     }
 
     /// Read from any [`std::io::Read`] source in permissive mode.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # fn main() -> Result<(), mrc::Error> {
+    /// use std::io::Cursor;
+    /// # let mut h = mrc::Header::new();
+    /// # h.nx = 4; h.ny = 4; h.nz = 1;
+    /// # h.mx = 4; h.my = 4; h.mz = 1;
+    /// # let mut raw = [0u8; 1024];
+    /// # h.encode_to_bytes(&mut raw);
+    /// # let data = vec![0u8; 64];
+    /// # let buf: Vec<u8> = raw.into_iter().chain(data).collect();
+    /// let (reader, warnings) = mrc::Reader::from_reader_permissive(Cursor::new(buf))?;
+    /// assert!(warnings.is_empty());
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn from_reader_permissive<R: std::io::Read>(
         mut reader: R,
     ) -> Result<(Self, Vec<String>), Error> {
@@ -166,11 +234,45 @@ impl Reader {
     }
 
     /// Parse an MRC file from an in-memory byte buffer.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # fn main() -> Result<(), mrc::Error> {
+    /// # let mut h = mrc::Header::new();
+    /// # h.nx = 4; h.ny = 4; h.nz = 1;
+    /// # h.mx = 4; h.my = 4; h.mz = 1;
+    /// # let mut raw = [0u8; 1024];
+    /// # h.encode_to_bytes(&mut raw);
+    /// # let data = vec![0u8; 64];
+    /// # let buf: Vec<u8> = raw.into_iter().chain(data).collect();
+    /// let reader = mrc::Reader::from_bytes(buf)?;
+    /// assert_eq!(reader.shape().nx, 4);
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn from_bytes(data: Vec<u8>) -> Result<Self, Error> {
         Self::_read_from_buf(data, false).map(|(r, _)| r)
     }
 
     /// Parse an MRC file from an in-memory byte buffer in permissive mode.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # fn main() -> Result<(), mrc::Error> {
+    /// # let mut h = mrc::Header::new();
+    /// # h.nx = 4; h.ny = 4; h.nz = 1;
+    /// # h.mx = 4; h.my = 4; h.mz = 1;
+    /// # let mut raw = [0u8; 1024];
+    /// # h.encode_to_bytes(&mut raw);
+    /// # let data = vec![0u8; 64];
+    /// # let buf: Vec<u8> = raw.into_iter().chain(data).collect();
+    /// let (reader, warnings) = mrc::Reader::from_bytes_permissive(buf)?;
+    /// assert!(warnings.is_empty());
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn from_bytes_permissive(data: Vec<u8>) -> Result<(Self, Vec<String>), Error> {
         Self::_read_from_buf(data, true)
     }
@@ -458,21 +560,88 @@ impl Reader {
 
 impl Reader {
     /// Volume dimensions.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # fn main() -> Result<(), mrc::Error> {
+    /// # let mut h = mrc::Header::new();
+    /// # h.nx = 4; h.ny = 4; h.nz = 1;
+    /// # h.mx = 4; h.my = 4; h.mz = 1;
+    /// # let mut raw = [0u8; 1024];
+    /// # h.encode_to_bytes(&mut raw);
+    /// # let buf: Vec<u8> = raw.into_iter().chain(vec![0u8; 64]).collect();
+    /// # let reader = mrc::Reader::from_bytes(buf)?;
+    /// let s = reader.shape();
+    /// assert_eq!(s.nx, 4);
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn shape(&self) -> VolumeShape {
         self.shape
     }
 
     /// Voxel data mode.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # fn main() -> Result<(), mrc::Error> {
+    /// # let mut h = mrc::Header::new();
+    /// # h.nx = 4; h.ny = 4; h.nz = 1;
+    /// # h.mx = 4; h.my = 4; h.mz = 1;
+    /// # h.mode = 0;
+    /// # let mut raw = [0u8; 1024];
+    /// # h.encode_to_bytes(&mut raw);
+    /// # let buf: Vec<u8> = raw.into_iter().chain(vec![0u8; 16]).collect();
+    /// # let reader = mrc::Reader::from_bytes(buf)?;
+    /// assert_eq!(reader.mode(), mrc::Mode::Int8);
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn mode(&self) -> Mode {
         self.mode
     }
 
     /// A reference to the parsed header.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # fn main() -> Result<(), mrc::Error> {
+    /// # let mut h = mrc::Header::new();
+    /// # h.nx = 4; h.ny = 4; h.nz = 1;
+    /// # h.mx = 4; h.my = 4; h.mz = 1;
+    /// # let mut raw = [0u8; 1024];
+    /// # h.encode_to_bytes(&mut raw);
+    /// # let buf: Vec<u8> = raw.into_iter().chain(vec![0u8; 64]).collect();
+    /// # let reader = mrc::Reader::from_bytes(buf)?;
+    /// let header = reader.header();
+    /// assert_eq!(header.nx, 4);
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn header(&self) -> &Header {
         &self.header
     }
 
     /// Detected file endianness.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # fn main() -> Result<(), mrc::Error> {
+    /// # let mut h = mrc::Header::new();
+    /// # h.nx = 4; h.ny = 4; h.nz = 1;
+    /// # h.mx = 4; h.my = 4; h.mz = 1;
+    /// # let mut raw = [0u8; 1024];
+    /// # h.encode_to_bytes(&mut raw);
+    /// # let buf: Vec<u8> = raw.into_iter().chain(vec![0u8; 64]).collect();
+    /// # let reader = mrc::Reader::from_bytes(buf)?;
+    /// assert_eq!(reader.endian(), mrc::FileEndian::LittleEndian);
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn endian(&self) -> FileEndian {
         self.endian
     }
@@ -481,6 +650,24 @@ impl Reader {
     ///
     /// For memory-mapped readers this returns a zero-copy `&[u8]` view.
     /// For buffered readers this borrows from the internal `Vec<u8>`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # fn main() -> Result<(), mrc::Error> {
+    /// # let mut h = mrc::Header::new();
+    /// # h.nx = 4; h.ny = 4; h.nz = 1;
+    /// # h.mx = 4; h.my = 4; h.mz = 1;
+    /// # let mut raw = [0u8; 1024];
+    /// # h.encode_to_bytes(&mut raw);
+    /// # let data = vec![42u8; 64];
+    /// # let buf: Vec<u8> = raw.into_iter().chain(data).collect();
+    /// # let reader = mrc::Reader::from_bytes(buf)?;
+    /// let bytes = reader.data_bytes();
+    /// assert_eq!(bytes.len(), 64);
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn data_bytes(&self) -> &[u8] {
         match &self.source {
             DataSource::Buffered { data, .. } => data,
@@ -500,6 +687,22 @@ impl Reader {
     }
 
     /// Extended header bytes (empty slice if none).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # fn main() -> Result<(), mrc::Error> {
+    /// # let mut h = mrc::Header::new();
+    /// # h.nx = 4; h.ny = 4; h.nz = 1;
+    /// # h.mx = 4; h.my = 4; h.mz = 1;
+    /// # let mut raw = [0u8; 1024];
+    /// # h.encode_to_bytes(&mut raw);
+    /// # let buf: Vec<u8> = raw.into_iter().chain(vec![0u8; 64]).collect();
+    /// # let reader = mrc::Reader::from_bytes(buf)?;
+    /// assert!(reader.ext_header_bytes().is_empty());
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn ext_header_bytes(&self) -> &[u8] {
         if !self.ext_header.is_empty() {
             return &self.ext_header;
@@ -525,6 +728,22 @@ impl Reader {
 
     /// Returns `true` when the file is shorter than the header's declared data
     /// size (only possible when opened in permissive mode).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # fn main() -> Result<(), mrc::Error> {
+    /// # let mut h = mrc::Header::new();
+    /// # h.nx = 4; h.ny = 4; h.nz = 1;
+    /// # h.mx = 4; h.my = 4; h.mz = 1;
+    /// # let mut raw = [0u8; 1024];
+    /// # h.encode_to_bytes(&mut raw);
+    /// # let buf: Vec<u8> = raw.into_iter().chain(vec![0u8; 64]).collect();
+    /// # let reader = mrc::Reader::from_bytes(buf)?;
+    /// assert!(!reader.is_truncated());
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn is_truncated(&self) -> bool {
         match &self.source {
             DataSource::Buffered { truncated, .. } => *truncated,
@@ -534,6 +753,23 @@ impl Reader {
     }
 
     /// Cross-check header statistics against actual data (1% tolerance).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # fn main() -> Result<(), mrc::Error> {
+    /// # let mut h = mrc::Header::new();
+    /// # h.nx = 4; h.ny = 4; h.nz = 1;
+    /// # h.mx = 4; h.my = 4; h.mz = 1;
+    /// # let mut raw = [0u8; 1024];
+    /// # h.encode_to_bytes(&mut raw);
+    /// # let data = vec![0u8; 64];
+    /// # let buf: Vec<u8> = raw.into_iter().chain(data).collect();
+    /// # let reader = mrc::Reader::from_bytes(buf)?;
+    /// reader.validate_header_stats()?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn validate_header_stats(&self) -> Result<(), Error> {
         crate::engine::stats::validate_header_stats(&self.header, self.data_bytes())
     }
@@ -545,6 +781,24 @@ impl Reader {
 
 impl Reader {
     /// Read a block of raw voxel bytes.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # fn main() -> Result<(), mrc::Error> {
+    /// # let mut h = mrc::Header::new();
+    /// # h.nx = 4; h.ny = 4; h.nz = 1;
+    /// # h.mx = 4; h.my = 4; h.mz = 1;
+    /// # let mut raw = [0u8; 1024];
+    /// # h.encode_to_bytes(&mut raw);
+    /// # let data = vec![0u8; 64];
+    /// # let buf: Vec<u8> = raw.into_iter().chain(data).collect();
+    /// # let reader = mrc::Reader::from_bytes(buf)?;
+    /// let block = reader.read_block_bytes([0, 0, 0], [4, 4, 1])?;
+    /// assert_eq!(block.len(), 64);
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn read_block_bytes(
         &self,
         offset: [usize; 3],
@@ -573,6 +827,17 @@ impl Reader {
     /// Only available for memory-mapped readers with native endianness
     /// and matching voxel type. Returns [`Error::TypeMismatch`] for
     /// buffered readers — use [`subregion`](Self::subregion) instead.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # fn main() -> Result<(), mrc::Error> {
+    /// let reader = mrc::Reader::open("density.mrc")?;
+    /// let slab: &[f32] = reader.slab_as::<f32>(0, 1)?;
+    /// println!("Slab has {} voxels", slab.len());
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn slab_as<T: Voxel>(&self, z: usize, k: usize) -> Result<&[T], Error> {
         #[cfg(feature = "mmap")]
         if let DataSource::Mmap {
@@ -718,6 +983,25 @@ impl Reader {
     // ── Iteration methods ─────────────────────────────────────────────
 
     /// Iterate over Z-slices.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # fn main() -> Result<(), mrc::Error> {
+    /// # let mut h = mrc::Header::new();
+    /// # h.nx = 4; h.ny = 4; h.nz = 2;
+    /// # h.mx = 4; h.my = 4; h.mz = 2;
+    /// # let mut raw = [0u8; 1024];
+    /// # h.encode_to_bytes(&mut raw);
+    /// # let buf: Vec<u8> = raw.into_iter().chain(vec![0u8; 128]).collect();
+    /// # let reader = mrc::Reader::from_bytes(buf)?;
+    /// for slice in reader.slices::<f32>() {
+    ///     let block = slice?;
+    ///     println!("Slice at z={} has {} voxels", block.offset[2], block.data.len());
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn slices<T: Voxel>(&self) -> crate::iter::RegionIter<'_, T, crate::iter::SliceStepper> {
         crate::iter::RegionIter::with_stepper(
             self,
@@ -727,6 +1011,25 @@ impl Reader {
     }
 
     /// Iterate over Z-slabs.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # fn main() -> Result<(), mrc::Error> {
+    /// # let mut h = mrc::Header::new();
+    /// # h.nx = 4; h.ny = 4; h.nz = 4;
+    /// # h.mx = 4; h.my = 4; h.mz = 4;
+    /// # let mut raw = [0u8; 1024];
+    /// # h.encode_to_bytes(&mut raw);
+    /// # let buf: Vec<u8> = raw.into_iter().chain(vec![0u8; 256]).collect();
+    /// # let reader = mrc::Reader::from_bytes(buf)?;
+    /// for slab in reader.slabs::<f32>(2) {
+    ///     let block = slab?;
+    ///     println!("Slab at z={} depth={}", block.offset[2], block.shape[2]);
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn slabs<T: Voxel>(
         &self,
         k: usize,
@@ -735,6 +1038,25 @@ impl Reader {
     }
 
     /// Iterate over 3D tiles.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # fn main() -> Result<(), mrc::Error> {
+    /// # let mut h = mrc::Header::new();
+    /// # h.nx = 4; h.ny = 4; h.nz = 4;
+    /// # h.mx = 4; h.my = 4; h.mz = 4;
+    /// # let mut raw = [0u8; 1024];
+    /// # h.encode_to_bytes(&mut raw);
+    /// # let buf: Vec<u8> = raw.into_iter().chain(vec![0u8; 256]).collect();
+    /// # let reader = mrc::Reader::from_bytes(buf)?;
+    /// for tile in reader.tiles::<f32>([2, 2, 2])? {
+    ///     let block = tile?;
+    ///     println!("Tile: {:?}", block.shape);
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn tiles<T: Voxel>(
         &self,
         tile_shape: [usize; 3],
@@ -747,6 +1069,26 @@ impl Reader {
     }
 
     /// Iterate over sub-volumes (volume stacks only).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # fn main() -> Result<(), mrc::Error> {
+    /// # let mut h = mrc::Header::new();
+    /// # h.nx = 4; h.ny = 4; h.nz = 4;
+    /// # h.mx = 4; h.my = 4; h.mz = 2;
+    /// # h.ispg = 401;
+    /// # let mut raw = [0u8; 1024];
+    /// # h.encode_to_bytes(&mut raw);
+    /// # let buf: Vec<u8> = raw.into_iter().chain(vec![0u8; 256]).collect();
+    /// # let reader = mrc::Reader::from_bytes(buf)?;
+    /// for vol in reader.volumes::<f32>()? {
+    ///     let block = vol?;
+    ///     println!("Volume depth: {}", block.shape[2]);
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn volumes<T: Voxel>(
         &self,
     ) -> Result<crate::iter::RegionIter<'_, T, crate::iter::SlabStepper>, Error> {
@@ -761,6 +1103,23 @@ impl Reader {
     }
 
     /// Read a single sub-region.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # fn main() -> Result<(), mrc::Error> {
+    /// # let mut h = mrc::Header::new();
+    /// # h.nx = 4; h.ny = 4; h.nz = 2;
+    /// # h.mx = 4; h.my = 4; h.mz = 2;
+    /// # let mut raw = [0u8; 1024];
+    /// # h.encode_to_bytes(&mut raw);
+    /// # let buf: Vec<u8> = raw.into_iter().chain(vec![0u8; 128]).collect();
+    /// # let reader = mrc::Reader::from_bytes(buf)?;
+    /// let block = reader.subregion::<f32>([0, 0, 0], [2, 2, 1])?;
+    /// assert_eq!(block.data.len(), 4);
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn subregion<T: Voxel>(
         &self,
         offset: [usize; 3],
@@ -776,11 +1135,48 @@ impl Reader {
     }
 
     /// Read the entire volume.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # fn main() -> Result<(), mrc::Error> {
+    /// # let mut h = mrc::Header::new();
+    /// # h.nx = 4; h.ny = 4; h.nz = 2;
+    /// # h.mx = 4; h.my = 4; h.mz = 2;
+    /// # let mut raw = [0u8; 1024];
+    /// # h.encode_to_bytes(&mut raw);
+    /// # let buf: Vec<u8> = raw.into_iter().chain(vec![0u8; 128]).collect();
+    /// # let reader = mrc::Reader::from_bytes(buf)?;
+    /// let volume = reader.read_volume::<f32>()?;
+    /// assert_eq!(volume.data.len(), 32);
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn read_volume<T: Voxel>(&self) -> Result<VoxelBlock<T>, Error> {
         self.subregion([0, 0, 0], [self.shape.nx, self.shape.ny, self.shape.nz])
     }
 
     /// Iterate over Z-slices as u8 (Uint16 narrowing or Packed4Bit unpack).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # fn main() -> Result<(), mrc::Error> {
+    /// # let mut h = mrc::Header::new();
+    /// # h.nx = 4; h.ny = 4; h.nz = 2;
+    /// # h.mx = 4; h.my = 4; h.mz = 2;
+    /// # h.mode = 6; // Uint16
+    /// # let mut raw = [0u8; 1024];
+    /// # h.encode_to_bytes(&mut raw);
+    /// # let buf: Vec<u8> = raw.into_iter().chain(vec![0u8; 64]).collect();
+    /// # let reader = mrc::Reader::from_bytes(buf)?;
+    /// for slice in reader.slices_u8() {
+    ///     let block = slice?;
+    ///     println!("u8 slice at z={}", block.offset[2]);
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn slices_u8(&self) -> crate::io::reader_common::VoxelIter<'_, u8> {
         if self.mode() == Mode::Packed4Bit {
             let shape = self.shape();
@@ -815,6 +1211,26 @@ impl Reader {
     }
 
     /// Iterate over Z-slabs as u8.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # fn main() -> Result<(), mrc::Error> {
+    /// # let mut h = mrc::Header::new();
+    /// # h.nx = 4; h.ny = 4; h.nz = 4;
+    /// # h.mx = 4; h.my = 4; h.mz = 4;
+    /// # h.mode = 6; // Uint16
+    /// # let mut raw = [0u8; 1024];
+    /// # h.encode_to_bytes(&mut raw);
+    /// # let buf: Vec<u8> = raw.into_iter().chain(vec![0u8; 128]).collect();
+    /// # let reader = mrc::Reader::from_bytes(buf)?;
+    /// for slab in reader.slabs_u8(2) {
+    ///     let block = slab?;
+    ///     println!("u8 slab depth: {}", block.shape[2]);
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn slabs_u8(&self, k: usize) -> crate::io::reader_common::VoxelIter<'_, u8> {
         if self.mode() == Mode::Packed4Bit {
             let volume_shape = self.shape();
@@ -860,6 +1276,26 @@ impl Reader {
     }
 
     /// Iterate over Z-slices of a Mode 0 file with configurable signed/unsigned interpretation.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # fn main() -> Result<(), mrc::Error> {
+    /// # let mut h = mrc::Header::new();
+    /// # h.nx = 4; h.ny = 4; h.nz = 2;
+    /// # h.mx = 4; h.my = 4; h.mz = 2;
+    /// # h.mode = 0; // Int8
+    /// # let mut raw = [0u8; 1024];
+    /// # h.encode_to_bytes(&mut raw);
+    /// # let buf: Vec<u8> = raw.into_iter().chain(vec![0u8; 32]).collect();
+    /// # let reader = mrc::Reader::from_bytes(buf)?;
+    /// for slice in reader.slices_mode0(mrc::M0Interpretation::Signed) {
+    ///     let block = slice?;
+    ///     println!("Mode 0 slice at z={}", block.offset[2]);
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn slices_mode0(
         &self,
         interp: crate::M0Interpretation,
@@ -885,6 +1321,26 @@ impl Reader {
     }
 
     /// Iterate over Z-slabs of a Mode 0 file.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # fn main() -> Result<(), mrc::Error> {
+    /// # let mut h = mrc::Header::new();
+    /// # h.nx = 4; h.ny = 4; h.nz = 4;
+    /// # h.mx = 4; h.my = 4; h.mz = 4;
+    /// # h.mode = 0; // Int8
+    /// # let mut raw = [0u8; 1024];
+    /// # h.encode_to_bytes(&mut raw);
+    /// # let buf: Vec<u8> = raw.into_iter().chain(vec![0u8; 64]).collect();
+    /// # let reader = mrc::Reader::from_bytes(buf)?;
+    /// for slab in reader.slabs_mode0(2, mrc::M0Interpretation::Signed) {
+    ///     let block = slab?;
+    ///     println!("Mode 0 slab depth: {}", block.shape[2]);
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn slabs_mode0(
         &self,
         k: usize,
@@ -923,6 +1379,26 @@ impl Reader {
     }
 
     /// Return a wrapper that auto-converts all reads to type `T`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # fn main() -> Result<(), mrc::Error> {
+    /// # let mut h = mrc::Header::new();
+    /// # h.nx = 4; h.ny = 4; h.nz = 1;
+    /// # h.mx = 4; h.my = 4; h.mz = 1;
+    /// # let mut raw = [0u8; 1024];
+    /// # h.encode_to_bytes(&mut raw);
+    /// # let buf: Vec<u8> = raw.into_iter().chain(vec![0u8; 64]).collect();
+    /// # let reader = mrc::Reader::from_bytes(buf)?;
+    /// let converter = reader.convert::<f32>();
+    /// for slice in converter.slices() {
+    ///     let block = slice?;
+    ///     println!("Converted slice: {} voxels", block.data.len());
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn convert<T>(&self) -> crate::io::reader_common::ConvertReader<'_, T>
     where
         T: Voxel + crate::engine::convert::ConvertFrom<f32>,
@@ -950,6 +1426,17 @@ impl Reader {
     }
 
     /// Read the entire volume as an ndarray (requires `ndarray` feature).
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # fn main() -> Result<(), mrc::Error> {
+    /// let reader = mrc::Reader::open("density.mrc")?;
+    /// let array = reader.to_ndarray::<f32>()?;
+    /// println!("Array shape: {:?}", array.shape());
+    /// # Ok(())
+    /// # }
+    /// ```
     #[cfg(feature = "ndarray")]
     pub fn to_ndarray<T: Voxel>(&self) -> Result<ndarray::Array3<T>, Error> {
         let block = self.read_volume::<T>()?;
@@ -958,6 +1445,25 @@ impl Reader {
     }
 
     /// Read the entire volume as u8 (Packed4Bit unpack).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # fn main() -> Result<(), mrc::Error> {
+    /// # let mut h = mrc::Header::new();
+    /// # h.nx = 4; h.ny = 4; h.nz = 1;
+    /// # h.mx = 4; h.my = 4; h.mz = 1;
+    /// # h.mode = 101; // Packed4Bit
+    /// # let mut raw = [0u8; 1024];
+    /// # h.encode_to_bytes(&mut raw);
+    /// # // Packed4Bit data: ceil(4/2)*4*1 = 8 bytes
+    /// # let buf: Vec<u8> = raw.into_iter().chain(vec![0u8; 8]).collect();
+    /// # let reader = mrc::Reader::from_bytes(buf)?;
+    /// let block = reader.read_volume_u8()?;
+    /// assert_eq!(block.data.len(), 16);
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn read_volume_u8(&self) -> Result<VoxelBlock<u8>, Error> {
         if self.mode() != Mode::Packed4Bit {
             return Err(Error::ModeMismatch {
@@ -981,41 +1487,177 @@ impl Reader {
     // ── Extended header convenience methods ──────────────────────────
 
     /// Auto-dispatch extended header parsing.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # fn main() -> Result<(), mrc::Error> {
+    /// # let mut h = mrc::Header::new();
+    /// # h.nx = 4; h.ny = 4; h.nz = 1;
+    /// # h.mx = 4; h.my = 4; h.mz = 1;
+    /// # let mut raw = [0u8; 1024];
+    /// # h.encode_to_bytes(&mut raw);
+    /// # let buf: Vec<u8> = raw.into_iter().chain(vec![0u8; 64]).collect();
+    /// # let reader = mrc::Reader::from_bytes(buf)?;
+    /// let ext = reader.parse_extended_header();
+    /// assert_eq!(ext, mrc::ExtHeaderData::None);
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn parse_extended_header(&self) -> crate::ExtHeaderData {
         crate::ExtHeaderData::from_header(&self.header, self.ext_header_bytes())
     }
 
     /// Parse FEI1 metadata records.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # fn main() -> Result<(), mrc::Error> {
+    /// # let mut h = mrc::Header::new();
+    /// # h.nx = 4; h.ny = 4; h.nz = 1;
+    /// # h.mx = 4; h.my = 4; h.mz = 1;
+    /// # let mut raw = [0u8; 1024];
+    /// # h.encode_to_bytes(&mut raw);
+    /// # let buf: Vec<u8> = raw.into_iter().chain(vec![0u8; 64]).collect();
+    /// # let reader = mrc::Reader::from_bytes(buf)?;
+    /// let fei1 = reader.fei1_metadata();
+    /// assert!(fei1.is_none()); // no FEI1 extended header present
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn fei1_metadata(&self) -> Option<Vec<crate::Fei1Metadata>> {
         crate::parse_fei1_records(self.ext_header_bytes())
     }
 
     /// Parse FEI2 metadata records.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # fn main() -> Result<(), mrc::Error> {
+    /// # let mut h = mrc::Header::new();
+    /// # h.nx = 4; h.ny = 4; h.nz = 1;
+    /// # h.mx = 4; h.my = 4; h.mz = 1;
+    /// # let mut raw = [0u8; 1024];
+    /// # h.encode_to_bytes(&mut raw);
+    /// # let buf: Vec<u8> = raw.into_iter().chain(vec![0u8; 64]).collect();
+    /// # let reader = mrc::Reader::from_bytes(buf)?;
+    /// let fei2 = reader.fei2_metadata();
+    /// assert!(fei2.is_none());
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn fei2_metadata(&self) -> Option<Vec<crate::Fei2Metadata>> {
         crate::parse_fei2_records(self.ext_header_bytes())
     }
 
     /// Parse CCP4 symmetry records.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # fn main() -> Result<(), mrc::Error> {
+    /// # let mut h = mrc::Header::new();
+    /// # h.nx = 4; h.ny = 4; h.nz = 1;
+    /// # h.mx = 4; h.my = 4; h.mz = 1;
+    /// # let mut raw = [0u8; 1024];
+    /// # h.encode_to_bytes(&mut raw);
+    /// # let buf: Vec<u8> = raw.into_iter().chain(vec![0u8; 64]).collect();
+    /// # let reader = mrc::Reader::from_bytes(buf)?;
+    /// let ccp4 = reader.ccp4_records();
+    /// assert!(ccp4.is_none());
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn ccp4_records(&self) -> Option<Vec<crate::Ccp4Record>> {
         crate::parse_ccp4_records(self.ext_header_bytes())
     }
 
     /// Parse MRCO legacy records.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # fn main() -> Result<(), mrc::Error> {
+    /// # let mut h = mrc::Header::new();
+    /// # h.nx = 4; h.ny = 4; h.nz = 1;
+    /// # h.mx = 4; h.my = 4; h.mz = 1;
+    /// # let mut raw = [0u8; 1024];
+    /// # h.encode_to_bytes(&mut raw);
+    /// # let buf: Vec<u8> = raw.into_iter().chain(vec![0u8; 64]).collect();
+    /// # let reader = mrc::Reader::from_bytes(buf)?;
+    /// let mrco = reader.mrco_records();
+    /// assert!(mrco.is_none());
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn mrco_records(&self) -> Option<Vec<crate::MrcoRecord>> {
         crate::parse_mrco_records(self.ext_header_bytes())
     }
 
     /// Parse SerialEM records.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # fn main() -> Result<(), mrc::Error> {
+    /// # let mut h = mrc::Header::new();
+    /// # h.nx = 4; h.ny = 4; h.nz = 1;
+    /// # h.mx = 4; h.my = 4; h.mz = 1;
+    /// # let mut raw = [0u8; 1024];
+    /// # h.encode_to_bytes(&mut raw);
+    /// # let buf: Vec<u8> = raw.into_iter().chain(vec![0u8; 64]).collect();
+    /// # let reader = mrc::Reader::from_bytes(buf)?;
+    /// let seri = reader.seri_records();
+    /// assert!(seri.is_none());
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn seri_records(&self) -> Option<Vec<crate::SeriRecord>> {
         crate::parse_seri_records(self.ext_header_bytes())
     }
 
     /// Parse Agard records.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # fn main() -> Result<(), mrc::Error> {
+    /// # let mut h = mrc::Header::new();
+    /// # h.nx = 4; h.ny = 4; h.nz = 1;
+    /// # h.mx = 4; h.my = 4; h.mz = 1;
+    /// # let mut raw = [0u8; 1024];
+    /// # h.encode_to_bytes(&mut raw);
+    /// # let buf: Vec<u8> = raw.into_iter().chain(vec![0u8; 64]).collect();
+    /// # let reader = mrc::Reader::from_bytes(buf)?;
+    /// let agar = reader.agar_records();
+    /// assert!(agar.is_none());
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn agar_records(&self) -> Option<Vec<crate::AgarRecord>> {
         crate::parse_agar_records(self.ext_header_bytes())
     }
 
     /// Parse IMOD metadata.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # fn main() -> Result<(), mrc::Error> {
+    /// # let mut h = mrc::Header::new();
+    /// # h.nx = 4; h.ny = 4; h.nz = 1;
+    /// # h.mx = 4; h.my = 4; h.mz = 1;
+    /// # let mut raw = [0u8; 1024];
+    /// # h.encode_to_bytes(&mut raw);
+    /// # let buf: Vec<u8> = raw.into_iter().chain(vec![0u8; 64]).collect();
+    /// # let reader = mrc::Reader::from_bytes(buf)?;
+    /// let imod = reader.imod_metadata();
+    /// assert!(imod.is_none());
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn imod_metadata(&self) -> Option<crate::ImodMetadata> {
         crate::parse_imod_metadata(&self.header)
     }

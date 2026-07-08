@@ -89,6 +89,14 @@ pub enum ExtHeaderType {
 
 impl ExtHeaderType {
     /// Detect the extended header type from a 4-byte EXTTYP identifier.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use mrc::ExtHeaderType;
+    /// let typ = ExtHeaderType::from_exttyp(*b"CCP4");
+    /// assert_eq!(typ, ExtHeaderType::Ccp4);
+    /// ```
     pub fn from_exttyp(exttyp: [u8; 4]) -> Self {
         match &exttyp {
             b"CCP4" => Self::Ccp4,
@@ -103,6 +111,16 @@ impl ExtHeaderType {
     }
 
     /// Detect the extended header type from a [`Header`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use mrc::{Header, ExtHeaderType};
+    /// let mut h = Header::new();
+    /// h.set_exttyp(*b"FEI1");
+    /// let typ = ExtHeaderType::from_header(&h);
+    /// assert_eq!(typ, ExtHeaderType::Fei1);
+    /// ```
     #[inline]
     pub fn from_header(header: &Header) -> Self {
         Self::from_exttyp(header.exttyp())
@@ -138,6 +156,14 @@ impl ExtHeaderData {
     ///
     /// Returns [`None`](ExtHeaderData::None) when `bytes` is empty or the
     /// extended header type is unknown.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use mrc::{ExtHeaderType, ExtHeaderData};
+    /// let data = ExtHeaderData::parse(ExtHeaderType::Ccp4, &[]);
+    /// assert_eq!(data, ExtHeaderData::None);
+    /// ```
     pub fn parse(ext_type: ExtHeaderType, bytes: &[u8]) -> Self {
         if bytes.is_empty() {
             return Self::None;
@@ -166,6 +192,15 @@ impl ExtHeaderData {
     }
 
     /// Parse using the [`ExtHeaderType`] detected from a [`Header`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use mrc::{Header, ExtHeaderData};
+    /// let h = Header::new();
+    /// let data = ExtHeaderData::from_header(&h, &[]);
+    /// assert_eq!(data, ExtHeaderData::None);
+    /// ```
     #[inline]
     pub fn from_header(header: &Header, bytes: &[u8]) -> Self {
         Self::parse(ExtHeaderType::from_header(header), bytes)
@@ -530,6 +565,17 @@ impl Header {
     /// Only **fatal** problems (dimensions ≤ 0 or completely unsupported mode)
     /// produce an `Err`. Everything else is collected as a human-readable
     /// warning string.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use mrc::Header;
+    /// let mut h = Header::new();
+    /// h.nx = 64; h.ny = 64; h.nz = 32;
+    /// h.mx = 64; h.my = 64; h.mz = 32;
+    /// h.mode = 2;
+    /// assert!(h.validate_permissive().is_ok());
+    /// ```
     pub fn validate_permissive(&self) -> Result<Vec<String>, crate::HeaderValidationError> {
         use crate::HeaderValidationError;
         let mut warnings = Vec::new();
@@ -661,6 +707,15 @@ impl Header {
     /// Stores the 4-byte EXTTYP identifier into `extra[8..12]`.
     ///
     /// EXTTYP is a 4-byte ASCII string indicating the type of extended header.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use mrc::Header;
+    /// let mut h = Header::new();
+    /// h.set_exttyp(*b"CCP4");
+    /// assert_eq!(h.exttyp(), *b"CCP4");
+    /// ```
     pub fn set_exttyp(&mut self, value: [u8; 4]) {
         let start = OFFSET_EXTTYP - OFFSET_EXTRA;
         self.extra[start..start + 4].copy_from_slice(&value);
@@ -668,6 +723,18 @@ impl Header {
 
     #[inline]
     /// Interprets EXTTYP as an ASCII string.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use mrc::Header;
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let mut h = Header::new();
+    /// h.set_exttyp(*b"FEI1");
+    /// assert_eq!(h.exttyp_str()?, "FEI1");
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn exttyp_str(&self) -> Result<&str, core::str::Utf8Error> {
         let start = OFFSET_EXTTYP - OFFSET_EXTRA;
         core::str::from_utf8(&self.extra[start..start + 4])
@@ -675,6 +742,18 @@ impl Header {
 
     #[inline]
     /// Sets EXTTYP from a 4-character ASCII string.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use mrc::Header;
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let mut h = Header::new();
+    /// h.set_exttyp_str("FEI1")?;
+    /// assert_eq!(h.exttyp(), *b"FEI1");
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn set_exttyp_str(&mut self, value: &str) -> Result<(), &'static str> {
         if value.len() != 4 {
             return Err("EXTTYP must be exactly 4 characters");
@@ -706,6 +785,15 @@ impl Header {
     /// Stores the 4-byte NVERSION number into `extra[12..16]`.
     ///
     /// This value is a numeric i32 and respects the file's endianness.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use mrc::Header;
+    /// let mut h = Header::new();
+    /// h.set_nversion(20140);
+    /// assert_eq!(h.nversion(), 20140);
+    /// ```
     pub fn set_nversion(&mut self, value: i32) {
         use crate::engine::codec::EndianCodec;
         let file_endian = self.detect_endian();
@@ -755,6 +843,15 @@ impl Header {
     /// Labels are truncated to 80 bytes and non-printable ASCII characters
     /// (outside 0x20–0x7E) are replaced with spaces. If 10 labels are already
     /// stored, the oldest label is dropped (FIFO).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use mrc::Header;
+    /// let mut h = Header::new();
+    /// h.add_label("my sample");
+    /// assert_eq!(h.get_labels(), vec!["my sample"]);
+    /// ```
     pub fn add_label(&mut self, text: &str) {
         // Filter to printable ASCII and truncate to 80 bytes
         let filtered: String = text
@@ -857,11 +954,29 @@ impl Header {
 
     /// Returns `true` if this is a single 3D volume (`ispg != 0` and not a
     /// volume stack).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use mrc::Header;
+    /// let mut h = Header::new();
+    /// h.ispg = 1;
+    /// assert!(h.is_volume());
+    /// ```
     pub fn is_volume(&self) -> bool {
         !self.is_image_stack() && !self.is_volume_stack()
     }
 
     /// Returns `true` if this is a volume stack (`ispg` in 401–630).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use mrc::Header;
+    /// let mut h = Header::new();
+    /// h.ispg = 401;
+    /// assert!(h.is_volume_stack());
+    /// ```
     pub fn is_volume_stack(&self) -> bool {
         (400..=630).contains(&self.ispg)
     }
@@ -869,6 +984,15 @@ impl Header {
     /// Configure the header as an image stack.
     ///
     /// Sets `ispg = 0` and `mz = 1`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use mrc::Header;
+    /// let mut h = Header::new();
+    /// h.set_image_stack();
+    /// assert!(h.is_image_stack());
+    /// ```
     pub fn set_image_stack(&mut self) {
         self.ispg = 0;
         self.mz = 1;
@@ -877,6 +1001,17 @@ impl Header {
     /// Configure the header as a single volume.
     ///
     /// Sets `ispg = 1` and `mz = nz`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use mrc::Header;
+    /// let mut h = Header::new();
+    /// h.nz = 32;
+    /// h.set_volume();
+    /// assert!(h.is_volume());
+    /// assert_eq!(h.mz, 32);
+    /// ```
     pub fn set_volume(&mut self) {
         self.ispg = 1;
         self.mz = self.nz;
@@ -886,6 +1021,16 @@ impl Header {
     ///
     /// Sets `ispg = 401` and `mz` to the given sub-volume size.
     /// `nz` must be divisible by `mz` for the header to validate.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use mrc::Header;
+    /// let mut h = Header::new();
+    /// h.set_volume_stack(16);
+    /// assert!(h.is_volume_stack());
+    /// assert_eq!(h.mz, 16);
+    /// ```
     pub fn set_volume_stack(&mut self, mz: i32) {
         self.ispg = 401;
         self.mz = mz;
@@ -899,6 +1044,18 @@ impl Header {
     ///
     /// Returns `[xlen / mx, ylen / my, zlen / mz]`.
     /// If any of `mx`, `my`, `mz` is zero, that component returns `0.0`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use mrc::Header;
+    /// let mut h = Header::new();
+    /// h.xlen = 10.0; h.mx = 100;
+    /// h.ylen = 10.0; h.my = 100;
+    /// h.zlen = 20.0; h.mz = 200;
+    /// let vs = h.voxel_size();
+    /// assert!((vs[0] - 0.1).abs() < 1e-6);
+    /// ```
     pub fn voxel_size(&self) -> [f32; 3] {
         [
             if self.mx == 0 {
@@ -922,6 +1079,15 @@ impl Header {
     /// Starting grid point / origin offset.
     ///
     /// Returns `[nxstart, nystart, nzstart]`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use mrc::Header;
+    /// let mut h = Header::new();
+    /// h.nxstart = 10; h.nystart = 20; h.nzstart = 30;
+    /// assert_eq!(h.nstart(), [10, 20, 30]);
+    /// ```
     pub fn nstart(&self) -> [i32; 3] {
         [self.nxstart, self.nystart, self.nzstart]
     }
@@ -929,6 +1095,14 @@ impl Header {
     /// Cell dimensions (unit cell edge lengths) in ångströms.
     ///
     /// Returns `[xlen, ylen, zlen]`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use mrc::Header;
+    /// let h = Header::new();
+    /// assert_eq!(h.cell_lengths(), [1.0, 1.0, 1.0]);
+    /// ```
     pub fn cell_lengths(&self) -> [f32; 3] {
         [self.xlen, self.ylen, self.zlen]
     }
@@ -936,6 +1110,14 @@ impl Header {
     /// Cell angles in degrees.
     ///
     /// Returns `[alpha, beta, gamma]`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use mrc::Header;
+    /// let h = Header::new();
+    /// assert_eq!(h.cell_angles(), [90.0, 90.0, 90.0]);
+    /// ```
     pub fn cell_angles(&self) -> [f32; 3] {
         [self.alpha, self.beta, self.gamma]
     }
@@ -948,6 +1130,16 @@ impl Header {
     /// | Image stack | `(1, nz, ny, nx)` |
     /// | Volume | `(1, nz, ny, nx)` |
     /// | Volume stack | `(nz / mz, mz, ny, nx)` |
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use mrc::Header;
+    /// let mut h = Header::new();
+    /// h.nx = 64; h.ny = 64; h.nz = 32;
+    /// // Default ispg=1 (volume) → shape is (1, nz, ny, nx)
+    /// assert_eq!(h.logical_shape(), [1, 32, 64, 64]);
+    /// ```
     pub fn logical_shape(&self) -> [usize; 4] {
         if self.is_volume_stack() && self.mz > 0 {
             let nvolumes = (self.nz / self.mz) as usize;
@@ -963,18 +1155,43 @@ impl Header {
     }
 
     /// Sampling rates (mx, my, mz).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use mrc::Header;
+    /// let mut h = Header::new();
+    /// h.mx = 100; h.my = 100; h.mz = 50;
+    /// assert_eq!(h.sampling(), [100, 100, 50]);
+    /// ```
     #[inline]
     pub fn sampling(&self) -> [i32; 3] {
         [self.mx, self.my, self.mz]
     }
 
     /// Header density statistics `(dmin, dmax, dmean, rms)`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use mrc::Header;
+    /// let h = Header::new();
+    /// assert_eq!(h.density_stats(), (0.0, -1.0, -2.0, -1.0));
+    /// ```
     #[inline]
     pub fn density_stats(&self) -> (f32, f32, f32, f32) {
         (self.dmin, self.dmax, self.dmean, self.rms)
     }
 
     /// Returns `true` when the MAP field is exactly `"MAP "` (MRC-2014 standard).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use mrc::Header;
+    /// let h = Header::new();
+    /// assert!(h.is_standard_map());
+    /// ```
     #[inline]
     pub fn is_standard_map(&self) -> bool {
         self.map == *b"MAP "
@@ -985,6 +1202,15 @@ impl Header {
     ///
     /// Labels are 80-byte fixed-width fields.  Trailing whitespace is trimmed.
     /// Non-UTF-8 bytes are replaced with `U+FFFD` (this is rare in practice).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use mrc::Header;
+    /// let mut h = Header::new();
+    /// h.add_label("my sample");
+    /// assert_eq!(h.label_at(0), Some("my sample"));
+    /// ```
     pub fn label_at(&self, index: usize) -> Option<&str> {
         if index >= self.nlabl.clamp(0, 10) as usize || self.label_is_empty(index) {
             return None;
@@ -1007,6 +1233,16 @@ impl Header {
     ///
     /// where `a`, `b`, `c` are cell lengths and `α`, `β`, `γ` are cell angles.
     /// Returns `0.0` for degenerate cells (any length ≤ 0).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use mrc::Header;
+    /// let mut h = Header::new();
+    /// h.xlen = 10.0; h.ylen = 10.0; h.zlen = 10.0;
+    /// let vol = h.cell_volume();
+    /// assert!((vol - 1000.0).abs() < 1e-6);
+    /// ```
     pub fn cell_volume(&self) -> f64 {
         let a = self.xlen as f64;
         let b = self.ylen as f64;
@@ -1032,6 +1268,21 @@ impl Header {
     /// If the detected endianness produces an invalid MODE value, the opposite
     /// endianness is tried as a fallback (matching the behaviour of the
     /// reference Python `mrcfile` library).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use mrc::Header;
+    /// let mut raw = [0u8; 1024];
+    /// raw[0..4].copy_from_slice(&(64i32).to_le_bytes());
+    /// raw[4..8].copy_from_slice(&(64i32).to_le_bytes());
+    /// raw[8..12].copy_from_slice(&(1i32).to_le_bytes());
+    /// raw[12..16].copy_from_slice(&(2i32).to_le_bytes());
+    /// raw[208..212].copy_from_slice(b"MAP ");
+    /// raw[212..216].copy_from_slice(&[0x44, 0x44, 0x00, 0x00]);
+    /// let h = Header::decode_from_bytes(&raw);
+    /// assert_eq!(h.nx, 64);
+    /// ```
     pub fn decode_from_bytes(bytes: &[u8; 1024]) -> Self {
         Self::decode_from_bytes_with_info(bytes).0
     }
@@ -1071,6 +1322,22 @@ impl Header {
     /// Returns `(header, warning)` where `warning` is `Some` if the MACHST
     /// indicated one endianness but the MODE field was only valid under the
     /// opposite endianness.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use mrc::Header;
+    /// let mut raw = [0u8; 1024];
+    /// raw[0..4].copy_from_slice(&(64i32).to_le_bytes());
+    /// raw[4..8].copy_from_slice(&(64i32).to_le_bytes());
+    /// raw[8..12].copy_from_slice(&(1i32).to_le_bytes());
+    /// raw[12..16].copy_from_slice(&(2i32).to_le_bytes());
+    /// raw[208..212].copy_from_slice(b"MAP ");
+    /// raw[212..216].copy_from_slice(&[0x44, 0x44, 0x00, 0x00]);
+    /// let (h, warn) = Header::decode_from_bytes_with_info(&raw);
+    /// assert_eq!(h.nx, 64);
+    /// assert!(warn.is_none());
+    /// ```
     pub fn decode_from_bytes_with_info(
         bytes: &[u8; 1024],
     ) -> (Self, Option<EndianFallbackWarning>) {
@@ -1163,6 +1430,16 @@ impl Header {
     /// Encode header to raw bytes with correct endianness.
     ///
     /// Endianness is determined from the MACHST field and applied automatically.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use mrc::Header;
+    /// let h = Header::new();
+    /// let mut encoded = [0u8; 1024];
+    /// h.encode_to_bytes(&mut encoded);
+    /// assert_eq!(&encoded[208..212], b"MAP ");
+    /// ```
     pub fn encode_to_bytes(&self, out: &mut [u8; 1024]) {
         use crate::engine::codec::EndianCodec;
 
@@ -1250,6 +1527,15 @@ impl Header {
     /// whether Mode 0 bytes are signed or unsigned:
     /// - `bytes_are_signed: true` → bit 0 set → standard MRC-2014 signed bytes
     /// - `bytes_are_signed: false` → bit 0 clear → IMOD legacy unsigned bytes
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use mrc::Header;
+    /// let mut h = Header::new();
+    /// h.extra[56..60].copy_from_slice(b"IMOD");
+    /// assert!(h.detect_imod().is_some());
+    /// ```
     pub fn detect_imod(&self) -> Option<ImodInfo> {
         // imodStamp at extra[56..60] = little-endian "IMOD" (1146047817)
         if self.extra[56..60] == [0x49, 0x4D, 0x4F, 0x44] {
@@ -1263,6 +1549,15 @@ impl Header {
 
     /// Returns `true` when `mapr == -2`, indicating Y-inverted image data
     /// (an IMOD convention not part of standard MRC-2014).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use mrc::Header;
+    /// let mut h = Header::new();
+    /// h.mapr = -2;
+    /// assert!(h.is_y_inverted());
+    /// ```
     pub fn is_y_inverted(&self) -> bool {
         self.mapr == -2
     }
@@ -1412,6 +1707,13 @@ pub struct HeaderBuilder {
 
 impl HeaderBuilder {
     /// Create a new header builder with sensible defaults.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use mrc::HeaderBuilder;
+    /// let builder = HeaderBuilder::new();
+    /// ```
     #[must_use]
     pub fn new() -> Self {
         Self {
@@ -1423,6 +1725,20 @@ impl HeaderBuilder {
     ///
     /// Also synchronises `mx`, `my`, `mz` to match `nx`, `ny`, `nz`, following
     /// the convention used by the reference Python `mrcfile` library.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use mrc::HeaderBuilder;
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let h = HeaderBuilder::new()
+    ///     .shape([512, 512, 256])
+    ///     .mode::<f32>()
+    ///     .build()?;
+    /// assert_eq!(h.nx, 512);
+    /// # Ok(())
+    /// # }
+    /// ```
     #[must_use]
     pub fn shape(mut self, shape: [usize; 3]) -> Self {
         self.header.nx = shape[0] as i32;
@@ -1435,6 +1751,20 @@ impl HeaderBuilder {
     }
 
     /// Set the voxel mode from a Rust type.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use mrc::HeaderBuilder;
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let h = HeaderBuilder::new()
+    ///     .shape([64, 64, 1])
+    ///     .mode::<f32>()
+    ///     .build()?;
+    /// assert_eq!(h.mode, 2);
+    /// # Ok(())
+    /// # }
+    /// ```
     #[must_use]
     pub fn mode<T: crate::mode::Voxel>(mut self) -> Self {
         self.header.mode = T::MODE.as_i32();
@@ -1446,6 +1776,20 @@ impl HeaderBuilder {
     /// This is primarily useful for [`Mode::Packed4Bit`] (mode 101) which does not
     /// implement `Voxel`.  Invalid mode constants are caught by header validation
     /// at `build()` time.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use mrc::HeaderBuilder;
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let h = HeaderBuilder::new()
+    ///     .shape([8, 8, 1])
+    ///     .mode_raw(101)
+    ///     .build()?;
+    /// assert_eq!(h.mode, 101);
+    /// # Ok(())
+    /// # }
+    /// ```
     #[must_use]
     pub fn mode_raw(mut self, mode: i32) -> Self {
         self.header.mode = mode;
@@ -1453,6 +1797,21 @@ impl HeaderBuilder {
     }
 
     /// Set the cell dimensions in Angstroms.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use mrc::HeaderBuilder;
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let h = HeaderBuilder::new()
+    ///     .shape([64, 64, 1])
+    ///     .mode::<f32>()
+    ///     .cell_lengths(100.0, 100.0, 100.0)
+    ///     .build()?;
+    /// assert_eq!(h.xlen, 100.0);
+    /// # Ok(())
+    /// # }
+    /// ```
     #[must_use]
     pub fn cell_lengths(mut self, xlen: f32, ylen: f32, zlen: f32) -> Self {
         self.header.xlen = xlen;
@@ -1462,6 +1821,21 @@ impl HeaderBuilder {
     }
 
     /// Set the cell angles in degrees (alpha, beta, gamma).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use mrc::HeaderBuilder;
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let h = HeaderBuilder::new()
+    ///     .shape([64, 64, 1])
+    ///     .mode::<f32>()
+    ///     .cell_angles(90.0, 90.0, 120.0)
+    ///     .build()?;
+    /// assert_eq!(h.gamma, 120.0);
+    /// # Ok(())
+    /// # }
+    /// ```
     #[must_use]
     pub fn cell_angles(mut self, alpha: f32, beta: f32, gamma: f32) -> Self {
         self.header.alpha = alpha;
@@ -1471,6 +1845,21 @@ impl HeaderBuilder {
     }
 
     /// Set the space group number.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use mrc::HeaderBuilder;
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let h = HeaderBuilder::new()
+    ///     .shape([64, 64, 1])
+    ///     .mode::<f32>()
+    ///     .ispg(0)
+    ///     .build()?;
+    /// assert_eq!(h.ispg, 0);
+    /// # Ok(())
+    /// # }
+    /// ```
     #[must_use]
     pub fn ispg(mut self, ispg: i32) -> Self {
         self.header.ispg = ispg;
@@ -1482,6 +1871,21 @@ impl HeaderBuilder {
     /// Shorthand for calling [`ispg(401)`](Self::ispg) and setting
     /// `mz` to the given value.  `nz` must be divisible by `mz` for
     /// the header to validate.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use mrc::HeaderBuilder;
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let h = HeaderBuilder::new()
+    ///     .shape([64, 64, 32])
+    ///     .mode::<f32>()
+    ///     .set_volume_stack(16)
+    ///     .build()?;
+    /// assert!(h.is_volume_stack());
+    /// # Ok(())
+    /// # }
+    /// ```
     #[must_use]
     pub fn set_volume_stack(mut self, mz: i32) -> Self {
         self.header.set_volume_stack(mz);
@@ -1489,6 +1893,21 @@ impl HeaderBuilder {
     }
 
     /// Set the extended header type (4-byte ASCII identifier).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use mrc::HeaderBuilder;
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let h = HeaderBuilder::new()
+    ///     .shape([64, 64, 1])
+    ///     .mode::<f32>()
+    ///     .exttyp(*b"CCP4")
+    ///     .build()?;
+    /// assert_eq!(h.exttyp(), *b"CCP4");
+    /// # Ok(())
+    /// # }
+    /// ```
     #[must_use]
     pub fn exttyp(mut self, exttyp: [u8; 4]) -> Self {
         self.header.set_exttyp(exttyp);
@@ -1496,6 +1915,21 @@ impl HeaderBuilder {
     }
 
     /// Set the extended header size in bytes.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use mrc::HeaderBuilder;
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let h = HeaderBuilder::new()
+    ///     .shape([64, 64, 1])
+    ///     .mode::<f32>()
+    ///     .nsymbt(256)
+    ///     .build()?;
+    /// assert_eq!(h.nsymbt, 256);
+    /// # Ok(())
+    /// # }
+    /// ```
     #[must_use]
     pub fn nsymbt(mut self, nsymbt: i32) -> Self {
         self.header.nsymbt = nsymbt;
@@ -1503,6 +1937,21 @@ impl HeaderBuilder {
     }
 
     /// Set the origin coordinates.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use mrc::HeaderBuilder;
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let h = HeaderBuilder::new()
+    ///     .shape([64, 64, 1])
+    ///     .mode::<f32>()
+    ///     .origin([1.0, 2.0, 3.0])
+    ///     .build()?;
+    /// assert_eq!(h.origin, [1.0, 2.0, 3.0]);
+    /// # Ok(())
+    /// # }
+    /// ```
     #[must_use]
     pub fn origin(mut self, origin: [f32; 3]) -> Self {
         self.header.origin = origin;
@@ -1513,6 +1962,21 @@ impl HeaderBuilder {
     ///
     /// This is the starting point of the image data within the unit cell.
     /// Commonly used in IMOD and tilt-series metadata.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use mrc::HeaderBuilder;
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let h = HeaderBuilder::new()
+    ///     .shape([64, 64, 1])
+    ///     .mode::<f32>()
+    ///     .nstart([10, 20, 0])
+    ///     .build()?;
+    /// assert_eq!(h.nxstart, 10);
+    /// # Ok(())
+    /// # }
+    /// ```
     #[must_use]
     pub fn nstart(mut self, nstart: [i32; 3]) -> Self {
         self.header.nxstart = nstart[0];
@@ -1527,6 +1991,21 @@ impl HeaderBuilder {
     /// By default [`shape`](Self::shape) syncs `mx`, `my`, `mz` to `nx`, `ny`,
     /// `nz`.  Use this method to override them when the cell sampling differs
     /// from the pixel dimensions.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use mrc::HeaderBuilder;
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let h = HeaderBuilder::new()
+    ///     .shape([64, 64, 32])
+    ///     .mode::<f32>()
+    ///     .sampling([64, 64, 32])
+    ///     .build()?;
+    /// assert_eq!(h.mx, 64);
+    /// # Ok(())
+    /// # }
+    /// ```
     #[must_use]
     pub fn sampling(mut self, sampling: [i32; 3]) -> Self {
         self.header.mx = sampling[0];
@@ -1542,6 +2021,21 @@ impl HeaderBuilder {
     /// The default is `[1, 2, 3]` (X=column, Y=row, Z=section), which
     /// covers nearly all MRC files.  Override only when you need a
     /// non-standard axis layout.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use mrc::HeaderBuilder;
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let h = HeaderBuilder::new()
+    ///     .shape([64, 64, 32])
+    ///     .mode::<f32>()
+    ///     .axis_mapping([2, 1, 3])
+    ///     .build()?;
+    /// assert_eq!(h.mapc, 2);
+    /// # Ok(())
+    /// # }
+    /// ```
     #[must_use]
     pub fn axis_mapping(mut self, mapping: [i32; 3]) -> Self {
         self.header.mapc = mapping[0];
@@ -1555,6 +2049,21 @@ impl HeaderBuilder {
     /// Delegates to [`Header::add_label`].  Labels are stored in the
     /// 800-byte label field (up to 10 labels).  When full, the oldest
     /// label is dropped (FIFO).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use mrc::HeaderBuilder;
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let h = HeaderBuilder::new()
+    ///     .shape([64, 64, 1])
+    ///     .mode::<f32>()
+    ///     .add_label("my sample")
+    ///     .build()?;
+    /// assert_eq!(h.get_labels(), vec!["my sample"]);
+    /// # Ok(())
+    /// # }
+    /// ```
     #[must_use]
     pub fn add_label(mut self, text: &str) -> Self {
         self.header.add_label(text);
@@ -1562,6 +2071,20 @@ impl HeaderBuilder {
     }
 
     /// Consume the builder and return the header.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use mrc::HeaderBuilder;
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let h = HeaderBuilder::new()
+    ///     .shape([64, 64, 1])
+    ///     .mode::<f32>()
+    ///     .build()?;
+    /// assert!(h.validate());
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn build(self) -> Result<Header, crate::HeaderValidationError> {
         self.header.validate_detailed()?;
         Ok(self.header)

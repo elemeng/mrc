@@ -576,9 +576,17 @@ fn convert_block_inner(
             Ok(mag)
         }
         Mode::Packed4Bit => {
+            // SAFETY: `convert_block` handles Packed4Bit before falling through to
+            // `convert_block_inner`, so this arm is truly unreachable. If you refactor
+            // the dispatch in `convert_block`, ensure Packed4Bit is still intercepted
+            // first or update this arm accordingly.
             unreachable!("Packed4Bit is dispatched via convert_block before convert_block_inner")
         }
-        Mode::Float16 => unreachable!("Float16 is dispatched via convert_block_float16"),
+        Mode::Float16 => {
+            // SAFETY: `convert_block` handles Float16 via `convert_block_float16` before
+            // falling through to `convert_block_inner`, so this arm is truly unreachable.
+            unreachable!("Float16 is dispatched via convert_block_float16 before convert_block_inner")
+        }
     }
 }
 
