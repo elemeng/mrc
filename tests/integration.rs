@@ -426,7 +426,8 @@ fn mmap_roundtrip_f32() {
         w.finalize().unwrap();
     }
 
-    let r = MmapReader::open(f.path()).unwrap();
+    // Reader::open auto-selects mmap when the mmap feature is available
+    let r = Reader::open(f.path()).unwrap();
     let block = r.read_volume::<f32>().unwrap();
     assert_eq!(block.data, data);
 

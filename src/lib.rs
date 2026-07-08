@@ -571,8 +571,8 @@ pub use mode::{
 /// Half-precision floating point type (requires `f16` feature).
 #[cfg(feature = "f16")]
 pub use half::f16;
-/// Buffered MRC reader with lazy slice/slab iterators.
-pub use io::buffered::Reader;
+/// Consolidated MRC reader with automatic mmap/buffered backend selection.
+pub use io::reader::Reader;
 
 /// MRC file writer and its builder.
 pub use io::writer::{Writer, WriterBuilder};
@@ -580,19 +580,6 @@ pub use io::writer::{Writer, WriterBuilder};
 pub use iter::RegionIter;
 /// Stepping strategies for [`RegionIter`].
 pub use iter::{SlabStepper, SliceStepper, TileStepper};
-
-/// Memory-mapped MRC writer (requires `mmap` feature).
-#[cfg(feature = "mmap")]
-pub use io::writer::MmapWriter;
-
-/// Memory-mapped MRC reader (requires `mmap` feature).
-#[cfg(feature = "mmap")]
-pub use io::mmap_reader::MmapReader;
-
-/// Trait alias for types supporting read + write + seek simultaneously.
-///
-/// Used by [`Writer::from_writer`] to accept any appropriate I/O target.
-pub use io::writer::ReadWriteSeek;
 
 /// Compression level for compressed MRC writers.
 ///
@@ -613,19 +600,6 @@ pub use io::bzip2::Bzip2Writer;
 /// Override via [`Reader::open_gzip_with_limit`] or
 /// [`Reader::open_bzip2_with_limit`].
 pub use io::reader_common::DEFAULT_MAX_DECOMPRESSED_BYTES;
-
-/// Universal iterator / read API for all MRC reader types.
-///
-/// Import this trait to call `slices`, `slabs`, `tiles`, `subregion`,
-/// `read_volume`, `slices_u8`, `slabs_u8`, `slices_mode0`, `slabs_mode0`,
-/// `read_volume_u8`, `volumes`, and `to_ndarray` on any reader.
-pub use io::reader_common::ReaderMethods;
-
-/// Auto-conversion API for MRC readers.
-///
-/// Import this trait to call `.convert::<T>()` on any reader, enabling
-/// automatic mode conversion (e.g. Int16 → f32).
-pub use io::reader_common::ConvertMethods;
 
 #[doc(hidden)]
 pub use io::reader::{CompressionType, detect_compression};

@@ -8,14 +8,13 @@
 //! Users typically obtain iterators from reader methods rather than constructing
 //! them directly:
 //!
-//! - [`Reader::slices`](crate::ReaderMethods::slices) — one Z-plane at a time
-//! - [`Reader::slabs`](crate::ReaderMethods::slabs) — batches of `k` Z-planes
-//! - [`Reader::tiles`](crate::ReaderMethods::tiles) — arbitrary 3D tiles
-//! - [`reader.convert::<f32>().slices()`](crate::io::reader_common::ConvertReader::slices) — any mode auto-converted to `f32`
+//! - [`Reader::slices`](crate::Reader::slices) — one Z-plane at a time
+//! - [`Reader::slabs`](crate::Reader::slabs) — batches of `k` Z-planes
+//! - [`Reader::tiles`](crate::Reader::tiles) — arbitrary 3D tiles
 
 use crate::Error;
+use crate::Reader;
 use crate::engine::block::{VolumeShape, VoxelBlock};
-use crate::io::reader_common::VoxelSource;
 use crate::mode::Voxel;
 
 // ============================================================================
@@ -23,9 +22,6 @@ use crate::mode::Voxel;
 // ============================================================================
 
 /// Strategy for stepping through a volume as a sequence of blocks.
-///
-/// This trait is `#[doc(hidden)]` — users interact with the concrete
-/// [`SliceStepper`], [`SlabStepper`], and [`TileStepper`] types instead.
 #[doc(hidden)]
 pub trait Stepper {
     /// Returns the next `(offset, shape)` pair, or `None` when exhausted.
@@ -132,7 +128,7 @@ impl Stepper for TileStepper {
 }
 
 // ============================================================================
-// RegionIter – unified block iterator
+// RegionIter – unified block iterator over a Reader
 // ============================================================================
 
 /// Lazy iterator over a volume as a sequence of [`VoxelBlock`]s.
@@ -140,20 +136,16 @@ impl Stepper for TileStepper {
 /// The stepping strategy (slices, slabs, tiles) is determined by the `S`
 /// type parameter.
 #[derive(Debug)]
-pub struct RegionIter<'a, T, R, S> {
-    reader: &'a R,
+pub struct RegionIter<'a, T, S> {
+    reader: &'a Reader,
     volume_shape: VolumeShape,
     stepper: S,
     _phantom: core::marker::PhantomData<T>,
 }
 
-impl<'a, T, R, S> RegionIter<'a, T, R, S> {
+impl<'a, T, S> RegionIter<'a, T, S> {
     /// Create a new region iterator with an explicit stepper.
-    ///
-    /// Prefer using the convenience methods on [`Reader`](crate::Reader) and
-    /// [`MmapReader`](crate::MmapReader) (`slices`, `slabs`, `tiles`, etc.)
-    /// which construct the appropriate stepper automatically.
-    pub fn with_stepper(reader: &'a R, volume_shape: VolumeShape, stepper: S) -> Self {
+    pub fn with_stepper(reader: &'a Reader, volume_shape: VolumeShape, stepper: S) -> Self {
         Self {
             reader,
             volume_shape,
@@ -163,9 +155,8 @@ impl<'a, T, R, S> RegionIter<'a, T, R, S> {
     }
 }
 
-impl<'a, T, R, S> Iterator for RegionIter<'a, T, R, S>
+impl<'a, T, S> Iterator for RegionIter<'a, T, S>
 where
-    R: VoxelSource,
     S: Stepper,
     T: Voxel,
 {
@@ -173,11 +164,11 @@ where
 
     fn next(&mut self) -> Option<Self::Item> {
         let (offset, shape) = self.stepper.next(self.volume_shape)?;
-        let bytes = match self.reader.vs_read_block_bytes(offset, shape) {
+        let bytes = match self.reader.read_block_bytes_cow(offset, shape) {
             Ok(b) => b,
             Err(e) => return Some(Err(e)),
         };
-        let data = match self.reader.vs_decode_block::<T>(&bytes) {
+        let data = match self.reader.decode_block::<T>(&bytes) {
             Ok(d) => d,
             Err(e) => return Some(Err(e)),
         };
@@ -189,9 +180,8 @@ where
     }
 }
 
-impl<'a, T, R, S> core::iter::FusedIterator for RegionIter<'a, T, R, S>
+impl<'a, T, S> core::iter::FusedIterator for RegionIter<'a, T, S>
 where
-    R: VoxelSource,
     S: Stepper,
     T: Voxel,
 {

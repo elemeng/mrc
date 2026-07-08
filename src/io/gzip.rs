@@ -68,17 +68,7 @@ impl crate::Reader {
     ) -> Result<(Self, Vec<String>), Error> {
         let decoder = flate2::read::GzDecoder::new(file);
         let d = crate::io::reader_common::open_compressed(decoder, permissive, max_bytes)?;
-        Ok((
-            Self {
-                header: d.header,
-                ext_header: d.ext_header,
-                data: d.data,
-                endian: d.endian,
-                mode: d.mode,
-                shape: d.shape,
-            },
-            d.warnings,
-        ))
+        Ok(Self::_from_decompressed(d))
     }
 }
 

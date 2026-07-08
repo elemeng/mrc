@@ -1,71 +1,134 @@
-//! Shared helpers for all MRC reader implementations.
+//! Internal helpers for block validation, endian decoding, and auto-conversion.
 //!
-//! This module contains the `VoxelSource` trait and helper functions that are
-//! used by [`Reader`](crate::Reader) and [`MmapReader`](crate::MmapReader) to implement block validation, endian
-//! decoding, and auto-conversion via [`ConvertReader`].
+//! This module contains the helper functions used by [`Reader`](crate::Reader)
+//! internally, plus the [`ConvertReader`] wrapper for automatic mode conversion.
 
-use crate::engine::block::{VolumeShape, VoxelBlock};
 use crate::engine::codec::{EndianCodec, decode_slice, encode_slice};
 use crate::engine::endian::FileEndian;
-use crate::iter::{RegionIter, SlabStepper, SliceStepper, Stepper, TileStepper};
-use crate::mode::{M0Interpretation, Voxel};
-use crate::{Error, Header, Mode};
-use std::borrow::Cow;
+use crate::iter::{SlabStepper, SliceStepper, Stepper, TileStepper};
+use crate::mode::Voxel;
+use crate::{Error, Mode};
+use crate::{VolumeShape, VoxelBlock};
 use std::io::Read;
 
-/// Internal helper: boxed iterator over [`VoxelBlock`] results.
-///
-/// Used by `convert_iter` to return type-erased iterators without
-/// exposing complex generic types in the public API.
-type VoxelIter<'a, T> = Box<dyn Iterator<Item = Result<VoxelBlock<T>, Error>> + 'a>;
+/// Internal helper: type-erased voxel block iterator.
+pub(crate) type VoxelIter<'a, T> = Box<dyn Iterator<Item = Result<VoxelBlock<T>, Error>> + 'a>;
 
-/// Raw-byte block iterator (no type decoding).
+// ============================================================================
+// ConvertReader — auto-conversion wrapper
+// ============================================================================
+
+/// A reader wrapper that auto-converts all voxel data to type `T`.
 ///
-/// Yields `(raw_bytes, offset, shape)` triples. Used as the base for generic
-/// conversion iterators via [`convert_iter`].
-pub(crate) struct RawRegionIter<'a, R: VoxelSource, S> {
-    reader: &'a R,
+/// Created via [`Reader::convert`](crate::Reader::convert).
+pub struct ConvertReader<'a, T> {
+    pub(crate) reader: &'a crate::Reader,
+    pub(crate) complex_strategy: crate::ComplexToRealStrategy,
+    pub(crate) m0_interp: crate::M0Interpretation,
+    pub(crate) _target: core::marker::PhantomData<T>,
+}
+
+impl<'a, T> ConvertReader<'a, T>
+where
+    T: Voxel + crate::engine::convert::ConvertFrom<f32>,
+{
+    pub fn slices(&self) -> VoxelIter<'_, T> {
+        let shape = self.reader.shape();
+        Box::new(convert_iter::<SliceStepper, T>(
+            self.reader,
+            shape,
+            SliceStepper::default(),
+            self.complex_strategy,
+            self.m0_interp,
+        ))
+    }
+
+    pub fn slabs(&self, k: usize) -> VoxelIter<'_, T> {
+        let shape = self.reader.shape();
+        Box::new(convert_iter::<SlabStepper, T>(
+            self.reader,
+            shape,
+            SlabStepper::new(k),
+            self.complex_strategy,
+            self.m0_interp,
+        ))
+    }
+
+    pub fn tiles(&self, tile_shape: [usize; 3]) -> Result<VoxelIter<'_, T>, Error> {
+        let shape = self.reader.shape();
+        Ok(Box::new(convert_iter::<TileStepper, T>(
+            self.reader,
+            shape,
+            TileStepper::new(tile_shape)?,
+            self.complex_strategy,
+            self.m0_interp,
+        )))
+    }
+
+    pub fn subregion(
+        &self,
+        offset: [usize; 3],
+        block_shape: [usize; 3],
+    ) -> Result<VoxelBlock<T>, Error> {
+        let bytes = self.reader.read_block_bytes_cow(offset, block_shape)?;
+        let s = self.reader.shape();
+        let data = crate::engine::convert::convert_block::<T>(
+            &bytes,
+            self.reader.mode(),
+            self.reader.endian(),
+            s.nx,
+            s.ny,
+            block_shape,
+            self.complex_strategy,
+            self.m0_interp,
+        )?;
+        Ok(VoxelBlock {
+            offset,
+            shape: block_shape,
+            data,
+        })
+    }
+
+    pub fn with_complex_strategy(mut self, strategy: crate::ComplexToRealStrategy) -> Self {
+        self.complex_strategy = strategy;
+        self
+    }
+
+    pub fn with_m0_interpretation(mut self, interp: crate::M0Interpretation) -> Self {
+        self.m0_interp = interp;
+        self
+    }
+
+    pub fn read_volume(&self) -> Result<VoxelBlock<T>, Error> {
+        let s = self.reader.shape();
+        let block_shape = [s.nx, s.ny, s.nz];
+        self.subregion([0, 0, 0], block_shape)
+    }
+
+    #[cfg(feature = "ndarray")]
+    pub fn to_ndarray(&self) -> Result<ndarray::Array3<T>, Error> {
+        let block = self.read_volume()?;
+        let s = self.reader.shape();
+        ndarray::Array3::from_shape_vec([s.nz, s.ny, s.nx], block.data)
+            .map_err(|_| Error::bounds_err())
+    }
+}
+
+pub(crate) fn convert_iter<'a, S: Stepper + 'a, T>(
+    reader: &'a crate::Reader,
     volume_shape: VolumeShape,
     stepper: S,
-}
-
-impl<'a, R: VoxelSource, S> RawRegionIter<'a, R, S> {
-    pub(crate) fn new(reader: &'a R, volume_shape: VolumeShape, stepper: S) -> Self {
-        Self {
-            reader,
-            volume_shape,
-            stepper,
-        }
-    }
-}
-
-impl<'a, R: VoxelSource, S: Stepper> Iterator for RawRegionIter<'a, R, S> {
-    type Item = Result<(Vec<u8>, [usize; 3], [usize; 3]), Error>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let (offset, shape) = self.stepper.next(self.volume_shape)?;
-        match self.reader.vs_read_block_bytes(offset, shape) {
-            Ok(bytes) => Some(Ok((bytes.into_owned(), offset, shape))),
-            Err(e) => Some(Err(e)),
-        }
-    }
-}
-
-/// Wrap a raw-byte iterator, converting each block to type `T` via
-/// [`convert_block`](crate::engine::convert::convert_block).
-pub(crate) fn convert_iter<'a, R: VoxelSource, S: Stepper + 'a, T>(
-    raw: RawRegionIter<'a, R, S>,
-    mode: Mode,
-    endian: FileEndian,
-    nx: usize,
-    ny: usize,
     complex_strategy: crate::ComplexToRealStrategy,
     m0_interp: crate::M0Interpretation,
 ) -> impl Iterator<Item = Result<VoxelBlock<T>, Error>> + 'a
 where
-    T: crate::engine::convert::ConvertFrom<f32> + Voxel,
+    T: Voxel + crate::engine::convert::ConvertFrom<f32>,
 {
-    raw.map(move |result| {
+    let mode = reader.mode();
+    let endian = reader.endian();
+    let nx = volume_shape.nx;
+    let ny = volume_shape.ny;
+    RawConvertIter::new(reader, volume_shape, stepper).map(move |result| {
         let (bytes, offset, shape) = result?;
         let data = crate::engine::convert::convert_block::<T>(
             &bytes,
@@ -85,795 +148,40 @@ where
     })
 }
 
-/// A reader wrapper that auto-converts all voxel data to type `T`.
-///
-/// Created via [`ReaderMethods::convert`](crate::ReaderMethods::convert) or
-/// [`MmapReader::convert`](crate::MmapReader::convert).
-/// All iteration methods return [`VoxelBlock<T>`] with automatic mode conversion.
-///
-/// Supported target types:
-/// * `f32` — universal target, zero-copy identity for Float32 files
-/// * `f16` — via f32 hub, SIMD-accelerated (requires `f16` feature)
-/// * `i16`, `u16`, `i8` — direct shortcuts for matching integer modes,
-///   f32 hub fallback for all other source modes
-///
-/// Complex source modes use [`ComplexToRealStrategy::Magnitude`] by default.
-/// Override with [`with_complex_strategy`](ConvertReader::with_complex_strategy).
-///
-/// ```ignore
-/// for slice in reader.convert::<f32>().slices() {
-///     let block = slice?;  // VoxelBlock<f32>
-/// }
-///
-/// // Complex mode: extract phase instead of magnitude
-/// for slice in reader.convert::<f32>()
-///     .with_complex_strategy(mrc::ComplexToRealStrategy::Phase)
-///     .slices() { ... }
-/// ```
-pub struct ConvertReader<'a, R, T> {
-    inner: &'a R,
-    complex_strategy: crate::ComplexToRealStrategy,
-    m0_interp: crate::M0Interpretation,
-    _target: core::marker::PhantomData<T>,
+/// Raw-byte block iterator (used internally by convert_iter).
+struct RawConvertIter<'a, S> {
+    reader: &'a crate::Reader,
+    volume_shape: VolumeShape,
+    stepper: S,
 }
 
-impl<'a, R: VoxelSource + ReaderCore, T> ConvertReader<'a, R, T>
-where
-    T: Voxel + crate::engine::convert::ConvertFrom<f32>,
-{
-    /// Iterate over Z-slices, auto-converting each to `T`.
-    ///
-    /// Complex modes use the strategy configured via
-    /// [`with_complex_strategy`](ConvertReader::with_complex_strategy)
-    /// (default: [`Magnitude`](crate::ComplexToRealStrategy::Magnitude)).
-    pub fn slices(&self) -> VoxelIter<'_, T> {
-        let shape = self.inner.shape();
-        Box::new(convert_iter::<_, SliceStepper, T>(
-            RawRegionIter::new(self.inner, shape, SliceStepper::default()),
-            self.inner.mode(),
-            self.inner.endian(),
-            shape.nx,
-            shape.ny,
-            self.complex_strategy,
-            self.m0_interp,
-        ))
-    }
-
-    /// Iterate over Z-slabs, auto-converting each to `T`.
-    ///
-    /// Complex modes use the strategy configured via
-    /// [`with_complex_strategy`](ConvertReader::with_complex_strategy).
-    pub fn slabs(&self, k: usize) -> VoxelIter<'_, T> {
-        let shape = self.inner.shape();
-        Box::new(convert_iter::<_, SlabStepper, T>(
-            RawRegionIter::new(self.inner, shape, SlabStepper::new(k)),
-            self.inner.mode(),
-            self.inner.endian(),
-            shape.nx,
-            shape.ny,
-            self.complex_strategy,
-            self.m0_interp,
-        ))
-    }
-
-    /// Iterate over 3D tiles, auto-converting each to `T`.
-    ///
-    /// Complex modes use the strategy configured via
-    /// [`with_complex_strategy`](ConvertReader::with_complex_strategy).
-    ///
-    /// # Errors
-    /// Returns [`Error::BoundsError`] if any dimension of `tile_shape` is zero.
-    pub fn tiles(&self, tile_shape: [usize; 3]) -> Result<VoxelIter<'_, T>, Error> {
-        let shape = self.inner.shape();
-        Ok(Box::new(convert_iter::<_, TileStepper, T>(
-            RawRegionIter::new(self.inner, shape, TileStepper::new(tile_shape)?),
-            self.inner.mode(),
-            self.inner.endian(),
-            shape.nx,
-            shape.ny,
-            self.complex_strategy,
-            self.m0_interp,
-        )))
-    }
-
-    /// Read a sub-region, auto-converting to `T`.
-    ///
-    /// Complex modes use the strategy configured via
-    /// [`with_complex_strategy`](ConvertReader::with_complex_strategy).
-    pub fn subregion(&self, offset: [usize; 3], shape: [usize; 3]) -> Result<VoxelBlock<T>, Error> {
-        let bytes = self.inner.vs_read_block_bytes(offset, shape)?;
-        let s = self.inner.shape();
-        let data = crate::engine::convert::convert_block::<T>(
-            &bytes,
-            self.inner.mode(),
-            self.inner.endian(),
-            s.nx,
-            s.ny,
-            shape,
-            self.complex_strategy,
-            self.m0_interp,
-        )?;
-        Ok(VoxelBlock {
-            offset,
-            shape,
-            data,
-        })
-    }
-
-    /// Set the strategy for converting complex numbers to real values.
-    ///
-    /// The default is [`Magnitude`](crate::ComplexToRealStrategy::Magnitude).
-    ///
-    /// # Example
-    /// ```ignore
-    /// for slice in reader.convert::<f32>().with_complex_strategy(
-    ///     mrc::ComplexToRealStrategy::Phase
-    /// ).slices() {
-    ///     // block.data contains phase values for complex modes
-    /// }
-    /// ```
-    pub fn with_complex_strategy(mut self, strategy: crate::ComplexToRealStrategy) -> Self {
-        self.complex_strategy = strategy;
-        self
-    }
-
-    /// Set the interpretation for Mode 0 (Int8) data.
-    ///
-    /// The default is [`Signed`](crate::M0Interpretation::Signed), matching
-    /// the MRC-2014 standard.  Set to [`Unsigned`](crate::M0Interpretation::Unsigned)
-    /// for IMOD files that store Mode 0 as unsigned bytes.
-    ///
-    /// When opening via [`open_permissive`](crate::Reader::open_permissive),
-    /// IMOD files are auto-detected and this is set automatically.
-    ///
-    /// # Example
-    /// ```ignore
-    /// for slice in reader.convert::<f32>()
-    ///     .with_m0_interpretation(mrc::M0Interpretation::Unsigned)
-    ///     .slices() { ... }
-    /// ```
-    pub fn with_m0_interpretation(mut self, interp: crate::M0Interpretation) -> Self {
-        self.m0_interp = interp;
-        self
-    }
-
-    /// Read the entire volume, auto-converting to `T`.
-    pub fn read_volume(&self) -> Result<VoxelBlock<T>, Error> {
-        let s = self.inner.shape();
-        let block_shape = [s.nx, s.ny, s.nz];
-        self.subregion([0, 0, 0], block_shape)
-    }
-
-    /// Read the entire volume as an `ndarray::Array3<T>` with shape `[nz, ny, nx]`
-    /// (matching Python `mrcfile`'s numpy array convention).
-    ///
-    /// Requires the `ndarray` feature.
-    #[cfg(feature = "ndarray")]
-    pub fn to_ndarray(&self) -> Result<ndarray::Array3<T>, Error> {
-        let block = self.read_volume()?;
-        let s = self.inner.shape();
-        ndarray::Array3::from_shape_vec([s.nz, s.ny, s.nx], block.data)
-            .map_err(|_| Error::bounds_err())
+impl<'a, S> RawConvertIter<'a, S> {
+    fn new(reader: &'a crate::Reader, volume_shape: VolumeShape, stepper: S) -> Self {
+        Self {
+            reader,
+            volume_shape,
+            stepper,
+        }
     }
 }
 
-mod private {
-    /// Sealed trait marker — prevents external implementations of [`VoxelSource`].
-    pub trait Sealed {}
-}
+impl<'a, S: Stepper> Iterator for RawConvertIter<'a, S> {
+    type Item = Result<(Vec<u8>, [usize; 3], [usize; 3]), Error>;
 
-/// Sealed trait unifying all reader types for generic iterators.
-///
-/// [`RegionIter`](crate::RegionIter) is generic over `VoxelSource` so it can
-/// work with any reader backend without monomorphising on the concrete type.
-///
-/// This trait is sealed: it can only be implemented by types inside this crate.
-#[doc(hidden)]
-pub trait VoxelSource: private::Sealed {
-    /// Read a block of raw bytes from the data region.
-    ///
-    /// Returns `Cow::Borrowed` for zero-copy backends (e.g. [`MmapReader`](crate::MmapReader))
-    /// and `Cow::Owned` for in-memory backends.
-    fn vs_read_block_bytes<'a>(
-        &'a self,
-        offset: [usize; 3],
-        shape: [usize; 3],
-    ) -> Result<Cow<'a, [u8]>, Error>;
-
-    /// Decode raw bytes to the requested voxel type, checking mode compatibility.
-    fn vs_decode_block<T: Voxel>(&self, bytes: &[u8]) -> Result<Vec<T>, Error>;
-}
-
-/// Core metadata accessors shared by all reader types.
-///
-/// This trait is `#[doc(hidden)]` — it powers the iterator system internally.
-///
-/// `dead_code` is suppressed because the trait is used implicitly through
-/// inherent method resolution (the `impl_inherent_reader_methods!` macro
-/// calls `self.shape()` etc. which resolve through `ReaderCore`).
-#[doc(hidden)]
-#[allow(dead_code)]
-pub trait ReaderCore: VoxelSource {
-    /// Volume dimensions in voxels.
-    fn shape(&self) -> VolumeShape;
-
-    /// Voxel data mode.
-    fn mode(&self) -> Mode;
-
-    /// Detected file endianness.
-    fn endian(&self) -> FileEndian;
-
-    /// Reference to the parsed header.
-    fn header(&self) -> &Header;
-
-    /// Extended header bytes (empty slice if no extended header).
-    fn ext_header_bytes(&self) -> &[u8];
-
-    /// Parse the extended header by auto-detecting the type from EXTTYP.
-    ///
-    /// Routes to the correct parser based on the 4-byte `exttyp` identifier
-    /// stored in the header's `extra[8..12]` field. Returns
-    /// [`ExtHeaderData::None`] when the type is unrecognized or the extended
-    /// header is empty.
-    fn parse_extended_header(&self) -> crate::ExtHeaderData {
-        let bytes = self.ext_header_bytes();
-        crate::ExtHeaderData::from_header(self.header(), bytes)
-    }
-
-    /// Parse FEI1 metadata records from the extended header.
-    fn fei1_metadata(&self) -> Option<Vec<crate::Fei1Metadata>> {
-        let bytes = self.ext_header_bytes();
-        crate::parse_fei1_records(bytes)
-    }
-
-    /// Parse FEI2 metadata records from the extended header.
-    fn fei2_metadata(&self) -> Option<Vec<crate::Fei2Metadata>> {
-        let bytes = self.ext_header_bytes();
-        crate::parse_fei2_records(bytes)
-    }
-
-    /// Parse CCP4 symmetry records from the extended header.
-    fn ccp4_records(&self) -> Option<Vec<crate::Ccp4Record>> {
-        let bytes = self.ext_header_bytes();
-        crate::parse_ccp4_records(bytes)
-    }
-
-    /// Parse MRCO legacy records from the extended header.
-    fn mrco_records(&self) -> Option<Vec<crate::MrcoRecord>> {
-        let bytes = self.ext_header_bytes();
-        crate::parse_mrco_records(bytes)
-    }
-
-    /// Parse SerialEM records from the extended header.
-    fn seri_records(&self) -> Option<Vec<crate::SeriRecord>> {
-        let bytes = self.ext_header_bytes();
-        crate::parse_seri_records(bytes)
-    }
-
-    /// Parse Agard records from the extended header.
-    fn agar_records(&self) -> Option<Vec<crate::AgarRecord>> {
-        let bytes = self.ext_header_bytes();
-        crate::parse_agar_records(bytes)
-    }
-
-    /// Parse IMOD metadata from the main header.
-    fn imod_metadata(&self) -> Option<crate::ImodMetadata> {
-        crate::parse_imod_metadata(self.header())
-    }
-}
-
-// ============================================================================
-// ReaderMethods trait — unified iteration / read API
-// ============================================================================
-
-/// Iterator methods available on all MRC reader types.
-///
-/// The methods on this trait (`slices`, `slabs`, `tiles`, `subregion`,
-/// `read_volume`, `slices_u8`, etc.) are also available as **inherent
-/// methods** on [`Reader`](crate::Reader) and [`MmapReader`](crate::MmapReader)
-/// — no trait import is needed for normal use.
-///
-/// Import this trait directly only when writing generic code over multiple
-/// reader types:
-///
-/// ```ignore
-/// use mrc::{Reader, ReaderMethods};
-///
-/// fn count_slices<R: ReaderMethods>(reader: &R) -> usize {
-///     reader.slices::<f32>().count()
-/// }
-/// ```
-pub trait ReaderMethods: VoxelSource + ReaderCore + Sized {
-    /// Iterate over Z-slices (1 voxel thick along Z) as [`VoxelBlock`]s.
-    ///
-    /// Each item is a contiguous full-XY slab at one Z position.
-    /// See also [`convert`](ConvertMethods::convert) for automatic mode conversion.
-    fn slices<T: Voxel>(&self) -> RegionIter<'_, T, Self, SliceStepper> {
-        RegionIter::with_stepper(self, self.shape(), SliceStepper::default())
-    }
-
-    /// Iterate over Z-slabs of `k` slices as [`VoxelBlock`]s.
-    ///
-    /// Each item is a contiguous full-XY slab of `k` Z-planes.
-    /// The final slab may be shorter than `k` near the end of the volume.
-    /// See also [`convert`](ConvertMethods::convert) for automatic mode conversion.
-    fn slabs<T: Voxel>(&self, k: usize) -> RegionIter<'_, T, Self, SlabStepper> {
-        RegionIter::with_stepper(self, self.shape(), SlabStepper::new(k))
-    }
-
-    /// Iterate over 3D tiles of the given shape as [`VoxelBlock`]s.
-    ///
-    /// The volume is partitioned into non-overlapping tiles of size
-    /// `tile_shape`. Tiles at the trailing edges may be truncated to fit
-    /// the volume bounds.
-    ///
-    /// # Errors
-    /// Returns [`Error::BoundsError`] if any dimension of `tile_shape` is zero.
-    fn tiles<T: Voxel>(
-        &self,
-        tile_shape: [usize; 3],
-    ) -> Result<RegionIter<'_, T, Self, TileStepper>, Error> {
-        Ok(RegionIter::with_stepper(
-            self,
-            self.shape(),
-            TileStepper::new(tile_shape)?,
-        ))
-    }
-
-    /// Iterate over sub-volumes of a volume-stack file.
-    ///
-    /// Each sub-volume is `mz` slices thick, where `mz` is taken from
-    /// the header's sampling field.
-    ///
-    /// # Errors
-    /// Returns [`Error::NotAVolumeStack`] if the file is not a volume stack
-    /// (ispg not in 401–630).
-    fn volumes<T: Voxel>(&self) -> Result<RegionIter<'_, T, Self, SlabStepper>, Error>
-    where
-        Self: Sized,
-    {
-        let mz = self.header().mz.max(0) as usize;
-        if !self.header().is_volume_stack() || mz == 0 {
-            return Err(Error::NotAVolumeStack {
-                ispg: self.header().ispg,
-                mz: self.header().mz,
-            });
-        }
-        Ok(self.slabs(mz))
-    }
-
-    /// Read a single arbitrary 3D sub-region as a [`VoxelBlock`].
-    ///
-    /// Unlike the iterators (`slices`, `slabs`, `tiles`), this reads
-    /// exactly one block at the given offset and shape. Useful for
-    /// random-access reads of specific regions.
-    ///
-    /// # Errors
-    /// Returns [`Error::BoundsError`] if the region exceeds volume bounds.
-    /// Returns [`Error::ModeMismatch`] if `T` does not match the file mode.
-    fn subregion<T: Voxel>(
-        &self,
-        offset: [usize; 3],
-        shape: [usize; 3],
-    ) -> Result<VoxelBlock<T>, Error> {
-        let bytes = self.vs_read_block_bytes(offset, shape)?;
-        let data = self.vs_decode_block::<T>(&bytes)?;
-        Ok(VoxelBlock {
-            offset,
-            shape,
-            data,
-        })
-    }
-
-    /// Read the entire volume as a [`VoxelBlock<T>`].
-    ///
-    /// Shorthand for [`subregion`](ReaderMethods::subregion)`([0, 0, 0], [nx, ny, nz])`.
-    ///
-    /// # Errors
-    /// Returns [`Error::ModeMismatch`] if `T` does not match the file mode.
-    fn read_volume<T: Voxel>(&self) -> Result<VoxelBlock<T>, Error> {
-        let s = self.shape();
-        self.subregion([0, 0, 0], [s.nx, s.ny, s.nz])
-    }
-
-    /// Read the entire volume as an `ndarray::Array3<T>` with shape `[nz, ny, nx]`
-    /// (matching Python `mrcfile`'s numpy array convention).
-    ///
-    /// Requires the `ndarray` feature.
-    ///
-    /// # Errors
-    /// Returns [`Error::ModeMismatch`] if `T` does not match the file mode.
-    #[cfg(feature = "ndarray")]
-    fn to_ndarray<T: Voxel>(&self) -> Result<ndarray::Array3<T>, Error> {
-        let block = self.read_volume::<T>()?;
-        let s = self.shape();
-        ndarray::Array3::from_shape_vec([s.nz, s.ny, s.nx], block.data)
-            .map_err(|_| Error::bounds_err())
-    }
-
-    /// Read the entire volume as `u8`, unpacking from Mode 101 (Packed4Bit).
-    ///
-    /// Each `u8` value is in the range 0–15.
-    ///
-    /// # Errors
-    /// Returns [`Error::ModeMismatch`] if the file mode is not [`Mode::Packed4Bit`].
-    fn read_volume_u8(&self) -> Result<VoxelBlock<u8>, Error> {
-        if self.mode() != Mode::Packed4Bit {
-            return Err(Error::ModeMismatch {
-                file_mode: self.mode(),
-                requested_mode: Mode::Packed4Bit,
-                offset: None,
-            });
-        }
-        let shape = self.shape();
-        let block_shape = [shape.nx, shape.ny, shape.nz];
-        let bytes = self.vs_read_block_bytes([0, 0, 0], block_shape)?;
-        let data =
-            crate::engine::convert::unpack_u4_bytes_to_u8(&bytes, shape.nx, shape.ny * shape.nz);
-        Ok(VoxelBlock {
-            offset: [0, 0, 0],
-            shape: block_shape,
-            data,
-        })
-    }
-
-    /// Iterate over Z-slices as `u8`, narrowing from Mode 6 (Uint16)
-    /// or unpacking from Mode 101 (Packed4Bit).
-    ///
-    /// For Uint16 files each 16-bit value is narrowed to 8 bits; values
-    /// exceeding 255 produce an error.
-    /// For Packed4Bit files each nibble is unpacked to `u8` (range 0–15).
-    ///
-    /// # Errors
-    /// Returns [`Error::ModeMismatch`] if the file mode is not `Uint16` or `Packed4Bit`.
-    fn slices_u8(&self) -> VoxelIter<'_, u8> {
-        if self.mode() == Mode::Packed4Bit {
-            let shape = self.shape();
-            let nx = shape.nx;
-            let ny = shape.ny;
-            let nz = shape.nz;
-            return Box::new((0..nz).map(move |z| {
-                let bytes = self.vs_read_block_bytes([0, 0, z], [nx, ny, 1])?;
-                let data = crate::engine::convert::unpack_u4_bytes_to_u8(&bytes, nx, ny);
-                Ok(VoxelBlock {
-                    offset: [0, 0, z],
-                    shape: [nx, ny, 1],
-                    data,
-                })
-            }));
-        }
-        if self.mode() != Mode::Uint16 {
-            return Box::new(std::iter::once(Err(Error::ModeMismatch {
-                file_mode: self.mode(),
-                requested_mode: Mode::Uint16,
-                offset: None,
-            })));
-        }
-        Box::new(self.slices::<u16>().map(|b| {
-            let b = b?;
-            Ok(VoxelBlock {
-                offset: b.offset,
-                shape: b.shape,
-                data: crate::engine::convert::convert_u16_slice_to_u8(&b.data)?,
-            })
-        }))
-    }
-
-    /// Iterate over Z-slabs as `u8`, narrowing from Mode 6 (Uint16)
-    /// or unpacking from Mode 101 (Packed4Bit).
-    ///
-    /// See [`slices_u8`](ReaderMethods::slices_u8) for mode-specific behaviour.
-    fn slabs_u8(&self, k: usize) -> VoxelIter<'_, u8> {
-        if self.mode() == Mode::Packed4Bit {
-            let volume_shape = self.shape();
-            let nx = volume_shape.nx;
-            let ny = volume_shape.ny;
-            let k = k.max(1);
-            let mut z = 0usize;
-            return Box::new(std::iter::from_fn(move || {
-                if z >= volume_shape.nz {
-                    return None;
-                }
-                let start = z;
-                let sz = k.min(volume_shape.nz - z);
-                z += sz;
-                let bytes = match self.vs_read_block_bytes([0, 0, start], [nx, ny, sz]) {
-                    Ok(b) => b,
-                    Err(e) => return Some(Err(e)),
-                };
-                let data = crate::engine::convert::unpack_u4_bytes_to_u8(&bytes, nx, ny * sz);
-                Some(Ok(VoxelBlock {
-                    offset: [0, 0, start],
-                    shape: [nx, ny, sz],
-                    data,
-                }))
-            }));
-        }
-        if self.mode() != Mode::Uint16 {
-            return Box::new(std::iter::once(Err(Error::ModeMismatch {
-                file_mode: self.mode(),
-                requested_mode: Mode::Uint16,
-                offset: None,
-            })));
-        }
-        let k = k.max(1);
-        Box::new(self.slabs::<u16>(k).map(|b| {
-            let b = b?;
-            Ok(VoxelBlock {
-                offset: b.offset,
-                shape: b.shape,
-                data: crate::engine::convert::convert_u16_slice_to_u8(&b.data)?,
-            })
-        }))
-    }
-
-    /// Iterate over Z-slices of a Mode 0 file, interpreting as signed or unsigned.
-    ///
-    /// Mode 0 (Int8) is ambiguous — some files store unsigned 8-bit data.
-    /// Use this method to control interpretation via [`M0Interpretation`].
-    ///
-    /// # Errors
-    /// Returns [`Error::ModeMismatch`] if the file mode is not `Int8`.
-    fn slices_mode0(&self, interp: M0Interpretation) -> VoxelIter<'_, f32> {
-        if self.mode() != Mode::Int8 {
-            return Box::new(std::iter::once(Err(Error::ModeMismatch {
-                file_mode: self.mode(),
-                requested_mode: Mode::Int8,
-                offset: None,
-            })));
-        }
-        let volume_shape = self.shape();
-        Box::new((0..volume_shape.nz).map(move |z| {
-            let bytes =
-                self.vs_read_block_bytes([0, 0, z], [volume_shape.nx, volume_shape.ny, 1])?;
-            let data = crate::engine::convert::reinterpret_m0(&bytes, interp);
-            Ok(VoxelBlock {
-                offset: [0, 0, z],
-                shape: [volume_shape.nx, volume_shape.ny, 1],
-                data,
-            })
-        }))
-    }
-
-    /// Iterate over Z-slabs of a Mode 0 file, interpreting as signed or unsigned.
-    ///
-    /// Like [`slices_mode0`](ReaderMethods::slices_mode0) but reads `k` slices per
-    /// iteration for improved throughput.
-    ///
-    /// # Errors
-    /// Returns [`Error::ModeMismatch`] if the file mode is not `Int8`.
-    fn slabs_mode0(&self, k: usize, interp: M0Interpretation) -> VoxelIter<'_, f32> {
-        if self.mode() != Mode::Int8 {
-            return Box::new(std::iter::once(Err(Error::ModeMismatch {
-                file_mode: self.mode(),
-                requested_mode: Mode::Int8,
-                offset: None,
-            })));
-        }
-        let volume_shape = self.shape();
-        let k = k.max(1);
-        let mut z = 0usize;
-        Box::new(std::iter::from_fn(move || {
-            if z >= volume_shape.nz {
-                return None;
-            }
-            let start = z;
-            let sz = k.min(volume_shape.nz - z);
-            z += sz;
-            let bytes = match self
-                .vs_read_block_bytes([0, 0, start], [volume_shape.nx, volume_shape.ny, sz])
-            {
-                Ok(b) => b,
-                Err(e) => return Some(Err(e)),
-            };
-            let data = crate::engine::convert::reinterpret_m0(&bytes, interp);
-            Some(Ok(VoxelBlock {
-                offset: [0, 0, start],
-                shape: [volume_shape.nx, volume_shape.ny, sz],
-                data,
-            }))
-        }))
-    }
-}
-
-/// Blanket implementation for all types implementing `VoxelSource` + `ReaderCore`.
-impl<R: VoxelSource + ReaderCore> ReaderMethods for R {}
-
-/// Adds `.convert::<T>()` method on reader types.
-///
-/// The method is also available as an **inherent method** on
-/// [`Reader`](crate::Reader) and [`MmapReader`](crate::MmapReader) — no
-/// trait import is needed for normal use.
-///
-/// Supported target types:
-/// * `f32` — zero-copy when source is already Float32
-/// * `f16` — via f32 hub, SIMD-accelerated (requires `f16` feature)
-/// * `i16`, `u16`, `i8` — direct shortcut for matching integer modes,
-///   f32 hub fallback for all other source modes
-///
-/// Import this trait directly only when writing generic code over multiple
-/// reader types.
-///
-/// ```ignore
-/// use mrc::{Reader, ConvertMethods};
-///
-/// fn convert_all<R: ConvertMethods>(reader: &R) {
-///     for slice in reader.convert::<f32>().slices() { ... }
-/// }
-/// ```
-pub trait ConvertMethods: VoxelSource + ReaderCore + Sized {
-    /// Return a wrapper that auto-converts all reads to type `T`.
-    fn convert<T>(&self) -> ConvertReader<'_, Self, T>
-    where
-        T: Voxel + crate::engine::convert::ConvertFrom<f32>;
-}
-
-impl<R: VoxelSource + ReaderCore> ConvertMethods for R {
-    fn convert<T>(&self) -> ConvertReader<'_, R, T>
-    where
-        T: Voxel + crate::engine::convert::ConvertFrom<f32>,
-    {
-        // Auto-detect IMOD unsigned Mode 0 from the header
-        let m0_interp = if self.mode() == Mode::Int8 {
-            if let Some(imod) = self.header().detect_imod() {
-                if !imod.bytes_are_signed {
-                    M0Interpretation::Unsigned
-                } else {
-                    M0Interpretation::Signed
-                }
-            } else {
-                M0Interpretation::Signed
-            }
-        } else {
-            M0Interpretation::Signed
-        };
-
-        ConvertReader {
-            inner: self,
-            complex_strategy: crate::ComplexToRealStrategy::Magnitude,
-            m0_interp,
-            _target: core::marker::PhantomData,
+    fn next(&mut self) -> Option<Self::Item> {
+        let (offset, shape) = self.stepper.next(self.volume_shape)?;
+        match self.reader.read_block_bytes_cow(offset, shape) {
+            Ok(bytes) => Some(Ok((bytes.into_owned(), offset, shape))),
+            Err(e) => Some(Err(e)),
         }
     }
 }
 
 // ============================================================================
-// Forwarding inherent methods — trait methods available without an explicit
-// import.  The traits remain the single definition of each method body; the
-// inherent methods below simply delegate to them.
+// Block validation and I/O helpers
 // ============================================================================
 
-macro_rules! impl_reader_forwarding {
-    ($ty:ty) => {
-        impl $ty {
-            #[doc = "See [`ReaderMethods::slices`]"]
-            #[inline]
-            pub fn slices<T: Voxel>(&self) -> RegionIter<'_, T, $ty, SliceStepper> {
-                <Self as ReaderMethods>::slices(self)
-            }
-            #[doc = "See [`ReaderMethods::slabs`]"]
-            #[inline]
-            pub fn slabs<T: Voxel>(&self, k: usize) -> RegionIter<'_, T, $ty, SlabStepper> {
-                <Self as ReaderMethods>::slabs(self, k)
-            }
-            #[doc = "See [`ReaderMethods::tiles`]"]
-            #[inline]
-            pub fn tiles<T: Voxel>(
-                &self,
-                tile_shape: [usize; 3],
-            ) -> Result<RegionIter<'_, T, $ty, TileStepper>, Error> {
-                <Self as ReaderMethods>::tiles(self, tile_shape)
-            }
-            #[doc = "See [`ReaderMethods::volumes`]"]
-            #[inline]
-            pub fn volumes<T: Voxel>(&self) -> Result<RegionIter<'_, T, $ty, SlabStepper>, Error> {
-                <Self as ReaderMethods>::volumes(self)
-            }
-            #[doc = "See [`ReaderMethods::subregion`]"]
-            #[inline]
-            pub fn subregion<T: Voxel>(
-                &self,
-                offset: [usize; 3],
-                shape: [usize; 3],
-            ) -> Result<VoxelBlock<T>, Error> {
-                <Self as ReaderMethods>::subregion(self, offset, shape)
-            }
-            #[doc = "See [`ReaderMethods::read_volume`]"]
-            #[inline]
-            pub fn read_volume<T: Voxel>(&self) -> Result<VoxelBlock<T>, Error> {
-                <Self as ReaderMethods>::read_volume(self)
-            }
-            #[doc = "See [`ReaderMethods::to_ndarray`]"]
-            #[inline]
-            #[cfg(feature = "ndarray")]
-            pub fn to_ndarray<T: Voxel>(&self) -> Result<ndarray::Array3<T>, Error> {
-                <Self as ReaderMethods>::to_ndarray(self)
-            }
-            #[doc = "See [`ReaderMethods::read_volume_u8`]"]
-            #[inline]
-            pub fn read_volume_u8(&self) -> Result<VoxelBlock<u8>, Error> {
-                <Self as ReaderMethods>::read_volume_u8(self)
-            }
-            #[doc = "See [`ReaderMethods::slices_u8`]"]
-            #[inline]
-            pub fn slices_u8(&self) -> VoxelIter<'_, u8> {
-                <Self as ReaderMethods>::slices_u8(self)
-            }
-            #[doc = "See [`ReaderMethods::slabs_u8`]"]
-            #[inline]
-            pub fn slabs_u8(&self, k: usize) -> VoxelIter<'_, u8> {
-                <Self as ReaderMethods>::slabs_u8(self, k)
-            }
-            #[doc = "See [`ReaderMethods::slices_mode0`]"]
-            #[inline]
-            pub fn slices_mode0(&self, interp: M0Interpretation) -> VoxelIter<'_, f32> {
-                <Self as ReaderMethods>::slices_mode0(self, interp)
-            }
-            #[doc = "See [`ReaderMethods::slabs_mode0`]"]
-            #[inline]
-            pub fn slabs_mode0(&self, k: usize, interp: M0Interpretation) -> VoxelIter<'_, f32> {
-                <Self as ReaderMethods>::slabs_mode0(self, k, interp)
-            }
-            #[doc = "See [`ConvertMethods::convert`]"]
-            #[inline]
-            pub fn convert<T>(&self) -> ConvertReader<'_, $ty, T>
-            where
-                T: Voxel + crate::engine::convert::ConvertFrom<f32>,
-            {
-                <Self as ConvertMethods>::convert(self)
-            }
-
-            // ── Extended header convenience methods (ReaderCore forwarding) ──
-
-            #[doc = "Auto-dispatch extended header parsing. Returns [`crate::ExtHeaderData`]."]
-            #[inline]
-            pub fn parse_extended_header(&self) -> crate::ExtHeaderData {
-                <Self as ReaderCore>::parse_extended_header(self)
-            }
-            #[doc = "Parse FEI1 metadata from the extended header. Returns [`crate::Fei1Metadata`] records."]
-            #[inline]
-            pub fn fei1_metadata(&self) -> Option<Vec<crate::Fei1Metadata>> {
-                <Self as ReaderCore>::fei1_metadata(self)
-            }
-            #[doc = "Parse FEI2 metadata from the extended header. Returns [`crate::Fei2Metadata`] records."]
-            #[inline]
-            pub fn fei2_metadata(&self) -> Option<Vec<crate::Fei2Metadata>> {
-                <Self as ReaderCore>::fei2_metadata(self)
-            }
-            #[doc = "Parse CCP4 symmetry records from the extended header. Returns [`crate::Ccp4Record`] entries."]
-            #[inline]
-            pub fn ccp4_records(&self) -> Option<Vec<crate::Ccp4Record>> {
-                <Self as ReaderCore>::ccp4_records(self)
-            }
-            #[doc = "Parse MRCO legacy records from the extended header. Returns [`crate::MrcoRecord`] entries."]
-            #[inline]
-            pub fn mrco_records(&self) -> Option<Vec<crate::MrcoRecord>> {
-                <Self as ReaderCore>::mrco_records(self)
-            }
-            #[doc = "Parse SerialEM records from the extended header. Returns [`crate::SeriRecord`] entries."]
-            #[inline]
-            pub fn seri_records(&self) -> Option<Vec<crate::SeriRecord>> {
-                <Self as ReaderCore>::seri_records(self)
-            }
-            #[doc = "Parse Agard records from the extended header. Returns [`crate::AgarRecord`] entries."]
-            #[inline]
-            pub fn agar_records(&self) -> Option<Vec<crate::AgarRecord>> {
-                <Self as ReaderCore>::agar_records(self)
-            }
-            #[doc = "Parse IMOD metadata from the main header. Returns [`crate::ImodMetadata`]."]
-            #[inline]
-            pub fn imod_metadata(&self) -> Option<crate::ImodMetadata> {
-                <Self as ReaderCore>::imod_metadata(self)
-            }
-        }
-    };
-}
-
-impl_reader_forwarding!(crate::Reader);
-#[cfg(feature = "mmap")]
-impl_reader_forwarding!(crate::MmapReader);
-
-/// Cold path helper for bounds errors — hints LLVM to sink error branches out of hot paths.
+/// Cold path helper for bounds errors.
 #[cold]
 #[inline(never)]
 fn cold_bounds_error() -> Error {
@@ -881,14 +189,6 @@ fn cold_bounds_error() -> Error {
 }
 
 /// Validate a block read/write request.
-///
-/// Checks that the requested block is fully contained within the volume bounds
-/// and that the data region is large enough for the last row of the block.
-/// Returns the total byte length of the gathered block.
-///
-/// # Errors
-///
-/// * [`Error::BoundsError`] if the block exceeds volume bounds or the data length.
 pub(crate) fn validate_block_bounds(
     volume_shape: VolumeShape,
     mode: Mode,
@@ -900,14 +200,12 @@ pub(crate) fn validate_block_bounds(
     let [ox, oy, oz] = offset;
     let [sx, sy, sz] = block_shape;
 
-    // Enriched bounds error with full context for this validation site.
     let bounds_err = || Error::BoundsError {
         offset: Some(offset),
         shape: Some(block_shape),
         volume: Some([nx, ny, nz]),
     };
 
-    // Use checked arithmetic to avoid wrap-around on maliciously large offsets.
     if ox.checked_add(sx).is_none_or(|end| end > nx)
         || oy.checked_add(sy).is_none_or(|end| end > ny)
         || oz.checked_add(sz).is_none_or(|end| end > nz)
@@ -933,10 +231,7 @@ pub(crate) fn validate_block_bounds(
         return Ok(0);
     }
 
-    // Verify the data region is large enough for the last row of the block.
     if mode == Mode::Packed4Bit {
-        // Only byte-aligned X-offsets are supported (ox even) to avoid
-        // nibble-level read-modify-write in gather/write paths.
         if ox % 2 != 0 {
             return Err(bounds_err());
         }
@@ -967,18 +262,7 @@ pub(crate) fn validate_block_bounds(
     Ok(byte_len)
 }
 
-/// Gather a non-contiguous 3D block from raw data bytes into a contiguous Vec.
-///
-/// The source `data` is treated as a C-ordered `[nx, ny, nz]` array where X is the
-/// fastest axis. The returned Vec contains the sub-block in C-order.
-///
-/// For [`Mode::Packed4Bit`], the byte layout uses 2 voxels per byte; voxel index
-/// `v` maps to byte `v / 2` in the data array.
-///
-/// # Panics
-/// The caller must ensure that the requested block is within bounds
-/// (via [`validate_block_bounds`]) before calling this function.  Out-of-bounds
-/// offsets will panic on slice indexing.
+/// Gather a non-contiguous 3D block from raw data bytes.
 pub(crate) fn gather_block_bytes(
     data: &[u8],
     volume_shape: VolumeShape,
@@ -991,18 +275,16 @@ pub(crate) fn gather_block_bytes(
     let [sx, sy, sz] = block_shape;
 
     if mode == Mode::Packed4Bit {
-        // Each byte holds two voxels.  Each row has sx.div_ceil(2) packed bytes.
         let vol_row_bytes = nx.div_ceil(2);
         let block_row_bytes = sx.div_ceil(2);
         let byte_len = block_row_bytes * sy * sz;
         let mut dst = vec![0u8; byte_len];
 
-        // Fast path: origin-aligned full XY slab — contiguous in the file.
         if ox == 0 && sx == nx && oy == 0 && sy == ny {
             let slice_bytes = ny * vol_row_bytes;
             let start = oz * slice_bytes;
-            let byte_len = sz * slice_bytes;
-            return data[start..start + byte_len].to_vec();
+            let len = sz * slice_bytes;
+            return data[start..start + len].to_vec();
         }
 
         for z in 0..sz {
@@ -1022,11 +304,9 @@ pub(crate) fn gather_block_bytes(
     let byte_len = voxel_count * b;
     let mut dst = vec![0u8; byte_len];
 
-    // Fast path: origin-aligned full XY slab — contiguous in the file.
     if ox == 0 && sx == nx && oy == 0 && sy == ny {
         let linear = oz * nx * ny;
         let start = linear * b;
-        let byte_len = sx * sy * sz * b;
         return data[start..start + byte_len].to_vec();
     }
 
@@ -1043,14 +323,7 @@ pub(crate) fn gather_block_bytes(
     dst
 }
 
-/// Encode a typed voxel block into a mutable byte buffer (the full data region).
-///
-/// Handles both contiguous (full XY slab) and scattered (row-by-row) write paths.
-/// This is the complementary write-side operation to [`gather_block_bytes`].
-///
-/// # Errors
-/// Returns `Error::BoundsError` if the block exceeds the buffer boundaries.
-/// Returns `Error::TypeMismatch` if the byte count is misaligned.
+/// Encode a typed voxel block into a mutable byte buffer.
 pub(crate) fn encode_block_to_buf<T: EndianCodec + Sync>(
     block: &VoxelBlock<T>,
     volume_shape: VolumeShape,
@@ -1064,7 +337,6 @@ pub(crate) fn encode_block_to_buf<T: EndianCodec + Sync>(
     let [sx, sy, sz] = block.shape;
     let b = bytes_per_voxel;
 
-    // Fast path: origin-aligned full XY slab — contiguous in the buffer.
     if ox == 0 && sx == nx && oy == 0 && sy == ny {
         let linear = oz * nx * ny;
         let start_byte = data_offset + linear * b;
@@ -1077,7 +349,6 @@ pub(crate) fn encode_block_to_buf<T: EndianCodec + Sync>(
         return Ok(());
     }
 
-    // Scatter path: write row by row.
     for z in 0..sz {
         for y in 0..sy {
             let file_linear = ox + (oy + y) * nx + (oz + z) * nx * ny;
@@ -1097,14 +368,7 @@ pub(crate) fn encode_block_to_buf<T: EndianCodec + Sync>(
     Ok(())
 }
 
-/// Write already-packed bytes into the data buffer at a given offset and shape.
-///
-/// This is the byte-level version of [`encode_block_to_buf`], used for Mode 101
-/// (Packed4Bit) writes where the data is already packed row-by-row.
-/// Endianness does not apply (nibble ordering is endian-independent).
-///
-/// Note: only supports full-row writes (`block_offset[0] == 0`). Sub-XY blocks
-/// with non-zero X-offset would need read-modify-write at the nibble level.
+/// Write packed bytes for Packed4Bit mode.
 pub(crate) fn write_block_bytes(
     packed: &[u8],
     volume_shape: VolumeShape,
@@ -1116,28 +380,21 @@ pub(crate) fn write_block_bytes(
     let [nx, ny, _nz] = [volume_shape.nx, volume_shape.ny, volume_shape.nz];
     let [ox, oy, oz] = block_offset;
     let [sx, sy, sz] = block_shape;
-    let file_row_bytes = nx.div_ceil(2); // packed bytes per row in the volume
-    let block_row_bytes = sx.div_ceil(2); // packed bytes per row in the block
-
-    // Only full-row (ox=0) blocks are supported to avoid nibble-level RMW.
+    let file_row_bytes = nx.div_ceil(2);
+    let block_row_bytes = sx.div_ceil(2);
     assert!(ox == 0, "write_block_bytes requires ox == 0");
 
-    // Fast path: origin-aligned full XY slab — contiguous in the buffer.
     if sx == nx && oy == 0 && sy == ny {
         let slice_bytes = ny * file_row_bytes;
         let start_byte = data_offset + oz * slice_bytes;
         let byte_len = sz * slice_bytes;
-        let end_byte = start_byte + byte_len;
-        if end_byte > buf.len() {
+        if start_byte + byte_len > buf.len() {
             return Err(cold_bounds_error());
         }
-        buf[start_byte..end_byte].copy_from_slice(&packed[..byte_len]);
+        buf[start_byte..start_byte + byte_len].copy_from_slice(&packed[..byte_len]);
         return Ok(());
     }
 
-    // Scatter path: write row by row.
-    // Each row in the volume occupies file_row_bytes; each row in the block
-    // occupies block_row_bytes.
     for z in 0..sz {
         for y in 0..sy {
             let vol_row = (oz + z) * ny + (oy + y);
@@ -1158,9 +415,6 @@ pub(crate) fn write_block_bytes(
 }
 
 /// Decode a raw byte block to the requested voxel type.
-///
-/// Performs endian conversion if the file endianness differs from the host.
-/// Returns [`Error::ModeMismatch`] if `T` does not match `file_mode`.
 pub(crate) fn decode_block<T: Voxel>(
     bytes: &[u8],
     file_mode: Mode,
@@ -1173,7 +427,6 @@ pub(crate) fn decode_block<T: Voxel>(
             offset: None,
         });
     }
-
     if endian == FileEndian::native() {
         decode_native_endian(bytes)
     } else {
@@ -1181,25 +434,10 @@ pub(crate) fn decode_block<T: Voxel>(
     }
 }
 
-/// Fast native-endian decode: copy bytes directly into a `Vec<T>`.
-///
-/// This is a thin `memcpy` wrapper used when the file endianness matches the
-/// host, avoiding per-element swapping.
-///
-/// # Safety
-/// This function uses `unsafe` to copy raw bytes into a typed `Vec`. The caller
-/// must ensure that `bytes.len()` is an exact multiple of `T::BYTE_SIZE` and
-/// that the byte pattern is valid for `T`. For MRC data this always holds
-/// because the byte count is derived from `mode.byte_size() * count`.
-pub(crate) fn decode_native_endian<T: EndianCodec + Copy>(bytes: &[u8]) -> Result<Vec<T>, Error> {
+/// Fast native-endian decode: copy bytes directly into `Vec<T>`.
+fn decode_native_endian<T: EndianCodec + Copy>(bytes: &[u8]) -> Result<Vec<T>, Error> {
     let n = bytes.len() / T::BYTE_SIZE;
-    debug_assert_eq!(
-        bytes.len() % T::BYTE_SIZE,
-        0,
-        "decode_native_endian: bytes.len() ({}) must be a multiple of T::BYTE_SIZE ({})",
-        bytes.len(),
-        T::BYTE_SIZE
-    );
+    debug_assert_eq!(bytes.len() % T::BYTE_SIZE, 0);
     let mut result = Vec::with_capacity(n);
     unsafe {
         core::ptr::copy_nonoverlapping(bytes.as_ptr(), result.as_mut_ptr() as *mut u8, bytes.len());
@@ -1209,9 +447,6 @@ pub(crate) fn decode_native_endian<T: EndianCodec + Copy>(bytes: &[u8]) -> Resul
 }
 
 /// Parse and validate an MRC header from raw bytes.
-///
-/// Returns the decoded header, any warning messages, the detected endianness,
-/// and the expected data size in bytes.
 pub(crate) fn parse_header(
     header_bytes: &[u8; 1024],
     permissive: bool,
@@ -1236,71 +471,30 @@ pub(crate) fn parse_header(
 }
 
 /// Default maximum decompressed bytes for compressed MRC files (256 GiB).
-///
-/// This is an absolute cap applied **before** parsing the header, preventing
-/// decompression bombs where a small compressed file claims huge dimensions.
-///
-/// Used by [`Reader::open_gzip`](crate::Reader::open_gzip) and
-/// [`Reader::open_bzip2`](crate::Reader::open_bzip2). Pass a custom value to
-/// [`Reader::open_gzip_with_limit`](crate::Reader::open_gzip_with_limit) or
-/// [`Reader::open_bzip2_with_limit`](crate::Reader::open_bzip2_with_limit) to
-/// override.
 pub const DEFAULT_MAX_DECOMPRESSED_BYTES: u64 = 256 * 1024 * 1024 * 1024;
 
-/// Components of a decompressed MRC file, returned by [`open_compressed`].
+/// Components of a decompressed MRC file.
 pub(crate) struct DecompressedMrc {
-    /// Parsed MRC header.
     pub header: crate::Header,
-    /// Extended header bytes.
     pub ext_header: Vec<u8>,
-    /// Voxel data bytes.
     pub data: Vec<u8>,
-    /// Non-fatal warnings (empty unless `permissive` was `true`).
     pub warnings: Vec<String>,
-    /// Detected file endianness.
-    pub endian: crate::FileEndian,
-    /// Volume dimensions.
-    pub shape: VolumeShape,
-    /// Validated voxel data mode.
-    pub mode: Mode,
 }
 
-/// Open a compressed MRC file (gzip or bzip2) from a decoder.
-///
-/// Reads the decompressed stream into memory with a safety cap on total
-/// output bytes (`max_bytes`). This cap is applied **before** parsing the
-/// header, so a malicious file that claims huge dimensions cannot trigger
-/// unbounded memory allocation.
-///
-/// After decompression, the header is parsed and the actual size is validated
-/// against the header-declared size (unless in permissive mode).
-///
-/// # Safety limit
-///
-/// If the decompressed stream exceeds `max_bytes`, the function returns an
-/// [`Error::Io`] with `"Decompressed data exceeds safety limit"`. The default
-/// value is [`DEFAULT_MAX_DECOMPRESSED_BYTES`] (256 GiB), accessible through
-/// [`Reader::open_gzip_with_limit`](crate::Reader::open_gzip_with_limit) and
-/// [`Reader::open_bzip2_with_limit`](crate::Reader::open_bzip2_with_limit).
+/// Open a compressed MRC file from a decoder.
 pub(crate) fn open_compressed<D: std::io::Read>(
     mut decoder: D,
     permissive: bool,
     max_bytes: u64,
 ) -> Result<DecompressedMrc, crate::Error> {
-    // Read up to (max_bytes + 1) so we can detect truncation by the cap.
-    // Uses saturating_add to avoid overflow when max_bytes = u64::MAX
-    // (which disables the cap — see Reader::open_gzip_with_limit docs).
     let limit = max_bytes.saturating_add(1);
     let mut buf = Vec::with_capacity(limit.min(1024 * 1024) as usize);
     decoder.by_ref().take(limit).read_to_end(&mut buf)?;
 
     if buf.len() > max_bytes as usize {
         return Err(crate::Error::Io(std::io::Error::other(format!(
-            "Decompressed data exceeds safety limit of {max_bytes} bytes \
-             ({} GiB). Refusing to allocate. \
-             Use Reader::open_gzip_with_limit() or Reader::open_bzip2_with_limit() \
-             with a larger max_bytes if you trust this file.",
-            max_bytes / (1024 * 1024 * 1024),
+            "Decompressed data exceeds safety limit of {max_bytes} bytes. \
+             Use Reader::open_gzip_with_limit() with a larger max_bytes if you trust this file.",
         ))));
     }
 
@@ -1310,8 +504,7 @@ pub(crate) fn open_compressed<D: std::io::Read>(
 
     let mut header_bytes = [0u8; 1024];
     header_bytes.copy_from_slice(&buf[..1024]);
-    let (header, mut warnings, endian, data_size) = parse_header(&header_bytes, permissive)?;
-
+    let (header, mut warnings, _endian, data_size) = parse_header(&header_bytes, permissive)?;
     let ext_size = header.nsymbt as usize;
 
     if !permissive {
@@ -1325,12 +518,10 @@ pub(crate) fn open_compressed<D: std::io::Read>(
         warnings.push(format!(
             "File size mismatch: expected {} bytes, got {}",
             1024 + ext_size + data_size,
-            buf.len()
+            buf.len(),
         ));
     }
 
-    // Clamp ext_header and data slices to available bytes (permissive mode
-    // may reach here with a mismatched file, and slices must not panic).
     let ext_end = (1024 + ext_size).min(buf.len());
     let ext_header = buf[1024..ext_end].to_vec();
     let data = if ext_end < buf.len() {
@@ -1338,9 +529,8 @@ pub(crate) fn open_compressed<D: std::io::Read>(
     } else {
         Vec::new()
     };
-    let shape = VolumeShape::new(header.nx as usize, header.ny as usize, header.nz as usize);
+    let _shape = VolumeShape::new(header.nx as usize, header.ny as usize, header.nz as usize);
 
-    // Detect IMOD unsigned Mode 0
     if let Some(mode) = Mode::from_i32(header.mode) {
         if mode == Mode::Int8 {
             if let Some(imod) = header.detect_imod() {
@@ -1360,77 +550,5 @@ pub(crate) fn open_compressed<D: std::io::Read>(
         ext_header,
         data,
         warnings,
-        endian,
-        shape,
-        mode: Mode::from_i32(header.mode).ok_or(crate::Error::UnsupportedMode)?,
     })
-}
-
-// ============================================================================
-// ReaderCore implementations
-// ============================================================================
-
-impl private::Sealed for crate::Reader {}
-impl VoxelSource for crate::Reader {
-    fn vs_read_block_bytes<'a>(
-        &'a self,
-        offset: [usize; 3],
-        shape: [usize; 3],
-    ) -> Result<Cow<'a, [u8]>, Error> {
-        self.read_block_bytes(offset, shape).map(Cow::Owned)
-    }
-    fn vs_decode_block<T: Voxel>(&self, bytes: &[u8]) -> Result<Vec<T>, Error> {
-        self.decode_block(bytes)
-    }
-}
-impl ReaderCore for crate::Reader {
-    fn shape(&self) -> VolumeShape {
-        self.shape()
-    }
-    fn mode(&self) -> Mode {
-        self.mode()
-    }
-    fn endian(&self) -> FileEndian {
-        self.endian
-    }
-    fn header(&self) -> &Header {
-        &self.header
-    }
-    fn ext_header_bytes(&self) -> &[u8] {
-        &self.ext_header
-    }
-}
-#[cfg(feature = "mmap")]
-impl private::Sealed for crate::MmapReader {}
-#[cfg(feature = "mmap")]
-impl VoxelSource for crate::MmapReader {
-    fn vs_read_block_bytes<'a>(
-        &'a self,
-        offset: [usize; 3],
-        shape: [usize; 3],
-    ) -> Result<Cow<'a, [u8]>, Error> {
-        // MmapReader has a zero-copy fast path for contiguous XY slabs.
-        self.read_block_bytes_cow(offset, shape)
-    }
-    fn vs_decode_block<T: Voxel>(&self, bytes: &[u8]) -> Result<Vec<T>, Error> {
-        self.decode_block(bytes)
-    }
-}
-#[cfg(feature = "mmap")]
-impl ReaderCore for crate::MmapReader {
-    fn shape(&self) -> VolumeShape {
-        self.shape()
-    }
-    fn mode(&self) -> Mode {
-        self.mode()
-    }
-    fn endian(&self) -> FileEndian {
-        self.endian()
-    }
-    fn header(&self) -> &Header {
-        self.header()
-    }
-    fn ext_header_bytes(&self) -> &[u8] {
-        self.ext_header_bytes()
-    }
 }
