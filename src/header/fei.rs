@@ -77,10 +77,8 @@ pub struct Fei1Metadata {
 }
 
 impl Fei1Metadata {
-    /// Parse a single FEI1 record from bytes.
-    ///
-    /// Returns `None` if `bytes` is shorter than [`FEI1_RECORD_SIZE`].
-    pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
+    /// Parse a single FEI1 record from bytes without checking metadata_size.
+    fn from_bytes_unchecked(bytes: &[u8]) -> Option<Self> {
         if bytes.len() < FEI1_RECORD_SIZE {
             return None;
         }
@@ -140,6 +138,21 @@ impl Fei1Metadata {
             alpha_tilt_max: be_f64(bytes, 760),
         })
     }
+
+    /// Parse a single FEI1 record from bytes.
+    ///
+    /// Returns `None` if `bytes` is shorter than [`FEI1_RECORD_SIZE`]
+    /// or if the `metadata_size` field does not match the expected record size.
+    pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
+        if bytes.len() < FEI1_RECORD_SIZE {
+            return None;
+        }
+        let metadata_size = be_u32(bytes, 0);
+        if metadata_size != FEI1_RECORD_SIZE as u32 {
+            return None;
+        }
+        Self::from_bytes_unchecked(bytes)
+    }
 }
 
 /// FEI2 metadata extends FEI1 with additional v2 fields.
@@ -168,12 +181,17 @@ pub struct Fei2Metadata {
 impl Fei2Metadata {
     /// Parse a single FEI2 record from bytes.
     ///
-    /// Returns `None` if `bytes` is shorter than [`FEI2_RECORD_SIZE`].
+    /// Returns `None` if `bytes` is shorter than [`FEI2_RECORD_SIZE`]
+    /// or if the `metadata_size` field does not match the expected record size.
     pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
         if bytes.len() < FEI2_RECORD_SIZE {
             return None;
         }
-        let fei1 = Fei1Metadata::from_bytes(bytes)?;
+        let metadata_size = be_u32(bytes, 0);
+        if metadata_size != FEI2_RECORD_SIZE as u32 {
+            return None;
+        }
+        let fei1 = Fei1Metadata::from_bytes_unchecked(bytes)?;
         Some(Self {
             fei1,
             scan_rotation: be_f64(bytes, 768),
@@ -376,6 +394,14 @@ mod tests {
     }
 
     #[test]
+    fn parse_fei1_wrong_metadata_size() {
+        let mut buf = make_fei1_record();
+        // Set metadata_size to an unexpected value (e.g. 999 instead of 768)
+        buf[0..4].copy_from_slice(&999u32.to_be_bytes());
+        assert!(parse_fei1_records(&buf).is_none());
+    }
+
+    #[test]
     fn parse_fei1_misaligned_length() {
         let buf = vec![0u8; FEI1_RECORD_SIZE + 1];
         assert!(parse_fei1_records(&buf).is_none());
@@ -385,7 +411,7 @@ mod tests {
     fn parse_fei2_known_values() {
         let mut buf = vec![0u8; FEI2_RECORD_SIZE];
         // Fill FEI1 portion with recognisable values
-        buf[0..4].copy_from_slice(&768u32.to_be_bytes());
+        buf[0..4].copy_from_slice(&888u32.to_be_bytes()); // metadata_size = FEI2_RECORD_SIZE
         buf[4..8].copy_from_slice(&1u32.to_be_bytes());
         buf[100..108].copy_from_slice(&(-35.5f64).to_be_bytes());
         buf[220..228].copy_from_slice(&(2.5f64).to_be_bytes());
