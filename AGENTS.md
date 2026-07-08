@@ -1,449 +1,134 @@
 # Agent Guide for `mrc`
 
-This file contains project-specific context for AI coding agents working on the `mrc` crate. The reader is assumed to know nothing about the project.
-
-## Project Overview
-
-`mrc` is a Rust library crate that reads and writes MRC-2014 files, a binary format used in cryo-electron microscopy (cryo-EM) and structural biology. The crate prioritizes zero-copy access, type-safe I/O, and SIMD acceleration for common data conversion paths.
+This file contains project-specific context for AI coding agents working on the `mrc` crate.
 
 - **Repository**: https://github.com/elemeng/mrc
 - **Crate**: https://crates.io/crates/mrc
-- **Docs**: https://docs.rs/mrc
-- **License**: MIT
-- **Version**: 0.4.1 (check `Cargo.toml` for latest)
-
-A reference Python implementation (`mrcfile`) is available on PyPI for specification comparison, but this crate is a standalone Rust implementation. The MRC-2014 specification is available locally as `mrcfile-official.md`.
-
-## Technology Stack
-
+- **Version**: 0.5.0 (check `Cargo.toml`)
 - **Language**: Rust, Edition 2024, MSRV 1.85
-- **Build Tool**: Cargo (no `rust-toolchain.toml` — uses system Rust)
-- **CI**: GitHub Actions (`.github/workflows/rust.yml`) — builds and tests on `ubuntu-latest`, `windows-latest`, `macos-latest` for pushes/PRs to `main`
-- **Error Handling**: `thiserror` 2.x (no-std compatible)
-- **No `unsafe` in public API**: All `unsafe` is internal; the public API is 100% safe Rust.
-- **Optional Dependencies** (as declared in `Cargo.toml`):
-  - `memmap2` 0.9 — memory-mapped I/O (`mmap` feature)
-  - `rayon` 1.12 — parallel encoding (`parallel` feature)
-  - `half` 2.7 — half-precision f16 (`f16` feature)
-  - `flate2` 1.1 — gzip compression (`gzip` feature)
-  - `bzip2` 0.5 — bzip2 compression (`bzip2` feature)
-  - `serde` 1 — serialization/deserialization (`serde` feature)
-- **Hard Dependencies**: `thiserror` 2.x, `tracing` 0.1
-
-<!-- rtk-instructions v2 -->
-# RTK (Rust Token Killer) - Token-Optimized Commands
-
-## Golden Rule
-
-**Always prefix commands with `rtk`**. If RTK has a dedicated filter, it uses it. If not, it passes through unchanged. This means RTK is always safe to use.
-
-**Important**: Even in command chains with `&&`, use `rtk`:
-```bash
-# ❌ Wrong
-git add . && git commit -m "msg" && git push
-
-# ✅ Correct
-rtk git add . && rtk git commit -m "msg" && rtk git push
-```
-
-## RTK Commands by Workflow
-
-### Build & Compile (80-90% savings)
-```bash
-rtk cargo build         # Cargo build output
-rtk cargo check         # Cargo check output
-rtk cargo clippy        # Clippy warnings grouped by file (80%)
-rtk tsc                 # TypeScript errors grouped by file/code (83%)
-rtk lint                # ESLint/Biome violations grouped (84%)
-rtk prettier --check    # Files needing format only (70%)
-rtk next build          # Next.js build with route metrics (87%)
-```
-
-### Test (60-99% savings)
-```bash
-rtk cargo test          # Cargo test failures only (90%)
-rtk go test             # Go test failures only (90%)
-rtk jest                # Jest failures only (99.5%)
-rtk vitest              # Vitest failures only (99.5%)
-rtk playwright test     # Playwright failures only (94%)
-rtk pytest              # Python test failures only (90%)
-rtk rake test           # Ruby test failures only (90%)
-rtk rspec               # RSpec test failures only (60%)
-rtk test <cmd>          # Generic test wrapper - failures only
-```
-
-### Git (59-80% savings)
-```bash
-rtk git status          # Compact status
-rtk git log             # Compact log (works with all git flags)
-rtk git diff            # Compact diff (80%)
-rtk git show            # Compact show (80%)
-rtk git add             # Ultra-compact confirmations (59%)
-rtk git commit          # Ultra-compact confirmations (59%)
-rtk git push            # Ultra-compact confirmations
-rtk git pull            # Ultra-compact confirmations
-rtk git branch          # Compact branch list
-rtk git fetch           # Compact fetch
-rtk git stash           # Compact stash
-rtk git worktree        # Compact worktree
-```
-
-Note: Git passthrough works for ALL subcommands, even those not explicitly listed.
-
-### GitHub (26-87% savings)
-```bash
-rtk gh pr view <num>    # Compact PR view (87%)
-rtk gh pr checks        # Compact PR checks (79%)
-rtk gh run list         # Compact workflow runs (82%)
-rtk gh issue list       # Compact issue list (80%)
-rtk gh api              # Compact API responses (26%)
-```
-
-### JavaScript/TypeScript Tooling (70-90% savings)
-```bash
-rtk pnpm list           # Compact dependency tree (70%)
-rtk pnpm outdated       # Compact outdated packages (80%)
-rtk pnpm install        # Compact install output (90%)
-rtk npm run <script>    # Compact npm script output
-rtk npx <cmd>           # Compact npx command output
-rtk prisma              # Prisma without ASCII art (88%)
-rtk uv run <cmd>        # Compact uv project command output
-```
-
-### Files & Search (60-75% savings)
-```bash
-rtk ls <path>           # Tree format, compact (65%)
-rtk read <file>         # Code reading with filtering (60%)
-rtk grep <pattern>      # Search grouped by file (75%). Format flags (-c, -l, -L, -o, -Z) run raw.
-rtk find <pattern>      # Find grouped by directory (70%)
-```
-
-### Analysis & Debug (70-90% savings)
-```bash
-rtk err <cmd>           # Filter errors only from any command
-rtk log <file>          # Deduplicated logs with counts
-rtk json <file>         # JSON structure without values
-rtk deps                # Dependency overview
-rtk env                 # Environment variables compact
-rtk summary <cmd>       # Smart summary of command output
-rtk diff                # Ultra-compact diffs
-```
-
-### Infrastructure (85% savings)
-```bash
-rtk docker ps           # Compact container list
-rtk docker images       # Compact image list
-rtk docker logs <c>     # Deduplicated logs
-rtk kubectl get         # Compact resource list
-rtk kubectl logs        # Deduplicated pod logs
-```
-
-### Network (65-70% savings)
-```bash
-rtk curl <url>          # Compact HTTP responses (70%)
-rtk wget <url>          # Compact download output (65%)
-```
-
-### Meta Commands
-```bash
-rtk gain                # View token savings statistics
-rtk gain --history      # View command history with savings
-rtk discover            # Analyze Claude Code sessions for missed RTK usage
-rtk proxy <cmd>         # Run command without filtering (for debugging)
-rtk init                # Add RTK instructions to CLAUDE.md
-rtk init --global       # Add RTK to ~/.claude/CLAUDE.md
-```
-
-## Token Savings Overview
-
-| Category | Commands | Typical Savings |
-|----------|----------|-----------------|
-| Tests | vitest, playwright, cargo test | 90-99% |
-| Build | next, tsc, lint, prettier | 70-87% |
-| Git | status, log, diff, add, commit | 59-80% |
-| GitHub | gh pr, gh run, gh issue | 26-87% |
-| Package Managers | pnpm, npm, npx | 70-90% |
-| Files | ls, read, grep, find | 60-75% |
-| Infrastructure | docker, kubectl | 85% |
-| Network | curl, wget | 65-70% |
-
-Overall average: **60-90% token reduction** on common development operations.
-<!-- /rtk-instructions -->
+- **Hard deps**: `thiserror` 2.x, `tracing` 0.1
+- **Spec reference**: `mrcfile-official.md` (local copy)
 
 ## Build and Test Commands
 
 ```bash
-# Build with default features (mmap, f16, simd, parallel, gzip)
-cargo build
-
-# Build with all features (recommended for development)
-cargo build --all-features
-
-# Run all tests (unit + doc tests)
-cargo test --all-features
-
-# Run tests with only default features
-cargo test
-
-# Check formatting
-cargo fmt --check
-
-# Run clippy
+cargo build                    # default features (mmap, f16, simd, parallel, gzip)
+cargo build --all-features     # recommended for development
+cargo test --all-features      # unit + integration + doc-tests
 cargo clippy --all-features
-
-# Build release binaries
-cargo build --release --bin mrc-validate
-cargo build --release --bin mrc-header
-cargo build --release --bin mrc-invert
+cargo fmt --check
+cargo doc --all-features       # verify no broken intra-doc links
 ```
 
-Unit tests are inline `#[cfg(test)]` modules inside source files; integration tests live in `tests/integration.rs`; and benchmarks are in `benches/bench.rs` (criterion).
+Unit tests: inline `#[cfg(test)]` modules. Integration tests: `tests/integration.rs`. Benchmarks: `benches/bench.rs` (criterion).
 
-## Feature Flags
-
-| Feature | Dependencies | Description | Default |
-|---------|-------------|-------------|---------|
-| `mmap` | `memmap2` | Memory-mapped readers/writers | ✅ |
-| `f16` | `half` | Half-precision `f16` support | ✅ |
-| `simd` | (none; uses `core::arch`) | AVX2/NEON accelerated conversions (`i16→f32`, etc.) | ✅ |
-| `parallel` | `rayon` | Parallel encoding for `write_block_parallel` | ✅ |
-| `gzip` | `flate2` | Gzip-compressed MRC I/O | ✅ |
-| `bzip2` | `bzip2` | Bzip2-compressed MRC I/O | ❌ |
-| `ndarray` | `ndarray` | Return volumes as `ndarray::Array3` via `to_ndarray()` | ❌ |
-| `serde` | `serde` | Serialize/Deserialize for public types | ❌ |
-
-The `simd` feature uses **runtime feature detection** (`is_x86_feature_detected!("avx2")` / `is_aarch64_feature_detected!("neon")`) — it never assumes the ISA is available at compile time. Scalar fallbacks are always present.
+All commands should be prefixed with `rtk` when available (e.g. `rtk cargo test`).
 
 ## Code Organization
 
 ```
 src/
 ├── lib.rs                 # Public API re-exports and convenience functions (open, create)
-├── error.rs               # Top-level `Error` and `HeaderValidationError` enums (thiserror)
-├── mode.rs                # `Mode` enum, `Voxel` trait, complex types (Int16Complex, Float32Complex), Packed4Bit mode handling
+├── error.rs               # Error and HeaderValidationError enums (thiserror)
+├── mode.rs                # Mode enum, Voxel trait, complex types, Packed4Bit
 ├── header/
-│   ├── mod.rs             # `Header` struct (1024-byte MRC-2014 header), `HeaderBuilder`
+│   ├── mod.rs             # Header struct (1024-byte MRC-2014 header), HeaderBuilder
 │   ├── fei.rs             # FEI1/FEI2 extended header parsers
 │   ├── ccp4.rs            # CCP4 symmetry record parser
 │   ├── mrco.rs            # MRCO legacy record parser
-│   ├── seri.rs            # SerialEM record parser (with alpha_tilt)
+│   ├── seri.rs            # SerialEM record parser
 │   └── agar.rs            # Agard record parser
-├── validate.rs            # `ValidationReport`, `validate_full()`, `validate_reader()`
-├── serde_byte_array.rs    # (private) serde helpers for fixed-size byte arrays > 32
-├── iter.rs                # Lazy iterators: `RegionIter<T, R, S>`, `SliceStepper`, `SlabStepper`, `TileStepper`
+├── validate.rs            # ValidationReport, validate_full(), validate_reader()
+├── serde_byte_array.rs    # (private) serde helpers for byte arrays > 32
+├── iter.rs                # Lazy iterators: RegionIter, SliceStepper, SlabStepper, TileStepper
 ├── engine/
-│   ├── mod.rs
-│   ├── block.rs           # `VolumeShape`, `VoxelBlock<T>`
-│   ├── codec.rs           # `EndianCodec` trait, `decode_slice`, `encode_slice`, parallel `encode_block_parallel`
-│   ├── convert.rs         # Type conversion utilities (i16→f32, u16→f32, i8→f32, u8↔u16, Mode 0 reinterpretation, 4-bit unpacking)
-│   ├── endian.rs          # `FileEndian` enum, `MachstInfo` metadata
-│   ├── simd.rs            # AVX2/NEON SIMD kernels (unsafe) — i8→f32, i16→f32, u16→f32
-│   └── stats.rs           # Statistics computation (dmin, dmax, dmean, rms), header statistics validation
+│   ├── block.rs           # VolumeShape, VoxelBlock<T>
+│   ├── codec.rs           # EndianCodec trait, decode_slice, encode_slice, encode_block_parallel
+│   ├── convert.rs         # Type conversion utilities, convert_block, ConvertFrom trait
+│   ├── endian.rs          # FileEndian enum, MachstInfo
+│   ├── simd/              # AVX2/NEON SIMD kernels (x86.rs, aarch64.rs)
+│   └── stats.rs           # Statistics computation and header stats validation
 ├── io/
-│   ├── mod.rs
-│   ├── reader.rs          # `CompressionType` and `detect_compression` helpers
-│   ├── reader_common.rs   # Shared `VoxelSource` trait, `ReaderCore` trait, block validation, gather/encode helpers, `parse_header`, `open_compressed`
-│   ├── buffered.rs        # In-memory `Reader` (loads entire file into Vec<u8>)
-│   ├── mmap_reader.rs     # (removed — consolidated into reader.rs)
-│   ├── writer.rs          # `Writer`, `WriterBuilder`, `MmapWriter`, `CompressedWriter<C: Compressor>`, `Compressor` trait
-│   ├── gzip.rs            # impl Reader { open_gzip* }, gzip reader methods
-│   └── bzip2.rs           # impl Reader { open_bzip2* }, bzip2 reader methods
+│   ├── reader.rs          # Reader (auto-selects mmap/buffered)
+│   ├── reader_common.rs   # Block validation, gather/encode helpers, parse_header, ConvertReader
+│   ├── writer.rs          # Writer, WriterBuilder (single Writer type for all backends)
+│   ├── gzip.rs            # impl Reader { open_gzip* }
+│   └── bzip2.rs           # impl Reader { open_bzip2* }
 └── bin/
-    ├── mrc-validate.rs    # CLI validation tool — comprehensive file validation with field filtering (`--field`)
-    ├── mrc-header.rs      # CLI header inspector — key:value output with inline validation (`--force` to skip)
-    └── mrc-invert.rs      # CLI contrast inverter — negates all voxel values, writes Float32 output
-```
+    ├── mrc-validate.rs    # CLI validation tool
+    ├── mrc-header.rs      # CLI header inspector
+    └── mrc-invert.rs      # CLI contrast inverter
 tests/
-    └── integration.rs    # ~21 integration tests (roundtrip, compression, edge cases)
+    └── integration.rs     # ~23 roundtrip tests
+```
 
 ### Module Philosophy
 
-- `engine/` contains low-level, format-agnostic encoding/decoding primitives.
-- `io/` contains user-facing I/O strategies (buffered, mmap, compressed).
-- `iter/` (a single `iter.rs` file, not a directory) provides lazy iterators that work over any `VoxelSource` implementor.
-- The crate uses **sealed traits** (`VoxelSource`) to keep internal abstractions internal.
-- `Packed4Bit` (Mode 101) has no `Voxel` impl. Read via `read_volume_u8()`/`slices_u8()` which unpack nibbles to `u8`; write via `write_u4_block()` which packs `u8` values (0–15) two-per-byte.
-
-### I/O Strategies
-
-| Reader | Description | Best for |
-|--------|-------------|---------|
-| `Reader` (auto) | Auto-selects mmap or buffered on open | Most use cases |
-| `Reader` (buffered) | Loads entire file into memory | via `from_reader()` / `from_bytes()` |
-
-| Writer | Description | Best for |
-|--------|-------------|---------|
-| `Writer` (file) | Standard file I/O via `WriterBuilder::finish()` | General use |
-| `Writer` (mmap) | Memory-mapped write via `WriterBuilder::finish_mmap()` | Very large files (`mmap` feature) |
-| `Writer` (gzip) | Buffers in RAM, compresses on `finalize` | Compressed output (`gzip` feature) |
-| `Writer` (bzip2) | Buffers in RAM, compresses on `finalize` | Compressed output (`bzip2` feature) |
-
-File open auto-detects gzip/bzip2 from magic bytes: `\x1f\x8b` → gzip, `BZ` → bzip2, anything else → plain.
+- `engine/` — format-agnostic encoding/decoding primitives (no I/O knowledge)
+- `io/` — user-facing I/O strategies: buffered, mmap, compressed
+- `iter/` — lazy iterators parameterized by a Stepper strategy
 
 ### API Surface Discipline
 
-The top-level `lib.rs` is the *only* public entry point. Internal modules (`engine/`, `io/`, `iter/`, `fei/`) are marked `mod` (private) or, when their items must be re-exported, are `pub mod` but with `#[doc(hidden)]` on internal plumbing:
+The only public entry point is `lib.rs`. Internal modules are `mod` (private) or `pub mod` with `#[doc(hidden)]`:
 
 | Visibility | Items |
 |------------|-------|
-| **Public (in lib.rs)** | `open`, `create`, `Reader`, `WriterBuilder`, `Writer`, `Header`, `HeaderBuilder`, `Mode`, `Voxel`, `VoxelBlock`, `VolumeShape`, `RegionIter`, `SliceStepper`, `SlabStepper`, `TileStepper`, `FileEndian`, `Error`, `HeaderValidationError`, `MmapWriter`, `GzipWriter`, `Bzip2Writer`, `validate_full`, `validate_reader`, `ValidationReport`, `ValidationIssue`, `Severity`, FEI types, CCP4/MRCO/SERI/AGAR types, IMOD types, `ComplexToRealStrategy`, `M0Interpretation`, `Int16Complex`, `Float32Complex`, `convert_u8_slice_to_u16`, `convert_u16_slice_to_u8`, `reinterpret_m0`, `DEFAULT_MAX_DECOMPRESSED_BYTES`, `ExtHeaderType`, `ExtHeaderData`, `Compression` |
-| **`#[doc(hidden)]`** | `VoxelSource`, `ReaderCore`, `EndianCodec`, `Compressor`, `MachstInfo`, `CompressionType`, `detect_compression`, `GzipCompressor`, `Bzip2Compressor`, `EndianFallbackWarning`, `serde_byte_array` |
-| **`pub(crate)` only** | `validate_block_bounds`, `gather_block_bytes`, `encode_block_to_buf`, `decode_block`, `decode_native_endian`, `decode_slice`, `encode_slice`, `encode_block_parallel`, `parse_header`, `DecompressedMrc`, `open_compressed`, `compute_stats`, `validate_header_stats`, `unpack_u4_bytes_to_u8`, `convert_i8_slice_to_f32`, `convert_i16_slice_to_f32`, `convert_u16_slice_to_f32`, `convert_f32_slice_to_i16`, `convert_f32_slice_to_u16`, `convert_f32_slice_to_i8` |
+| **Public** | `open`, `create`, `Reader`, `WriterBuilder`, `Writer`, `Header`, `HeaderBuilder`, `Mode`, `Voxel`, `VoxelBlock`, `VolumeShape`, `RegionIter`, steppers, `FileEndian`, `Error`, `HeaderValidationError`, `Compression`, validate types, FEI/CCP4/MRCO/SERI/AGAR/IMOD types, ExtHeaderType/Data, conversion utilities, `DEFAULT_MAX_DECOMPRESSED_BYTES` |
+| **`#[doc(hidden)]`** | `EndianCodec`, `MachstInfo`, `CompressionType`, `detect_compression`, `EndianFallbackWarning`, `serde_byte_array` |
+| **`pub(crate)` only** | `validate_block_bounds`, `gather_block_bytes`, `encode_block_to_buf`, `decode_block`, `decode_slice`, `encode_slice`, `convert_block`, `parse_header`, `open_compressed`, `compute_stats`, `validate_header_stats`, SIMD wrapper functions, converter functions |
 
-Key user-facing enums (`Error`, `Mode`, `Compression`, `CompressionType`, `ComplexToRealStrategy`, `M0Interpretation`, `ExtHeaderType`, `ExtHeaderData`) use `#[non_exhaustive]` to allow future variants. Match with a wildcard arm (`_`) in user code.
-
-## Usage Note — Trait Imports (Optional)
-
-Iterator and conversion methods (`slices`, `slabs`, `subregion`, `read_volume`,
-`convert`, etc.) are **inherent methods** on `Reader` — no trait imports needed
-for normal use:
-
-```rust
-use mrc::Reader;
-
-let reader = Reader::open("file.mrc")?;
-for slice in reader.slices::<f32>() { ... }
-for slice in reader.convert::<f32>().slices() { ... }
-```
+Key enums (`Error`, `Mode`, `Compression`, `CompressionType`, `ComplexToRealStrategy`, `M0Interpretation`, `ExtHeaderType`, `ExtHeaderData`) are `#[non_exhaustive]`.
 
 ## Development Conventions
 
 ### Code Style
 
-- **Language**: All comments, docs, and identifiers are in English.
-- **Formatting**: Standard `rustfmt`. No custom `rustfmt.toml`.
-- **Clippy**: The crate enforces `#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used, clippy::perf))]` and `#![warn(missing_docs, clippy::cargo)]` in `lib.rs`. Production code must not use `.unwrap()` or `.expect()`, performance lints are errors, all public items require documentation, and cargo metadata is checked.
-- **Inlining**: Small accessor methods and hot-path conversion functions are marked `#[inline]`.
-- **Documentation**: Heavy use of `//!` module docs and `///` item docs. The crate-level doc (`lib.rs`) includes real-world workflow examples (tilt series, FEI metadata, volume stacks) and a troubleshooting table. Doc-tests are present and run with `cargo test` — ~33 doc-tests across `lib.rs`, `header.rs`, `validate.rs`, `error.rs`, `io/buffered.rs`, `io/writer.rs`, `io/mmap_reader.rs`, and `engine/codec.rs`.
+- `#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used, clippy::perf))]`
+- `#![warn(missing_docs, clippy::cargo)]`
+- No `.unwrap()` or `.expect()` in production code
+- All public items must have doc comments
+- Small accessors and hot-path conversions marked `#[inline]`
+- Error paths and `bounds_err()` helpers marked `#[cold]`
 
 ### Error Handling
 
-- Fallible functions return `Result<T, Error>`.
-- `Error` is a central enum using `thiserror` for `#[from]` conversions.
-- Specific error variants: `Io`, `InvalidHeader`, `UnsupportedMode`, `BoundsError`, `TypeMismatch`, `BlockShapeMismatch`, `ModeMismatch`, `InvalidHeaderDetailed`, `StatsMismatch`, `Mmap`, `FileSizeMismatch`, `NotAVolumeStack`, `ValueOutOfRange`.
-- `HeaderValidationError` provides granular diagnostics for header validation.
-- `ModeMismatch`, `TypeMismatch`, and `ValueOutOfRange` errors are preferred over silent data corruption.
-- Bounds checking on `VoxelBlock` shapes is mandatory.
+- All fallible functions return `Result<T, Error>`.
+- `Error` is a central `thiserror` enum: `Io`, `InvalidHeader`, `UnsupportedMode`, `BoundsError`, `TypeMismatch`, `BlockShapeMismatch`, `ModeMismatch`, `InvalidHeaderDetailed`, `StatsMismatch`, `Mmap`, `FileSizeMismatch`, `NotAVolumeStack`, `ValueOutOfRange`.
+- `HeaderValidationError` provides granular header diagnostics.
+- `ModeMismatch`, `TypeMismatch`, `ValueOutOfRange` preferred over silent data corruption.
 
 ### Type Safety
 
-- The `Voxel` trait connects Rust types to MRC modes at compile time.
-- Generic read/write APIs require `T: Voxel`, preventing runtime mode mismatches.
-- Built-in conversion conveniences: `reader.convert::<T>()` adapter for auto-conversion, `slices_u8()`, `slabs_u8()`, `slices_mode0()`, `slabs_mode0()`, `read_volume::<T>()`, `read_volume_u8()`, `write_block_as()`, `write_u8_block()`, and `write_u4_block()`.
-
-### MRC Mode Mapping
-
-| Mode constant | Rust type | `Voxel` impl | Typical use |
-|---------------|-----------|--------------|-------------|
-| 0 (Int8) | `i8` | ✅ | Binary masks |
-| 1 (Int16) | `i16` | ✅ | Raw cryo-EM density |
-| 2 (Float32) | `f32` | ✅ | Processed/reconstructed density |
-| 3 (Int16Complex) | `Int16Complex` | ✅ | Complex data (obsolete for writing) |
-| 4 (Float32Complex) | `Float32Complex` | ✅ | Complex data |
-| 6 (Uint16) | `u16` | ✅ | Segmentation labels |
-| 12 (Float16) | `f16` (via `half` crate, feature `f16`) | ✅ | Half-precision storage |
-| 101 (Packed4Bit) | `u8` (via `slices_u8`/`read_volume_u8`) | ❌ (no Voxel impl) | 4-bit packed data; use `convert::<f32>().slices()` for f32 conversion |
-
-### File Endianness
-
-- MRC files encode byte order via the 4-byte MACHST machine stamp at offset 212.
-- Standard stamps: `0x44 0x44 0x00 0x00` = little-endian; `0x11 0x11 0x00 0x00` = big-endian.
-- CCP4 variant: `0x44 0x41` = little-endian.
-- New files are always little-endian per crate policy (matching Python `mrcfile`).
-- Header decode has an endianness fallback: if MODE is invalid under the detected endianness, the opposite is tried. This handles files with a wrong MACHST.
-
-### Header Validation
-
-- `Header::validate_detailed()` enforces strict MRC-2014 compliance. Since v0.2.5 it also accepts NVERSION=0 (uninitialized, common in EPU microscope files) alongside 20140/20141, so `open()` works on EPU data without special flags.
-- `Header::validate_permissive()` turns most non-fatal issues into warnings.
-- `validate_map()` accepts `"MAP "`, `"MAP\0"`, `"MAPI"`, and all-zero MAP fields — covering EPU, IMOD, and uninitialized headers.
-
-## Testing Strategy
-
-- **Unit Tests**: ~101 tests in inline `mod tests` blocks inside source files (`header.rs`, `engine/simd.rs`, `engine/convert.rs`, `engine/endian.rs`, `engine/stats.rs`, `io/reader.rs`, `engine/block.rs`, `lib.rs`, `mode.rs`).
-- **Doc Tests**: ~49 doc-tests (43 run, 6 ignored — for internal-only API patterns) in `lib.rs`, `header.rs`, `validate.rs`, `error.rs`, `io/buffered.rs`, `io/writer.rs`, `io/mmap_reader.rs`, and `engine/codec.rs`.
-- **Integration Tests**: ~23 integration tests in `tests/integration.rs` covering write-then-read roundtrips for Float32, Int16, Uint16, Float16, subregion reads, gzip/bzip2 compression, header statistics, Reader (mmap), Packed4Bit (Mode 101), complex modes, volume stacks, and permissive-mode edge cases.
-- **Benchmarks**: Criterion benchmarks live in `benches/bench.rs` (requires `--all-features` for mmap benchmarks).
-- **No External Fixtures**: Tests generate temporary MRC files programmatically (using `tempfile` in dev-dependencies) rather than checking large binary files into git.
+- `Voxel` trait connects Rust types to MRC modes at compile time.
+- Generic read/write APIs require `T: Voxel`.
+- `Packed4Bit` (Mode 101) has no `Voxel` impl — use `slices_u8`/`read_volume_u8`/`write_u4_block`.
+- No `unsafe` in the public API — all `unsafe` is internal.
 
 ## Safety and Unsafe Code
 
-The crate contains a small amount of `unsafe` Rust, all justified by performance:
+Unsafe locations and their justifications:
 
-1. **SIMD Kernels** (`engine/simd.rs`): AVX2 and NEON intrinsics for `i8→f32`, `i16→f32`, `u16→f32`. Runtime feature detection gates these.
-2. **Memory Mapping** (`io/mmap_reader.rs`, `io/writer.rs`): `memmap2::MmapOptions::new().map()` and `.map_mut()` require `unsafe`.
-3. **Fast-path memcpy** (`engine/codec.rs`): `core::ptr::copy_nonoverlapping` is used for native-endian decode/encode to avoid per-element branching.
-4. **`Vec::set_len`** (`engine/codec.rs`): Used after `Vec::with_capacity` when all elements are guaranteed to be overwritten immediately.
-5. **Zero-copy `slab_as`** (`io/mmap_reader.rs`): `core::slice::from_raw_parts` returns a `&[T]` into the memory map. Alignment, mode, and endianness are checked beforehand.
+1. **`engine/simd/x86.rs` + `aarch64.rs`** — AVX2/NEON intrinsics. Runtime feature detection via `is_x86_feature_detected!("avx2")` / `is_aarch64_feature_detected!("neon")`. All `unsafe fn` bodies require explicit `unsafe { }` blocks (Rust 2024 `unsafe_op_in_unsafe_fn` lint).
+2. **`io/reader.rs` + `io/writer.rs`** — `memmap2::Mmap` / `MmapMut` construction and `slab_as` zero-copy slice. Alignment, mode, and endianness checked before pointer dereference.
+3. **`engine/codec.rs`** — `core::ptr::copy_nonoverlapping` for native-endian memcpy; `Vec::set_len` after capacity-guaranteed initialization.
+4. **`engine/convert.rs`** — `reinterpret_vec` and `Vec::from_raw_parts` for type-erased Vec reuse. Type identity verified via `TypeId` before transmute.
 
-**Agent Guidance**: When modifying unsafe code, ensure:
-- Runtime feature detection for SIMD (do not assume AVX2/NEON is available).
-- Alignment and size invariants are documented with `// SAFETY:` comments.
-- No undefined behavior is introduced through out-of-bounds raw pointer access.
-- `Vec::set_len` is only called after all elements in the allocated capacity are initialized.
+All `unsafe` blocks must have a `// SAFETY:` comment documenting the invariant.
 
 ## Known Issues and Technical Debt
 
-1. **`gather_block_bytes` fast-path assumes origin-aligned XY slabs**: For full-row slabs (`ox == 0 && sx == nx && oy == 0 && sy == ny`) a contiguous copy is used. Sub-XY blocks correctly use row-by-row scatter/gather. The fast-path comment was clarified in v0.2.7.
-2. **`Reader::data_bytes()` silently truncates on undersized files in permissive mode**: When the file is smaller than the header claims, the method returns whatever bytes are available. Use [`is_truncated()`](crate::Reader::is_truncated) to detect this. In strict mode the file size is validated on open.
-3. **`Packed4Bit` sub-block reads require even X-offset**: `validate_block_bounds` rejects odd `ox` for Mode 101 to avoid nibble-level read-modify-write in `gather_block_bytes`. Full-frame and byte-aligned sub-block reads work correctly.
-
-## CLI Tools
-
-Three binary targets are available (`src/bin/`):
-
-- **`mrc-validate`**: Comprehensive file validation. Supports `--permissive` (warnings instead of hard errors), `--field <name>` (filter to specific checks), and `--list-fields`. Exit code 0 = valid, 1 = validation failed, 2 = usage error.
-- **`mrc-header`**: Header inspector with key:value output. Uses `--permissive` for lenient opening, `--force` to skip validation and show raw values only.
-- **`mrc-invert`**: Contrast inverter. Reads any mode via `convert::<f32>().slices()`, negates every voxel, writes Float32 output. Shows progress every 100 slices.
-
-## Deployment and Release
-
-- The crate is published to **crates.io**.
-- `cargo build --release` produces optimized artifacts.
-- The CI workflow builds with `--release` and runs tests across all three platforms.
-
-## Security Considerations
-
-- **File Size Validation**: Readers validate that file size matches header-declared data size (with a `FileSizeMismatch` error) unless opened in permissive mode.
-- **Memory Mapping**: `Reader::open` maps files read-only when using mmap. `WriterBuilder::finish_mmap()` maps read-write for in-place updates.
-- **Compression**: Gzip/Bzip2 readers decompress the entire file into memory on open (they do not stream). A hard cap of [`DEFAULT_MAX_DECOMPRESSED_BYTES`](crate::DEFAULT_MAX_DECOMPRESSED_BYTES) (256 GiB) is enforced before the header is parsed, preventing decompression bombs. Use [`open_gzip_with_limit`](crate::Reader::open_gzip_with_limit) / [`open_bzip2_with_limit`](crate::Reader::open_bzip2_with_limit) for a custom limit, or set to `u64::MAX` to disable the cap.
-- **No `unsafe` in public API**: All `unsafe` is internal; the public API is 100% safe Rust.
-- **Integer Overflow**: The codebase uses `checked_mul` and `checked_add` for size calculations in several places (`VolumeShape::total_voxels`, `checked_linear_index`, block validation), but not universally. Agents should maintain defensive arithmetic when computing byte offsets and buffer sizes.
-
-## External References
-
-- **MRC-2014 Spec**: `mrcfile-official.md` (local copy) or https://www.ccpem.ac.uk/mrc-format/mrc2014/
-- **Python Reference**: CCP-EM's `mrcfile` Python package
+1. **`gather_block_bytes` fast-path assumes origin-aligned XY slabs**: full-row slabs (`ox == 0 && sx == nx && oy == 0 && sy == ny`) use a contiguous copy. Sub-XY blocks correctly scatter/gather row-by-row.
+2. **`Reader::data_bytes()` silently truncates on undersized files in permissive mode**: returns available bytes. Use `is_truncated()` to detect. Strict mode validates on open.
+3. **`Packed4Bit` sub-block reads require even X-offset**: `validate_block_bounds` rejects odd `ox` for Mode 101. Full-frame and byte-aligned sub-blocks work.
+4. **`write_block_as_body` f32 clone eliminated** in v0.5.0 — existing code paths are clean.
 
 ## Roadmap
 
-### v0.3.x — Stabilization & Quality ✅
-
-All MRC-2014 format features are implemented and tested.
-
-### v0.4.x — Quality, Header API & Polish ✅
-
-- [x] Optional serde support (`#[cfg(feature = "serde")]`) for `Header`,
-  `Mode`, `VolumeShape`, `ValidationReport`, and other public types
-- [x] Replace `eprintln!("Warning: Mode 3...")` with `tracing::warn!` via
-  the `tracing` facade (library never installs a subscriber)
-- [x] Auto-dispatch extended header parsing — `reader.parse_extended_header()`
-  checks `exttyp` and routes to the correct parser automatically
-- [x] Reader convenience methods — `reader.fei1_metadata()`,
-  `reader.ccp4_records()`, etc. (read + parse in one call)
-- [x] Expand IMOD metadata with more fields from `extra` bytes
-- [x] Richer `Header` convenience API — cell volume, better label
-  helpers, more validation utilities
-- [x] `exttyp`-based dispatch enum for generic code over all extended
-  header formats
-- [x] Add Miri CI job in GitHub Actions (`cargo miri test`) for all
-  unsafe code paths (SIMD kernels, mmap, Vec::set_len, reinterpreting)
-- [x] Extend clippy linting: `clippy::cargo`, selective `clippy::pedantic`,
-  selective `clippy::nursery`, and `missing_docs` (warn)
-- [x] Richer error context (offset, mode) in BoundsError / ModeMismatch
-- [x] `#[must_use]` audit on all builder and accessor methods
-
-### v0.5.x — Python bindings via PyO3 / `maturin` (evaluate)
+- **v0.3.x** ✅ — Complete MRC-2014 format support, iterator API, SIMD, mmap, all modes
+- **v0.4.x** ✅ — Serde, tracing, dispatch enums, IMOD expansion, Miri CI, clippy, error context
+- **v0.5.x** ✅ — API completeness (`header_mut`, builder setters), `is_truncated` fix, perf cleanup, doc overhaul
+- **v0.6.x** — Robust real-world testing across all public APIs with real MRC files
 
 ## When Modifying This File
 

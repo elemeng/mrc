@@ -48,12 +48,44 @@
 //! # Ok(()) }
 //! ```
 //!
-//! Then pick an iteration method:
+//! Then pick an iteration method, each returning [`VoxelBlock<T>`] chunks:
 //!
 //! * [`slices`](Reader::slices) — one Z-plane at a time
 //! * [`slabs`](Reader::slabs) — batches of `k` Z-planes
 //! * [`tiles`](Reader::tiles) — arbitrary 3D blocks
 //! * [`subregion`](Reader::subregion) — a single block by coordinate
+//! * [`read_volume`](Reader::read_volume) — the entire volume as one block
+//!
+//! All iteration methods share the same API pattern:
+//!
+//! ```no_run
+//! # fn main() -> Result<(), mrc::Error> {
+//! # let reader = mrc::Reader::open("density.mrc")?;
+//! // One slice at a time:
+//! for slice in reader.slices::<f32>() {
+//!     let block = slice?;
+//! }
+//! // Or batches of 16 Z-planes:
+//! for slab in reader.slabs::<f32>(16) {
+//!     let block = slab?;
+//! }
+//! // Or arbitrary 3D tiles:
+//! for tile in reader.tiles::<f32>([64, 64, 64])? {
+//!     let block = tile?;
+//! }
+//! # Ok(()) }
+//! ```
+//!
+//! Each block contains the `offset`, `shape`, and flat `data: Vec<T>`.
+//! Read the entire volume with [`read_volume`](Reader::read_volume):
+//!
+//! ```no_run
+//! # fn main() -> Result<(), mrc::Error> {
+//! # let reader = mrc::Reader::open("density.mrc")?;
+//! let block: mrc::VoxelBlock<f32> = reader.read_volume::<f32>()?;
+//! println!("shape: {:?}, voxels: {}", block.shape, block.data.len());
+//! # Ok(()) }
+//! ```
 //!
 //! > **No trait imports needed:** All iterator and conversion methods are
 //! > available as inherent methods on `Reader` without any import.
@@ -82,18 +114,17 @@
 //! # Ok(()) }
 //! ```
 //!
-//! When the `ndarray` feature is enabled, get numpy-like multidimensional access:
+//! ### Special-mode reads (Packed4Bit and Mode 0)
 //!
-//! ```no_run
-//! # #[cfg(feature = "ndarray")] {
-//! # fn main() -> Result<(), mrc::Error> {
-//! # let reader = mrc::Reader::open("density.mrc")?;
-//! let arr = reader.to_ndarray::<f32>()?;
-//! // arr is ndarray::Array3<f32> with shape [nz, ny, nx]
-//! let center = arr[[arr.shape()[0] / 2, arr.shape()[1] / 2, arr.shape()[2] / 2]];
-//! # Ok(()) }
-//! # }
-//! ```
+//! For modes that don't implement [`Voxel`] (Packed4Bit, Mode 0 with unsigned
+//! interpretation), dedicated methods read directly as `u8` or `f32`:
+//!
+//! * [`slices_u8`](Reader::slices_u8) / [`slabs_u8`](Reader::slabs_u8) —
+//!   unpack Packed4Bit nibbles, or narrow Uint16, to `u8`
+//! * [`read_volume_u8`](Reader::read_volume_u8) — full volume as `u8`
+//!   (Packed4Bit only)
+//! * [`slices_mode0`](Reader::slices_mode0) / [`slabs_mode0`](Reader::slabs_mode0) —
+//!   read Mode 0 as `f32`, choosing signed or unsigned interpretation
 //!
 //! ### Reading from memory or streams
 //!
@@ -124,12 +155,17 @@
 //!
 //! For esoteric or severely non-standard files, use
 //! [`Reader::open_permissive`] which turns non-critical header issues into
-//! warnings instead of hard errors:
+//! warnings instead of hard errors, and allows opening files that are shorter
+//! than the header declares. Use [`is_truncated`](Reader::is_truncated) to
+//! detect truncated data after a permissive open:
 //!
 //! ```no_run
 //! # fn main() -> Result<(), mrc::Error> {
 //! # use mrc::Reader;
 //! let (reader, warnings) = Reader::open_permissive("legacy.mrc")?;
+//! if reader.is_truncated() {
+//!     eprintln!("warning: file is incomplete");
+//! }
 //! for w in &warnings { eprintln!("note: {w}"); }
 //! # Ok(()) }
 //! ```
@@ -141,11 +177,23 @@
 //!
 //! ```no_run
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! use mrc::create;
+//! use mrc::{create, VoxelBlock};
 //! let mut writer = create("output.mrc")
 //!     .shape([256, 256, 128])
 //!     .mode::<f32>()
 //!     .finish()?;
+//!
+//! // Write some data
+//! writer.write_block(&VoxelBlock::new(
+//!     [0, 0, 0], [256, 256, 1],
+//!     vec![0.0f32; 256 * 256],
+//! )?)?;
+//!
+//! // Optionally compute and store density statistics
+//! writer.update_header_stats()?;
+//!
+//! // Finalize — required, rewrites header with final metadata
+//! writer.finalize()?;
 //! # Ok(()) }
 //! ```
 //!
@@ -155,7 +203,11 @@
 //!    `T` matches the file's mode — a compile-time check that prevents
 //!    accidentally treating bytes as the wrong kind of number.
 //!    Use [`write_block_as`](Writer::write_block_as) for automatic conversion
-//!    (e.g. write `f32` data to an Int16 or Float16 file).
+//!    (e.g. write `f32` data to an Int16 or Float16 file)
+//!
+//!    For Uint16 files, [`write_u8_block`](Writer::write_u8_block) auto-widens
+//!    `u8` data; for Packed4Bit files, [`write_u4_block`](Writer::write_u4_block)
+//!    packs `u8` values (0–15) two-per-byte.
 //! 2. Optionally call [`update_header_stats`](Writer::update_header_stats)
 //!    to fill in `dmin`/`dmax`/`dmean`/`rms`.
 //! 3. **Finalize** with [`finalize`](Writer::finalize) to rewrite the header
@@ -212,6 +264,19 @@
 //! When you don't know the mode ahead of time, use
 //! [`convert::<f32>()`](Reader::convert) which converts any mode to `f32`.
 //!
+//! # Feature flags
+//!
+//! | Feature | Description | Default |
+//! |---------|-------------|---------|
+//! | `mmap` | Memory-mapped readers and writers | ✅ |
+//! | `f16` | Half-precision float via the `half` crate | ✅ |
+//! | `simd` | AVX2 / NEON acceleration for integer↔f32, f16↔f32, byte-swap, stats, and f32→integer clamping | ✅ |
+//! | `parallel` | Parallel encoding via `rayon` | ✅ |
+//! | `gzip` | Gzip-compressed I/O | ✅ |
+//! | `bzip2` | Bzip2-compressed I/O | ❌ |
+//! | `ndarray` | Return volumes as `ndarray::Array3<T>` via `to_ndarray()` | ❌ |
+//! | `serde` | Serialize/Deserialize support via `serde` | ❌ |
+//!
 //! # Headers
 //!
 //! The [`Header`] struct mirrors the 1024-byte MRC-2014 fixed header.
@@ -236,6 +301,7 @@
 //!     .origin([0.0, 0.0, 0.0])
 //!     .nstart([0, 0, 0])
 //!     .sampling([512, 512, 256])
+//!     .axis_mapping([1, 2, 3])
 //!     .add_label("reconstructed map")
 //!     .build()?;
 //! # Ok::<_, mrc::HeaderValidationError>(())
@@ -248,6 +314,21 @@
 //!   what is wrong via [`HeaderValidationError`]
 //! * [`validate_permissive`](Header::validate_permissive) — warnings for
 //!   non-critical issues
+//!
+//! ### Volume type helpers
+//!
+//! The header distinguishes four volume types. Configure them explicitly
+//! when creating files that are not single 3D volumes:
+//!
+//! ```rust
+//! # use mrc::Header;
+//! let mut h = Header::new();
+//! h.nx = 64; h.ny = 64; h.nz = 120;
+//! h.mx = 64; h.my = 64; h.mz = 30;
+//! h.set_volume_stack(30); // ispg = 401, mz = 30
+//! assert!(h.is_volume_stack());
+//! assert_eq!(h.logical_shape(), [4, 30, 64, 64]); // 4 sub-volumes
+//! ```
 //!
 //! ### Convenience API
 //!
@@ -358,25 +439,27 @@
 //! [`agar_records`](crate::Reader::agar_records),
 //! [`imod_metadata`](crate::Reader::imod_metadata).
 //!
-//! # Feature flags
+//! # Error handling
 //!
-//! | Feature | Description | Default |
-//! |---------|-------------|---------|
-//! | `mmap` | Memory-mapped readers and writers | ✅ |
-//! | `f16` | Half-precision float via the `half` crate | ✅ |
-//! | `simd` | AVX2 / NEON acceleration for integer→f32, f16↔f32, byte-swap, stats | ✅ |
-//! | `parallel` | Parallel encoding via `rayon` | ✅ |
-//! | `gzip` | Gzip-compressed I/O | ✅ |
-//! | `bzip2` | Bzip2-compressed I/O | ❌ |
-//! | `ndarray` | Return volumes as `ndarray::Array3<T>` via `to_ndarray()` | ❌ |
-//! | `serde` | Serialize/Deserialize support via `serde` | ❌ |
+//! Fallible functions return `Result<T, Error>`. Match on specific variants
+//! to handle different failure modes:
 //!
-//! # Advanced topics
+//! ```rust
+//! use mrc::Error;
 //!
-//! ## Error handling
+//! fn describe(err: &Error) -> &str {
+//!     match err {
+//!         Error::Io(_) => "I/O failure",
+//!         Error::InvalidHeader => "not a valid MRC file",
+//!         Error::ModeMismatch { .. } => "wrong voxel type for this file",
+//!         Error::BoundsError { .. } => "block outside volume",
+//!         Error::FileSizeMismatch { .. } => "file truncated or has trailing data",
+//!         _ => "other",
+//!     }
+//! }
+//! ```
 //!
-//! Fallible functions return `Result<T, Error>`. The errors you will
-//! actually hit in practice:
+//! The errors you will actually hit in practice:
 //!
 //! * [`Io`](Error::Io) — the file could not be read or written
 //! * [`InvalidHeader`](Error::InvalidHeader) — not a valid MRC file
@@ -389,17 +472,27 @@
 //! [`HeaderValidationError`] gives fine-grained diagnostics for header
 //! problems (bad dimensions, wrong MAP field, invalid NVERSION ...).
 //!
-//! ## Endianness
+//! # Endianness
 //!
-//! MRC files encode byte order via a 4-byte MACHST stamp. [`FileEndian`]
-//! handles detection and conversion automatically. New files are always
-//! little-endian, matching modern hardware and the Python `mrcfile` library.
+//! MRC files encode byte order via a 4-byte MACHST stamp at file offset 212.
+//! [`FileEndian`] represents the detected byte order:
+//!
+//! ```rust
+//! use mrc::FileEndian;
+//! let stamp: [u8; 4] = [0x44, 0x44, 0x00, 0x00]; // little-endian
+//! assert_eq!(FileEndian::from_machst(&stamp), FileEndian::LittleEndian);
+//! ```
+//!
+//! Use [`FileEndian::native`] to query the host platform, and
+//! [`reader.endian()`](Reader::endian) to get a file's actual byte order.
+//! New files are always little-endian, matching modern hardware and the Python
+//! `mrcfile` library.
 //!
 //! The crate has a fallback: if the MODE field is invalid under the detected
 //! endianness, the opposite byte order is tried. This handles files with a
 //! wrong MACHST stamp but correct data.
 //!
-//! ## Compression auto-detection
+//! # Compression auto-detection
 //!
 //! [`Reader::open`] reads the first two bytes of the file:
 //!
@@ -420,12 +513,26 @@
 //! > zero-copy access — the OS pages data on demand without loading the whole
 //! > file into memory.
 //!
-//! ## File validation
+//! # File validation
 //!
 //! [`validate_full`](validate::validate_full) runs comprehensive checks
 //! on a file — header, size, endianness, data statistics (1% tolerance),
 //! and NaN / Inf scanning. Returns a
-//! [`ValidationReport`](validate::ValidationReport) with categorized issues.
+//! [`ValidationReport`](validate::ValidationReport) with categorized issues:
+//!
+//! ```no_run
+//! use mrc::validate::{validate_full, Severity};
+//!
+//! let report = validate_full("protein.mrc", false)?;
+//! if !report.is_valid() {
+//!     for issue in &report.issues {
+//!         if issue.severity == Severity::Error {
+//!             eprintln!("[{}] {}", issue.category, issue.message);
+//!         }
+//!     }
+//! }
+//! # Ok::<_, Box<dyn std::error::Error>>(())
+//! ```
 //!
 //! If you already have an open [`Reader`], use
 //! [`validate_reader`](validate::validate_reader) to avoid re-opening
@@ -440,15 +547,15 @@
 //!
 //! ```no_run
 //! # fn main() -> Result<(), mrc::Error> {
-//! use mrc::{open, parse_fei1_records};
+//! use mrc::open;
 //!
 //! let reader = open("tiltseries.mrc")?;
 //! println!("{}×{}×{} voxels, mode {:?}",
 //!     reader.shape().nx, reader.shape().ny, reader.shape().nz,
 //!     reader.mode());
 //!
-//! // Read FEI extended header metadata
-//! if let Some(records) = parse_fei1_records(reader.ext_header_bytes()) {
+//! // Read FEI extended header metadata via convenience method
+//! if let Some(records) = reader.fei1_metadata() {
 //!     for (i, r) in records.iter().enumerate() {
 //!         println!("tilt {i}: α={:.1}°, defocus={:.1} µm",
 //!             r.alpha_tilt, r.defocus);
@@ -605,7 +712,8 @@ pub use io::reader::{CompressionType, detect_compression};
 /// Use [`Reader::open_gzip_with_limit`] or [`Reader::open_bzip2_with_limit`]
 /// to set a custom limit.
 ///
-/// For permissive mode or compressed-file-specific openers,
+/// For permissive mode (returns `(Reader, Vec<String>)` instead of
+/// `Reader`), or compressed-file-specific openers,
 /// use [`Reader::open_permissive`], [`Reader::open_gzip`], etc. directly.
 pub fn open<P: AsRef<std::path::Path>>(path: P) -> Result<Reader, Error> {
     Reader::open(path)

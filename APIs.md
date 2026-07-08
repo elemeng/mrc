@@ -83,7 +83,9 @@ pub const DEFAULT_MAX_DECOMPRESSED_BYTES: u64 = 274_877_906_944;
 
 ### `Reader`
 
-The standard buffered reader. Loads the **entire file** into a `Vec<u8>` on open.
+The auto-selecting reader. For files, it prefers memory-mapped I/O (zero-copy)
+and falls back to buffered I/O. Also accepts in-memory buffers and generic
+`Read` streams via `from_reader`/`from_bytes`.
 
 All iterator and conversion methods (`slices`, `slabs`, `tiles`,
 `subregion`, `read_volume`, `convert`, `slices_u8`, etc.) are available
@@ -127,11 +129,11 @@ as **inherent methods** — no trait imports needed for normal use.
 |---|---|---|
 | `reader.subregion::<T>(offset, shape)` | `Result<VoxelBlock<T>>` | Read and decode typed sub-block at any offset |
 | `reader.read_volume::<T>()` | `Result<VoxelBlock<T>>` | Read the entire volume as a single block |
-| `reader.read_volume_u8()` | `Result<VoxelBlock<u8>>` | Read volume as `u8` (Uint16 narrowing or Packed4Bit unpack) |
-| `reader.slices::<T>()` | `RegionIter<T, SliceStepper>` | One Z-plane at a time |
-| `reader.slabs::<T>(k)` | `RegionIter<T, SlabStepper>` | `k` contiguous Z-planes |
-| `reader.tiles::<T>(shape)` | `RegionIter<T, TileStepper>` | Arbitrary 3D tiles |
-| `reader.volumes::<T>()` | `Result<RegionIter<T, SlabStepper>>` | One sub-volume per step (volume stacks only) |
+| `reader.read_volume_u8()` | `Result<VoxelBlock<u8>>` | Read Packed4Bit volume as `u8` (nibble unpack) |
+| `reader.slices::<T>()` | `RegionIter<'_, T, SliceStepper>` | One Z-plane at a time |
+| `reader.slabs::<T>(k)` | `RegionIter<'_, T, SlabStepper>` | `k` contiguous Z-planes |
+| `reader.tiles::<T>(shape)` | `RegionIter<'_, T, TileStepper>` | Arbitrary 3D tiles |
+| `reader.volumes::<T>()` | `Result<RegionIter<'_, T, SlabStepper>>` | One sub-volume per step (volume stacks only) |
 | `reader.slices_u8()` | iterator yielding `VoxelBlock<u8>` | Mode 6 (Uint16) or Mode 101 (Packed4Bit); narrows/nibble-unpacks to `u8` |
 | `reader.slabs_u8(k)` | iterator yielding `VoxelBlock<u8>` | Same as `slices_u8` but `k` planes at a time |
 | `reader.slices_mode0(interp)` | iterator yielding `VoxelBlock<f32>` | Mode 0 (Int8) only; signed or unsigned |
@@ -158,7 +160,7 @@ matches the host and the voxel type matches the file mode.
 | Method | Returns | Description |
 |---|---|---|
 | `reader.slab_as::<T>(z, k)` | `Result<&[T]>` | Zero-copy typed access into the mmap |
-| `reader.is_truncated()` | `bool` | `true` if permissive-mode mmap is shorter than header claims |
+| `reader.is_truncated()` | `bool` | `true` if permissive-mode file is shorter than header claims |
 
 ---
 
@@ -174,6 +176,7 @@ The standard writer. Created via `create(path)` or `WriterBuilder::new(path)`.
 let writer = create("out.mrc")
     .shape([nx, ny, nz])          // volume dimensions (also sets mx,my,mz)
     .mode::<f32>()                // voxel type (i8, i16, u16, f32, etc.)
+    .mode_raw(101)                // set raw mode (e.g. Packed4Bit, no Voxel impl)
     .cell_lengths(xlen, ylen, zlen) // unit cell in Å
     .ispg(1)                      // space group
     .exttyp(*b"CCP4")             // 4-byte extended header type
@@ -181,14 +184,13 @@ let writer = create("out.mrc")
     .origin([0.0, 0.0, 0.0])     // origin coordinates
     .ext_header_bytes(vec![])     // raw extended header bytes (sets nsymbt)
     .compression(Compression::Best) // compression level for gzip/bzip2
-    .finish()?;     // raw extended header bytes (sets nsymbt)
     .finish()?;                   // → Result<Writer>
 ```
 
 Additional builder methods behind feature flags:
-- `.finish_mmap()?` → `MmapWriter` (feature `mmap`)
-- `.finish_gzip()?` → `GzipWriter` (feature `gzip`)
-- `.finish_bzip2()?` → `Bzip2Writer` (feature `bzip2`)
+- `.finish_mmap()?` → `Writer` backed by mmap (feature `mmap`)
+- `.finish_gzip()?` → `Writer` backed by in-memory buffer, gzip-compressed on finalize (feature `gzip`)
+- `.finish_bzip2()?` → `Writer` backed by in-memory buffer, bzip2-compressed on finalize (feature `bzip2`)
 
 **Writer methods:**
 
@@ -197,7 +199,8 @@ Additional builder methods behind feature flags:
 | `Writer::from_writer(writer, header, ext)` | Create from any `Read + Write + Seek` target (e.g. `Cursor<Vec<u8>>`) |
 | `writer.shape()` | Volume dimensions |
 | `writer.mode()` | Voxel mode |
-| `writer.header()` | Mutable access to header (modify before `finalize`) |
+| `writer.header()` | Read-only reference to header |
+| `writer.header_mut()` | Mutable reference to header (modify before `finalize`) |
 | `writer.write_block::<T>(&block)` | Write a typed voxel block. `T` must match file mode |
 | `writer.write_u8_block(&block)` | Convenience: write `VoxelBlock<u8>` to a Uint16 file (auto-widens) |
 | `writer.write_u4_block(&block)` | Convenience: write `VoxelBlock<u8>` to a Packed4Bit file (auto-packs, values must be 0–15) |
@@ -206,24 +209,18 @@ Additional builder methods behind feature flags:
 | `writer.finalize()` | **Required.** Rewrites the header with final metadata (updated stats, labels). The header is written optimistically at file creation and rewritten here — without it the header is stale and tools may display wrong contrast. |
 | `writer.update_header_stats()` | Scan all data from disk, compute dmin/dmax/dmean/rms, update header — ⚠️ re-reads entire data block from disk |
 
-### `MmapWriter`
+### Memory-mapped Writer (`Writer` with mmap)
 
 Memory-mapped writer. Created via `WriterBuilder::finish_mmap()`.
 Requires `mmap` feature.
 
-Same API as `Writer` (`write_block`, `write_block_as`, `write_u8_block`,
+Same API as the file-backed `Writer` (`write_block`, `write_block_as`, `write_u8_block`,
 `write_u4_block`, `write_block_parallel`, `finalize`, `update_header_stats`).
 
 **`finalize()` is required** — flushes the mmap to disk. Without it the header
 is stale (density statistics missing, tools display wrong contrast).
 
-### Compressed Writers
-
-```rust
-// Type aliases
-pub type GzipWriter = CompressedWriter<GzipCompressor>;   // feature `gzip`
-pub type Bzip2Writer = CompressedWriter<Bzip2Compressor>; // feature `bzip2`
-```
+### Compressed Writers (`Writer` with gzip/bzip2)
 
 Created via `WriterBuilder::finish_gzip()` / `finish_bzip2()`.
 
@@ -231,9 +228,9 @@ Created via `WriterBuilder::finish_gzip()` / `finish_bzip2()`.
 only on `finalize`. **`finalize()` is required** — without it nothing is written
 to disk. Not suitable for large volumes that exceed RAM.
 
-Full API: `shape()`, `mode()`, `header()`, `write_block()`, `write_block_as()`, `write_u4_block()`,
+Full API: `shape()`, `mode()`, `header()`, `header_mut()`, `write_block()`, `write_block_as()`, `write_u8_block()`, `write_u4_block()`,
 `update_header_stats()` (reads from in-memory buffer),
-`finalize()` (takes `self` by value).
+`finalize()` (writes compressed data to disk).
 
 ---
 
@@ -314,6 +311,7 @@ The 1024-byte MRC-2014 header. Every field is a public `struct` member.
 HeaderBuilder::new()
     .shape([nx, ny, nz])         // set dimensions + mx,my,mz
     .mode::<f32>()               // set voxel type → mode
+    .mode_raw(101)               // set raw mode (e.g. Packed4Bit, no Voxel impl)
     .cell_lengths(x, y, z)       // cell dimensions in Å
     .cell_angles(a, b, g)        // cell angles in degrees
     .ispg(n)                     // space group
@@ -357,7 +355,7 @@ pub struct VoxelBlock<T> {
 | Method | Returns | Description |
 |---|---|---|
 | `VoxelBlock::new(offset, shape, data)` | `Result<Self>` | Validates data length matches shape |
-| `VoxelBlock::try_new(offset, shape, data, err_fn)` | `Result<Self>` | Like `new`, with a custom error factory |
+| `VoxelBlock::try_new(offset, shape, data)` | `Result<Self>` | Like `new`, validates data length matches shape |
 | `block.len()` | `usize` | Number of voxels |
 | `block.is_empty()` | `bool` | Zero voxels |
 | `block.is_full_volume(&VolumeShape)` | `bool` | Covers entire volume from origin |
@@ -527,7 +525,7 @@ Accessible via `reader.imod_metadata()` on any reader.
 
 ### `RegionIter` and Steppers
 
-`RegionIter<T, R, S>` is a **lazy iterator** that yields `Result<VoxelBlock<T>>`.
+`RegionIter<'a, T, S>` is a **lazy iterator** that yields `Result<VoxelBlock<T>>`.
 Created by reader methods like `.slices::<f32>()`.
 
 ```rust
@@ -735,7 +733,7 @@ automatically converts any MRC mode to the target type via `.slices()`, `.slabs(
 |---|---|---|
 | `mmap` | ✅ | Memory-mapped I/O (auto-selected by `Reader::open`, `WriterBuilder::finish_mmap()`) |
 | `f16` | ✅ | `half::f16` type, `Mode::Float16`, `write_block_as()` for f32→f16 |
-| `simd` | ✅ | AVX2/NEON accelerated integer→f32, f16↔f32, byte-swap, and f32 statistics |
+| `simd` | ✅ | AVX2/NEON accelerated integer↔f32, f16↔f32, byte-swap, f32 statistics, and f32→integer clamping |
 | `parallel` | ✅ | `write_block_parallel()` using `rayon` |
 | `gzip` | ✅ | Gzip auto-detection, `Reader::open_gzip()`, compressed writer |
 | `bzip2` | ❌ | Bzip2 auto-detection, `Reader::open_bzip2()`, compressed writer |

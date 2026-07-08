@@ -13,7 +13,7 @@ A high-performance, memory-efficient library for reading and writing MRC (Medica
 
 ```toml
 [dependencies]
-mrc = "0.4"
+mrc = "0.5"
 ```
 
 ## Quick Start
@@ -38,7 +38,8 @@ let mut writer = create("output.mrc")
 writer.write_block(&VoxelBlock::new(
     [0, 0, 0], [512, 512, 1], vec![0.0f32; 512 * 512],
 )?)?;
-writer.finalize()?;
+writer.update_header_stats()?;  // compute density statistics
+writer.finalize()?;             // rewrite header with final metadata
 # Ok(()) }
 ```
 
@@ -47,7 +48,7 @@ writer.finalize()?;
 See **[docs.rs/mrc](https://docs.rs/mrc)** for the complete API reference, or
 **[APIs.md](APIs.md)** in this repository for a local API surface overview.
 
-- Reading files — `Reader`, `MmapReader`, compressed I/O, permissive mode,
+- Reading files — `Reader` (auto-selects mmap or buffered), compressed I/O, permissive mode,
   decompression bomb protection (256 GiB limit, configurable);
   also `from_reader()` / `from_bytes()` for in-memory and stream sources
 - Writing files — `Writer`; `from_writer()` for in-memory targets; `Compression` level control
@@ -87,7 +88,7 @@ See [update.log](update.log) for detailed changelogs covering all releases from 
 - [x] Complete MRC-2014 format support
 - [x] Iterator-centric API (slices, slabs, tiles)
 - [x] Type-safe I/O with compile-time mode checking
-- [x] SIMD acceleration (AVX2, NEON) — i8→f32, i16→f32, u16→f32, f16↔f32, byte-swap, stats
+- [x] SIMD acceleration (AVX2, NEON) — i8↔f32, i16↔f32, u16↔f32, f16↔f32, byte-swap, stats, f32→i16/u16/i8
 - [x] Memory-mapped I/O and parallel encoding
 - [x] All data types (modes 0–4, 6, 12, 101)
 - [x] Compression support (gzip, bzip2)
@@ -115,7 +116,23 @@ See [update.log](update.log) for detailed changelogs covering all releases from 
 - [x] Richer error context (offset, mode) in BoundsError / ModeMismatch
 - [x] `#[must_use]` audit on builder and accessor methods
 
-**v0.5.x** — Python bindings via PyO3 / `maturin` (evaluate)
+**v0.5.x** — Consolidation & Polish ✅
+
+- [x] Fixed `is_truncated()` for buffered readers (previously always returned `false`)
+- [x] Added `Writer::header_mut()` for mutable header access mid-write
+- [x] Added missing builder setters (`cell_angles`, `nstart`, `sampling`, `axis_mapping`, `add_label`, `mode_raw`)
+- [x] Eliminated O(n) f32 clone in `write_block_as_body` via `write_block_data()` extraction
+- [x] Fixed `write_u4_block` returning `BoundsError` instead of `ValueOutOfRange`
+- [x] Corrected `write_u8_block` to avoid unnecessary `VoxelBlock` construction
+- [x] Added `#[must_use]` to `WriterBuilder::ext_header_bytes`
+- [x] Comprehensive documentation audit across all doc files
+- [x] Restructured and enriched crate-level docs.rs documentation
+
+**v0.6.x** — Robust real-world testing across all public APIs
+
+- [ ] Test every public API item with real MRC files in every mode
+- [ ] Cover all read/write/convert/validate/header paths with actual cryo-EM data
+- [ ] Ensure edge cases (truncated, compressed, permissive, volume stacks, extended headers) are exercised with real files
 
 **Note:** This crate is under active development. While most features are functional, occasional API changes are possible. Contributions welcome — please report issues and share your ideas!
 
