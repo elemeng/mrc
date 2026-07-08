@@ -97,6 +97,22 @@
 //! # }
 //! ```
 //!
+//! ### Reading from memory or streams
+//!
+//! When your data is already in memory (e.g. from a camera readout, network
+//! stream, or embedded resource), use [`Reader::from_reader`] or
+//! [`Reader::from_bytes`]:
+//!
+//! ```no_run
+//! # fn main() -> Result<(), mrc::Error> {
+//! use mrc::Reader;
+//! use std::io::Cursor;
+//!
+//! let bytes = std::fs::read("density.mrc")?;
+//! let reader = Reader::from_reader(Cursor::new(bytes))?;
+//! # Ok(()) }
+//! ```
+//!
 //! ### Large files
 //!
 //! When the file does not fit in RAM, use [`MmapReader`] (requires the
@@ -147,14 +163,30 @@
 //! 3. **Finalize** with [`finalize`](Writer::finalize) to rewrite the header
 //!    with final metadata. **Required** — without it the header is stale.
 //!
-//! Four backends through the same builder:
+//! Four backends through the same builder, plus in-memory output:
 //!
 //! | Backend | Builder method | Best for |
 //! |---|---|---|
 //! | [`Writer`] | [`finish()`](WriterBuilder::finish) | General use, writes straight to disk |
+//! | [`Writer`] (in-memory) | [`Writer::from_writer`] | Memory buffer, e.g. `Cursor<Vec<u8>>` |
 //! | [`MmapWriter`] | [`finish_mmap()`](WriterBuilder::finish_mmap) | Very large files (`mmap` feature) |
 //! | [`GzipWriter`] | [`finish_gzip()`](WriterBuilder::finish_gzip) | Compressed output (`gzip` feature) |
 //! | [`Bzip2Writer`] | [`finish_bzip2()`](WriterBuilder::finish_bzip2) | Compressed output (`bzip2` feature) |
+//!
+//! Compressed writers support configurable [`Compression`] level via
+//! [`WriterBuilder::compression`]:
+//!
+//! ```no_run
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! use mrc::{Compression, create};
+//!
+//! let mut writer = create("output.mrc.gz")
+//!     .shape([256, 256, 128])
+//!     .mode::<f32>()
+//!     .compression(Compression::Best)
+//!     .finish_gzip()?;
+//! # Ok(()) }
+//! ```
 //!
 //! # Data modes
 //!
