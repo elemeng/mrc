@@ -160,6 +160,22 @@ use crate::{Error, Header, Mode};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::PathBuf;
 
+/// How the writer persists voxel data.
+enum DataSink {
+    /// Standard file I/O or generic I/O target.
+    File(Box<dyn ReadWriteSeek + 'static>),
+    /// Memory-mapped file.
+    #[cfg(feature = "mmap")]
+    Mmap(memmap2::MmapMut),
+    /// Buffered in memory; compressed and written to disk on finalize.
+    Compressed {
+        buf: Vec<u8>,
+        path: std::path::PathBuf,
+        compression: Compression,
+        is_gzip: bool,
+    },
+}
+
 /// Trait alias for types that support read, write, and seek simultaneously.
 ///
 /// Required by [`Writer`] which needs random-access read-back for
@@ -327,8 +343,8 @@ impl WriterBuilder {
     /// (requires the `mmap` feature).
     /// instead of a [`Writer`].
     #[cfg(feature = "mmap")]
-    pub fn finish_mmap(self) -> Result<MmapWriter, Error> {
-        MmapWriter::create(self.path, self.header, &self.ext_header)
+    pub fn finish_mmap(self) -> Result<Writer, Error> {
+        Writer::create_mmap(self.path, self.header, &self.ext_header)
     }
 
     /// Build a gzip-compressed writer.
@@ -337,8 +353,14 @@ impl WriterBuilder {
     /// in memory and compressed only on finalize.
     /// For large volumes consider using [`finish`](Self::finish) instead.
     #[cfg(feature = "gzip")]
-    pub fn finish_gzip(self) -> Result<crate::GzipWriter, Error> {
-        CompressedWriter::create(self.path, self.header, &self.ext_header, self.compression)
+    pub fn finish_gzip(self) -> Result<Writer, Error> {
+        Writer::create_compressed(
+            self.path,
+            self.header,
+            &self.ext_header,
+            self.compression,
+            true,
+        )
     }
 
     /// Build a bzip2-compressed writer.
@@ -347,8 +369,14 @@ impl WriterBuilder {
     /// in memory and compressed only on finalize.
     /// For large volumes consider using [`finish`](Self::finish) instead.
     #[cfg(feature = "bzip2")]
-    pub fn finish_bzip2(self) -> Result<crate::Bzip2Writer, Error> {
-        CompressedWriter::create(self.path, self.header, &self.ext_header, self.compression)
+    pub fn finish_bzip2(self) -> Result<Writer, Error> {
+        Writer::create_compressed(
+            self.path,
+            self.header,
+            &self.ext_header,
+            self.compression,
+            false,
+        )
     }
 }
 
@@ -375,12 +403,12 @@ impl WriterBuilder {
 /// writer.finalize().unwrap();
 /// ```
 pub struct Writer {
-    io: Box<dyn ReadWriteSeek + 'static>,
     header: Header,
     data_offset: u64,
     bytes_per_voxel: usize,
     mode: Mode,
     shape: VolumeShape,
+    sink: DataSink,
 }
 
 impl std::fmt::Debug for Writer {
@@ -470,12 +498,128 @@ impl Writer {
         let shape = VolumeShape::new(header.nx as usize, header.ny as usize, header.nz as usize);
 
         Ok(Self {
-            io,
             header,
             data_offset,
             bytes_per_voxel,
             mode,
             shape,
+            sink: DataSink::File(io),
+        })
+    }
+
+    /// Create a memory-mapped writer.
+    #[cfg(feature = "mmap")]
+    pub(crate) fn create_mmap<P: AsRef<std::path::Path>>(
+        path: P,
+        mut header: Header,
+        ext_header: &[u8],
+    ) -> Result<Self, Error> {
+        header.set_file_endian(FileEndian::LittleEndian);
+        header.validate_detailed()?;
+        let total_size = header
+            .data_offset()
+            .checked_add(header.data_size().ok_or(Error::InvalidHeader)?)
+            .ok_or(Error::InvalidHeader)?;
+        let mmap = {
+            use std::fs::OpenOptions;
+            use std::io::Write;
+            let file = OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .open(path)?;
+            file.set_len(total_size as u64)?;
+            let mut hb = [0u8; 1024];
+            header.encode_to_bytes(&mut hb);
+            (&file).write_all(&hb)?;
+            let ext_size = header.nsymbt as usize;
+            if ext_size > 0 {
+                if ext_header.len() >= ext_size {
+                    (&file).write_all(&ext_header[..ext_size])?;
+                } else {
+                    (&file).write_all(ext_header)?;
+                    (&file).write_all(&vec![0u8; ext_size - ext_header.len()])?;
+                }
+            }
+            unsafe {
+                memmap2::MmapOptions::new()
+                    .map_mut(&file)
+                    .map_err(|_| Error::Mmap)?
+            }
+        };
+
+        let data_offset = header.data_offset() as u64;
+        let mode = Mode::from_i32(header.mode).ok_or(Error::UnsupportedMode)?;
+        if mode == Mode::Int16Complex {
+            tracing::warn!(
+                "Mode 3 (Int16Complex) is obsolete and should not be used for writing new files."
+            );
+        }
+        let bytes_per_voxel = mode.byte_size();
+        let shape = VolumeShape::new(header.nx as usize, header.ny as usize, header.nz as usize);
+        Ok(Self {
+            header,
+            data_offset,
+            bytes_per_voxel,
+            mode,
+            shape,
+            sink: DataSink::Mmap(mmap),
+        })
+    }
+
+    /// Create a compressed writer.
+    #[cfg(any(feature = "gzip", feature = "bzip2"))]
+    pub(crate) fn create_compressed<P: AsRef<std::path::Path>>(
+        path: P,
+        mut header: Header,
+        ext_header: &[u8],
+        compression: Compression,
+        is_gzip: bool,
+    ) -> Result<Self, Error> {
+        header.set_file_endian(FileEndian::LittleEndian);
+        if !ext_header.is_empty() {
+            header.nsymbt = ext_header.len() as i32;
+        }
+        header.validate_detailed()?;
+        let ext_size = header.nsymbt as usize;
+        let ext_stored = if ext_header.len() >= ext_size {
+            ext_header[..ext_size].to_vec()
+        } else {
+            let mut v = ext_header.to_vec();
+            v.resize(ext_size, 0);
+            v
+        };
+        let data_size = header.data_size().ok_or(Error::InvalidHeader)?;
+        let off = header.data_offset();
+        let mut buf = vec![0u8; off + data_size];
+        let mut hb = [0u8; 1024];
+        header.encode_to_bytes(&mut hb);
+        buf[..1024].copy_from_slice(&hb);
+        if ext_size > 0 {
+            buf[1024..1024 + ext_size].copy_from_slice(&ext_stored);
+        }
+        let data_offset = header.data_offset() as u64;
+        let mode = Mode::from_i32(header.mode).ok_or(Error::UnsupportedMode)?;
+        if mode == Mode::Int16Complex {
+            tracing::warn!(
+                "Mode 3 (Int16Complex) is obsolete and should not be used for writing new files."
+            );
+        }
+        let bytes_per_voxel = mode.byte_size();
+        let shape = VolumeShape::new(header.nx as usize, header.ny as usize, header.nz as usize);
+        Ok(Self {
+            header,
+            data_offset,
+            bytes_per_voxel,
+            mode,
+            shape,
+            sink: DataSink::Compressed {
+                buf,
+                path: path.as_ref().to_path_buf(),
+                compression,
+                is_gzip,
+            },
         })
     }
 
@@ -509,50 +653,68 @@ impl Writer {
                 offset: None,
             });
         }
-
         if !self.shape.contains_block(block.offset, block.shape) {
             return Err(Error::bounds_err());
         }
 
-        let [nx, ny, _nz] = [self.shape.nx, self.shape.ny, self.shape.nz];
-        let [ox, oy, oz] = block.offset;
-        let [sx, sy, sz] = block.shape;
-        let b = self.bytes_per_voxel;
         let file_endian = self.header.detect_endian();
 
-        // Fast path: origin-aligned full XY slab — contiguous in the file.
-        if ox == 0 && sx == nx && oy == 0 && sy == ny {
-            let linear =
-                (ox as u64) + (oy as u64) * (nx as u64) + (oz as u64) * (nx as u64) * (ny as u64);
-            let start_offset = self.data_offset + linear * (b as u64);
-            let byte_len = (sx as u64) * (sy as u64) * (sz as u64) * (b as u64);
-            let byte_len_usize = byte_len.try_into().map_err(|_| Error::bounds_err())?;
-            let mut buffer = vec![0u8; byte_len_usize];
-            encode_slice(&block.data, &mut buffer, file_endian)?;
+        match &mut self.sink {
+            DataSink::File(io) => {
+                let [nx, ny, _nz] = [self.shape.nx, self.shape.ny, self.shape.nz];
+                let [ox, oy, oz] = block.offset;
+                let [sx, sy, sz] = block.shape;
+                let b = self.bytes_per_voxel;
 
-            self.io.seek(SeekFrom::Start(start_offset))?;
-            self.io.write_all(&buffer)?;
-            return Ok(());
-        }
-
-        // Scatter path: write row by row.
-        // Pre-allocate a single row buffer to avoid per-row allocation churn.
-        let mut row_bytes = vec![0u8; sx * b];
-        for z in 0..sz {
-            for y in 0..sy {
-                let file_linear = ox + (oy + y) * nx + (oz + z) * nx * ny;
-                let file_offset = self.data_offset + (file_linear as u64) * (b as u64);
-                let block_idx = y * sx + z * sx * sy;
-                if block_idx + sx > block.data.len() {
-                    return Err(Error::bounds_err());
+                if ox == 0 && sx == nx && oy == 0 && sy == ny {
+                    let linear = (ox as u64)
+                        + (oy as u64) * (nx as u64)
+                        + (oz as u64) * (nx as u64) * (ny as u64);
+                    let start_offset = self.data_offset + linear * (b as u64);
+                    let byte_len = (sx as u64) * (sy as u64) * (sz as u64) * (b as u64);
+                    let byte_len_usize = byte_len.try_into().map_err(|_| Error::bounds_err())?;
+                    let mut buffer = vec![0u8; byte_len_usize];
+                    encode_slice(&block.data, &mut buffer, file_endian)?;
+                    io.seek(SeekFrom::Start(start_offset))?;
+                    io.write_all(&buffer)?;
+                    return Ok(());
                 }
-                let row_values = &block.data[block_idx..block_idx + sx];
-                encode_slice(row_values, &mut row_bytes, file_endian)?;
-                self.io.seek(SeekFrom::Start(file_offset))?;
-                self.io.write_all(&row_bytes)?;
+
+                let mut row_bytes = vec![0u8; sx * b];
+                for z in 0..sz {
+                    for y in 0..sy {
+                        let file_linear = ox + (oy + y) * nx + (oz + z) * nx * ny;
+                        let file_offset = self.data_offset + (file_linear as u64) * (b as u64);
+                        let block_idx = y * sx + z * sx * sy;
+                        if block_idx + sx > block.data.len() {
+                            return Err(Error::bounds_err());
+                        }
+                        let row_values = &block.data[block_idx..block_idx + sx];
+                        encode_slice(row_values, &mut row_bytes, file_endian)?;
+                        io.seek(SeekFrom::Start(file_offset))?;
+                        io.write_all(&row_bytes)?;
+                    }
+                }
+                Ok(())
             }
+            #[cfg(feature = "mmap")]
+            DataSink::Mmap(mmap) => crate::io::reader_common::encode_block_to_buf(
+                block,
+                self.shape,
+                self.bytes_per_voxel,
+                file_endian,
+                self.data_offset as usize,
+                mmap,
+            ),
+            DataSink::Compressed { buf, .. } => crate::io::reader_common::encode_block_to_buf(
+                block,
+                self.shape,
+                self.bytes_per_voxel,
+                file_endian,
+                self.data_offset as usize,
+                buf,
+            ),
         }
-        Ok(())
     }
 
     /// Write a block of `u8` data by automatically widening to `u16` (Mode 6).
@@ -615,7 +777,6 @@ impl Writer {
                 offset: None,
             });
         }
-
         if !self.shape.contains_block(block.offset, block.shape) {
             return Err(Error::bounds_err());
         }
@@ -629,23 +790,24 @@ impl Writer {
             return self.write_block(block);
         }
 
-        let chunk_size = 1024 * 1024; // 1M voxels per chunk
+        // Only file-backed writers support parallel seeks.
+        let DataSink::File(io) = &mut self.sink else {
+            return self.write_block(block);
+        };
+
+        let chunk_size = 1024 * 1024;
         let linear =
             (ox as u64) + (oy as u64) * (nx as u64) + (oz as u64) * (nx as u64) * (ny as u64);
         let base_offset = self.data_offset + linear * (self.bytes_per_voxel as u64);
         let file_endian = self.header.detect_endian();
-
-        // Encode in parallel
         let encoded_chunks = encode_block_parallel(&block.data, chunk_size, file_endian);
 
-        // Write chunks sequentially (cross-platform)
         for (chunk_idx, encoded) in encoded_chunks {
             let offset = base_offset
                 + (chunk_idx as u64) * (chunk_size as u64) * (self.bytes_per_voxel as u64);
-            self.io.seek(SeekFrom::Start(offset))?;
-            self.io.write_all(&encoded)?;
+            io.seek(SeekFrom::Start(offset))?;
+            io.write_all(&encoded)?;
         }
-
         Ok(())
     }
 
@@ -669,88 +831,146 @@ impl Writer {
         offset: [usize; 3],
         shape: [usize; 3],
     ) -> Result<(), Error> {
-        let [nx, ny, _nz] = [self.shape.nx, self.shape.ny, self.shape.nz];
-        let [ox, oy, oz] = offset;
-        let [sx, sy, sz] = shape;
-        let file_row_bytes = nx.div_ceil(2);
-        let block_row_bytes = sx.div_ceil(2);
-
-        if ox != 0 {
-            return Err(Error::bounds_err());
-        }
-
-        // Fast path: full XY slab is contiguous.
-        if sx == nx && oy == 0 && sy == ny {
-            let slice_bytes = ny * file_row_bytes;
-            let start_offset = (self.data_offset as usize) + oz * slice_bytes;
-            let byte_len = sz * slice_bytes;
-            let end_offset = start_offset + byte_len;
-            if end_offset > (self.data_offset as usize) + self.header.data_size().unwrap_or(0) {
-                return Err(Error::bounds_err());
-            }
-            self.io.seek(SeekFrom::Start(start_offset as u64))?;
-            self.io.write_all(&packed[..byte_len])?;
-            return Ok(());
-        }
-
-        // Scatter path: write row by row.
-        for z in 0..sz {
-            for y in 0..sy {
-                let vol_row = (oz + z) * ny + (oy + y);
-                let file_offset = (self.data_offset as usize) + vol_row * file_row_bytes;
-                let packed_start = (y + z * sy) * block_row_bytes;
-                let packed_end = packed_start + block_row_bytes;
-                if packed_end > packed.len() {
+        match &mut self.sink {
+            DataSink::File(io) => {
+                let [nx, ny, _nz] = [self.shape.nx, self.shape.ny, self.shape.nz];
+                let [ox, oy, oz] = offset;
+                let [sx, sy, sz] = shape;
+                let file_row_bytes = nx.div_ceil(2);
+                let block_row_bytes = sx.div_ceil(2);
+                if ox != 0 {
                     return Err(Error::bounds_err());
                 }
-                self.io.seek(SeekFrom::Start(file_offset as u64))?;
-                self.io.write_all(&packed[packed_start..packed_end])?;
+                if sx == nx && oy == 0 && sy == ny {
+                    let slice_bytes = ny * file_row_bytes;
+                    let start_offset = (self.data_offset as usize) + oz * slice_bytes;
+                    let byte_len = sz * slice_bytes;
+                    io.seek(SeekFrom::Start(start_offset as u64))?;
+                    io.write_all(&packed[..byte_len])?;
+                    return Ok(());
+                }
+                for z in 0..sz {
+                    for y in 0..sy {
+                        let vol_row = (oz + z) * ny + (oy + y);
+                        let file_offset = (self.data_offset as usize) + vol_row * file_row_bytes;
+                        let packed_start = (y + z * sy) * block_row_bytes;
+                        let packed_end = packed_start + block_row_bytes;
+                        if packed_end > packed.len() {
+                            return Err(Error::bounds_err());
+                        }
+                        io.seek(SeekFrom::Start(file_offset as u64))?;
+                        io.write_all(&packed[packed_start..packed_end])?;
+                    }
+                }
+                Ok(())
             }
+            #[cfg(feature = "mmap")]
+            DataSink::Mmap(mmap) => crate::io::reader_common::write_block_bytes(
+                packed,
+                self.shape,
+                offset,
+                shape,
+                self.data_offset as usize,
+                mmap,
+            ),
+            DataSink::Compressed { buf, .. } => crate::io::reader_common::write_block_bytes(
+                packed,
+                self.shape,
+                offset,
+                shape,
+                self.data_offset as usize,
+                buf,
+            ),
         }
-        Ok(())
     }
 
-    /// Finalize the MRC file by rewriting the header at the beginning of the file.
-    ///
-    /// This must be called after all [`write_block`](Self::write_block) calls
-    /// are complete. It updates the on-disk header to reflect any changes made
-    /// via [`header`](Self::header) (such as updated `dmin`/`dmax`/`dmean`/`rms`
-    /// statistics after calling [`update_header_stats`](Self::update_header_stats)).
-    ///
-    /// # Errors
-    /// Returns [`Error::Io`] if seeking or writing fails.
+    /// Finalize the MRC file by rewriting the header.
     pub fn finalize(&mut self) -> Result<(), Error> {
-        // Rewrite header
-        self.io.seek(SeekFrom::Start(0))?;
-
         let mut header_bytes = [0u8; 1024];
         self.header.encode_to_bytes(&mut header_bytes);
-        self.io.write_all(&header_bytes)?;
 
-        Ok(())
+        match &mut self.sink {
+            DataSink::File(io) => {
+                io.seek(SeekFrom::Start(0))?;
+                io.write_all(&header_bytes)?;
+                Ok(())
+            }
+            #[cfg(feature = "mmap")]
+            DataSink::Mmap(mmap) => {
+                mmap[0..1024].copy_from_slice(&header_bytes);
+                mmap.flush()?;
+                Ok(())
+            }
+            DataSink::Compressed {
+                buf,
+                path,
+                compression,
+                is_gzip,
+            } => {
+                buf[..1024].copy_from_slice(&header_bytes);
+                let compressed = compress_data(buf, *compression, *is_gzip)?;
+                std::fs::write(path, compressed)?;
+                Ok(())
+            }
+        }
     }
 
-    /// Scan the written data block and update `dmin`, `dmax`, `dmean` and `rms`
-    /// in the header to match the actual file contents.
-    ///
-    /// This reads the entire data block back from disk — for very large files,
-    /// consider computing statistics at write time and setting them via
-    /// [`header`](Self::header) before calling [`finalize`](Self::finalize).
-    /// The mmap-backed writer alternative is zero-copy because
-    /// the data is already in the memory map.
+    /// Scan the written data block and update header statistics.
     pub fn update_header_stats(&mut self) -> Result<(), Error> {
-        let data_size = self.header.data_size().ok_or(Error::InvalidHeader)?;
-        self.io.seek(SeekFrom::Start(self.data_offset))?;
-        let mut buf = vec![0u8; data_size];
-        self.io.read_exact(&mut buf)?;
-        update_header_stats_from_bytes(&mut self.header, &buf)?;
-        Ok(())
+        let (data_offset, data_size) = {
+            let ds = self.header.data_size().ok_or(Error::InvalidHeader)?;
+            (self.header.data_offset(), ds)
+        };
+        match &mut self.sink {
+            DataSink::File(io) => {
+                let mut buf = vec![0u8; data_size];
+                io.seek(SeekFrom::Start(self.data_offset))?;
+                io.read_exact(&mut buf)?;
+                update_header_stats_from_bytes(&mut self.header, &buf)
+            }
+            #[cfg(feature = "mmap")]
+            DataSink::Mmap(mmap) => {
+                let end = self.data_offset as usize + data_size;
+                if end > mmap.len() {
+                    return Err(Error::bounds_err());
+                }
+                update_header_stats_from_bytes(
+                    &mut self.header,
+                    &mmap[self.data_offset as usize..end],
+                )
+            }
+            DataSink::Compressed { buf, .. } => {
+                let end = data_offset + data_size;
+                if end > buf.len() {
+                    return Err(Error::bounds_err());
+                }
+                update_header_stats_from_bytes(&mut self.header, &buf[data_offset..end])
+            }
+        }
     }
 }
 
 // ============================================================================
-// Stats helpers
+// Stats helpers and compression
 // ============================================================================
+
+/// Compress MRC data using the appropriate algorithm based on compression level.
+#[cfg(any(feature = "gzip", feature = "bzip2"))]
+fn compress_data(data: &[u8], compression: Compression, is_gzip: bool) -> Result<Vec<u8>, Error> {
+    #[cfg(feature = "gzip")]
+    if is_gzip {
+        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), compression.to_flate2());
+        std::io::Write::write_all(&mut encoder, data)?;
+        return Ok(encoder.finish()?);
+    }
+    #[cfg(feature = "bzip2")]
+    if !is_gzip {
+        let mut encoder = bzip2::write::BzEncoder::new(Vec::new(), compression.to_bzip2());
+        std::io::Write::write_all(&mut encoder, data)?;
+        return Ok(encoder.finish()?);
+    }
+    Err(Error::UnsupportedMode)
+}
 
 fn update_header_stats_from_bytes(header: &mut Header, bytes: &[u8]) -> Result<(), Error> {
     let endian = header.detect_endian();
@@ -765,547 +985,4 @@ fn update_header_stats_from_bytes(header: &mut Header, bytes: &[u8]) -> Result<(
     header.dmean = dmean;
     header.rms = rms;
     Ok(())
-}
-
-// ============================================================================
-// MmapWriter
-// ============================================================================
-
-/// Memory-mapped MRC file writer.
-///
-/// Writes data directly into a memory-mapped region, letting the OS handle
-/// paging and flushing. This is efficient for large files and random-access
-/// modifications, but requires the `mmap` feature.
-///
-/// # Example
-///
-/// ```no_run
-/// use mrc::{create, VoxelBlock};
-///
-/// fn main() -> Result<(), Box<dyn std::error::Error>> {
-///     let mut writer = create("output.mrc")
-///         .shape([512, 512, 256])
-///         .mode::<f32>()
-///         .finish_mmap()?;
-///
-///     writer.write_block(&VoxelBlock::new(
-///         [0, 0, 0], [512, 512, 1],
-///         vec![0.0f32; 512 * 512],
-///     )?)?;
-///     Ok(())
-/// }
-/// ```
-///
-/// For most use cases, prefer creating via [`WriterBuilder::finish_mmap`](crate::WriterBuilder::finish_mmap).
-#[cfg(feature = "mmap")]
-#[derive(Debug)]
-pub struct MmapWriter {
-    mmap: memmap2::MmapMut,
-    header: Header,
-    data_offset: usize,
-    bytes_per_voxel: usize,
-    mode: Mode,
-    shape: VolumeShape,
-}
-
-#[cfg(feature = "mmap")]
-impl MmapWriter {
-    pub(crate) fn create<P: AsRef<std::path::Path>>(
-        path: P,
-        mut header: Header,
-        ext_header: &[u8],
-    ) -> Result<Self, Error> {
-        use std::fs::OpenOptions;
-
-        // New files are always little-endian per crate policy
-        header.set_file_endian(FileEndian::LittleEndian);
-
-        header.validate_detailed()?;
-
-        let total_size = header
-            .data_offset()
-            .checked_add(header.data_size().ok_or(Error::InvalidHeader)?)
-            .ok_or(Error::InvalidHeader)?;
-        let mut file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .open(path)?;
-
-        file.set_len(total_size as u64)?;
-
-        let mut header_bytes = [0u8; 1024];
-        header.encode_to_bytes(&mut header_bytes);
-        file.write_all(&header_bytes)?;
-
-        // Write extended header (provided bytes or zeros).
-        let ext_size = header.nsymbt as usize;
-        if ext_size > 0 {
-            if ext_header.len() >= ext_size {
-                file.write_all(&ext_header[..ext_size])?;
-            } else {
-                file.write_all(ext_header)?;
-                let remaining = ext_size - ext_header.len();
-                let zeros = vec![0u8; remaining];
-                file.write_all(&zeros)?;
-            }
-        }
-
-        let mmap = unsafe {
-            memmap2::MmapOptions::new()
-                .map_mut(&file)
-                .map_err(|_| Error::Mmap)?
-        };
-
-        let data_offset = header.data_offset();
-        let mode = Mode::from_i32(header.mode).ok_or(Error::UnsupportedMode)?;
-        if mode == Mode::Int16Complex {
-            tracing::warn!(
-                "Mode 3 (Int16Complex) is obsolete and should not be used for writing new files."
-            );
-        }
-        let bytes_per_voxel = mode.byte_size();
-
-        let shape = VolumeShape::new(header.nx as usize, header.ny as usize, header.nz as usize);
-
-        Ok(Self {
-            mmap,
-            header,
-            data_offset,
-            bytes_per_voxel,
-            mode,
-            shape,
-        })
-    }
-
-    /// Volume dimensions for this writer.
-    pub fn shape(&self) -> VolumeShape {
-        self.shape
-    }
-
-    /// Voxel data mode for this writer.
-    pub fn mode(&self) -> Mode {
-        self.mode
-    }
-
-    /// Reference to the current header.
-    ///
-    /// Modify header fields before calling [`finalize`](Self::finalize) to
-    /// change what gets written to disk.
-    pub fn header(&self) -> &Header {
-        &self.header
-    }
-
-    /// Write a block of `u8` data by automatically widening to `u16` (Mode 6).
-    ///
-    /// The file must have been created with [`Mode::Uint16`]. Each `u8` voxel
-    /// is widened to `u16` before writing, matching Python `mrcfile`'s
-    /// auto-conversion behaviour for `np.uint8` data.
-    ///
-    /// # Errors
-    /// Returns [`Error::ModeMismatch`] if the file mode is not `Uint16`.
-    pub fn write_u8_block(&mut self, block: &VoxelBlock<u8>) -> Result<(), Error> {
-        if self.mode() != Mode::Uint16 {
-            return Err(Error::ModeMismatch {
-                file_mode: self.mode(),
-                requested_mode: Mode::Uint16,
-                offset: None,
-            });
-        }
-        let widened = crate::engine::convert::convert_u8_slice_to_u16(&block.data);
-        self.write_block(&VoxelBlock {
-            offset: block.offset,
-            shape: block.shape,
-            data: widened,
-        })
-    }
-
-    /// Write a block with automatic type conversion to the file's mode.
-    ///
-    /// Supported: `f32` → `i8`/`i16`/`u16`/`f16` (clamped as needed).
-    pub fn write_block_as(&mut self, block: &VoxelBlock<f32>) -> Result<(), Error> {
-        write_block_as_body!(self, block)
-    }
-
-    /// Write a block of voxels to the memory-mapped file.
-    ///
-    /// The type `T` must match the file's voxel mode exactly.
-    /// Supports arbitrary sub-blocks by scattering row-by-row when necessary.
-    pub fn write_block<T: Voxel>(&mut self, block: &VoxelBlock<T>) -> Result<(), Error> {
-        if T::MODE != self.mode() {
-            return Err(Error::ModeMismatch {
-                file_mode: self.mode(),
-                requested_mode: T::MODE,
-                offset: None,
-            });
-        }
-
-        if !self.shape.contains_block(block.offset, block.shape) {
-            return Err(Error::bounds_err());
-        }
-
-        let file_endian = self.header.detect_endian();
-        crate::io::reader_common::encode_block_to_buf(
-            block,
-            self.shape,
-            self.bytes_per_voxel,
-            file_endian,
-            self.data_offset,
-            &mut self.mmap,
-        )
-    }
-
-    /// Write a block with parallel encoding to memory-mapped region.
-    ///
-    /// For non-contiguous blocks (sub-XY slabs), this falls back to the serial
-    /// [`write_block`](Self::write_block) implementation.
-    #[cfg(feature = "parallel")]
-    pub fn write_block_parallel<T: Voxel>(&mut self, block: &VoxelBlock<T>) -> Result<(), Error> {
-        use rayon::prelude::*;
-
-        if T::MODE != self.mode() {
-            return Err(Error::ModeMismatch {
-                file_mode: self.mode(),
-                requested_mode: T::MODE,
-                offset: None,
-            });
-        }
-
-        if !self.shape.contains_block(block.offset, block.shape) {
-            return Err(Error::bounds_err());
-        }
-
-        let [nx, ny, _nz] = [self.shape.nx, self.shape.ny, self.shape.nz];
-        let [ox, oy, _oz] = block.offset;
-        let [sx, sy, _sz] = block.shape;
-
-        // Parallel fast path only works for full XY slabs (contiguous in file).
-        if ox != 0 || sx != nx || oy != 0 || sy != ny {
-            return self.write_block(block);
-        }
-
-        let chunk_size = 1024 * 1024; // 1M voxels per chunk
-        let linear = self
-            .shape
-            .checked_linear_index(block.offset)
-            .ok_or_else(Error::bounds_err)?;
-        let base_offset = self
-            .data_offset
-            .checked_add(
-                linear
-                    .checked_mul(self.bytes_per_voxel)
-                    .ok_or_else(Error::bounds_err)?,
-            )
-            .ok_or_else(Error::bounds_err)?;
-        let file_endian = self.header.detect_endian();
-
-        // Use a usize representation for the mmap base pointer so that it
-        // can be captured by the rayon closure (usize is `Send + Sync`).
-        // SAFETY: Each rayon chunk writes to a disjoint byte range of the
-        // mmap, and the chunks are non-overlapping because `par_chunks`
-        // partitions the data by contiguous index ranges.
-        let mmap_ptr = self.mmap.as_mut_ptr() as usize;
-        block
-            .data
-            .par_chunks(chunk_size)
-            .enumerate()
-            .try_for_each(|(chunk_idx, chunk)| {
-                let start_offset = base_offset + chunk_idx * chunk_size * self.bytes_per_voxel;
-                let dst = unsafe {
-                    let ptr = (mmap_ptr + start_offset) as *mut u8;
-                    core::slice::from_raw_parts_mut(ptr, chunk.len() * self.bytes_per_voxel)
-                };
-
-                encode_slice(chunk, dst, file_endian)
-            })?;
-
-        Ok(())
-    }
-
-    /// Write a block of `u8` data (0–15 per voxel) by packing to 4-bit (Mode 101).
-    pub fn write_u4_block(&mut self, block: &VoxelBlock<u8>) -> Result<(), Error> {
-        write_u4_block_body!(self, block)
-    }
-
-    /// Write raw packed bytes at the given block offset.
-    fn write_block_bytes(
-        &mut self,
-        packed: &[u8],
-        offset: [usize; 3],
-        shape: [usize; 3],
-    ) -> Result<(), Error> {
-        crate::io::reader_common::write_block_bytes(
-            packed,
-            self.shape,
-            offset,
-            shape,
-            self.data_offset,
-            &mut self.mmap,
-        )
-    }
-
-    /// Scan the written data block and update header statistics.
-    ///
-    /// This is zero-copy for memory-mapped writers because the data is already
-    /// accessible via the memory map.
-    pub fn update_header_stats(&mut self) -> Result<(), Error> {
-        let data_size = self.header.data_size().ok_or(Error::InvalidHeader)?;
-        let end = self
-            .data_offset
-            .checked_add(data_size)
-            .ok_or(Error::InvalidHeader)?;
-        if end > self.mmap.len() {
-            return Err(Error::bounds_err());
-        }
-        update_header_stats_from_bytes(&mut self.header, &self.mmap[self.data_offset..end])?;
-        Ok(())
-    }
-}
-
-#[cfg(feature = "mmap")]
-impl MmapWriter {
-    /// Finalize the memory-mapped MRC file by writing the header.
-    ///
-    /// This updates the first 1024 bytes of the memory map with the current
-    /// header and flushes the mapping to disk. Must be called after all
-    /// [`write_block`](MmapWriter::write_block) calls.
-    ///
-    /// # Errors
-    /// Returns [`Error::Io`] if the flush fails.
-    pub fn finalize(&mut self) -> Result<(), Error> {
-        let mut header_bytes = [0u8; 1024];
-        self.header.encode_to_bytes(&mut header_bytes);
-        self.mmap[0..1024].copy_from_slice(&header_bytes);
-        self.mmap.flush()?;
-        Ok(())
-    }
-}
-
-// -------------------------------------------------------------------------
-// Compressed writer (gzip / bzip2)
-// -------------------------------------------------------------------------
-
-/// Compression backend trait for [`CompressedWriter`].
-///
-/// Implementations of this trait plug into [`CompressedWriter`] to provide
-/// a specific compression algorithm (e.g. gzip via [`GzipCompressor`](crate::io::gzip::GzipCompressor),
-/// bzip2 via [`Bzip2Compressor`](crate::io::bzip2::Bzip2Compressor)).
-///
-/// The trait has a single method so that [`CompressedWriter`] can remain
-/// generic without carrying runtime state for the compressor.
-///
-/// This trait is `#[doc(hidden)]` — users should use the concrete type
-/// aliases [`GzipWriter`](crate::GzipWriter) and [`Bzip2Writer`](crate::Bzip2Writer).
-#[doc(hidden)]
-pub trait Compressor {
-    /// Compress `data` at the given compression level and return the compressed bytes.
-    fn compress(data: &[u8], level: Compression) -> Result<Vec<u8>, Error>;
-}
-
-/// MRC file writer that buffers the entire file in memory and compresses on
-/// [`finalize`](CompressedWriter::finalize).
-///
-/// Compressed formats (gzip, bzip2) do not support random access, so this
-/// writer accumulates header and voxel data in a `Vec<u8>` during construction
-/// and [`write_block`] calls. Only when [`finalize`](CompressedWriter::finalize)
-/// is invoked does it assemble the full file, compress it via [`Compressor::compress`],
-/// and write the result to disk in one shot.
-///
-/// This design matches the behaviour of the reference Python `mrcfile` library.
-/// For large volumes that do not fit in RAM, prefer [`Writer`] (uncompressed)
-/// or write to an uncompressed file and compress it afterwards.
-///
-/// Concrete type aliases are provided for convenience:
-/// * [`GzipWriter`](crate::GzipWriter) = `CompressedWriter<GzipCompressor>`
-/// * [`Bzip2Writer`](crate::Bzip2Writer) = `CompressedWriter<Bzip2Compressor>`
-#[derive(Debug)]
-pub struct CompressedWriter<C: Compressor> {
-    header: Header,
-    data: Vec<u8>,
-    ext_header: Vec<u8>,
-    path: std::path::PathBuf,
-    bytes_per_voxel: usize,
-    mode: Mode,
-    shape: VolumeShape,
-    compression: Compression,
-    _marker: std::marker::PhantomData<C>,
-}
-
-impl<C: Compressor> CompressedWriter<C> {
-    pub(crate) fn create<P: AsRef<std::path::Path>>(
-        path: P,
-        header: Header,
-        ext_header: &[u8],
-        compression: Compression,
-    ) -> Result<Self, Error> {
-        let mut header = header;
-        header.set_file_endian(FileEndian::LittleEndian);
-
-        // Sync nsymbt with provided ext_header if non-empty.
-        if !ext_header.is_empty() {
-            header.nsymbt = ext_header.len() as i32;
-        }
-        header.validate_detailed()?;
-
-        let ext_size = header.nsymbt as usize;
-        let ext_header_stored = if ext_header.len() >= ext_size {
-            ext_header[..ext_size].to_vec()
-        } else {
-            let mut v = ext_header.to_vec();
-            v.resize(ext_size, 0);
-            v
-        };
-
-        let data_size = header.data_size().ok_or(Error::InvalidHeader)?;
-        let data = vec![0u8; data_size];
-
-        let mode = Mode::from_i32(header.mode).ok_or(Error::UnsupportedMode)?;
-        let bytes_per_voxel = mode.byte_size();
-        let shape = VolumeShape::new(header.nx as usize, header.ny as usize, header.nz as usize);
-
-        Ok(Self {
-            header,
-            data,
-            ext_header: ext_header_stored,
-            path: path.as_ref().to_path_buf(),
-            bytes_per_voxel,
-            mode,
-            shape,
-            compression,
-            _marker: std::marker::PhantomData,
-        })
-    }
-
-    /// Volume dimensions for this writer.
-    pub fn shape(&self) -> VolumeShape {
-        self.shape
-    }
-
-    /// Voxel data mode for this writer.
-    pub fn mode(&self) -> Mode {
-        self.mode
-    }
-
-    /// Reference to the current header.
-    ///
-    /// Modify header fields before calling [`finalize`](Self::finalize) to
-    /// change what gets written to disk.
-    pub fn header(&self) -> &Header {
-        &self.header
-    }
-
-    /// Write a block of voxels to the in-memory buffer.
-    ///
-    /// The type `T` must match the file's voxel mode exactly.
-    /// Supports arbitrary sub-blocks by scattering row-by-row when necessary.
-    pub fn write_block<T: Voxel>(&mut self, block: &VoxelBlock<T>) -> Result<(), Error> {
-        if T::MODE != self.mode() {
-            return Err(Error::ModeMismatch {
-                file_mode: self.mode(),
-                requested_mode: T::MODE,
-                offset: None,
-            });
-        }
-
-        if !self.shape.contains_block(block.offset, block.shape) {
-            return Err(Error::bounds_err());
-        }
-
-        let file_endian = self.header.detect_endian();
-        // NOTE: self.data contains only the voxel data (not the header),
-        // so data_offset is 0.
-        crate::io::reader_common::encode_block_to_buf(
-            block,
-            self.shape,
-            self.bytes_per_voxel,
-            file_endian,
-            0,
-            &mut self.data,
-        )
-    }
-
-    /// Write a block of `u8` data by automatically widening to `u16` (Mode 6).
-    ///
-    /// The file must have been created with [`Mode::Uint16`]. Each `u8` voxel
-    /// is widened to `u16` before writing, matching Python `mrcfile`'s
-    /// auto-conversion behaviour for `np.uint8` data.
-    pub fn write_u8_block(&mut self, block: &VoxelBlock<u8>) -> Result<(), Error> {
-        if self.mode() != Mode::Uint16 {
-            return Err(Error::ModeMismatch {
-                file_mode: self.mode(),
-                requested_mode: Mode::Uint16,
-                offset: None,
-            });
-        }
-        let widened = crate::engine::convert::convert_u8_slice_to_u16(&block.data);
-        self.write_block(&VoxelBlock {
-            offset: block.offset,
-            shape: block.shape,
-            data: widened,
-        })
-    }
-
-    /// Write a block with automatic type conversion to the file's mode.
-    ///
-    /// Supported: `f32` → `i8`/`i16`/`u16`/`f16` (clamped as needed).
-    pub fn write_block_as(&mut self, block: &VoxelBlock<f32>) -> Result<(), Error> {
-        write_block_as_body!(self, block)
-    }
-
-    /// Write a block of `u8` data (0–15 per voxel) by packing to 4-bit (Mode 101).
-    pub fn write_u4_block(&mut self, block: &VoxelBlock<u8>) -> Result<(), Error> {
-        write_u4_block_body!(self, block)
-    }
-
-    /// Write raw packed bytes at the given block offset.
-    fn write_block_bytes(
-        &mut self,
-        packed: &[u8],
-        offset: [usize; 3],
-        shape: [usize; 3],
-    ) -> Result<(), Error> {
-        crate::io::reader_common::write_block_bytes(
-            packed,
-            self.shape,
-            offset,
-            shape,
-            0, // data starts at offset 0 within self.data
-            &mut self.data,
-        )
-    }
-
-    /// Scan the written data block and update `dmin`, `dmax`, `dmean` and `rms`
-    /// in the header to match the actual file contents.
-    ///
-    /// This is zero-copy for compressed writers because the data is already
-    /// buffered in memory.
-    pub fn update_header_stats(&mut self) -> Result<(), Error> {
-        update_header_stats_from_bytes(&mut self.header, &self.data)
-    }
-
-    /// Finalize the compressed MRC file by assembling, compressing and writing to disk.
-    ///
-    /// Assembles the full MRC file (header + extended header + voxel data),
-    /// compresses it via the backend compressor, and writes the result to the
-    /// output path. After this call the writer is consumed.
-    ///
-    /// # Errors
-    /// Returns [`Error::Io`] if the file cannot be written.
-    pub fn finalize(self) -> Result<(), Error> {
-        let mut header_bytes = [0u8; 1024];
-        self.header.encode_to_bytes(&mut header_bytes);
-
-        let ext_size = self.header.nsymbt as usize;
-        let mut file_bytes = Vec::with_capacity(1024 + ext_size + self.data.len());
-        file_bytes.extend_from_slice(&header_bytes);
-        if ext_size > 0 {
-            file_bytes.extend_from_slice(&self.ext_header);
-        }
-        file_bytes.extend_from_slice(&self.data);
-
-        let compressed = C::compress(&file_bytes, self.compression)?;
-        std::fs::write(&self.path, compressed)?;
-        Ok(())
-    }
 }

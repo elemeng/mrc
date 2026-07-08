@@ -584,14 +584,6 @@ pub use iter::{SlabStepper, SliceStepper, TileStepper};
 /// See [`WriterBuilder::compression`] for usage.
 pub use io::writer::Compression;
 
-/// Gzip-compressed MRC writer (feature `gzip`). Created via `WriterBuilder::finish_gzip()`.
-#[cfg(feature = "gzip")]
-pub use io::gzip::GzipWriter;
-
-/// Bzip2-compressed MRC writer (feature `bzip2`). Created via `WriterBuilder::finish_bzip2()`.
-#[cfg(feature = "bzip2")]
-pub use io::bzip2::Bzip2Writer;
-
 /// Default decompression safety limit for gzip/bzip2 files (256 GiB).
 ///
 /// Applied before the header is parsed, preventing decompression bombs.

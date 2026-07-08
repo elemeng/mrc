@@ -1,13 +1,11 @@
-//! Bzip2-compressed MRC file reader and writer.
-//!
-//! Because bzip2 does not support random access, the writer buffers the entire
-//! file in memory and compresses on [`CompressedWriter::finalize`]. This matches
-//! the behaviour of the reference Python `mrcfile` library.
+//! Bzip2-compressed MRC file reader.
 //!
 //! The reader applies a safety limit of [`DEFAULT_MAX_DECOMPRESSED_BYTES`]
 //! (256 GiB) during decompression, enforced before the header is parsed.
 //! Use [`open_bzip2_with_limit`](crate::Reader::open_bzip2_with_limit) to
 //! override.
+//!
+//! The bzip2 writer is built via [`WriterBuilder::finish_bzip2`](crate::WriterBuilder::finish_bzip2).
 //!
 //! [`DEFAULT_MAX_DECOMPRESSED_BYTES`]: crate::DEFAULT_MAX_DECOMPRESSED_BYTES
 
@@ -71,27 +69,3 @@ impl crate::Reader {
         Self::_from_decompressed(d)
     }
 }
-
-/// Bzip2 compressor backend.
-///
-/// This type is `#[doc(hidden)]`.
-#[doc(hidden)]
-#[derive(Debug)]
-pub struct Bzip2Compressor;
-
-impl crate::io::writer::Compressor for Bzip2Compressor {
-    fn compress(data: &[u8], level: crate::io::writer::Compression) -> Result<Vec<u8>, Error> {
-        let mut encoder = bzip2::write::BzEncoder::new(Vec::new(), level.to_bzip2());
-        std::io::Write::write_all(&mut encoder, data)?;
-        Ok(encoder.finish()?)
-    }
-}
-
-/// Bzip2-compressed MRC file writer.
-///
-/// Because bzip2 does not support random access, the entire file is buffered
-/// in memory and compressed only on finalize.
-/// For large volumes consider using [`Writer`](crate::Writer) instead.
-///
-/// Construct via [`WriterBuilder::finish_bzip2`](crate::WriterBuilder::finish_bzip2)
-pub type Bzip2Writer = crate::io::writer::CompressedWriter<Bzip2Compressor>;

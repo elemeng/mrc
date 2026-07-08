@@ -1,13 +1,11 @@
-//! Gzip-compressed MRC file reader and writer.
-//!
-//! Because gzip does not support random access, the writer buffers the entire
-//! file in memory and compresses on [`CompressedWriter::finalize`]. This matches
-//! the behaviour of the reference Python `mrcfile` library.
+//! Gzip-compressed MRC file reader.
 //!
 //! The reader applies a safety limit of [`DEFAULT_MAX_DECOMPRESSED_BYTES`]
 //! (256 GiB) during decompression, enforced before the header is parsed.
 //! Use [`open_gzip_with_limit`](crate::Reader::open_gzip_with_limit) to
 //! override.
+//!
+//! The gzip writer is built via [`WriterBuilder::finish_gzip`](crate::WriterBuilder::finish_gzip).
 //!
 //! [`DEFAULT_MAX_DECOMPRESSED_BYTES`]: crate::DEFAULT_MAX_DECOMPRESSED_BYTES
 
@@ -71,27 +69,3 @@ impl crate::Reader {
         Self::_from_decompressed(d)
     }
 }
-
-/// Gzip compressor backend.
-///
-/// This type is `#[doc(hidden)]`.
-#[doc(hidden)]
-#[derive(Debug)]
-pub struct GzipCompressor;
-
-impl crate::io::writer::Compressor for GzipCompressor {
-    fn compress(data: &[u8], level: crate::io::writer::Compression) -> Result<Vec<u8>, Error> {
-        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), level.to_flate2());
-        std::io::Write::write_all(&mut encoder, data)?;
-        Ok(encoder.finish()?)
-    }
-}
-
-/// Gzip-compressed MRC file writer.
-///
-/// Because gzip does not support random access, the entire file is buffered
-/// in memory and compressed only on finalize.
-/// For large volumes consider using [`Writer`](crate::Writer) instead.
-///
-/// Construct via [`WriterBuilder::finish_gzip`](crate::WriterBuilder::finish_gzip)
-pub type GzipWriter = crate::io::writer::CompressedWriter<GzipCompressor>;
