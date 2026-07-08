@@ -71,7 +71,10 @@ pub fn detect_compression<P: AsRef<Path>>(path: P) -> Result<CompressionType, Er
 #[derive(Debug)]
 enum DataSource {
     /// Loaded entirely into memory.
-    Buffered(Vec<u8>),
+    Buffered {
+        data: Vec<u8>,
+        truncated: bool,
+    },
     /// Memory-mapped file (zero-copy).
     #[cfg(feature = "mmap")]
     Mmap {
@@ -189,6 +192,8 @@ impl Reader {
             match magic {
                 #[cfg(feature = "gzip")]
                 [0x1f, 0x8b] => {
+                    // Seek back to start before handing to the gzip decoder.
+                    // An error here is benign — the decoder will fail on its own.
                     let _ = file.seek(std::io::SeekFrom::Start(0));
                     return Self::_open_gzip_file(
                         file,
@@ -198,6 +203,8 @@ impl Reader {
                 }
                 #[cfg(feature = "bzip2")]
                 [b'B', b'Z'] => {
+                    // Seek back to start before handing to the bzip2 decoder.
+                    // An error here is benign — the decoder will fail on its own.
                     let _ = file.seek(std::io::SeekFrom::Start(0));
                     return Self::_open_bzip2_file(
                         file,
@@ -223,6 +230,9 @@ impl Reader {
 
         #[cfg(not(feature = "mmap"))]
         {
+            // Seek back to start (file is at offset 2 after reading magic bytes).
+            // An error here is benign — the plain-file reader will fail with
+            // its own I/O error if the file is genuinely unreadable.
             let _ = file.seek(std::io::SeekFrom::Start(0));
             Self::_open_plain_file(file, permissive)
         }
@@ -267,7 +277,15 @@ impl Reader {
             }
         }
 
-        Self::_build(header, ext_header, DataSource::Buffered(data), warnings)
+        Self::_build(
+            header,
+            ext_header,
+            DataSource::Buffered {
+                data,
+                truncated: false,
+            },
+            warnings,
+        )
     }
 
     fn _read_from_buf(data: Vec<u8>, permissive: bool) -> Result<(Self, Vec<String>), Error> {
@@ -276,12 +294,20 @@ impl Reader {
         }
         let mut header_bytes = [0u8; 1024];
         header_bytes.copy_from_slice(&data[..1024]);
-        let (header, warnings, _endian, data_size) =
+        let (header, mut warnings, _endian, data_size) =
             crate::io::reader_common::parse_header(&header_bytes, permissive)?;
 
         let ext_size = header.nsymbt as usize;
-        let ext_header = if ext_size > 0 && 1024 + ext_size <= data.len() {
-            data[1024..1024 + ext_size].to_vec()
+        let ext_end = (1024 + ext_size).min(data.len());
+        let ext_header = if ext_size > 0 && ext_end > 1024 {
+            if ext_end < 1024 + ext_size {
+                warnings.push(format!(
+                    "Extended header truncated: expected {} bytes, got {}",
+                    ext_size,
+                    ext_end - 1024
+                ));
+            }
+            data[1024..ext_end].to_vec()
         } else {
             Vec::new()
         };
@@ -302,10 +328,14 @@ impl Reader {
             });
         }
 
+        let truncated = voxel_data.len() != data_size;
         Self::_build(
             header,
             ext_header,
-            DataSource::Buffered(voxel_data),
+            DataSource::Buffered {
+                data: voxel_data,
+                truncated,
+            },
             warnings,
         )
     }
@@ -413,7 +443,10 @@ impl Reader {
         Self::_build(
             d.header,
             d.ext_header,
-            DataSource::Buffered(d.data),
+            DataSource::Buffered {
+                data: d.data,
+                truncated: false,
+            },
             d.warnings,
         )
     }
@@ -450,7 +483,7 @@ impl Reader {
     /// For buffered readers this borrows from the internal `Vec<u8>`.
     pub fn data_bytes(&self) -> &[u8] {
         match &self.source {
-            DataSource::Buffered(data) => data,
+            DataSource::Buffered { data, .. } => data,
             #[cfg(feature = "mmap")]
             DataSource::Mmap {
                 map, data_offset, ..
@@ -494,9 +527,9 @@ impl Reader {
     /// size (only possible when opened in permissive mode).
     pub fn is_truncated(&self) -> bool {
         match &self.source {
+            DataSource::Buffered { truncated, .. } => *truncated,
             #[cfg(feature = "mmap")]
             DataSource::Mmap { truncated, .. } => *truncated,
-            _ => false,
         }
     }
 
@@ -611,7 +644,7 @@ impl Reader {
         shape: [usize; 3],
     ) -> Result<Cow<'a, [u8]>, Error> {
         match &self.source {
-            DataSource::Buffered(data) => {
+            DataSource::Buffered { data, .. } => {
                 let data_len = data.len();
                 crate::io::reader_common::validate_block_bounds(
                     self.shape,
@@ -632,7 +665,7 @@ impl Reader {
             DataSource::Mmap {
                 map, data_offset, ..
             } => {
-                let [nx, ny, _nz] = [self.shape.nx, self.shape.ny, self.shape.nz];
+                let [nx, ny, ..] = [self.shape.nx, self.shape.ny, self.shape.nz];
                 let [ox, oy, oz] = offset;
                 let [sx, sy, sz] = shape;
                 let data_len = map.len().saturating_sub(*data_offset);
@@ -674,7 +707,7 @@ impl Reader {
     /// Internal: return a `&[u8]` to the full data region regardless of backend.
     fn _source_data(&self) -> &[u8] {
         match &self.source {
-            DataSource::Buffered(data) => data,
+            DataSource::Buffered { data, .. } => data,
             #[cfg(feature = "mmap")]
             DataSource::Mmap {
                 map, data_offset, ..

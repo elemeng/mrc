@@ -1441,6 +1441,17 @@ impl HeaderBuilder {
         self
     }
 
+    /// Set the MRC mode by raw integer value (for modes without a [`crate::Voxel`] impl).
+    ///
+    /// This is primarily useful for [`Mode::Packed4Bit`] (mode 101) which does not
+    /// implement `Voxel`.  Invalid mode constants are caught by header validation
+    /// at `build()` time.
+    #[must_use]
+    pub fn mode_raw(mut self, mode: i32) -> Self {
+        self.header.mode = mode;
+        self
+    }
+
     /// Set the cell dimensions in Angstroms.
     #[must_use]
     pub fn cell_lengths(mut self, xlen: f32, ylen: f32, zlen: f32) -> Self {

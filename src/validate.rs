@@ -142,7 +142,7 @@ pub fn validate_reader(
     compression: &str,
     warnings: &[String],
 ) -> Result<ValidationReport, Error> {
-    let mut issues: Vec<ValidationIssue> = Vec::new();
+    let mut issues: Vec<ValidationIssue> = Vec::with_capacity(16);
     let header = reader.header();
     let mode_val = header.mode;
     let endian = reader.endian();
@@ -254,7 +254,7 @@ pub fn validate_reader(
             let rms_ok = rms_unset || crate::engine::stats::is_close(header.rms, actual_rms, rtol);
 
             if !stats_unset || !rms_unset {
-                let mut mismatch_parts = Vec::new();
+                let mut mismatch_parts = Vec::with_capacity(4);
                 if !min_ok {
                     mismatch_parts.push("dmin".to_string());
                 }
@@ -459,7 +459,7 @@ fn float_mode_issues(
         _ => return Ok(Vec::new()),
     };
 
-    let mut issues = Vec::new();
+    let mut issues = Vec::with_capacity(3);
     let mut nan_count = 0usize;
     let mut inf_count = 0usize;
     let mut neg_inf_count = 0usize;
@@ -503,7 +503,7 @@ fn complex_float_mode_issues(data_bytes: &[u8], endian: FileEndian) -> Result<Ve
     let data: Vec<crate::mode::Float32Complex> =
         decode_slice::<crate::mode::Float32Complex>(data_bytes, endian)?;
 
-    let mut issues = Vec::new();
+    let mut issues = Vec::with_capacity(3);
     let mut nan_count = 0usize;
     let mut inf_count = 0usize;
     let mut neg_inf_count = 0usize;

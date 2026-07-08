@@ -464,36 +464,42 @@ where
         if mode == Mode::Int16 && core::any::TypeId::of::<T>() == core::any::TypeId::of::<i8>() {
             let src = decode_slice::<i16>(bytes, endian)?;
             let r = convert_i16_slice_to_i8(&src);
+            // SAFETY: TypeId checked above guarantees T == i8, so sizes match.
             return Ok(unsafe { reinterpret_vec::<i8, T>(r) });
         }
         // i8 → i16
         if mode == Mode::Int8 && core::any::TypeId::of::<T>() == core::any::TypeId::of::<i16>() {
             let src = decode_slice::<i8>(bytes, endian)?;
             let r = convert_i8_slice_to_i16(&src);
+            // SAFETY: TypeId checked above guarantees T == i16, so sizes match.
             return Ok(unsafe { reinterpret_vec::<i16, T>(r) });
         }
         // u16 → i8
         if mode == Mode::Uint16 && core::any::TypeId::of::<T>() == core::any::TypeId::of::<i8>() {
             let src = decode_slice::<u16>(bytes, endian)?;
             let r = convert_u16_slice_to_i8(&src);
+            // SAFETY: TypeId checked above guarantees T == i8, so sizes match.
             return Ok(unsafe { reinterpret_vec::<i8, T>(r) });
         }
         // i8 → u16
         if mode == Mode::Int8 && core::any::TypeId::of::<T>() == core::any::TypeId::of::<u16>() {
             let src = decode_slice::<i8>(bytes, endian)?;
             let r = convert_i8_slice_to_u16(&src);
+            // SAFETY: TypeId checked above guarantees T == u16, so sizes match.
             return Ok(unsafe { reinterpret_vec::<u16, T>(r) });
         }
         // u16 → i16
         if mode == Mode::Uint16 && core::any::TypeId::of::<T>() == core::any::TypeId::of::<i16>() {
             let src = decode_slice::<u16>(bytes, endian)?;
             let r = convert_u16_slice_to_i16(&src);
+            // SAFETY: TypeId checked above guarantees T == i16, so sizes match.
             return Ok(unsafe { reinterpret_vec::<i16, T>(r) });
         }
         // i16 → u16
         if mode == Mode::Int16 && core::any::TypeId::of::<T>() == core::any::TypeId::of::<u16>() {
             let src = decode_slice::<i16>(bytes, endian)?;
             let r = convert_i16_slice_to_u16(&src);
+            // SAFETY: TypeId checked above guarantees T == u16, so sizes match.
             return Ok(unsafe { reinterpret_vec::<u16, T>(r) });
         }
     }
