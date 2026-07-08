@@ -113,7 +113,7 @@ fn bench_mmap_read_volume_f32(c: &mut Criterion) {
     let path = make_f32_mrc(NX, NY, NZ);
     c.bench_function("mmap_read_volume_f32", |b| {
         b.iter(|| {
-            let reader = mrc::MmapReader::open(black_box(&path)).unwrap();
+            let reader = mrc::Reader::open(black_box(&path)).unwrap();
             let vol = reader.read_volume::<f32>().unwrap();
             black_box(vol);
         })
