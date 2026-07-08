@@ -70,8 +70,8 @@ pub enum Mode {
     /// 4-bit data packed two values per byte (Mode 101).
     ///
     /// Each byte stores two 4-bit nibbles: low nibble = first pixel,
-    /// high nibble = second pixel. Read via [`slices_u8`](crate::ReaderMethods::slices_u8)
-    /// or [`convert::<f32>()`](crate::ConvertMethods::convert); write via
+    /// high nibble = second pixel. Read via [`slices_u8`](crate::Reader::slices_u8)
+    /// or [`convert::<f32>()`](crate::Reader::convert); write via
     /// [`write_u4_block`](crate::Writer::write_u4_block).
     Packed4Bit = 101,
 }

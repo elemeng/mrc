@@ -50,17 +50,15 @@
 //!
 //! Then pick an iteration method:
 //!
-//! * [`slices`](ReaderMethods::slices) — one Z-plane at a time
-//! * [`slabs`](ReaderMethods::slabs) — batches of `k` Z-planes
-//! * [`tiles`](ReaderMethods::tiles) — arbitrary 3D blocks
-//! * [`subregion`](ReaderMethods::subregion) — a single block by coordinate
+//! * [`slices`](Reader::slices) — one Z-plane at a time
+//! * [`slabs`](Reader::slabs) — batches of `k` Z-planes
+//! * [`tiles`](Reader::tiles) — arbitrary 3D blocks
+//! * [`subregion`](Reader::subregion) — a single block by coordinate
 //!
-//! > **Trait imports (optional):** Iterator and conversion methods are
-//! > available as inherent methods on `Reader` and `MmapReader` without any
-//! > import. The [`ReaderMethods`] and [`ConvertMethods`] traits are also
-//! > re-exported for advanced use (e.g. generic code over reader types).
+//! > **No trait imports needed:** All iterator and conversion methods are
+//! > available as inherent methods on `Reader` without any import.
 //!
-//! For automatic mode conversion, use [`convert`](ConvertMethods::convert):
+//! For automatic mode conversion, use [`convert`](Reader::convert):
 //!
 //! ```no_run
 //! # fn main() -> Result<(), mrc::Error> {
@@ -115,9 +113,9 @@
 //!
 //! ### Large files
 //!
-//! When the file does not fit in RAM, use [`MmapReader`] (requires the
-//! `mmap` feature). Same iterator API, zero-copy [`slab_as`](MmapReader::slab_as),
-//! OS-managed paging.
+//! When the file does not fit in RAM, [`Reader::open`] automatically uses
+//! memory-mapped I/O (requires the `mmap` feature). Same iterator API,
+//! zero-copy [`slab_as`](Reader::slab_as), OS-managed paging.
 //!
 //! ### Quirky files
 //!
@@ -169,9 +167,9 @@
 //! |---|---|---|
 //! | [`Writer`] | [`finish()`](WriterBuilder::finish) | General use, writes straight to disk |
 //! | [`Writer`] (in-memory) | [`Writer::from_writer`] | Memory buffer, e.g. `Cursor<Vec<u8>>` |
-//! | [`MmapWriter`] | [`finish_mmap()`](WriterBuilder::finish_mmap) | Very large files (`mmap` feature) |
-//! | [`GzipWriter`] | [`finish_gzip()`](WriterBuilder::finish_gzip) | Compressed output (`gzip` feature) |
-//! | [`Bzip2Writer`] | [`finish_bzip2()`](WriterBuilder::finish_bzip2) | Compressed output (`bzip2` feature) |
+//! | [`Writer`] (mmap) | [`finish_mmap()`](WriterBuilder::finish_mmap) | Very large files (`mmap` feature) |
+//! | [`Writer`] (gzip) | [`finish_gzip()`](WriterBuilder::finish_gzip) | Compressed output (`gzip` feature) |
+//! | [`Writer`] (bzip2) | [`finish_bzip2()`](WriterBuilder::finish_bzip2) | Compressed output (`bzip2` feature) |
 //!
 //! Compressed writers support configurable [`Compression`] level via
 //! [`WriterBuilder::compression`]:
@@ -203,16 +201,16 @@
 //! | [`Float32Complex`](Mode::Float32Complex) (4) | [`Float32Complex`] | Complex data (f32 real + f32 imag) |
 //! | [`Uint16`](Mode::Uint16) (6) | `u16` | Segmentation labels |
 //! | [`Float16`](Mode::Float16) (12) | `f16` | Half-precision storage (feature `f16`) |
-//! | [`Packed4Bit`](Mode::Packed4Bit) (101) | `u8` via [`slices_u8`](ReaderMethods::slices_u8) | 4-bit packed data; no `Voxel` impl |
+//! | [`Packed4Bit`](Mode::Packed4Bit) (101) | `u8` via [`slices_u8`](Reader::slices_u8) | 4-bit packed data; no `Voxel` impl |
 //!
 //! Packed 4-bit data is handled transparently by the unified API:
-//! [`convert::<f32>()`](ConvertMethods::convert) unpacks nibbles to `f32`,
-//! [`slices_u8`](ReaderMethods::slices_u8) / [`slabs_u8`](ReaderMethods::slabs_u8) unpack
+//! [`convert::<f32>()`](Reader::convert) unpacks nibbles to `f32`,
+//! [`slices_u8`](Reader::slices_u8) / [`slabs_u8`](Reader::slabs_u8) unpack
 //! to `u8` (0–15), and [`write_u4_block`](Writer::write_u4_block) packs
 //! `u8` values back.
 //!
 //! When you don't know the mode ahead of time, use
-//! [`convert::<f32>()`](ConvertMethods::convert) which converts any mode to `f32`.
+//! [`convert::<f32>()`](Reader::convert) which converts any mode to `f32`.
 //!
 //! # Headers
 //!
@@ -418,7 +416,7 @@
 //! [`Reader::open_bzip2_with_limit`] for a custom limit.
 //!
 //! > **Large compressed files:** If the uncompressed data exceeds available RAM,
-//! > decompress with `gunzip` or `bunzip2` first, then use [`MmapReader`] for
+//! > decompress with `gunzip` or `bunzip2` first, then use [`Reader::open`] for
 //! > zero-copy access — the OS pages data on demand without loading the whole
 //! > file into memory.
 //!
@@ -498,7 +496,7 @@
 //! ## 3. Read subtomogram averages from a volume stack
 //!
 //! Volume stacks (ISPG 401–630) pack multiple sub-volumes into one file,
-//! each `mz` slices thick. Use [`volumes`](ReaderMethods::volumes) to iterate:
+//! each `mz` slices thick. Use [`volumes`](Reader::volumes) to iterate:
 //!
 //! ```no_run
 //! # fn main() -> Result<(), mrc::Error> {
@@ -517,7 +515,7 @@
 //! |---|---|---|
 //! | [`InvalidHeader`](Error::InvalidHeader) | Not an MRC file, or header corruption | Run `mrc-validate file.mrc`; try [`open_permissive`](Reader::open_permissive) |
 //! | [`FileSizeMismatch`](Error::FileSizeMismatch) | File truncated or has trailing garbage | Re-download or check `mrc-validate` output |
-//! | [`ModeMismatch`](Error::ModeMismatch) | Using `slices::<f32>()` on an Int16 file | Use [`convert::<f32>()`](ConvertMethods::convert) — auto-converts any mode |
+//! | [`ModeMismatch`](Error::ModeMismatch) | Using `slices::<f32>()` on an Int16 file | Use [`convert::<f32>()`](Reader::convert) — auto-converts any mode |
 //! | [`BoundsError`](Error::BoundsError) | Block outside volume | Check offset + shape against dimensions |
 //! | [`UnsupportedMode`](Error::UnsupportedMode) | Unrecognized mode, or mode needs the `f16` feature | Enable `f16` feature or convert with another tool |
 //! | `Io` error | File permissions, filesystem issue | Check the file path and permissions |
@@ -586,11 +584,11 @@ pub use iter::{SlabStepper, SliceStepper, TileStepper};
 /// See [`WriterBuilder::compression`] for usage.
 pub use io::writer::Compression;
 
-/// Gzip-compressed MRC writer (requires `gzip` feature).
+/// Gzip-compressed MRC writer (feature `gzip`). Created via `WriterBuilder::finish_gzip()`.
 #[cfg(feature = "gzip")]
 pub use io::gzip::GzipWriter;
 
-/// Bzip2-compressed MRC writer (requires `bzip2` feature).
+/// Bzip2-compressed MRC writer (feature `bzip2`). Created via `WriterBuilder::finish_bzip2()`.
 #[cfg(feature = "bzip2")]
 pub use io::bzip2::Bzip2Writer;
 

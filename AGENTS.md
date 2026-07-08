@@ -244,10 +244,10 @@ src/
 │   ├── reader.rs          # `CompressionType` and `detect_compression` helpers
 │   ├── reader_common.rs   # Shared `VoxelSource` trait, `ReaderCore` trait, block validation, gather/encode helpers, `parse_header`, `open_compressed`
 │   ├── buffered.rs        # In-memory `Reader` (loads entire file into Vec<u8>)
-│   ├── mmap_reader.rs     # `MmapReader` (zero-copy, requires `mmap` feature)
+│   ├── mmap_reader.rs     # (removed — consolidated into reader.rs)
 │   ├── writer.rs          # `Writer`, `WriterBuilder`, `MmapWriter`, `CompressedWriter<C: Compressor>`, `Compressor` trait
-│   ├── gzip.rs            # `GzipCompressor`, `GzipWriter` type alias, gzip reader methods on Reader
-│   └── bzip2.rs           # `Bzip2Compressor`, `Bzip2Writer` type alias, bzip2 reader methods on Reader
+│   ├── gzip.rs            # impl Reader { open_gzip* }, gzip reader methods
+│   └── bzip2.rs           # impl Reader { open_bzip2* }, bzip2 reader methods
 └── bin/
     ├── mrc-validate.rs    # CLI validation tool — comprehensive file validation with field filtering (`--field`)
     ├── mrc-header.rs      # CLI header inspector — key:value output with inline validation (`--force` to skip)
@@ -268,15 +268,15 @@ tests/
 
 | Reader | Description | Best for |
 |--------|-------------|---------|
-| `Reader` (buffered) | Loads entire file into `Vec<u8>` on open | Smaller files, random access |
-| `MmapReader` | Memory-maps the file, OS-managed paging | Large files, partial reads, zero-copy `slab_as` |
+| `Reader` (auto) | Auto-selects mmap or buffered on open | Most use cases |
+| `Reader` (buffered) | Loads entire file into memory | via `from_reader()` / `from_bytes()` |
 
 | Writer | Description | Best for |
 |--------|-------------|---------|
-| `Writer` | Standard file I/O, writes blocks directly to disk | General use |
-| `MmapWriter` | Memory-mapped write via `memmap2::MmapMut` | Very large files (`mmap` feature) |
-| `GzipWriter` | Buffers in RAM, compresses on `finalize` | Compressed output (`gzip` feature) |
-| `Bzip2Writer` | Buffers in RAM, compresses on `finalize` | Compressed output (`bzip2` feature) |
+| `Writer` (file) | Standard file I/O via `WriterBuilder::finish()` | General use |
+| `Writer` (mmap) | Memory-mapped write via `WriterBuilder::finish_mmap()` | Very large files (`mmap` feature) |
+| `Writer` (gzip) | Buffers in RAM, compresses on `finalize` | Compressed output (`gzip` feature) |
+| `Writer` (bzip2) | Buffers in RAM, compresses on `finalize` | Compressed output (`bzip2` feature) |
 
 File open auto-detects gzip/bzip2 from magic bytes: `\x1f\x8b` → gzip, `BZ` → bzip2, anything else → plain.
 
@@ -286,7 +286,7 @@ The top-level `lib.rs` is the *only* public entry point. Internal modules (`engi
 
 | Visibility | Items |
 |------------|-------|
-| **Public (in lib.rs)** | `open`, `create`, `Reader`, `WriterBuilder`, `Writer`, `Header`, `HeaderBuilder`, `Mode`, `Voxel`, `VoxelBlock`, `VolumeShape`, `RegionIter`, `SliceStepper`, `SlabStepper`, `TileStepper`, `FileEndian`, `Error`, `HeaderValidationError`, `MmapReader`, `MmapWriter`, `GzipWriter`, `Bzip2Writer`, `validate_full`, `validate_reader`, `ValidationReport`, `ValidationIssue`, `Severity`, FEI types, CCP4/MRCO/SERI/AGAR types, IMOD types, `ComplexToRealStrategy`, `M0Interpretation`, `Int16Complex`, `Float32Complex`, `convert_u8_slice_to_u16`, `convert_u16_slice_to_u8`, `reinterpret_m0`, `DEFAULT_MAX_DECOMPRESSED_BYTES`, `ReaderMethods`, `ConvertMethods`, `ExtHeaderType`, `ExtHeaderData`, `Compression`, `ReadWriteSeek` |
+| **Public (in lib.rs)** | `open`, `create`, `Reader`, `WriterBuilder`, `Writer`, `Header`, `HeaderBuilder`, `Mode`, `Voxel`, `VoxelBlock`, `VolumeShape`, `RegionIter`, `SliceStepper`, `SlabStepper`, `TileStepper`, `FileEndian`, `Error`, `HeaderValidationError`, `MmapWriter`, `GzipWriter`, `Bzip2Writer`, `validate_full`, `validate_reader`, `ValidationReport`, `ValidationIssue`, `Severity`, FEI types, CCP4/MRCO/SERI/AGAR types, IMOD types, `ComplexToRealStrategy`, `M0Interpretation`, `Int16Complex`, `Float32Complex`, `convert_u8_slice_to_u16`, `convert_u16_slice_to_u8`, `reinterpret_m0`, `DEFAULT_MAX_DECOMPRESSED_BYTES`, `ExtHeaderType`, `ExtHeaderData`, `Compression` |
 | **`#[doc(hidden)]`** | `VoxelSource`, `ReaderCore`, `EndianCodec`, `Compressor`, `MachstInfo`, `CompressionType`, `detect_compression`, `GzipCompressor`, `Bzip2Compressor`, `EndianFallbackWarning`, `serde_byte_array` |
 | **`pub(crate)` only** | `validate_block_bounds`, `gather_block_bytes`, `encode_block_to_buf`, `decode_block`, `decode_native_endian`, `decode_slice`, `encode_slice`, `encode_block_parallel`, `parse_header`, `DecompressedMrc`, `open_compressed`, `compute_stats`, `validate_header_stats`, `unpack_u4_bytes_to_u8`, `convert_i8_slice_to_f32`, `convert_i16_slice_to_f32`, `convert_u16_slice_to_f32`, `convert_f32_slice_to_i16`, `convert_f32_slice_to_u16`, `convert_f32_slice_to_i8` |
 
@@ -295,9 +295,8 @@ Key user-facing enums (`Error`, `Mode`, `Compression`, `CompressionType`, `Compl
 ## Usage Note — Trait Imports (Optional)
 
 Iterator and conversion methods (`slices`, `slabs`, `subregion`, `read_volume`,
-`convert`, etc.) are defined on the [`ReaderMethods`] and [`ConvertMethods`]
-traits respectively, with **inherent forwarding methods** on `Reader` and
-`MmapReader`.  For normal use **no trait import is needed**:
+`convert`, etc.) are **inherent methods** on `Reader` — no trait imports needed
+for normal use:
 
 ```rust
 use mrc::Reader;
@@ -305,15 +304,6 @@ use mrc::Reader;
 let reader = Reader::open("file.mrc")?;
 for slice in reader.slices::<f32>() { ... }
 for slice in reader.convert::<f32>().slices() { ... }
-```
-
-Import the traits explicitly only when writing generic code over reader types:
-
-```rust
-use mrc::{Reader, ReaderMethods, ConvertMethods};
-
-fn process<T, R>(reader: &R)
-where R: ReaderMethods + ConvertMethods + ... { ... }
 ```
 
 ## Development Conventions
@@ -372,7 +362,7 @@ where R: ReaderMethods + ConvertMethods + ... { ... }
 
 - **Unit Tests**: ~101 tests in inline `mod tests` blocks inside source files (`header.rs`, `engine/simd.rs`, `engine/convert.rs`, `engine/endian.rs`, `engine/stats.rs`, `io/reader.rs`, `engine/block.rs`, `lib.rs`, `mode.rs`).
 - **Doc Tests**: ~49 doc-tests (43 run, 6 ignored — for internal-only API patterns) in `lib.rs`, `header.rs`, `validate.rs`, `error.rs`, `io/buffered.rs`, `io/writer.rs`, `io/mmap_reader.rs`, and `engine/codec.rs`.
-- **Integration Tests**: ~23 integration tests in `tests/integration.rs` covering write-then-read roundtrips for Float32, Int16, Uint16, Float16, subregion reads, gzip/bzip2 compression, header statistics, MmapReader, Packed4Bit (Mode 101), complex modes, volume stacks, and permissive-mode edge cases.
+- **Integration Tests**: ~23 integration tests in `tests/integration.rs` covering write-then-read roundtrips for Float32, Int16, Uint16, Float16, subregion reads, gzip/bzip2 compression, header statistics, Reader (mmap), Packed4Bit (Mode 101), complex modes, volume stacks, and permissive-mode edge cases.
 - **Benchmarks**: Criterion benchmarks live in `benches/bench.rs` (requires `--all-features` for mmap benchmarks).
 - **No External Fixtures**: Tests generate temporary MRC files programmatically (using `tempfile` in dev-dependencies) rather than checking large binary files into git.
 
@@ -395,7 +385,7 @@ The crate contains a small amount of `unsafe` Rust, all justified by performance
 ## Known Issues and Technical Debt
 
 1. **`gather_block_bytes` fast-path assumes origin-aligned XY slabs**: For full-row slabs (`ox == 0 && sx == nx && oy == 0 && sy == ny`) a contiguous copy is used. Sub-XY blocks correctly use row-by-row scatter/gather. The fast-path comment was clarified in v0.2.7.
-2. **`MmapReader::data_bytes()` silently truncates on undersized files in permissive mode**: When the file is smaller than the header claims, the method returns whatever bytes are available. Use [`is_truncated()`](crate::MmapReader::is_truncated) to detect this. In strict mode the file size is validated on open.
+2. **`Reader::data_bytes()` silently truncates on undersized files in permissive mode**: When the file is smaller than the header claims, the method returns whatever bytes are available. Use [`is_truncated()`](crate::Reader::is_truncated) to detect this. In strict mode the file size is validated on open.
 3. **`Packed4Bit` sub-block reads require even X-offset**: `validate_block_bounds` rejects odd `ox` for Mode 101 to avoid nibble-level read-modify-write in `gather_block_bytes`. Full-frame and byte-aligned sub-block reads work correctly.
 
 ## CLI Tools
@@ -415,7 +405,7 @@ Three binary targets are available (`src/bin/`):
 ## Security Considerations
 
 - **File Size Validation**: Readers validate that file size matches header-declared data size (with a `FileSizeMismatch` error) unless opened in permissive mode.
-- **Memory Mapping**: `MmapReader` maps files read-only. `MmapWriter` maps read-write and can mutate files in place.
+- **Memory Mapping**: `Reader::open` maps files read-only when using mmap. `WriterBuilder::finish_mmap()` maps read-write for in-place updates.
 - **Compression**: Gzip/Bzip2 readers decompress the entire file into memory on open (they do not stream). A hard cap of [`DEFAULT_MAX_DECOMPRESSED_BYTES`](crate::DEFAULT_MAX_DECOMPRESSED_BYTES) (256 GiB) is enforced before the header is parsed, preventing decompression bombs. Use [`open_gzip_with_limit`](crate::Reader::open_gzip_with_limit) / [`open_bzip2_with_limit`](crate::Reader::open_bzip2_with_limit) for a custom limit, or set to `u64::MAX` to disable the cap.
 - **No `unsafe` in public API**: All `unsafe` is internal; the public API is 100% safe Rust.
 - **Integer Overflow**: The codebase uses `checked_mul` and `checked_add` for size calculations in several places (`VolumeShape::total_voxels`, `checked_linear_index`, block validation), but not universally. Agents should maintain defensive arithmetic when computing byte offsets and buffer sizes.

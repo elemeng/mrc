@@ -10,12 +10,9 @@
 1. [Quick Start](#quick-start)
 2. [Top-Level Functions](#top-level-functions)
 3. [Readers](#readers)
-   - [`Reader`](#reader) — buffered in-memory reader
-   - [`MmapReader`](#mmapreader) — memory-mapped reader (feature `mmap`)
+   - [`Reader`](#reader) — auto-selects mmap or buffered
 4. [Writers](#writers)
    - [`WriterBuilder` / `Writer`](#writerbuilder--writer) — standard file I/O
-   - [`MmapWriter`](#mmapwriter) — memory-mapped writer (feature `mmap`)
-   - [`GzipWriter` / `Bzip2Writer`](#compressed-writers) — compressed writers (feature `gzip` / `bzip2`)
 5. [Types](#types)
    - [`Header` / `HeaderBuilder`](#header--headerbuilder)
    - [`VolumeShape` / `VoxelBlock`](#volumeshape--voxelblock)
@@ -92,10 +89,6 @@ All iterator and conversion methods (`slices`, `slabs`, `tiles`,
 `subregion`, `read_volume`, `convert`, `slices_u8`, etc.) are available
 as **inherent methods** — no trait imports needed for normal use.
 
-The [`ReaderMethods`] and [`ConvertMethods`] traits are also re-exported
-and can be used directly for generic code over reader types, but most
-callers will never need to import them.
-
 | Method | Returns | Description |
 |---|---|---|
 | `Reader::open(path)` | `Result<Reader>` | Auto-detect compression, open file |
@@ -155,42 +148,17 @@ Then use the wrapper's inherent methods:
 | `reader.convert::<T>().subregion(offset, shape)` | `Result<VoxelBlock<T>>` | Single block at given offset/shape, auto-converted |
 | `reader.convert::<T>().read_volume()` | `Result<VoxelBlock<T>>` | Full volume as one block, auto-converted |
 
-### `MmapReader`
+### Performance note: memory-mapped access
 
-Memory-mapped reader with **zero-copy** access for native-endian files.
-Requires the `mmap` feature. All iterator and conversion methods are
-available as inherent methods (no trait import needed).
+[`Reader::open`] automatically uses memory-mapped I/O (zero-copy, demand-paged)
+when available (requires the `mmap` feature). The [`slab_as`](crate::Reader::slab_as)
+method provides zero-copy typed access into the mmap when the file endianness
+matches the host and the voxel type matches the file mode.
 
 | Method | Returns | Description |
 |---|---|---|
-| `MmapReader::open(path)` | `Result<MmapReader>` | Map file read-only |
-| `MmapReader::open_permissive(path)` | `Result<(MmapReader, Vec<String>)>` | Permissive mode |
-| `reader.shape()` | `VolumeShape` | Volume dimensions |
-| `reader.mode()` | `Mode` | Voxel mode |
-| `reader.header()` | `&Header` | Parsed header |
-| `reader.endian()` | `FileEndian` | Detected byte order |
-| `reader.data_bytes()` | `&[u8]` | Raw voxel data (zero-copy) |
+| `reader.slab_as::<T>(z, k)` | `Result<&[T]>` | Zero-copy typed access into the mmap |
 | `reader.is_truncated()` | `bool` | `true` if permissive-mode mmap is shorter than header claims |
-| `reader.ext_header_bytes()` | `&[u8]` | Extended header bytes |
-| `reader.slab_as::<T>(z, k)` | `Result<&[T]>` | **Zero-copy** typed access into the mmap (requires native endian + matching type) |
-| `reader.read_block_bytes(offset, shape)` | `Result<Vec<u8>>` | Read raw bytes for any sub-block |
-| `reader.read_block::<T>(offset, shape)` | `Result<VoxelBlock<T>>` | Deprecated, use `subregion` instead |
-| `reader.validate_header_stats()` | `Result<()>` | Cross-check header stats |
-
-`MmapReader` also has all the same reader methods as `Reader` (`slices`,
-`slabs`, `tiles`, `convert`, `slices_u8`, `slabs_u8`, `slices_mode0`,
-`slabs_mode0`, `volumes`, `subregion`, `read_volume`, `read_volume_u8`,
-`to_ndarray`, etc.).
-
-**When to use `MmapReader` vs `Reader`:**
-
-| Criterion | `Reader` | `MmapReader` |
-|---|---|---|
-| File smaller than available RAM | ✅ | ✅ |
-| Very large file (> 4 GB) | ⚠️ load time + RAM | ✅ demand-paged |
-| True zero-copy typed access | ❌ | ✅ `slab_as` |
-| Auto-detects compression | ✅ | ❌ (uncompressed only — open via `Reader::open` for compressed) |
-| Available without `mmap` feature | ✅ | ❌ |
 
 ---
 
@@ -226,7 +194,7 @@ Additional builder methods behind feature flags:
 
 | Method | Description |
 |---|---|
-| `Writer::from_writer(writer, header, ext)` | Create from any `ReadWriteSeek` target (e.g. `Cursor<Vec<u8>>`) |
+| `Writer::from_writer(writer, header, ext)` | Create from any `Read + Write + Seek` target (e.g. `Cursor<Vec<u8>>`) |
 | `writer.shape()` | Volume dimensions |
 | `writer.mode()` | Voxel mode |
 | `writer.header()` | Mutable access to header (modify before `finalize`) |
@@ -474,9 +442,9 @@ Both have `to_real(strategy: ComplexToRealStrategy) -> f32`:
 
 Packed4Bit does **not** implement `Voxel` — instead it is handled transparently
 by the unified API:
-- Reading: [`slices_u8`](ReaderMethods::slices_u8) / [`slabs_u8`](ReaderMethods::slabs_u8) /
-  [`read_volume_u8`](ReaderMethods::read_volume_u8) unpack nibbles to `u8` (0–15);
-  [`convert::<f32>()`](ConvertMethods::convert) / [`convert::<T>()`](ConvertMethods::convert)
+- Reading: [`slices_u8`](Reader::slices_u8) / [`slabs_u8`](Reader::slabs_u8) /
+  [`read_volume_u8`](Reader::read_volume_u8) unpack nibbles to `u8` (0–15);
+  [`convert::<f32>()`](Reader::convert) / [`convert::<T>()`](Reader::convert)
   convert directly to `f32` or any target type via `.slices()` / `.read_volume()` /
   `.subregion()` — correctly handles multi-slice volumes and sub-block shapes.
 - Writing: [`write_u4_block`](Writer::write_u4_block) packs `u8` values
@@ -765,12 +733,12 @@ automatically converts any MRC mode to the target type via `.slices()`, `.slabs(
 
 | Feature | Default | What it enables |
 |---|---|---|
-| `mmap` | ✅ | `MmapReader`, `MmapWriter`, `WriterBuilder::finish_mmap()` |
+| `mmap` | ✅ | Memory-mapped I/O (auto-selected by `Reader::open`, `WriterBuilder::finish_mmap()`) |
 | `f16` | ✅ | `half::f16` type, `Mode::Float16`, `write_block_as()` for f32→f16 |
 | `simd` | ✅ | AVX2/NEON accelerated integer→f32, f16↔f32, byte-swap, and f32 statistics |
 | `parallel` | ✅ | `write_block_parallel()` using `rayon` |
-| `gzip` | ✅ | Gzip auto-detection, `Reader::open_gzip()`, `GzipWriter` |
-| `bzip2` | ❌ | Bzip2 auto-detection, `Reader::open_bzip2()`, `Bzip2Writer` |
+| `gzip` | ✅ | Gzip auto-detection, `Reader::open_gzip()`, compressed writer |
+| `bzip2` | ❌ | Bzip2 auto-detection, `Reader::open_bzip2()`, compressed writer |
 | `ndarray` | ❌ | Return volumes as `ndarray::Array3<T>` via `to_ndarray()` |
 | `serde` | ❌ | Serialize/Deserialize for `Header`, `Mode`, `VolumeShape`, `ValidationReport`, and other public types |
 
@@ -790,7 +758,7 @@ magic bytes and decompresses the whole file into memory. A hard cap of
 Use `open_gzip_with_limit()` / `open_bzip2_with_limit()` for a custom limit.
 
 > **Large compressed files:** If the uncompressed data exceeds available RAM,
-> decompress with `gunzip` or `bunzip2` first, then use [`MmapReader`] for
+> decompress with `gunzip` or `bunzip2` first, then use `Reader::open` for
 > zero-copy access — the OS pages data on demand.
 
 [`DEFAULT_MAX_DECOMPRESSED_BYTES`]: #top-level-functions
