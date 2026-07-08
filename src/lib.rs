@@ -562,6 +562,11 @@ pub use io::mmap_reader::MmapReader;
 /// Used by [`Writer::from_writer`] to accept any appropriate I/O target.
 pub use io::writer::ReadWriteSeek;
 
+/// Compression level for compressed MRC writers.
+///
+/// See [`WriterBuilder::compression`] for usage.
+pub use io::writer::Compression;
+
 /// Gzip-compressed MRC writer (requires `gzip` feature).
 #[cfg(feature = "gzip")]
 pub use io::gzip::GzipWriter;

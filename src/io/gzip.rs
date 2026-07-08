@@ -90,8 +90,8 @@ impl crate::Reader {
 pub struct GzipCompressor;
 
 impl crate::io::writer::Compressor for GzipCompressor {
-    fn compress(data: &[u8]) -> Result<Vec<u8>, Error> {
-        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    fn compress(data: &[u8], level: crate::io::writer::Compression) -> Result<Vec<u8>, Error> {
+        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), level.to_flate2());
         std::io::Write::write_all(&mut encoder, data)?;
         Ok(encoder.finish()?)
     }

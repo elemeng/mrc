@@ -90,8 +90,8 @@ impl crate::Reader {
 pub struct Bzip2Compressor;
 
 impl crate::io::writer::Compressor for Bzip2Compressor {
-    fn compress(data: &[u8]) -> Result<Vec<u8>, Error> {
-        let mut encoder = bzip2::write::BzEncoder::new(Vec::new(), bzip2::Compression::default());
+    fn compress(data: &[u8], level: crate::io::writer::Compression) -> Result<Vec<u8>, Error> {
+        let mut encoder = bzip2::write::BzEncoder::new(Vec::new(), level.to_bzip2());
         std::io::Write::write_all(&mut encoder, data)?;
         Ok(encoder.finish()?)
     }

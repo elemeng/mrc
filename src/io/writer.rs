@@ -96,6 +96,59 @@ macro_rules! write_block_as_body {
     }};
 }
 
+/// Compression level for compressed MRC writers.
+///
+/// Controls the trade-off between compression speed and file size.
+/// Used by [`GzipWriter`](crate::GzipWriter) and [`Bzip2Writer`](crate::Bzip2Writer).
+///
+/// # Example
+/// ```no_run
+/// use mrc::{Compression, create};
+///
+/// let mut writer = create("output.mrc.gz")
+///     .shape([256, 256, 128])
+///     .mode::<f32>()
+///     .compression(Compression::Best)
+///     .finish_gzip()
+///     .unwrap();
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub enum Compression {
+    /// No compression (plain MRC).
+    None,
+    /// Fast compression (minimal CPU, larger output).
+    Fast,
+    /// Balanced compression (default).
+    #[default]
+    Balanced,
+    /// Maximum compression (more CPU, smaller output).
+    Best,
+}
+
+impl Compression {
+    /// Map to flate2 compression level.
+    #[cfg(feature = "gzip")]
+    pub(crate) fn to_flate2(self) -> flate2::Compression {
+        match self {
+            Compression::None => flate2::Compression::none(),
+            Compression::Fast => flate2::Compression::fast(),
+            Compression::Balanced => flate2::Compression::default(),
+            Compression::Best => flate2::Compression::best(),
+        }
+    }
+
+    /// Map to bzip2 compression level.
+    #[cfg(feature = "bzip2")]
+    pub(crate) fn to_bzip2(self) -> bzip2::Compression {
+        match self {
+            Compression::None | Compression::Fast => bzip2::Compression::fast(),
+            Compression::Balanced => bzip2::Compression::default(),
+            Compression::Best => bzip2::Compression::best(),
+        }
+    }
+}
+
 use crate::engine::block::{VolumeShape, VoxelBlock};
 #[cfg(feature = "parallel")]
 use crate::engine::codec::encode_block_parallel;
@@ -214,6 +267,7 @@ pub struct WriterBuilder {
     path: PathBuf,
     header: Header,
     ext_header: Vec<u8>,
+    compression: Compression,
 }
 
 impl WriterBuilder {
@@ -224,7 +278,21 @@ impl WriterBuilder {
             path: path.as_ref().to_path_buf(),
             header: Header::new(),
             ext_header: Vec::new(),
+            compression: Compression::Balanced,
         }
+    }
+
+    /// Set the compression level for compressed writers.
+    ///
+    /// Affects [`finish_gzip`](Self::finish_gzip) and
+    /// [`finish_bzip2`](Self::finish_bzip2). Has no effect on
+    /// [`finish`](Self::finish) (plain) or [`finish_mmap`](Self::finish_mmap).
+    ///
+    /// Default: [`Compression::Balanced`].
+    #[must_use]
+    pub fn compression(mut self, compression: Compression) -> Self {
+        self.compression = compression;
+        self
     }
 
     builder_setters!();
@@ -269,7 +337,7 @@ impl WriterBuilder {
     /// For large volumes consider using [`finish`](Self::finish) instead.
     #[cfg(feature = "gzip")]
     pub fn finish_gzip(self) -> Result<crate::GzipWriter, Error> {
-        CompressedWriter::create(self.path, self.header, &self.ext_header)
+        CompressedWriter::create(self.path, self.header, &self.ext_header, self.compression)
     }
 
     /// Build a bzip2-compressed writer.
@@ -279,7 +347,7 @@ impl WriterBuilder {
     /// For large volumes consider using [`finish`](Self::finish) instead.
     #[cfg(feature = "bzip2")]
     pub fn finish_bzip2(self) -> Result<crate::Bzip2Writer, Error> {
-        CompressedWriter::create(self.path, self.header, &self.ext_header)
+        CompressedWriter::create(self.path, self.header, &self.ext_header, self.compression)
     }
 }
 
@@ -1030,8 +1098,8 @@ impl MmapWriter {
 /// aliases [`GzipWriter`](crate::GzipWriter) and [`Bzip2Writer`](crate::Bzip2Writer).
 #[doc(hidden)]
 pub trait Compressor {
-    /// Compress `data` and return the compressed bytes.
-    fn compress(data: &[u8]) -> Result<Vec<u8>, Error>;
+    /// Compress `data` at the given compression level and return the compressed bytes.
+    fn compress(data: &[u8], level: Compression) -> Result<Vec<u8>, Error>;
 }
 
 /// MRC file writer that buffers the entire file in memory and compresses on
@@ -1059,6 +1127,7 @@ pub struct CompressedWriter<C: Compressor> {
     bytes_per_voxel: usize,
     mode: Mode,
     shape: VolumeShape,
+    compression: Compression,
     _marker: std::marker::PhantomData<C>,
 }
 
@@ -1067,6 +1136,7 @@ impl<C: Compressor> CompressedWriter<C> {
         path: P,
         header: Header,
         ext_header: &[u8],
+        compression: Compression,
     ) -> Result<Self, Error> {
         let mut header = header;
         header.set_file_endian(FileEndian::LittleEndian);
@@ -1101,6 +1171,7 @@ impl<C: Compressor> CompressedWriter<C> {
             bytes_per_voxel,
             mode,
             shape,
+            compression,
             _marker: std::marker::PhantomData,
         })
     }
@@ -1232,7 +1303,7 @@ impl<C: Compressor> CompressedWriter<C> {
         }
         file_bytes.extend_from_slice(&self.data);
 
-        let compressed = C::compress(&file_bytes)?;
+        let compressed = C::compress(&file_bytes, self.compression)?;
         std::fs::write(&self.path, compressed)?;
         Ok(())
     }
