@@ -18,7 +18,7 @@ A reference Python implementation (`mrcfile`) is available on PyPI for specifica
 
 - **Language**: Rust, Edition 2024, MSRV 1.85
 - **Build Tool**: Cargo (no `rust-toolchain.toml` — uses system Rust)
-- **CI**: GitHub Actions (`.github/workflows/rust.yml`) — builds and tests on `ubuntu-latest`, `windows-latest`, `macos-latest`, and inside a `fedora:latest` container for pushes/PRs to `main`
+- **CI**: GitHub Actions (`.github/workflows/rust.yml`) — builds and tests on `ubuntu-latest`, `windows-latest`, `macos-latest` for pushes/PRs to `main`
 - **Error Handling**: `thiserror` 2.x (no-std compatible)
 - **No `unsafe` in public API**: All `unsafe` is internal; the public API is 100% safe Rust.
 - **Optional Dependencies** (as declared in `Cargo.toml`):
@@ -368,9 +368,9 @@ where R: ReaderMethods + ConvertMethods + ... { ... }
 
 ## Testing Strategy
 
-- **Unit Tests**: ~91 tests in inline `mod tests` blocks inside source files (`header.rs`, `engine/simd.rs`, `engine/convert.rs`, `engine/endian.rs`, `engine/stats.rs`, `io/reader.rs`, `lib.rs`, `mode.rs`).
-- **Doc Tests**: ~39 doc-tests (33 run, 6 ignored — for internal-only API patterns) in `lib.rs`, `header.rs`, `validate.rs`, `error.rs`, `io/buffered.rs`, `io/writer.rs`, `io/mmap_reader.rs`, and `engine/codec.rs`.
-- **Integration Tests**: ~21 integration tests in `tests/integration.rs` covering write-then-read roundtrips for Float32, Int16, Uint16, subregion reads, gzip/bzip2 compression, header statistics, MmapReader, Packed4Bit (Mode 101), complex modes, volume stacks, and permissive-mode edge cases.
+- **Unit Tests**: ~101 tests in inline `mod tests` blocks inside source files (`header.rs`, `engine/simd.rs`, `engine/convert.rs`, `engine/endian.rs`, `engine/stats.rs`, `io/reader.rs`, `engine/block.rs`, `lib.rs`, `mode.rs`).
+- **Doc Tests**: ~44 doc-tests (38 run, 6 ignored — for internal-only API patterns) in `lib.rs`, `header.rs`, `validate.rs`, `error.rs`, `io/buffered.rs`, `io/writer.rs`, `io/mmap_reader.rs`, and `engine/codec.rs`.
+- **Integration Tests**: ~23 integration tests in `tests/integration.rs` covering write-then-read roundtrips for Float32, Int16, Uint16, Float16, subregion reads, gzip/bzip2 compression, header statistics, MmapReader, Packed4Bit (Mode 101), complex modes, volume stacks, and permissive-mode edge cases.
 - **Benchmarks**: Criterion benchmarks live in `benches/bench.rs` (requires `--all-features` for mmap benchmarks).
 - **No External Fixtures**: Tests generate temporary MRC files programmatically (using `tempfile` in dev-dependencies) rather than checking large binary files into git.
 
@@ -408,8 +408,7 @@ Three binary targets are available (`src/bin/`):
 
 - The crate is published to **crates.io**.
 - `cargo build --release` produces optimized artifacts.
-- CI only runs on Ubuntu; there is no cross-platform or Windows/macOS testing in CI.
-- The CI workflow builds with `--release` and runs tests (without `--all-features`).
+- The CI workflow builds with `--release` and runs tests across all three platforms.
 
 ## Security Considerations
 

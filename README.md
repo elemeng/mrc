@@ -77,19 +77,9 @@ cargo build --release --bin mrc-validate
 ./mrc-validate protein.mrc
 ```
 
-## Migrating from v0.1
+## Version History
 
-| v0.1 | v0.2 |
-|------|------|
-| `MrcView::new(data)` | `Reader::open(path)` / `open(path)` |
-| `MrcFile::create(path, header)` | `create(path).shape(dims).mode::<T>().finish()` |
-| `MrcView::view::<f32>()` | `reader.slices::<f32>()` |
-| `MrcViewMut` | `Writer` + `VoxelBlock<T>` |
-| `MrcMmap` | `MmapReader` / `MmapWriter` |
-
-v0.2 adds SIMD acceleration, parallel encoding, type conversion iterators, compression support, unified reader API, and FEI extended header parsing.
-
-## Roadmap
+See [update.log](update.log) for detailed changelogs covering all releases from v0.2.6 onward.
 
 **v0.3.x** — Stabilization & Quality ✅
 
