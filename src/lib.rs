@@ -219,9 +219,9 @@
 //! |---|---|---|
 //! | [`Writer`] | [`finish()`](WriterBuilder::finish) | General use, writes straight to disk |
 //! | [`Writer`] (in-memory) | [`Writer::from_writer`] | Memory buffer, e.g. `Cursor<Vec<u8>>` |
-//! | [`Writer`] (mmap) | [`finish_mmap()`](WriterBuilder::finish_mmap) | Very large files (`mmap` feature) |
-//! | [`Writer`] (gzip) | [`finish_gzip()`](WriterBuilder::finish_gzip) | Compressed output (`gzip` feature) |
-//! | [`Writer`] (bzip2) | [`finish_bzip2()`](WriterBuilder::finish_bzip2) | Compressed output (`bzip2` feature) |
+//! | [`Writer`] (mmap) | [`finish_mmap()`](WriterBuilder::finish_mmap) / [`from_writer_mmap`](Writer::from_writer_mmap) | Very large files (`mmap` feature) |
+//! | [`Writer`] (gzip) | [`finish_gzip()`](WriterBuilder::finish_gzip) / [`from_writer_gzip`](Writer::from_writer_gzip) | Compressed output (`gzip` feature) |
+//! | [`Writer`] (bzip2) | [`finish_bzip2()`](WriterBuilder::finish_bzip2) / [`from_writer_bzip2`](Writer::from_writer_bzip2) | Compressed output (`bzip2` feature) |
 //!
 //! Compressed writers support configurable [`Compression`] level via
 //! [`WriterBuilder::compression`]:

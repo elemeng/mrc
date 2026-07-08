@@ -181,6 +181,7 @@ let writer = create("out.mrc")
     .ispg(1)                      // space group
     .exttyp(*b"CCP4")             // 4-byte extended header type
     .nsymbt(1024)                 // extended header size in bytes
+    .set_volume_stack(30)        // configure as volume stack (ispg=401, mz=30)
     .origin([0.0, 0.0, 0.0])     // origin coordinates
     .ext_header_bytes(vec![])     // raw extended header bytes (sets nsymbt)
     .compression(Compression::Best) // compression level for gzip/bzip2
@@ -197,6 +198,9 @@ Additional builder methods behind feature flags:
 | Method | Description |
 |---|---|
 | `Writer::from_writer(writer, header, ext)` | Create from any `Read + Write + Seek` target (e.g. `Cursor<Vec<u8>>`) |
+| `Writer::from_writer_mmap(path, header, ext)` | Create mmap writer from raw `Header` (feature `mmap`) |
+| `Writer::from_writer_gzip(path, header, ext, comp)` | Create gzip writer from raw `Header` (feature `gzip`) |
+| `Writer::from_writer_bzip2(path, header, ext, comp)` | Create bzip2 writer from raw `Header` (feature `bzip2`) |
 | `writer.shape()` | Volume dimensions |
 | `writer.mode()` | Voxel mode |
 | `writer.header()` | Read-only reference to header |
@@ -322,6 +326,7 @@ HeaderBuilder::new()
     .sampling([mx, my, mz])      // cell sampling rates (independent of shape)
     .axis_mapping([1, 2, 3])     // column/row/section axis mapping (mapc/r/s)
     .add_label("my volume")      // append a text label
+    .set_volume_stack(30)        // configure as volume stack (ispg=401, mz=30)
     .build()?                    // → Result<Header>
 ```
 
