@@ -516,7 +516,7 @@ where
     };
     // Avoid the identity-clone when T == f32 by reusing the allocation.
     // SAFETY: The TypeId check guarantees T and f32 are the same type at the
-    // monomorphised call site; the compiler optimises the branch away.
+    // monomorphized call site; the compiler optimizes the branch away.
     if core::any::TypeId::of::<T>() == core::any::TypeId::of::<f32>() {
         let ptr = f32_data.as_ptr() as *mut T;
         let len = f32_data.len();

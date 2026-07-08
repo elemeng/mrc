@@ -128,7 +128,7 @@ impl ValidationReport {
 /// Run comprehensive validation on an already-opened [`Reader`].
 ///
 /// Checks header structure, file size, endianness, data statistics cross-check
-/// (1 % tolerance), and NaN/Inf scanning. Avoids the redundant open that
+/// (1% tolerance), and NaN/Inf scanning. Avoids the redundant open that
 /// [`validate_full`] performs.
 ///
 /// The `warnings` parameter accepts the permissive-mode warnings from
@@ -277,7 +277,7 @@ pub fn validate_reader(
                     } else {
                         issues.push(ValidationIssue::info(
                             "Statistics",
-                            "All statistics match actual data (within 1 % tolerance)".into(),
+                            "All statistics match actual data (within 1% tolerance)".into(),
                         ));
                     }
                 } else {

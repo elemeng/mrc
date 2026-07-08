@@ -3,7 +3,7 @@
 //!
 //! This crate handles file I/O, byte-order detection, and type-safe data
 //! access so you can focus on your science. It's fast (SIMD, parallel
-//! encoding) and works with plain, gzip, and bzip2 files out of the box.
+//! encoding) and works with plain, gzip, and (optionally) bzip2 files.
 //!
 //! See the [README](https://github.com/elemeng/mrc#readme) for installation
 //! instructions, CLI tools, and the project roadmap.
@@ -299,7 +299,7 @@
 //!     ExtHeaderData::Seri(records) => {
 //!         println!("  first tilt: {:.1}°", records[0].alpha_tilt);
 //!     }
-//!     ExtHeaderData::None => println!("No recognised extended header"),
+//!     ExtHeaderData::None => println!("No recognized extended header"),
 //!     _ => {}
 //! }
 //! # Ok(()) }
@@ -393,9 +393,9 @@
 //! ## File validation
 //!
 //! [`validate_full`](validate::validate_full) runs comprehensive checks
-//! on a file — header, size, endianness, data statistics (1 % tolerance),
+//! on a file — header, size, endianness, data statistics (1% tolerance),
 //! and NaN / Inf scanning. Returns a
-//! [`ValidationReport`](validate::ValidationReport) with categorised issues.
+//! [`ValidationReport`](validate::ValidationReport) with categorized issues.
 //!
 //! If you already have an open [`Reader`], use
 //! [`validate_reader`](validate::validate_reader) to avoid re-opening
@@ -487,7 +487,7 @@
 //! | [`FileSizeMismatch`](Error::FileSizeMismatch) | File truncated or has trailing garbage | Re-download or check `mrc-validate` output |
 //! | [`ModeMismatch`](Error::ModeMismatch) | Using `slices::<f32>()` on an Int16 file | Use [`convert::<f32>()`](ConvertMethods::convert) — auto-converts any mode |
 //! | [`BoundsError`](Error::BoundsError) | Block outside volume | Check offset + shape against dimensions |
-//! | [`UnsupportedMode`](Error::UnsupportedMode) | Unrecognised mode, or mode needs the `f16` feature | Enable `f16` feature or convert with another tool |
+//! | [`UnsupportedMode`](Error::UnsupportedMode) | Unrecognized mode, or mode needs the `f16` feature | Enable `f16` feature or convert with another tool |
 //! | `Io` error | File permissions, filesystem issue | Check the file path and permissions |
 //! | Values look wrong | Endianness mismatch | The endianness fallback handles most cases; try `mrc-validate` |
 //!

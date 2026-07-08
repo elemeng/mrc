@@ -313,7 +313,7 @@ pub trait ReaderCore: VoxelSource {
     ///
     /// Routes to the correct parser based on the 4-byte `exttyp` identifier
     /// stored in the header's `extra[8..12]` field. Returns
-    /// [`ExtHeaderData::None`] when the type is unrecognised or the extended
+    /// [`ExtHeaderData::None`] when the type is unrecognized or the extended
     /// header is empty.
     fn parse_extended_header(&self) -> crate::ExtHeaderData {
         let bytes = self.ext_header_bytes();

@@ -288,7 +288,7 @@ impl MmapReader {
     /// Cross-check header statistics against actual data.
     ///
     /// Computes `dmin`, `dmax`, `dmean` and `rms` from the memory-mapped data
-    /// block and compares them with the header values using a 1 % relative
+    /// block and compares them with the header values using a 1% relative
     /// tolerance (matching Python `mrcfile`'s `np.isclose(rtol=0.01)`).
     ///
     /// # Errors

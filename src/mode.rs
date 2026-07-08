@@ -85,7 +85,7 @@ impl Mode {
 
     /// Convert an MRC mode integer to a [`Mode`] enum value.
     ///
-    /// Returns `None` for unrecognised mode values.
+    /// Returns `None` for unrecognized mode values.
     #[inline]
     pub fn from_i32(mode: i32) -> Option<Self> {
         match mode {

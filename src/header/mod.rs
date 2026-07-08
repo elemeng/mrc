@@ -83,7 +83,7 @@ pub enum ExtHeaderType {
     Fei2,
     /// HDF5-based extended header (`"HDF5"`).
     Hdf5,
-    /// Any unrecognised extended header type.
+    /// Any unrecognized extended header type.
     Unknown([u8; 4]),
 }
 
@@ -129,7 +129,7 @@ pub enum ExtHeaderData {
     Fei1(Vec<Fei1Metadata>),
     /// FEI/Thermo Fisher Type 2 metadata records.
     Fei2(Vec<Fei2Metadata>),
-    /// No extended header data (nsymbt == 0) or unrecognised type.
+    /// No extended header data (nsymbt == 0) or unrecognized type.
     None,
 }
 
@@ -319,7 +319,7 @@ impl Header {
     ///
     /// # Endianness
     /// Per crate policy, new MRC files are always written in little-endian format.
-    /// This constructor sets `machst` to little-endian by default and initialises
+    /// This constructor sets `machst` to little-endian by default and initializes
     /// `nversion` to `20141` (latest MRC2014 update).
     #[must_use]
     pub const fn new() -> Self {

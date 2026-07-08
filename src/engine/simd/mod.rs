@@ -712,7 +712,7 @@ mod tests {
     }
 
     #[test]
-    fn test_stats_f32_simd_umaligned() {
+    fn test_stats_f32_simd_unaligned() {
         // Test with non-SIMD-multiple sizes
         for size in [1, 2, 3, 5, 7, 9, 15, 17, 33] {
             let data: Vec<f32> = (0..size).map(|i| i as f32).collect();

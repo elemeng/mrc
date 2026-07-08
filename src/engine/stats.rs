@@ -85,7 +85,7 @@ where
     #[cfg(feature = "simd")]
     {
         // SAFETY: we check the type identity via pointer comparison after
-        // monomorphisation — the compiler optimises the branch away.
+        // monomorphization — the compiler optimizes the branch away.
         if core::any::TypeId::of::<T>() == core::any::TypeId::of::<f32>() {
             let f32_data: &[f32] =
                 unsafe { core::slice::from_raw_parts(data.as_ptr() as *const f32, data.len()) };
@@ -183,7 +183,7 @@ pub(crate) fn is_close(a: f32, b: f32, rtol: f32) -> bool {
 
 /// Validate header statistics against actual data bytes.
 ///
-/// Uses a 1 % relative tolerance (matching Python `mrcfile`'s `np.isclose(rtol=0.01)`).
+/// Uses a 1% relative tolerance (matching Python `mrcfile`'s `np.isclose(rtol=0.01)`).
 /// For complex modes, only RMS is checked.
 pub(crate) fn validate_header_stats(
     header: &crate::Header,
