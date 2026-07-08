@@ -615,7 +615,7 @@ fn error_unsupported_mode() {
     // Write the header + minimal data
     let mut file = std::fs::File::create(f.path()).unwrap();
     file.write_all(&raw_header).unwrap();
-    file.write_all(&vec![0u8; 64]).unwrap(); // data
+    file.write_all(&[0u8; 64]).unwrap(); // data
     drop(file);
     match Reader::open(f.path()) {
         Err(Error::InvalidHeaderDetailed(HeaderValidationError::UnsupportedMode(99))) => {},
@@ -707,7 +707,7 @@ fn validate_full_invalid_file() {
     // Write header + minimal data
     let mut file = std::fs::File::create(f.path()).unwrap();
     file.write_all(&bytes).unwrap();
-    file.write_all(&vec![0u8; 64]).unwrap(); // data
+    file.write_all(&[0u8; 64]).unwrap(); // data
     drop(file);
     let report = mrc::validate::validate_full(f.path(), true).unwrap();
     // Should have warnings (negative NSYMBT) but no hard errors
@@ -805,7 +805,7 @@ fn detect_compression_plain() {
 fn decompression_bomb_limit() {
     // open_gzip_with_limit with a tiny limit should fail
     let f = TempMrc::new("bomb_limit");
-    std::fs::write(f.path(), &[0x1f, 0x8b, 0x00]).unwrap(); // truncated gzip header
+    std::fs::write(f.path(), [0x1f, 0x8b, 0x00]).unwrap(); // truncated gzip header
     match Reader::open_gzip_with_limit(f.path(), 10) {
         Err(_) => {}, // expected: decompression fails or limit exceeded
         Ok(_) => panic!("expected error for tiny limit"),
@@ -831,7 +831,7 @@ fn writer_set_volume_stack() {
     }
     let r = Reader::open(f.path()).unwrap();
     assert!(r.header().is_volume_stack());
-    assert_eq!(r.header().mz, subvol as i32);
+    assert_eq!(r.header().mz, subvol);
     let nvol = nz / subvol as usize;
     let count = r.volumes::<f32>().unwrap().count();
     assert_eq!(count, nvol);
