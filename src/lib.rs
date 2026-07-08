@@ -557,6 +557,11 @@ pub use io::writer::MmapWriter;
 #[cfg(feature = "mmap")]
 pub use io::mmap_reader::MmapReader;
 
+/// Trait alias for types supporting read + write + seek simultaneously.
+///
+/// Used by [`Writer::from_writer`] to accept any appropriate I/O target.
+pub use io::writer::ReadWriteSeek;
+
 /// Gzip-compressed MRC writer (requires `gzip` feature).
 #[cfg(feature = "gzip")]
 pub use io::gzip::GzipWriter;

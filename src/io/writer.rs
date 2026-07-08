@@ -107,6 +107,14 @@ use crate::{Error, Header, Mode};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::PathBuf;
 
+/// Trait alias for types that support read, write, and seek simultaneously.
+///
+/// Required by [`Writer`] which needs random-access read-back for
+/// [`update_header_stats`](Writer::update_header_stats) and must seek back
+/// to rewrite the header on [`finalize`](Writer::finalize).
+pub trait ReadWriteSeek: Read + Write + Seek {}
+impl<T: Read + Write + Seek> ReadWriteSeek for T {}
+
 macro_rules! builder_setters {
     () => {
         /// Set the volume dimensions.
@@ -283,9 +291,22 @@ impl WriterBuilder {
 /// The writer maintains an open file handle and writes data blocks directly
 /// to disk. Call [`finalize`](Self::finalize) when done to ensure the header
 /// is correctly rewritten.
-#[derive(Debug)]
+///
+/// To write to an in-memory buffer instead of a file, use
+/// [`from_writer`](Self::from_writer) with a [`std::io::Cursor`]:
+///
+/// ```no_run
+/// use mrc::{Header, Writer};
+/// use std::io::Cursor;
+///
+/// let buffer: Vec<u8> = Vec::new();
+/// let header = Header::new();
+/// let mut writer = Writer::from_writer(Cursor::new(buffer), header, &[]).unwrap();
+/// // ... write blocks, then finalize
+/// writer.finalize().unwrap();
+/// ```
 pub struct Writer {
-    file: std::fs::File,
+    io: Box<dyn ReadWriteSeek + 'static>,
     header: Header,
     data_offset: u64,
     bytes_per_voxel: usize,
@@ -293,9 +314,56 @@ pub struct Writer {
     shape: VolumeShape,
 }
 
+impl std::fmt::Debug for Writer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Writer")
+            .field("header", &self.header)
+            .field("data_offset", &self.data_offset)
+            .field("bytes_per_voxel", &self.bytes_per_voxel)
+            .field("mode", &self.mode)
+            .field("shape", &self.shape)
+            .finish()
+    }
+}
+
 impl Writer {
+    /// Create a writer that writes to an arbitrary [`Read`] + [`Write`] + [`Seek`] target
+    /// (using the [`ReadWriteSeek`] trait alias).
+    ///
+    /// This enables writing directly to in-memory buffers:
+    ///
+    /// ```no_run
+    /// use mrc::{Header, Writer};
+    /// use std::io::Cursor;
+    ///
+    /// let header = Header::new();
+    /// let mut writer = Writer::from_writer(Cursor::new(Vec::new()), header, &[]).unwrap();
+    /// ```
+    pub fn from_writer<W: Read + Write + Seek + 'static>(
+        writer: W,
+        header: Header,
+        ext_header: &[u8],
+    ) -> Result<Self, Error> {
+        // New files are always little-endian per crate policy
+        Self::_create(Box::new(writer), header, ext_header)
+    }
+
     pub(crate) fn create<P: AsRef<std::path::Path>>(
         path: P,
+        header: Header,
+        ext_header: &[u8],
+    ) -> Result<Self, Error> {
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(path)?;
+        Self::_create(Box::new(file), header, ext_header)
+    }
+
+    fn _create(
+        mut io: Box<dyn ReadWriteSeek + 'static>,
         mut header: Header,
         ext_header: &[u8],
     ) -> Result<Self, Error> {
@@ -304,27 +372,20 @@ impl Writer {
 
         header.validate_detailed()?;
 
-        let mut file = std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .open(path)?;
-
         let mut header_bytes = [0u8; 1024];
         header.encode_to_bytes(&mut header_bytes);
-        file.write_all(&header_bytes)?;
+        io.write_all(&header_bytes)?;
 
         let ext_size = header.nsymbt as usize;
         if ext_size > 0 {
             if ext_header.len() >= ext_size {
-                file.write_all(&ext_header[..ext_size])?;
+                io.write_all(&ext_header[..ext_size])?;
             } else {
                 // Pad with zeros if provided bytes are shorter than nsymbt
-                file.write_all(ext_header)?;
+                io.write_all(ext_header)?;
                 let remaining = ext_size - ext_header.len();
                 let zeros = vec![0u8; remaining];
-                file.write_all(&zeros)?;
+                io.write_all(&zeros)?;
             }
         }
 
@@ -340,7 +401,7 @@ impl Writer {
         let shape = VolumeShape::new(header.nx as usize, header.ny as usize, header.nz as usize);
 
         Ok(Self {
-            file,
+            io,
             header,
             data_offset,
             bytes_per_voxel,
@@ -400,8 +461,8 @@ impl Writer {
             let mut buffer = vec![0u8; byte_len_usize];
             encode_slice(&block.data, &mut buffer, file_endian)?;
 
-            self.file.seek(SeekFrom::Start(start_offset))?;
-            self.file.write_all(&buffer)?;
+            self.io.seek(SeekFrom::Start(start_offset))?;
+            self.io.write_all(&buffer)?;
             return Ok(());
         }
 
@@ -418,8 +479,8 @@ impl Writer {
                 }
                 let row_values = &block.data[block_idx..block_idx + sx];
                 encode_slice(row_values, &mut row_bytes, file_endian)?;
-                self.file.seek(SeekFrom::Start(file_offset))?;
-                self.file.write_all(&row_bytes)?;
+                self.io.seek(SeekFrom::Start(file_offset))?;
+                self.io.write_all(&row_bytes)?;
             }
         }
         Ok(())
@@ -512,8 +573,8 @@ impl Writer {
         for (chunk_idx, encoded) in encoded_chunks {
             let offset = base_offset
                 + (chunk_idx as u64) * (chunk_size as u64) * (self.bytes_per_voxel as u64);
-            self.file.seek(SeekFrom::Start(offset))?;
-            self.file.write_all(&encoded)?;
+            self.io.seek(SeekFrom::Start(offset))?;
+            self.io.write_all(&encoded)?;
         }
 
         Ok(())
@@ -558,8 +619,8 @@ impl Writer {
             if end_offset > (self.data_offset as usize) + self.header.data_size().unwrap_or(0) {
                 return Err(Error::bounds_err());
             }
-            self.file.seek(SeekFrom::Start(start_offset as u64))?;
-            self.file.write_all(&packed[..byte_len])?;
+            self.io.seek(SeekFrom::Start(start_offset as u64))?;
+            self.io.write_all(&packed[..byte_len])?;
             return Ok(());
         }
 
@@ -573,8 +634,8 @@ impl Writer {
                 if packed_end > packed.len() {
                     return Err(Error::bounds_err());
                 }
-                self.file.seek(SeekFrom::Start(file_offset as u64))?;
-                self.file.write_all(&packed[packed_start..packed_end])?;
+                self.io.seek(SeekFrom::Start(file_offset as u64))?;
+                self.io.write_all(&packed[packed_start..packed_end])?;
             }
         }
         Ok(())
@@ -591,11 +652,11 @@ impl Writer {
     /// Returns [`Error::Io`] if seeking or writing fails.
     pub fn finalize(&mut self) -> Result<(), Error> {
         // Rewrite header
-        self.file.seek(SeekFrom::Start(0))?;
+        self.io.seek(SeekFrom::Start(0))?;
 
         let mut header_bytes = [0u8; 1024];
         self.header.encode_to_bytes(&mut header_bytes);
-        self.file.write_all(&header_bytes)?;
+        self.io.write_all(&header_bytes)?;
 
         Ok(())
     }
@@ -610,9 +671,9 @@ impl Writer {
     /// the data is already in the memory map.
     pub fn update_header_stats(&mut self) -> Result<(), Error> {
         let data_size = self.header.data_size().ok_or(Error::InvalidHeader)?;
-        self.file.seek(SeekFrom::Start(self.data_offset))?;
+        self.io.seek(SeekFrom::Start(self.data_offset))?;
         let mut buf = vec![0u8; data_size];
-        self.file.read_exact(&mut buf)?;
+        self.io.read_exact(&mut buf)?;
         update_header_stats_from_bytes(&mut self.header, &buf)?;
         Ok(())
     }

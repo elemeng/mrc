@@ -8,6 +8,7 @@ use std::path::Path;
 
 /// Detected compression format of an MRC file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum CompressionType {
     /// Uncompressed MRC file.
     Plain,

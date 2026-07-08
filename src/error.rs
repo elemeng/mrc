@@ -31,8 +31,13 @@ use serde::{Deserialize, Serialize};
 /// The top-level error type for MRC I/O operations.
 ///
 /// Most fallible functions in this crate return `Result<T, Error>`.
+///
+/// This enum is `#[non_exhaustive]` — new variants may be added in minor
+/// releases without breaking exhaustive matches. Use a wildcard arm (`_`)
+/// when matching all variants.
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(thiserror::Error, Debug)]
+#[non_exhaustive]
 pub enum Error {
     /// An underlying I/O operation failed.
     #[error("IO error: {0}")]
@@ -171,6 +176,15 @@ impl Error {
             offset: None,
             shape: None,
             volume: None,
+        }
+    }
+}
+
+impl From<Error> for std::io::Error {
+    fn from(err: Error) -> Self {
+        match &err {
+            Error::Io(e) => std::io::Error::new(e.kind(), err.to_string()),
+            _ => std::io::Error::other(err.to_string()),
         }
     }
 }

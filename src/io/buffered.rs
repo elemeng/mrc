@@ -167,7 +167,7 @@ impl Reader {
         let mut header_bytes = [0u8; 1024];
         file.read_exact(&mut header_bytes)?;
 
-        let (header, warnings, endian, data_size) =
+        let (header, warnings, _endian, data_size) =
             crate::io::reader_common::parse_header(&header_bytes, permissive)?;
 
         let ext_size = header.nsymbt as usize;
@@ -190,10 +190,133 @@ impl Reader {
             }
         }
 
+        Self::_build_reader(header, ext_header, data, warnings)
+    }
+
+    fn _open_plain<P: AsRef<std::path::Path>>(
+        path: P,
+        permissive: bool,
+    ) -> Result<(Self, Vec<String>), Error> {
+        Self::_open_plain_file(std::fs::File::open(path)?, permissive)
+    }
+
+    /// Read an MRC file from any [`Read`] source (in-memory buffer, network stream, etc.).
+    ///
+    /// The entire source is read into memory, then parsed. For file-backed reading,
+    /// prefer [`open`](Self::open) which can use memory-mapped I/O for large files.
+    ///
+    /// # Example
+    /// ```
+    /// use mrc::{Header, Reader};
+    /// use std::io::Cursor;
+    ///
+    /// // Create a minimal valid MRC file in memory
+    /// let mut header = Header::new();
+    /// header.nx = 4; header.ny = 4; header.nz = 1;
+    /// header.mx = 4; header.my = 4; header.mz = 1;
+    /// header.mode = 2;
+    /// let mut header_bytes = [0u8; 1024];
+    /// header.encode_to_bytes(&mut header_bytes);
+    /// let mut bytes = header_bytes.to_vec();
+    /// bytes.extend_from_slice(&[0u8; 64]); // 4×4×1 Float32 = 64 bytes
+    ///
+    /// let reader = Reader::from_reader(Cursor::new(bytes)).unwrap();
+    /// assert_eq!(reader.shape().nx, 4);
+    /// ```
+    pub fn from_reader<R: std::io::Read>(mut reader: R) -> Result<Self, Error> {
+        let mut buf = Vec::new();
+        reader.read_to_end(&mut buf)?;
+        Self::_read_from_buf(buf, false).map(|(r, _)| r)
+    }
+
+    /// Read from any [`Read`] source in permissive mode.
+    pub fn from_reader_permissive<R: std::io::Read>(
+        mut reader: R,
+    ) -> Result<(Self, Vec<String>), Error> {
+        let mut buf = Vec::new();
+        reader.read_to_end(&mut buf)?;
+        Self::_read_from_buf(buf, true)
+    }
+
+    /// Parse an MRC file directly from an in-memory byte buffer.
+    ///
+    /// This is useful when the data is already in memory (e.g. from a camera
+    /// readout, embedded resource, or downloaded blob) and avoids an extra
+    /// copy through [`Cursor`](std::io::Cursor).
+    ///
+    /// # Example
+    /// ```
+    /// use mrc::{Header, Reader};
+    ///
+    /// // Create a minimal valid MRC file in memory
+    /// let mut header = Header::new();
+    /// header.nx = 4; header.ny = 4; header.nz = 1;
+    /// header.mx = 4; header.my = 4; header.mz = 1;
+    /// header.mode = 2;
+    /// let mut header_bytes = [0u8; 1024];
+    /// header.encode_to_bytes(&mut header_bytes);
+    /// let mut bytes = header_bytes.to_vec();
+    /// bytes.extend_from_slice(&[0u8; 64]); // 4×4×1 Float32 = 64 bytes
+    ///
+    /// let reader = Reader::from_bytes(bytes).unwrap();
+    /// assert_eq!(reader.shape().nx, 4);
+    /// ```
+    pub fn from_bytes(data: Vec<u8>) -> Result<Self, Error> {
+        Self::_read_from_buf(data, false).map(|(r, _)| r)
+    }
+
+    /// Parse an MRC file from an in-memory byte buffer in permissive mode.
+    pub fn from_bytes_permissive(data: Vec<u8>) -> Result<(Self, Vec<String>), Error> {
+        Self::_read_from_buf(data, true)
+    }
+
+    /// Parse an MRC file from an in-memory byte buffer (internal, with permissive flag).
+    fn _read_from_buf(data: Vec<u8>, permissive: bool) -> Result<(Self, Vec<String>), Error> {
+        if data.len() < 1024 {
+            return Err(Error::InvalidHeader);
+        }
+        let mut header_bytes = [0u8; 1024];
+        header_bytes.copy_from_slice(&data[..1024]);
+        let (header, warnings, _endian, data_size) =
+            crate::io::reader_common::parse_header(&header_bytes, permissive)?;
+
+        let ext_size = header.nsymbt as usize;
+        let ext_header = if ext_size > 0 && 1024 + ext_size <= data.len() {
+            data[1024..1024 + ext_size].to_vec()
+        } else {
+            Vec::new()
+        };
+
+        let data_offset = header.data_offset();
+        let voxel_data = if data_offset < data.len() {
+            let available = data.len() - data_offset;
+            let expected = data_size.min(available);
+            data[data_offset..data_offset + expected].to_vec()
+        } else {
+            Vec::new()
+        };
+
+        if !permissive && voxel_data.len() != data_size {
+            return Err(Error::FileSizeMismatch {
+                expected: header.data_offset() + data_size,
+                actual: data.len(),
+            });
+        }
+
+        Self::_build_reader(header, ext_header, voxel_data, warnings)
+    }
+
+    /// Construct a Reader from parsed header + data, detecting IMOD unsigned Mode 0.
+    fn _build_reader(
+        header: Header,
+        ext_header: Vec<u8>,
+        data: Vec<u8>,
+        warnings: Vec<String>,
+    ) -> Result<(Self, Vec<String>), Error> {
         let shape = VolumeShape::new(header.nx as usize, header.ny as usize, header.nz as usize);
         let mode = Mode::from_i32(header.mode).ok_or(Error::UnsupportedMode)?;
+        let endian = header.detect_endian();
 
-        // Detect IMOD unsigned Mode 0
         let mut warnings = warnings;
         if mode == Mode::Int8 {
             if let Some(imod) = header.detect_imod() {
@@ -218,13 +341,6 @@ impl Reader {
             },
             warnings,
         ))
-    }
-
-    fn _open_plain<P: AsRef<std::path::Path>>(
-        path: P,
-        permissive: bool,
-    ) -> Result<(Self, Vec<String>), Error> {
-        Self::_open_plain_file(std::fs::File::open(path)?, permissive)
     }
 
     /// Volume dimensions of the opened file.
