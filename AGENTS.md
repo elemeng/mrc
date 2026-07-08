@@ -286,9 +286,11 @@ The top-level `lib.rs` is the *only* public entry point. Internal modules (`engi
 
 | Visibility | Items |
 |------------|-------|
-| **Public (in lib.rs)** | `open`, `create`, `Reader`, `WriterBuilder`, `Writer`, `Header`, `HeaderBuilder`, `Mode`, `Voxel`, `VoxelBlock`, `VolumeShape`, `RegionIter`, `SliceStepper`, `SlabStepper`, `TileStepper`, `FileEndian`, `Error`, `HeaderValidationError`, `MmapReader`, `MmapWriter`, `GzipWriter`, `Bzip2Writer`, `validate_full`, `validate_reader`, `ValidationReport`, `ValidationIssue`, `Severity`, FEI types, CCP4/MRCO/SERI/AGAR types, IMOD types, `ComplexToRealStrategy`, `M0Interpretation`, `Int16Complex`, `Float32Complex`, `convert_u8_slice_to_u16`, `convert_u16_slice_to_u8`, `reinterpret_m0`, `DEFAULT_MAX_DECOMPRESSED_BYTES`, `ReaderMethods`, `ConvertMethods`, `ExtHeaderType`, `ExtHeaderData` |
+| **Public (in lib.rs)** | `open`, `create`, `Reader`, `WriterBuilder`, `Writer`, `Header`, `HeaderBuilder`, `Mode`, `Voxel`, `VoxelBlock`, `VolumeShape`, `RegionIter`, `SliceStepper`, `SlabStepper`, `TileStepper`, `FileEndian`, `Error`, `HeaderValidationError`, `MmapReader`, `MmapWriter`, `GzipWriter`, `Bzip2Writer`, `validate_full`, `validate_reader`, `ValidationReport`, `ValidationIssue`, `Severity`, FEI types, CCP4/MRCO/SERI/AGAR types, IMOD types, `ComplexToRealStrategy`, `M0Interpretation`, `Int16Complex`, `Float32Complex`, `convert_u8_slice_to_u16`, `convert_u16_slice_to_u8`, `reinterpret_m0`, `DEFAULT_MAX_DECOMPRESSED_BYTES`, `ReaderMethods`, `ConvertMethods`, `ExtHeaderType`, `ExtHeaderData`, `Compression`, `ReadWriteSeek` |
 | **`#[doc(hidden)]`** | `VoxelSource`, `ReaderCore`, `EndianCodec`, `Compressor`, `MachstInfo`, `CompressionType`, `detect_compression`, `GzipCompressor`, `Bzip2Compressor`, `EndianFallbackWarning`, `serde_byte_array` |
 | **`pub(crate)` only** | `validate_block_bounds`, `gather_block_bytes`, `encode_block_to_buf`, `decode_block`, `decode_native_endian`, `decode_slice`, `encode_slice`, `encode_block_parallel`, `parse_header`, `DecompressedMrc`, `open_compressed`, `compute_stats`, `validate_header_stats`, `unpack_u4_bytes_to_u8`, `convert_i8_slice_to_f32`, `convert_i16_slice_to_f32`, `convert_u16_slice_to_f32`, `convert_f32_slice_to_i16`, `convert_f32_slice_to_u16`, `convert_f32_slice_to_i8` |
+
+Key user-facing enums (`Error`, `Mode`, `Compression`, `CompressionType`, `ComplexToRealStrategy`, `M0Interpretation`, `ExtHeaderType`, `ExtHeaderData`) use `#[non_exhaustive]` to allow future variants. Match with a wildcard arm (`_`) in user code.
 
 ## Usage Note — Trait Imports (Optional)
 
@@ -369,7 +371,7 @@ where R: ReaderMethods + ConvertMethods + ... { ... }
 ## Testing Strategy
 
 - **Unit Tests**: ~101 tests in inline `mod tests` blocks inside source files (`header.rs`, `engine/simd.rs`, `engine/convert.rs`, `engine/endian.rs`, `engine/stats.rs`, `io/reader.rs`, `engine/block.rs`, `lib.rs`, `mode.rs`).
-- **Doc Tests**: ~44 doc-tests (38 run, 6 ignored — for internal-only API patterns) in `lib.rs`, `header.rs`, `validate.rs`, `error.rs`, `io/buffered.rs`, `io/writer.rs`, `io/mmap_reader.rs`, and `engine/codec.rs`.
+- **Doc Tests**: ~49 doc-tests (43 run, 6 ignored — for internal-only API patterns) in `lib.rs`, `header.rs`, `validate.rs`, `error.rs`, `io/buffered.rs`, `io/writer.rs`, `io/mmap_reader.rs`, and `engine/codec.rs`.
 - **Integration Tests**: ~23 integration tests in `tests/integration.rs` covering write-then-read roundtrips for Float32, Int16, Uint16, Float16, subregion reads, gzip/bzip2 compression, header statistics, MmapReader, Packed4Bit (Mode 101), complex modes, volume stacks, and permissive-mode edge cases.
 - **Benchmarks**: Criterion benchmarks live in `benches/bench.rs` (requires `--all-features` for mmap benchmarks).
 - **No External Fixtures**: Tests generate temporary MRC files programmatically (using `tempfile` in dev-dependencies) rather than checking large binary files into git.

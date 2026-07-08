@@ -107,6 +107,10 @@ callers will never need to import them.
 | `Reader::open_permissive(path)` | `Result<(Reader, Vec<String>)>` | Open with lenient header validation; warnings returned separately |
 | `Reader::open_gzip_permissive(path)` | `Result<(Reader, Vec<String>)>` | Permissive gzip |
 | `Reader::open_bzip2_permissive(path)` | `Result<(Reader, Vec<String>)>` | Permissive bzip2 |
+| `Reader::from_reader(r)` | `Result<Reader>` | Read from any `Read` source (memory, network, etc.) |
+| `Reader::from_reader_permissive(r)` | `Result<(Reader, Vec<String>)>` | Permissive read from any `Read` source |
+| `Reader::from_bytes(data)` | `Result<Reader>` | Parse from in-memory `Vec<u8>` |
+| `Reader::from_bytes_permissive(data)` | `Result<(Reader, Vec<String>)>` | Permissive parse from `Vec<u8>` |
 | `reader.shape()` | `VolumeShape` | Volume dimensions `(nx, ny, nz)` |
 | `reader.mode()` | `Mode` | Voxel data mode |
 | `reader.header()` | `&Header` | Reference to parsed header |
@@ -208,6 +212,8 @@ let writer = create("out.mrc")
     .nsymbt(1024)                 // extended header size in bytes
     .origin([0.0, 0.0, 0.0])     // origin coordinates
     .ext_header_bytes(vec![])     // raw extended header bytes (sets nsymbt)
+    .compression(Compression::Best) // compression level for gzip/bzip2
+    .finish()?;     // raw extended header bytes (sets nsymbt)
     .finish()?;                   // → Result<Writer>
 ```
 
@@ -220,6 +226,7 @@ Additional builder methods behind feature flags:
 
 | Method | Description |
 |---|---|
+| `Writer::from_writer(writer, header, ext)` | Create from any `ReadWriteSeek` target (e.g. `Cursor<Vec<u8>>`) |
 | `writer.shape()` | Volume dimensions |
 | `writer.mode()` | Voxel mode |
 | `writer.header()` | Mutable access to header (modify before `finalize`) |

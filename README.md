@@ -48,8 +48,10 @@ See **[docs.rs/mrc](https://docs.rs/mrc)** for the complete API reference, or
 **[APIs.md](APIs.md)** in this repository for a local API surface overview.
 
 - Reading files — `Reader`, `MmapReader`, compressed I/O, permissive mode,
-  decompression bomb protection (256 GiB limit, configurable)
-- Writing files — `Writer`, `MmapWriter`, `GzipWriter`, `Bzip2Writer`
+  decompression bomb protection (256 GiB limit, configurable);
+  also `from_reader()` / `from_bytes()` for in-memory and stream sources
+- Writing files — `Writer`, `MmapWriter`, `GzipWriter`, `Bzip2Writer`;
+  `from_writer()` for in-memory targets; `Compression` level control
 - Iterators — slices, slabs, tiles, volumes
 - Auto-conversion — `reader.convert::<T>().slices()` etc.
 - Full-volume reads — `read_volume::<T>()`, `read_volume_u8()`,
