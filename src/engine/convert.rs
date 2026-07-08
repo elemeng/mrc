@@ -19,7 +19,7 @@ use crate::mode::M0Interpretation;
 /// The caller must ensure that `S` and `T` have the same size and alignment,
 /// and that the byte pattern of `S` is valid for `T`.  This is satisfied when
 /// the caller has verified `TypeId::of::<S>() == TypeId::of::<T>()` (which
-/// guarantees `S` and `T` are the same type at the monomorphised call site).
+/// guarantees `S` and `T` are the same type at the monomorphized call site).
 unsafe fn reinterpret_vec<S, T>(v: Vec<S>) -> Vec<T> {
     debug_assert_eq!(core::mem::size_of::<S>(), core::mem::size_of::<T>());
     debug_assert_eq!(core::mem::align_of::<S>(), core::mem::align_of::<T>());

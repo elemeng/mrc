@@ -495,7 +495,7 @@ impl ExtHeaderType {
 ```
 
 Maps the 4-byte EXTTYP identifier from `extra[8..12]` to a Rust enum for generic dispatch.
-`Unknown` captures any unrecognised identifier.
+`Unknown` captures any unrecognized identifier.
 
 ```rust
 pub enum ExtHeaderData {
@@ -676,7 +676,7 @@ impl Fei2Metadata {
 |---|---|
 | `Io(std::io::Error)` | Underlying I/O failure |
 | `InvalidHeader` | Malformed header |
-| `UnsupportedMode` | Mode not recognised |
+| `UnsupportedMode` | Mode not recognized |
 | `BoundsError { offset?, shape?, volume? }` | Block outside volume bounds (optional context) |
 | `TypeMismatch { expected, actual }` | Byte size mismatch |
 | `ValueOutOfRange { value, max }` | Voxel value exceeds target type range |
