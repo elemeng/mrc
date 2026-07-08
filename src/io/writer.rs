@@ -1,6 +1,6 @@
 //! MRC file writer with block-based API.
 //!
-//! Provides [`Writer`] (standard file I/O), [`MmapWriter`](crate::MmapWriter)
+//! Provides [`Writer`], a unified writer supporting file, mmap, gzip, and bzip2 output.
 //! (memory-mapped, requires `mmap`), and [`CompressedWriter`] (gzip/bzip2 backend).
 //! Use [`WriterBuilder`] or the [`create`](crate::create) convenience function
 //! to construct a writer.
@@ -323,7 +323,8 @@ impl WriterBuilder {
 
     /// Build a memory-mapped writer.
     ///
-    /// Equivalent to [`finish`](Self::finish) but creates an [`MmapWriter`]
+    /// Equivalent to [`finish`](Self::finish) but uses memory-mapped output
+    /// (requires the `mmap` feature).
     /// instead of a [`Writer`].
     #[cfg(feature = "mmap")]
     pub fn finish_mmap(self) -> Result<MmapWriter, Error> {
@@ -395,8 +396,8 @@ impl std::fmt::Debug for Writer {
 }
 
 impl Writer {
-    /// Create a writer that writes to an arbitrary [`Read`] + [`Write`] + [`Seek`] target
-    /// (using the [`ReadWriteSeek`] trait alias).
+    /// Create a writer that writes to an arbitrary [`std::io::Read`] +
+    /// [`std::io::Write`] + [`std::io::Seek`] target.
     ///
     /// This enables writing directly to in-memory buffers:
     ///
@@ -735,7 +736,7 @@ impl Writer {
     /// This reads the entire data block back from disk — for very large files,
     /// consider computing statistics at write time and setting them via
     /// [`header`](Self::header) before calling [`finalize`](Self::finalize).
-    /// The [`MmapWriter::update_header_stats`] alternative is zero-copy because
+    /// The mmap-backed writer alternative is zero-copy because
     /// the data is already in the memory map.
     pub fn update_header_stats(&mut self) -> Result<(), Error> {
         let data_size = self.header.data_size().ok_or(Error::InvalidHeader)?;

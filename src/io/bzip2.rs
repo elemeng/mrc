@@ -72,9 +72,9 @@ impl crate::Reader {
     }
 }
 
-/// Bzip2 compressor backend for [`CompressedWriter`](crate::io::writer::CompressedWriter).
+/// Bzip2 compressor backend.
 ///
-/// This type is `#[doc(hidden)]` — use the [`Bzip2Writer`](crate::Bzip2Writer) type alias.
+/// This type is `#[doc(hidden)]`.
 #[doc(hidden)]
 #[derive(Debug)]
 pub struct Bzip2Compressor;

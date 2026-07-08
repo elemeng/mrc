@@ -84,7 +84,7 @@ enum DataSource {
 /// MRC file reader with automatic backend selection.
 ///
 /// Opens files via memory mapping (zero-copy for large files) or buffered
-/// I/O (in-memory for smaller files). Accepts custom [`Read`] sources
+/// I/O (in-memory for smaller files). Accepts custom [`std::io::Read`] sources
 /// via [`from_reader`](Self::from_reader).
 ///
 /// All iteration methods (`slices`, `slabs`, `tiles`, `subregion`, etc.)
@@ -144,7 +144,7 @@ impl Reader {
         Self::_open_plain(path, false).map(|(r, _)| r)
     }
 
-    /// Read an MRC file from any [`Read`] source.
+    /// Read an MRC file from any [`std::io::Read`] source.
     ///
     /// The entire source is read into memory, then parsed.
     pub fn from_reader<R: std::io::Read>(mut reader: R) -> Result<Self, Error> {
@@ -153,7 +153,7 @@ impl Reader {
         Self::_read_from_buf(buf, false).map(|(r, _)| r)
     }
 
-    /// Read from any [`Read`] source in permissive mode.
+    /// Read from any [`std::io::Read`] source in permissive mode.
     pub fn from_reader_permissive<R: std::io::Read>(
         mut reader: R,
     ) -> Result<(Self, Vec<String>), Error> {

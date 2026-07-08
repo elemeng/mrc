@@ -72,7 +72,7 @@ impl VolumeShape {
 /// A contiguous chunk of voxel data with a 3D offset and shape.
 ///
 /// Created by [`VoxelBlock::new`] or returned by reader methods such as
-/// [`Reader::slices`] and [`Reader::subregion`].
+/// [`crate::Reader::slices`] and [`crate::Reader::subregion`].
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone)]
 pub struct VoxelBlock<T> {

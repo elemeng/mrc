@@ -72,9 +72,9 @@ impl crate::Reader {
     }
 }
 
-/// Gzip compressor backend for [`CompressedWriter`](crate::io::writer::CompressedWriter).
+/// Gzip compressor backend.
 ///
-/// This type is `#[doc(hidden)]` — use the [`GzipWriter`](crate::GzipWriter) type alias.
+/// This type is `#[doc(hidden)]`.
 #[doc(hidden)]
 #[derive(Debug)]
 pub struct GzipCompressor;
