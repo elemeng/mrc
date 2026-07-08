@@ -114,7 +114,6 @@ callers will never need to import them.
 | `reader.data_bytes()` | `&[u8]` | Raw voxel data bytes |
 | `reader.ext_header_bytes()` | `&[u8]` | Extended header bytes (empty if none) |
 | `reader.read_block_bytes(offset, shape)` | `Result<Vec<u8>>` | Read raw bytes for any sub-block |
-| `reader.read_block::<T>(offset, shape)` | `Result<VoxelBlock<T>>` | Deprecated, use `subregion` instead |
 | `reader.validate_header_stats()` | `Result<()>` | Cross-check header stats vs actual data (1% tolerance) |
 | `reader.parse_extended_header()` | `ExtHeaderData` | Auto-detect EXTTYP and parse extended header bytes |
 | `reader.fei1_metadata()` | `Option<Vec<Fei1Metadata>>` | Parse FEI1 records from extended header |
@@ -665,6 +664,43 @@ impl Fei2Metadata {
 `detector_commercial_name`, `start/end_tilt_angle`, `tilt_per_image`, `tilt_speed`,
 `beam_center_x/y_pixel`, `cfeg_flash_timestamp`, `phase_plate_position_index`,
 `objective_aperture_name`.
+
+### Other Extended Header Formats
+
+```rust
+use mrc::{
+    Ccp4Record, MrcoRecord, SeriRecord, AgarRecord,
+    CCP4_RECORD_SIZE, MRCO_RECORD_SIZE, SERI_RECORD_SIZE, AGAR_RECORD_SIZE,
+    parse_ccp4_records, parse_mrco_records, parse_seri_records, parse_agar_records,
+};
+```
+
+```rust
+pub const CCP4_RECORD_SIZE: usize = 80;
+pub const MRCO_RECORD_SIZE: usize = 80;
+pub const SERI_RECORD_SIZE: usize = 256;
+pub const AGAR_RECORD_SIZE: usize = 1024;
+
+// Parse extended header bytes into typed records
+pub fn parse_ccp4_records(bytes: &[u8]) -> Option<Vec<Ccp4Record>>;
+pub fn parse_mrco_records(bytes: &[u8]) -> Option<Vec<MrcoRecord>>;
+pub fn parse_seri_records(bytes: &[u8]) -> Option<Vec<SeriRecord>>;
+pub fn parse_agar_records(bytes: &[u8]) -> Option<Vec<AgarRecord>>;
+```
+
+| Format | Record size | Typical use |
+|--------|-------------|-------------|
+| CCP4 | 80 bytes | CCP4 suite symmetry records |
+| MRCO | 80 bytes | Legacy MRC format records |
+| SERI | 256 bytes | SerialEM tilt-series metadata |
+| AGAR | 1024 bytes | Agard-style microscope metadata |
+
+Access via `reader.ccp4_records()`, `reader.mrco_records()`, etc. on any open
+reader, or directly via `parse_*_records()` for raw byte slices.
+
+`Ccp4Record` has an `as_str()` method returning trimmed symmetry text.
+`SeriRecord` exposes the `alpha_tilt` field directly; all other record types
+store raw bytes for caller interpretation.
 
 ---
 
