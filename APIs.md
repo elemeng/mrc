@@ -149,6 +149,9 @@ Then use the wrapper's inherent methods:
 | `reader.convert::<T>().tiles(shape)` | iterator yielding `VoxelBlock<T>` | Same as `slices` but arbitrary 3D tiles |
 | `reader.convert::<T>().subregion(offset, shape)` | `Result<VoxelBlock<T>>` | Single block at given offset/shape, auto-converted |
 | `reader.convert::<T>().read_volume()` | `Result<VoxelBlock<T>>` | Full volume as one block, auto-converted |
+| `reader.convert::<T>().with_complex_strategy(s)` | `Self` (builder) | Configure complex‑mode reduction (RealPart, Magnitude, etc.) |
+| `reader.convert::<T>().with_m0_interpretation(i)` | `Self` (builder) | Configure Mode 0 as Signed or Unsigned |
+| `reader.convert::<T>().to_ndarray()` | `Result<Array3<T>>` (feature `ndarray`) | Full volume as an `ndarray::Array3` |
 
 ### Performance note: memory-mapped access
 

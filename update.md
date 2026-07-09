@@ -1,5 +1,91 @@
 # Update Log
 
+## 2026-07-09 — Documentation refinements
+
+### API Exposure
+
+- **`ConvertReader`** — re-exported from crate root (was `pub` in a private module,
+  invisible to docs). All 8 public methods now documented with doc comments.
+- **`Fei1Metadata` / `Fei2Metadata`** — all 61 public fields now have doc comments
+  (removed `#[allow(missing_docs)]`).
+
+### Stale References Fixed
+
+- **CLI binary name** — all docs (`src/lib.rs`, `README.md`, `AGENTS.md`) refer to
+  the binary as `mrc-cli` rather than `mrc`, matching `Cargo.toml`.
+- **`APIs.md`** — ConvertReader methods table expanded with `with_complex_strategy`,
+  `with_m0_interpretation`, `to_ndarray` rows.
+- **`AGENTS.md`** — `ConvertReader` added to Public API Surface table.
+
+### Verification
+
+- 0 doc warnings, 396 tests pass.
+
+---
+
+## 2026-07-08 — v0.4.1 → v0.5.0
+
+~30 files changed. This release focuses on API completeness, documentation accuracy, and
+code quality — closing gaps between the public API surface and what users actually need.
+
+### API Additions
+
+- **`Writer::header_mut()`** — mutable header access for mid-write modifications
+  (previously only `&Header` was exposed)
+- **Missing `WriterBuilder` setters** — `cell_angles()`, `nstart()`, `sampling()`,
+  `axis_mapping()`, `add_label()` added to `builder_setters!()` macro, matching
+  `HeaderBuilder`
+- **`HeaderBuilder::mode_raw()`** — set raw mode constant for types without a `Voxel`
+  impl (e.g. Packed4Bit)
+- **`#[must_use]` on `WriterBuilder::ext_header_bytes`** — all builder methods now
+  consistently annotated
+
+### Bug Fixes
+
+- **`is_truncated()` now works for buffered readers** — the `Buffered` variant was a
+  tuple with no `truncated` flag; `is_truncated()` always returned `false` for
+  permissive-mode buffered reads. Changed to struct variant with `truncated: bool`.
+- **`write_u4_block` wrong error variant** — values > 15 returned `BoundsError`
+  (geometry error) instead of the correct `ValueOutOfRange { value, max: 15 }`
+- **`_read_from_buf` ext_header truncation** — extended header bytes were silently
+  dropped when the input buffer was shorter than declared `ext_size`; now emits a
+  warning in permissive mode
+- **Broken intra-doc link** — ``[`Voxel`]`` in `HeaderBuilder::mode_raw` resolved
+  via ``[`crate::Voxel`]``
+
+### Performance
+
+- **Eliminated f32 clone in `write_block_as_body`** — the Float32 pass-through arm
+  cloned the entire `Vec<f32>` just to construct a temporary `VoxelBlock`. Extracted
+  `write_block_data()` from `write_block()`, allowing direct slice-to-buffer encoding.
+- **`write_u8_block` skips temporary `VoxelBlock`** — widened data written directly
+  via `write_block_data::<u16>()` instead of building a `VoxelBlock<u16>` wrapper.
+
+### Documentation Overhaul
+
+- **`src/lib.rs`** — Restructured from 11 to 14 top-level sections, removing the
+  "Advanced topics" grab-bag. Added richer examples: iteration patterns (`slices`,
+  `slabs`, `tiles`), `write_block_as()` auto-conversion, `write_u8_block`/`write_u4_block`
+  convenience methods, special-mode reads (`slices_u8`, `slices_mode0`),
+  `FileEndian::from_machst()` detection, `validate_full()` report inspection, volume
+  stack header configuration, error match example, `is_truncated()` detection.
+  47 doc-tests (up from 41).
+- **`README.md`** — Quick Start updated with `update_header_stats()` in the write
+  example. Roadmap filled for v0.5.x. Stale badge refs cleaned.
+- **`APIs.md`** — Fixed `RegionIter` lifetime, "backing by" typo, added `mode_raw` to
+  `HeaderBuilder`, corrected feature flag descriptions.
+- **`AGENTS.md`** — Updated simd path to `simd/` directory, removed stale file refs
+  (`buffered.rs`, `mmap_reader.rs`, `VoxelSource`, `ReaderCore`), fixed `RegionIter`
+  type params, corrected test counts throughout, removed non-existent type aliases
+  (`MmapWriter`, `GzipWriter`, `Bzip2Writer`).
+
+### Testing
+
+- 98 unit tests, 23 integration tests, 47 doc-tests — all pass across debug, release,
+  and --all-features builds. 0 clippy warnings, 0 doc warnings.
+
+---
+
 ## 2026-07-07 — v0.3.x → v0.4.1
 
 ~3,200 lines changed across ~40 files. This release focuses on API quality, header ergonomics,
@@ -146,66 +232,3 @@ debug, release, and --all-features builds.
 ### References
 
 - MRC2014 Specification: https://www.ccpem.ac.uk/mrc-format/mrc2014/
-
----
-
-## 2026-07-08 — v0.4.1 → v0.5.0
-
-~30 files changed. This release focuses on API completeness, documentation accuracy, and
-code quality — closing gaps between the public API surface and what users actually need.
-
-### API Additions
-
-- **`Writer::header_mut()`** — mutable header access for mid-write modifications
-  (previously only `&Header` was exposed)
-- **Missing `WriterBuilder` setters** — `cell_angles()`, `nstart()`, `sampling()`,
-  `axis_mapping()`, `add_label()` added to `builder_setters!()` macro, matching
-  `HeaderBuilder`
-- **`HeaderBuilder::mode_raw()`** — set raw mode constant for types without a `Voxel`
-  impl (e.g. Packed4Bit)
-- **`#[must_use]` on `WriterBuilder::ext_header_bytes`** — all builder methods now
-  consistently annotated
-
-### Bug Fixes
-
-- **`is_truncated()` now works for buffered readers** — the `Buffered` variant was a
-  tuple with no `truncated` flag; `is_truncated()` always returned `false` for
-  permissive-mode buffered reads. Changed to struct variant with `truncated: bool`.
-- **`write_u4_block` wrong error variant** — values > 15 returned `BoundsError`
-  (geometry error) instead of the correct `ValueOutOfRange { value, max: 15 }`
-- **`_read_from_buf` ext_header truncation** — extended header bytes were silently
-  dropped when the input buffer was shorter than declared `ext_size`; now emits a
-  warning in permissive mode
-- **Broken intra-doc link** — ``[`Voxel`]`` in `HeaderBuilder::mode_raw` resolved
-  via ``[`crate::Voxel`]``
-
-### Performance
-
-- **Eliminated f32 clone in `write_block_as_body`** — the Float32 pass-through arm
-  cloned the entire `Vec<f32>` just to construct a temporary `VoxelBlock`. Extracted
-  `write_block_data()` from `write_block()`, allowing direct slice-to-buffer encoding.
-- **`write_u8_block` skips temporary `VoxelBlock`** — widened data written directly
-  via `write_block_data::<u16>()` instead of building a `VoxelBlock<u16>` wrapper.
-
-### Documentation Overhaul
-
-- **`src/lib.rs`** — Restructured from 11 to 14 top-level sections, removing the
-  "Advanced topics" grab-bag. Added richer examples: iteration patterns (`slices`,
-  `slabs`, `tiles`), `write_block_as()` auto-conversion, `write_u8_block`/`write_u4_block`
-  convenience methods, special-mode reads (`slices_u8`, `slices_mode0`),
-  `FileEndian::from_machst()` detection, `validate_full()` report inspection, volume
-  stack header configuration, error match example, `is_truncated()` detection.
-  47 doc-tests (up from 41).
-- **`README.md`** — Quick Start updated with `update_header_stats()` in the write
-  example. Roadmap filled for v0.5.x. Stale badge refs cleaned.
-- **`APIs.md`** — Fixed `RegionIter` lifetime, "backing by" typo, added `mode_raw` to
-  `HeaderBuilder`, corrected feature flag descriptions.
-- **`AGENTS.md`** — Updated simd path to `simd/` directory, removed stale file refs
-  (`buffered.rs`, `mmap_reader.rs`, `VoxelSource`, `ReaderCore`), fixed `RegionIter`
-  type params, corrected test counts throughout, removed non-existent type aliases
-  (`MmapWriter`, `GzipWriter`, `Bzip2Writer`).
-
-### Testing
-
-- 98 unit tests, 23 integration tests, 47 doc-tests — all pass across debug, release,
-  and --all-features builds. 0 clippy warnings, 0 doc warnings.

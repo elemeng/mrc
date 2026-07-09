@@ -11,7 +11,7 @@ This file contains project-specific context for AI coding agents working on the 
 
 ### CLI crate
 
-The [`mrc-cli`](https://crates.io/crates/mrc-cli) crate provides the `mrc` binary (12 subcommands).
+The [`mrc-cli`](https://crates.io/crates/mrc-cli) crate provides the `mrc-cli` binary (12 subcommands).
 It depends on `mrc` (path) plus `clap` 4.5 and `image` 0.25.
 
 ```bash
@@ -84,7 +84,7 @@ The only public entry point is `lib.rs`. Internal modules are `mod` (private) or
 
 | Visibility | Items |
 |------------|-------|
-| **Public** | `open`, `create`, `Reader`, `WriterBuilder`, `Writer`, `Header`, `HeaderBuilder`, `Mode`, `Voxel`, `VoxelBlock`, `VolumeShape`, `RegionIter`, steppers, `FileEndian`, `Error`, `HeaderValidationError`, `Compression`, validate types, FEI/CCP4/MRCO/SERI/AGAR/IMOD types, ExtHeaderType/Data, conversion utilities, `DEFAULT_MAX_DECOMPRESSED_BYTES` |
+| **Public** | `open`, `create`, `Reader`, `ConvertReader`, `WriterBuilder`, `Writer`, `Header`, `HeaderBuilder`, `Mode`, `Voxel`, `VoxelBlock`, `VolumeShape`, `RegionIter`, steppers, `FileEndian`, `Error`, `HeaderValidationError`, `Compression`, validate types, FEI/CCP4/MRCO/SERI/AGAR/IMOD types, ExtHeaderType/Data, conversion utilities, `DEFAULT_MAX_DECOMPRESSED_BYTES` |
 | **`#[doc(hidden)]`** | `EndianCodec`, `MachstInfo`, `CompressionType`, `detect_compression`, `EndianFallbackWarning`, `serde_byte_array` |
 | **`pub(crate)` only** | `validate_block_bounds`, `gather_block_bytes`, `encode_block_to_buf`, `decode_block`, `decode_slice`, `encode_slice`, `convert_block`, `parse_header`, `open_compressed`, `compute_stats`, `validate_header_stats`, SIMD wrapper functions, converter functions |
 

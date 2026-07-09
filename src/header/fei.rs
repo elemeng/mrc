@@ -21,58 +21,108 @@ pub const FEI2_RECORD_SIZE: usize = 888;
 /// unsupported fields.
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone, PartialEq)]
-#[allow(missing_docs)]
 pub struct Fei1Metadata {
+    /// Size of this FEI1 record in bytes (should be 768).
     pub metadata_size: u32,
+    /// Version number of the metadata format.
     pub metadata_version: u32,
+    /// Bitmask of acquisition flags (little-endian, unlike the rest of the record).
     pub bitmask_1: u32,
+    /// Acquisition timestamp as Unix time (seconds since epoch).
     pub timestamp: f64,
+    /// Microscope model name as a null-padded byte string.
     pub microscope_type: [u8; 16],
+    /// High tension (acceleration voltage) in kV.
     pub ht: f64,
+    /// Total electron dose in e⁻/Å².
     pub dose: f64,
+    /// Stage alpha (primary) tilt angle in degrees.
     pub alpha_tilt: f64,
+    /// Stage beta (secondary) tilt angle in degrees.
     pub beta_tilt: f64,
+    /// Stage X position in µm.
     pub x_stage: f64,
+    /// Stage Y position in µm.
     pub y_stage: f64,
+    /// Stage Z position in µm.
     pub z_stage: f64,
+    /// Tilt axis rotation angle in degrees.
     pub tilt_axis_angle: f64,
+    /// Pixel size in X in Å.
     pub pixel_size_x: f64,
+    /// Pixel size in Y in Å.
     pub pixel_size_y: f64,
+    /// Objective lens defocus in µm.
     pub defocus: f64,
+    /// STEM defocus in µm.
     pub stem_defocus: f64,
+    /// Defocus value applied during acquisition in µm.
     pub applied_defocus: f64,
+    /// Nominal magnification.
     pub magnification: f64,
+    /// Camera length in mm.
     pub camera_length: f64,
+    /// Selected condenser spot index.
     pub spot_index: i32,
+    /// Illuminated area diameter in µm.
     pub illuminated_area: f64,
+    /// Beam intensity setting.
     pub intensity: f64,
+    /// Beam convergence semi-angle in mrad.
     pub convergence_angle: f64,
+    /// Energy-filter slit width in eV.
     pub slit_width: f64,
+    /// Beam shift offset in X as a fraction of full scale.
     pub shift_offset_x: f64,
+    /// Beam shift offset in Y.
     pub shift_offset_y: f64,
+    /// Beam shift in X.
     pub shift_x: f64,
+    /// Beam shift in Y.
     pub shift_y: f64,
+    /// Exposure/integration time in seconds.
     pub integration_time: f64,
+    /// Horizontal pixel binning factor.
     pub binning_width: i32,
+    /// Vertical pixel binning factor.
     pub binning_height: i32,
+    /// Detector/camera name as a null-padded byte string.
     pub camera_name: [u8; 16],
+    /// Left pixel coordinate of the readout region.
     pub readout_area_left: i32,
+    /// Top pixel coordinate of the readout region.
     pub readout_area_top: i32,
+    /// Right pixel coordinate of the readout region.
     pub readout_area_right: i32,
+    /// Bottom pixel coordinate of the readout region.
     pub readout_area_bottom: i32,
+    /// Number of CETA frames summed into this image.
     pub ceta_frames_summed: i32,
+    /// Whether a physical phase plate was inserted.
     pub phase_plate: bool,
+    /// Detector gain factor.
     pub gain: f64,
+    /// Detector offset value.
     pub offset: f64,
+    /// Pixel dwell time in seconds (STEM mode).
     pub dwell_time: f64,
+    /// Total frame exposure time in seconds.
     pub frame_time: f64,
+    /// Full-scan field of view in X in µm.
     pub full_scan_fov_x: f64,
+    /// Full-scan field of view in Y in µm.
     pub full_scan_fov_y: f64,
+    /// Whether dose fractionation was enabled.
     pub is_dose_fraction: bool,
+    /// Fraction index within a dose-fractionated series.
     pub fraction_number: i32,
+    /// First frame number of this fraction.
     pub start_frame: i32,
+    /// Last frame number of this fraction.
     pub end_frame: i32,
+    /// Minimum alpha tilt angle in degrees (tilt series).
     pub alpha_tilt_min: f64,
+    /// Maximum alpha tilt angle in degrees (tilt series).
     pub alpha_tilt_max: f64,
 }
 
@@ -158,23 +208,38 @@ impl Fei1Metadata {
 /// FEI2 metadata extends FEI1 with additional v2 fields.
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone, PartialEq)]
-#[allow(missing_docs)]
 pub struct Fei2Metadata {
+    /// The FEI1 metadata record for this entry.
     pub fei1: Fei1Metadata,
+    /// Scan rotation angle in degrees.
     pub scan_rotation: f64,
+    /// Diffraction pattern rotation in degrees.
     pub diffraction_pattern_rotation: f64,
+    /// Image rotation in degrees.
     pub image_rotation: f64,
+    /// Scan mode enumeration (e.g. 0 = TEM, 1 = STEM).
     pub scan_mode_enumeration: i32,
+    /// Acquisition timestamp in nanoseconds since Unix epoch.
     pub acquisition_time_stamp: i64,
+    /// Detector model name as a null-padded byte string.
     pub detector_commercial_name: [u8; 16],
+    /// Start tilt angle in degrees.
     pub start_tilt_angle: f64,
+    /// End tilt angle in degrees.
     pub end_tilt_angle: f64,
+    /// Tilt increment per image in degrees.
     pub tilt_per_image: f64,
+    /// Stage tilt speed in degrees per second.
     pub tilt_speed: f64,
+    /// Beam center X coordinate in pixels.
     pub beam_center_x_pixel: i32,
+    /// Beam center Y coordinate in pixels.
     pub beam_center_y_pixel: i32,
+    /// CFEG flash timestamp in nanoseconds since Unix epoch.
     pub cfeg_flash_timestamp: i64,
+    /// Phase plate position index.
     pub phase_plate_position_index: i32,
+    /// Objective aperture name as a null-padded byte string.
     pub objective_aperture_name: [u8; 16],
 }
 

@@ -32,6 +32,7 @@ impl<'a, T> ConvertReader<'a, T>
 where
     T: Voxel + crate::engine::convert::ConvertFrom<f32>,
 {
+    /// Iterate over Z-slices, auto-converting each to `T`.
     pub fn slices(&self) -> VoxelIter<'_, T> {
         let shape = self.reader.shape();
         Box::new(convert_iter::<SliceStepper, T>(
@@ -43,6 +44,7 @@ where
         ))
     }
 
+    /// Iterate over slabs of `k` Z-planes, auto-converting each to `T`.
     pub fn slabs(&self, k: usize) -> VoxelIter<'_, T> {
         let shape = self.reader.shape();
         Box::new(convert_iter::<SlabStepper, T>(
@@ -54,6 +56,7 @@ where
         ))
     }
 
+    /// Iterate over 3D tiles of the given shape, auto-converting each to `T`.
     pub fn tiles(&self, tile_shape: [usize; 3]) -> Result<VoxelIter<'_, T>, Error> {
         let shape = self.reader.shape();
         Ok(Box::new(convert_iter::<TileStepper, T>(
@@ -65,6 +68,7 @@ where
         )))
     }
 
+    /// Read a single sub-region at `offset` with `block_shape`, auto-converting to `T`.
     pub fn subregion(
         &self,
         offset: [usize; 3],
@@ -89,22 +93,26 @@ where
         })
     }
 
+    /// Configure how complex modes (3, 4) are reduced to real values.
     pub fn with_complex_strategy(mut self, strategy: crate::ComplexToRealStrategy) -> Self {
         self.complex_strategy = strategy;
         self
     }
 
+    /// Configure how Mode 0 (Int8) is interpreted (signed or unsigned).
     pub fn with_m0_interpretation(mut self, interp: crate::M0Interpretation) -> Self {
         self.m0_interp = interp;
         self
     }
 
+    /// Read the entire volume as a single block, auto-converting to `T`.
     pub fn read_volume(&self) -> Result<VoxelBlock<T>, Error> {
         let s = self.reader.shape();
         let block_shape = [s.nx, s.ny, s.nz];
         self.subregion([0, 0, 0], block_shape)
     }
 
+    /// Read the entire volume as an `ndarray::Array3<T>`.
     #[cfg(feature = "ndarray")]
     pub fn to_ndarray(&self) -> Result<ndarray::Array3<T>, Error> {
         let block = self.read_volume()?;

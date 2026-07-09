@@ -7,7 +7,7 @@
 //!
 //! See the [README](https://github.com/elemeng/mrc#readme) for installation
 //! instructions.  The [`mrc-cli`](https://crates.io/crates/mrc-cli) companion
-//! crate provides a CLI binary (`mrc`) with subcommands for inspection,
+//! crate provides a `mrc-cli` binary with subcommands for inspection,
 //! validation, conversion, PNG/GIF export, and resampling — install it with
 //! `cargo install mrc-cli`.
 //!
@@ -117,10 +117,17 @@
 //! # Ok(()) }
 //! ```
 //!
+//! The same iteration methods — [`slabs`](Reader::slabs),
+//! [`tiles`](Reader::tiles), [`subregion`](Reader::subregion) — plus
+//! [`with_complex_strategy`](crate::ConvertReader::with_complex_strategy) and
+//! [`with_m0_interpretation`](crate::ConvertReader::with_m0_interpretation)
+//! are all available on the returned converter.
+//!
 //! ### Special-mode reads (Packed4Bit and Mode 0)
 //!
-//! For modes that don't implement [`Voxel`] (Packed4Bit, Mode 0 with unsigned
-//! interpretation), dedicated methods read directly as `u8` or `f32`:
+//! These modes have no [`Voxel`] implementation — there is no single Rust
+//! type that maps to them safely at compile time — so dedicated methods read
+//! directly as `u8` or `f32`:
 //!
 //! * [`slices_u8`](Reader::slices_u8) / [`slabs_u8`](Reader::slabs_u8) —
 //!   unpack Packed4Bit nibbles, or narrow Uint16, to `u8`
@@ -144,6 +151,10 @@
 //! let reader = Reader::from_reader(Cursor::new(bytes))?;
 //! # Ok(()) }
 //! ```
+//!
+//! Permissive variants [`Reader::from_reader_permissive`] and
+//! [`Reader::from_bytes_permissive`] accept non-critical header issues as
+//! warnings without failing, mirroring [`Reader::open_permissive`].
 //!
 //! ### Large files
 //!
@@ -279,6 +290,18 @@
 //! | `bzip2` | Bzip2-compressed I/O | ❌ |
 //! | `ndarray` | Return volumes as `ndarray::Array3<T>` via `to_ndarray()` | ❌ |
 //! | `serde` | Serialize/Deserialize support via `serde` | ❌ |
+//!
+//! ```no_run
+//! # fn main() -> Result<(), mrc::Error> {
+//! # let reader = mrc::Reader::open("density.mrc")?;
+//! # #[cfg(feature = "ndarray")]
+//! # {
+//! use ndarray::Array3;
+//! let arr: Array3<f32> = reader.convert::<f32>().to_ndarray()?;
+//! println!("{}×{}×{} array", arr.shape()[0], arr.shape()[1], arr.shape()[2]);
+//! # }
+//! # Ok(()) }
+//! ```
 //!
 //! # Headers
 //!
@@ -681,6 +704,9 @@ pub use mode::{
 pub use half::f16;
 /// Consolidated MRC reader with automatic mmap/buffered backend selection.
 pub use io::reader::Reader;
+
+/// Auto-conversion wrapper returned by [`Reader::convert`].
+pub use io::reader_common::ConvertReader;
 
 /// MRC file writer and its builder.
 pub use io::writer::{Writer, WriterBuilder};

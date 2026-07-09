@@ -74,7 +74,7 @@ Enable optional features in `Cargo.toml`:
 mrc = { version = "0.5", features = ["ndarray", "serde", "bzip2"] }
 ```
 
-For the CLI binary (`mrc` command), install the companion crate:
+For the `mrc-cli` binary, install the companion crate:
 
 ```bash
 cargo install mrc-cli
@@ -88,7 +88,7 @@ cargo install mrc-cli
 | `parallel` | ✅ | Parallel encoding via `rayon` |
 | `gzip` | ✅ | Gzip auto-detection and compressed writer |
 | `bzip2` | ❌ | Bzip2 auto-detection and compressed writer |
-| `ndarray` | ❌ | Return volumes as `ndarray::Array3<T>` |
+| `ndarray` | ❌ | Return volumes as `ndarray::Array3<T>` via `to_ndarray()` |
 | `serde` | ❌ | Serialize/Deserialize for all public types |
 
 ---
@@ -142,6 +142,9 @@ for slice in reader.convert::<f32>().slices() {
 
 // Or read the whole converted volume in one call
 let block = reader.convert::<f32>().read_volume()?;
+
+// The same converter also supports slabs, tiles, subregion,
+// with_complex_strategy, with_m0_interpretation, and to_ndarray().
 ```
 
 ### Writing — type-safe, flexible, fast
@@ -322,24 +325,24 @@ writer.finalize()?;
 
 ## CLI Tools
 
-The [`mrc-cli`](https://crates.io/crates/mrc-cli) crate provides the `mrc`
+The [`mrc-cli`](https://crates.io/crates/mrc-cli) crate provides the `mrc-cli`
 command-line tool with subcommands for inspection, validation, conversion,
 PNG/GIF export, and resampling.
 
 ```bash
 cargo install mrc-cli
-mrc info protein.mrc
-mrc header density.mrc
-mrc validate tiltseries.mrc
-mrc stats protein.mrc
-mrc invert input.mrc output.mrc
-mrc convert input.mrc output.mrc --mode i16
-mrc slice volume.mrc -z 42 -o slice.mrc
-mrc crop volume.mrc -o roi.mrc --x 100 --y 100 --z 50 -s 128,128,64
-mrc unstack tiltseries.mrc -o frame
-mrc rescale volume.mrc output.mrc --down 2
-mrc png volume.mrc -z 0 -o slice.png
-mrc movie volume.mrc -o movie.gif --pingpong
+mrc-cli info protein.mrc
+mrc-cli header density.mrc
+mrc-cli validate tiltseries.mrc
+mrc-cli stats protein.mrc
+mrc-cli invert input.mrc output.mrc
+mrc-cli convert input.mrc output.mrc --mode i16
+mrc-cli slice volume.mrc -z 42 -o slice.mrc
+mrc-cli crop volume.mrc -o roi.mrc --x 100 --y 100 --z 50 -s 128,128,64
+mrc-cli unstack tiltseries.mrc -o frame
+mrc-cli rescale volume.mrc output.mrc --down 2
+mrc-cli png volume.mrc -z 0 -o slice.png
+mrc-cli movie volume.mrc -o movie.gif --pingpong
 ```
 
 See the [`mrc-cli` crate on crates.io](https://crates.io/crates/mrc-cli) for the
