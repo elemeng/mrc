@@ -8,20 +8,22 @@
 
 > **Type-safe MRC-2014 reader/writer for Rust** — SIMD-accelerated, mmap-enabled, with full cryo-EM metadata support.
 
-Read, write, and inspect MRC files — the standard format in cryo-electron microscopy and structural biology. Handles everything from raw tilt series to reconstructed volumes, with automatic endianness detection, compression, and extended header parsing for all major microscope formats.
+A type-safe Rust encoder/decoder for MRC files — the standard format in cryo-electron microscopy and structural biology. Automatically handles endianness, type conversion, and compression with SIMD acceleration, exposing a powerful yet intuitive and friendly read/write API so you can focus on your data.
 
 ---
 
 ## Quick Start
 
+Three lines to read any MRC file. Three more to write one.
+
 ```rust,no_run
 use mrc::{open, create, VoxelBlock};
 
-// Read — auto-detects gzip/bzip2, handles NVERSION=0, "MAP\0" automatically
+// Read — auto-detects gzip/bzip2, handles quirky headers
 let reader = open("density.mrc")?;
-for slice in reader.convert::<f32>().slices() {
-    let block = slice?;
-}
+let volume: VoxelBlock<f32> = reader.convert::<f32>().read_volume()?;
+println!("{}×{}×{} = {} voxels",
+    volume.shape[0], volume.shape[1], volume.shape[2], volume.data.len());
 
 // Write — type-safe, compile-time mode checking
 let mut writer = create("output.mrc")
@@ -29,33 +31,35 @@ let mut writer = create("output.mrc")
     .mode::<f32>()
     .finish()?;
 writer.write_block(&VoxelBlock::new(
-    [0, 0, 0], [512, 512, 1], vec![0.0f32; 512 * 512],
+    [0, 0, 0], [512, 512, 256], vec![0.0f32; 512 * 512 * 256],
 )?)?;
 writer.update_header_stats()?;  // compute dmin/dmax/dmean/rms
-writer.finalize()?;             // **required** — rewrites header
+writer.finalize()?;             // rewrites header — always call this
 ```
 
 ---
 
-## Why `mrc`?
+## Power & Simplicity at a Glance
 
-| Feature | What it means for you |
+The `mrc` API is designed so that **common operations are one-liners** and **complex workflows read naturally**.
+
+| What you want | How you write it |
 |---|---|
-| **Friendly, consistent API** | `reader.slices::<f32>()` and `writer.write_block(&block)` — same pattern everywhere, no trait imports, no surprises |
-| **Type-safe I/O** | `reader.slices::<f32>()` — wrong type won't compile, not just a runtime error |
-| **Zero-copy mmap** | Files too large for RAM? Memory-mapped access with OS demand-paging |
-| **Auto-conversion** | `reader.convert::<f32>().slices()` — read any mode as `f32` without thinking |
-| **SIMD acceleration** | AVX2/NEON for i8↔f32, i16↔f32, f16↔f32, byte-swap — up to 8x faster |
-| **All data modes** | Int8, Int16, Float32, Uint16, Float16, complex, Packed4Bit |
-| **Extended headers** | FEI1/FEI2, CCP4, MRCO, SerialEM, Agard — parse metadata from every major microscope |
-| **Compression** | gzip/bzip2 auto-detection; decompression bomb protection (256 GiB limit) |
-| **Permissive mode** | Open quirky files (bad NVERSION, wrong MACHST) without errors |
-| **Volume stacks** | Read multi-sub-volume files with `reader.volumes::<f32>()` |
-| **Validation** | `mrc-validate` CLI — header checks, stats cross-check, NaN/Inf scan |
-| **No trait imports** | All methods are inherent — `reader.slices()`, not `use SomeTrait` |
-| **393 tests** | 212 doc-tests, 60 API coverage tests, 23 integration tests |
+| Open any MRC file (plain / gzip / bzip2) | `Reader::open("file.mrc")?` |
+| Read the whole volume as `f32` | `reader.convert::<f32>().read_volume()?` |
+| Read a sub-region | `reader.subregion::<f32>([x, y, z], [sx, sy, sz])?` |
+| Iterate Z-slices | `reader.slices::<f32>()` → `for slice in ...` |
+| Iterate batches of 16 Z-planes | `reader.slabs::<f32>(16)` → `for slab in ...` |
+| Iterate 3D tiles | `reader.tiles::<f32>([64, 64, 64])?` → `for tile in ...` |
+| Create a new file | `create("out.mrc").shape([512, 512, 256]).mode::<f32>().finish()?` |
+| Write with auto-conversion (f32 → i16) | `writer.write_block_as(&f32_block)?` |
+| Parse tilt-series metadata | `reader.fei1_metadata()` or `reader.parse_extended_header()` |
+| Validate a file | `validate_full("file.mrc", false)?` |
+| Open a quirky file | `Reader::open_permissive("broken.mrc")?` |
+| Zero-copy mmap access | `reader.slab_as::<f32>(z, k)?` |
 
----
+**No trait imports required.** Every one of these is an inherent method — no `use SomeTrait` needed.
+
 
 ## Installation
 
@@ -85,7 +89,9 @@ mrc = { version = "0.5", features = ["ndarray", "serde", "bzip2"] }
 
 ## Quick Tour
 
-### Reading
+> See [docs.rs/mrc](https://docs.rs/mrc) for the full API documentation, runnable examples, and detailed guidance. The examples below are just a few highlights.
+
+### Reading — any file, any mode, any shape
 
 ```rust,no_run
 use mrc::Reader;
@@ -98,7 +104,7 @@ println!("{}×{}×{} voxels, mode {:?}",
 
 // Iterate — slices, slabs, tiles, or subregion
 for slice in reader.slices::<f32>() {          // one Z-plane
-    let block = slice?;
+    let block = slice?;                        // VoxelBlock<f32>
 }
 for slab in reader.slabs::<f32>(16) {          // 16 planes at a time
     let block = slab?;
@@ -110,47 +116,200 @@ for tile in reader.tiles::<f32>([64, 64, 64])? { // 3D tiles
 // Full volume in one call
 let volume = reader.read_volume::<f32>()?;
 println!("{} voxels", volume.data.len());
+
+// Any sub-region by coordinate
+let patch = reader.subregion::<f32>([10, 10, 5], [32, 32, 8])?;
 ```
 
-### Writing
+### Auto-conversion — read any MRC mode as `f32`
+
+Don't care whether the file is Int8, Int16, Uint16, Float16, or even Packed4Bit? Use `convert::<f32>()` and the crate handles the rest.
+
+```rust,no_run
+// Read any file mode as f32 — Int16, Uint16, Float16, even Packed4Bit
+for slice in reader.convert::<f32>().slices() {
+    let block: mrc::VoxelBlock<f32> = slice?;
+    println!("slice {}: mean = {:.2}",
+        block.offset[2],
+        block.data.iter().sum::<f32>() / block.data.len() as f32);
+}
+
+// Or read the whole converted volume in one call
+let block = reader.convert::<f32>().read_volume()?;
+```
+
+### Writing — type-safe, flexible, fast
 
 ```rust,no_run
 use mrc::create;
 
+// Create a Float32 file
 let mut writer = create("output.mrc")
     .shape([512, 512, 256])
-    .mode::<i16>()                 // compile-time: writer expects i16 data
+    .mode::<f32>()
     .finish()?;
 
-// write_block_as auto-converts f32 → i16 (clamped)
+// Write one slice at a time
+for z in 0..256 {
+    let slice = vec![0.0f32; 512 * 512];
+    writer.write_block(&mrc::VoxelBlock::new(
+        [0, 0, z], [512, 512, 1], slice,
+    )?)?;
+}
+
+// Or write with auto-conversion: f32 data → i16 file
 writer.write_block_as(&mrc::VoxelBlock::new(
     [0, 0, 0], [512, 512, 1],
     vec![0.0f32; 512 * 512],
+)?)?;
+
+// Write in parallel (requires `parallel` feature)
+writer.write_block_parallel(&mrc::VoxelBlock::new(
+    [0, 0, 0], [512, 512, 256], vec![0.0f32; 512 * 512 * 256],
 )?)?;
 
 writer.update_header_stats()?;    // fills dmin/dmax/dmean/rms
 writer.finalize()?;               // **required** — rewrites header
 ```
 
-### Reading Extended Metadata
+### Writing compressed files
+
+```rust,no_run
+use mrc::{create, Compression};
+
+// Gzip-compressed output — same API, just finish_gzip()
+let mut writer = create("output.mrc.gz")
+    .shape([256, 256, 128])
+    .mode::<f32>()
+    .compression(Compression::Best)
+    .finish_gzip()?;
+writer.write_block(&mrc::VoxelBlock::new(
+    [0, 0, 0], [256, 256, 128], vec![0.0f32; 256 * 256 * 128],
+)?)?;
+writer.finalize()?;  // compresses & writes to disk
+```
+
+### Memory-mapped I/O — zero-copy for large files
+
+Files too large for RAM? `Reader::open` automatically uses memory-mapped I/O (requires `mmap` feature). The OS pages data on demand.
+
+```rust,no_run
+let reader = Reader::open("huge_volume.mrc")?;
+
+// Zero-copy typed access to Z-planes
+let slab: &[f32] = reader.slab_as::<f32>(0, 1)?;  // no allocation
+println!("first plane has {} voxels", slab.len());
+```
+
+### Reading Extended Metadata — one method call
 
 ```rust,no_run
 use mrc::ExtHeaderData;
 
-// Auto-detect and parse extended headers
+// Auto-detect and parse whatever extended header the file has
 match reader.parse_extended_header() {
     ExtHeaderData::Fei1(records) => {
-        println!("{} tilt images", records.len());
-        println!("first tilt: {:.1}°, defocus {:.1}µm",
+        println!("FEI1 tilt series ({} images)", records.len());
+        println!("first: tilt {:.1}°, defocus {:.1}µm",
             records[0].alpha_tilt, records[0].defocus);
     }
+    ExtHeaderData::Fei2(records) => {
+        println!("FEI2 — {} records", records.len());
+    }
+    ExtHeaderData::Ccp4(records) => {
+        println!("CCP4 symmetry — {} records", records.len());
+    }
     ExtHeaderData::Seri(records) => {
-        println!("SerialEM series, first tilt {:.1}°",
-            records[0].alpha_tilt);
+        println!("SerialEM — first tilt {:.1}°", records[0].alpha_tilt);
     }
     ExtHeaderData::None => println!("No extended header"),
     _ => {}
 }
+
+// Or use typed convenience methods directly
+if let Some(records) = reader.fei1_metadata() {
+    println!("{} FEI1 records", records.len());
+}
+if let Some(imod) = reader.imod_metadata() {
+    println!("IMOD: {:?}, tilt increment {:.1}°",
+        imod.image_type, imod.tilt_increment);
+}
+```
+
+### Volume stacks — iterate sub-volumes
+
+Volume stacks (ISPG 401–630) pack multiple sub-volumes in one file.
+
+```rust,no_run
+for result in reader.volumes::<f32>()? {
+    let vol = result?;
+    println!("sub-volume at z={}: {}×{}×{}",
+        vol.offset[2], vol.shape[0], vol.shape[1], vol.shape[2]);
+}
+```
+
+### Validation — catch issues early
+
+```rust,no_run
+use mrc::validate::{validate_full, Severity};
+
+let report = validate_full("protein.mrc", false)?;
+if !report.is_valid() {
+    for issue in &report.issues {
+        if issue.severity == Severity::Error {
+            eprintln!("[{}] {}", issue.category, issue.message);
+        }
+    }
+}
+```
+
+### Working with quirky files
+
+Common microscope quirks (NVERSION left at 0, `"MAP\0"` instead of `"MAP "`) are handled transparently by `open()`. For truly broken files, permissive mode turns non-critical errors into warnings:
+
+```rust,no_run
+let (reader, warnings) = Reader::open_permissive("legacy.mrc")?;
+if reader.is_truncated() {
+    eprintln!("warning: file is incomplete");
+}
+for w in &warnings { eprintln!("note: {w}"); }
+```
+
+### Real-world workflow — the full pipeline
+
+```rust,no_run
+use mrc::{open, create, VoxelBlock};
+
+// 1. Open a tilt series from any microscope format
+let reader = open("tiltseries.mrc")?;
+println!("{}×{}×{}, mode {:?}",
+    reader.shape().nx, reader.shape().ny, reader.shape().nz,
+    reader.mode());
+
+// 2. Read FEI metadata (or CCP4, SerialEM, Agard...)
+if let Some(records) = reader.fei1_metadata() {
+    for (i, r) in records.iter().enumerate() {
+        println!("tilt {i}: α={:.1}°, defocus={:.1} µm",
+            r.alpha_tilt, r.defocus);
+    }
+}
+
+// 3. Process each slice as f32 (auto-converts from any mode)
+for slice in reader.convert::<f32>().slices() {
+    let block = slice?;
+    // block.data: Vec<f32> — ready for filtering, CTF, alignment
+}
+
+// 4. Write the reconstructed volume
+let mut writer = create("reconstructed.mrc")
+    .shape([512, 512, 256])
+    .mode::<f32>()
+    .finish()?;
+writer.write_block(&VoxelBlock::new(
+    [0, 0, 0], [512, 512, 256], processed_data,
+)?)?;
+writer.update_header_stats()?;
+writer.finalize()?;
 ```
 
 ---
