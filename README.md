@@ -81,7 +81,7 @@ cargo build --release --bin mrc-validate
 
 ## Version History
 
-See [update.log](update.log) for detailed changelogs covering all releases from v0.2.6 onward.
+See [update.md](update.md) for detailed changelogs covering all releases from v0.2.6 onward.
 
 **v0.3.x** — Stabilization & Quality ✅
 
