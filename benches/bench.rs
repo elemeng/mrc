@@ -6,8 +6,8 @@
 //! ```
 
 use criterion::{Criterion, criterion_group, criterion_main};
-use std::hint::black_box;
 use mrc::{VoxelBlock, create};
+use std::hint::black_box;
 
 // ============================================================================
 // Helpers — generate temp MRC files for benchmarking

@@ -585,7 +585,9 @@ fn convert_block_inner(
         Mode::Float16 => {
             // SAFETY: `convert_block` handles Float16 via `convert_block_float16` before
             // falling through to `convert_block_inner`, so this arm is truly unreachable.
-            unreachable!("Float16 is dispatched via convert_block_float16 before convert_block_inner")
+            unreachable!(
+                "Float16 is dispatched via convert_block_float16 before convert_block_inner"
+            )
         }
     }
 }

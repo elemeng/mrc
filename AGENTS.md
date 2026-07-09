@@ -4,10 +4,24 @@ This file contains project-specific context for AI coding agents working on the 
 
 - **Repository**: https://github.com/elemeng/mrc
 - **Crate**: https://crates.io/crates/mrc
-- **Version**: 0.5.0 (check `Cargo.toml`)
+- **Version**: 0.5.2 (check `Cargo.toml`)
 - **Language**: Rust, Edition 2024, MSRV 1.85
 - **Hard deps**: `thiserror` 2.x, `tracing` 0.1
 - **Spec reference**: `mrcfile-official.md` (local copy)
+
+### CLI crate
+
+The [`mrc-cli`](https://crates.io/crates/mrc-cli) crate provides the `mrc` binary (12 subcommands).
+It depends on `mrc` (path) plus `clap` 4.5 and `image` 0.25.
+
+```bash
+# Build CLI
+(cd cli && cargo build)
+
+# Install CLI
+cargo install --path cli
+# or: cargo install mrc-cli
+```
 
 ## Build and Test Commands
 
@@ -54,10 +68,6 @@ src/
 │   ├── writer.rs          # Writer, WriterBuilder (single Writer type for all backends)
 │   ├── gzip.rs            # impl Reader { open_gzip* }
 │   └── bzip2.rs           # impl Reader { open_bzip2* }
-└── bin/
-    ├── mrc-validate.rs    # CLI validation tool
-    ├── mrc-header.rs      # CLI header inspector
-    └── mrc-invert.rs      # CLI contrast inverter
 tests/
     └── integration.rs     # ~23 roundtrip tests
 ```

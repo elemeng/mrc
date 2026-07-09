@@ -14,22 +14,35 @@ struct TempMrc(std::path::PathBuf);
 impl TempMrc {
     fn new(suffix: &str) -> Self {
         let mut p = std::env::temp_dir();
-        p.push(format!("mrc_api_test_{}_{}.mrc", std::process::id(), suffix));
+        p.push(format!(
+            "mrc_api_test_{}_{}.mrc",
+            std::process::id(),
+            suffix
+        ));
         let _ = std::fs::remove_file(&p);
         Self(p)
     }
-    fn path(&self) -> &std::path::Path { &self.0 }
+    fn path(&self) -> &std::path::Path {
+        &self.0
+    }
 }
 
 impl Drop for TempMrc {
-    fn drop(&mut self) { let _ = std::fs::remove_file(&self.0); }
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
 }
 
 fn write_f32_volume(f: &TempMrc, nx: usize, ny: usize, nz: usize) -> Vec<f32> {
     let total = nx * ny * nz;
     let data: Vec<f32> = (0..total).map(|i| i as f32).collect();
-    let mut w = create(f.path()).shape([nx, ny, nz]).mode::<f32>().finish().unwrap();
-    w.write_block(&VoxelBlock::new([0, 0, 0], [nx, ny, nz], data.clone()).unwrap()).unwrap();
+    let mut w = create(f.path())
+        .shape([nx, ny, nz])
+        .mode::<f32>()
+        .finish()
+        .unwrap();
+    w.write_block(&VoxelBlock::new([0, 0, 0], [nx, ny, nz], data.clone()).unwrap())
+        .unwrap();
     w.finalize().unwrap();
     data
 }
@@ -42,15 +55,22 @@ fn mode_0_int8_roundtrip() {
     let total = 32usize;
     let src: Vec<i8> = (0..total).map(|i| (i as i8) - 16).collect();
     {
-        let mut w = create(f.path()).shape([4, 4, 2]).mode::<i8>().finish().unwrap();
-        w.write_block(&VoxelBlock::new([0, 0, 0], [4, 4, 2], src.clone()).unwrap()).unwrap();
+        let mut w = create(f.path())
+            .shape([4, 4, 2])
+            .mode::<i8>()
+            .finish()
+            .unwrap();
+        w.write_block(&VoxelBlock::new([0, 0, 0], [4, 4, 2], src.clone()).unwrap())
+            .unwrap();
         w.finalize().unwrap();
     }
     let r = Reader::open(f.path()).unwrap();
     assert_eq!(r.read_volume::<i8>().unwrap().data, src);
     // slices_mode0 signed
-    let collected: Vec<f32> = r.slices_mode0(M0Interpretation::Signed)
-        .flat_map(|s| s.unwrap().data).collect();
+    let collected: Vec<f32> = r
+        .slices_mode0(M0Interpretation::Signed)
+        .flat_map(|s| s.unwrap().data)
+        .collect();
     assert_eq!(collected, src.iter().map(|&v| v as f32).collect::<Vec<_>>());
 }
 
@@ -60,14 +80,23 @@ fn mode_1_int16_roundtrip() {
     let total = 32usize;
     let src: Vec<i16> = (0..total).map(|i| (i as i16) - 100).collect();
     {
-        let mut w = create(f.path()).shape([4, 4, 2]).mode::<i16>().finish().unwrap();
-        w.write_block(&VoxelBlock::new([0, 0, 0], [4, 4, 2], src.clone()).unwrap()).unwrap();
+        let mut w = create(f.path())
+            .shape([4, 4, 2])
+            .mode::<i16>()
+            .finish()
+            .unwrap();
+        w.write_block(&VoxelBlock::new([0, 0, 0], [4, 4, 2], src.clone()).unwrap())
+            .unwrap();
         w.finalize().unwrap();
     }
     let r = Reader::open(f.path()).unwrap();
     assert_eq!(r.read_volume::<i16>().unwrap().data, src);
     // convert to f32 via slices
-    let collected: Vec<f32> = r.slices::<i16>().flat_map(|s| s.unwrap().data).map(|v| v as f32).collect();
+    let collected: Vec<f32> = r
+        .slices::<i16>()
+        .flat_map(|s| s.unwrap().data)
+        .map(|v| v as f32)
+        .collect();
     assert_eq!(collected, src.iter().map(|&v| v as f32).collect::<Vec<_>>());
 }
 
@@ -85,8 +114,13 @@ fn mode_6_uint16_roundtrip() {
     let total = 32usize;
     let src: Vec<u16> = (0..total).map(|i| (i * 2) as u16).collect();
     {
-        let mut w = create(f.path()).shape([4, 4, 2]).mode::<u16>().finish().unwrap();
-        w.write_block(&VoxelBlock::new([0, 0, 0], [4, 4, 2], src.clone()).unwrap()).unwrap();
+        let mut w = create(f.path())
+            .shape([4, 4, 2])
+            .mode::<u16>()
+            .finish()
+            .unwrap();
+        w.write_block(&VoxelBlock::new([0, 0, 0], [4, 4, 2], src.clone()).unwrap())
+            .unwrap();
         w.finalize().unwrap();
     }
     let r = Reader::open(f.path()).unwrap();
@@ -105,16 +139,26 @@ fn mode_12_float16_roundtrip() {
     let src_f32: Vec<f32> = (0..total).map(|i| i as f32 * 1.25).collect();
     let src: Vec<f16> = src_f32.iter().map(|&v| f16::from_f32(v)).collect();
     {
-        let mut w = create(f.path()).shape([4, 4, 2]).mode::<f16>().finish().unwrap();
-        w.write_block(&VoxelBlock::new([0, 0, 0], [4, 4, 2], src.clone()).unwrap()).unwrap();
+        let mut w = create(f.path())
+            .shape([4, 4, 2])
+            .mode::<f16>()
+            .finish()
+            .unwrap();
+        w.write_block(&VoxelBlock::new([0, 0, 0], [4, 4, 2], src.clone()).unwrap())
+            .unwrap();
         w.finalize().unwrap();
     }
     let r = Reader::open(f.path()).unwrap();
     assert_eq!(r.read_volume::<f16>().unwrap().data, src);
     // write_block_as f32→f16
     let f2 = TempMrc::new("m12_f16_wba");
-    let mut w2 = create(f2.path()).shape([4, 4, 2]).mode::<f16>().finish().unwrap();
-    w2.write_block_as(&VoxelBlock::new([0, 0, 0], [4, 4, 2], src_f32.clone()).unwrap()).unwrap();
+    let mut w2 = create(f2.path())
+        .shape([4, 4, 2])
+        .mode::<f16>()
+        .finish()
+        .unwrap();
+    w2.write_block_as(&VoxelBlock::new([0, 0, 0], [4, 4, 2], src_f32.clone()).unwrap())
+        .unwrap();
     w2.finalize().unwrap();
     let r2 = Reader::open(f2.path()).unwrap();
     let back: Vec<f32> = r2.convert::<f32>().read_volume().unwrap().data;
@@ -129,8 +173,13 @@ fn mode_101_packed4bit_roundtrip() {
     let total = 64usize;
     let src: Vec<u8> = (0..total).map(|i| (i % 16) as u8).collect();
     {
-        let mut w = create(f.path()).shape([8, 4, 2]).mode_raw(101).finish().unwrap();
-        w.write_u4_block(&VoxelBlock::new([0, 0, 0], [8, 4, 2], src.clone()).unwrap()).unwrap();
+        let mut w = create(f.path())
+            .shape([8, 4, 2])
+            .mode_raw(101)
+            .finish()
+            .unwrap();
+        w.write_u4_block(&VoxelBlock::new([0, 0, 0], [8, 4, 2], src.clone()).unwrap())
+            .unwrap();
         w.finalize().unwrap();
     }
     let r = Reader::open(f.path()).unwrap();
@@ -188,8 +237,13 @@ fn reader_gzip_open_detect() {
     let f = TempMrc::new("gzip_detect");
     let data: Vec<f32> = vec![1.0, 2.0, 3.0, 4.0];
     {
-        let mut w = create(f.path()).shape([2, 2, 1]).mode::<f32>().finish_gzip().unwrap();
-        w.write_block(&VoxelBlock::new([0, 0, 0], [2, 2, 1], data.clone()).unwrap()).unwrap();
+        let mut w = create(f.path())
+            .shape([2, 2, 1])
+            .mode::<f32>()
+            .finish_gzip()
+            .unwrap();
+        w.write_block(&VoxelBlock::new([0, 0, 0], [2, 2, 1], data.clone()).unwrap())
+            .unwrap();
         w.finalize().unwrap();
     }
     // auto-detect
@@ -272,7 +326,7 @@ fn reader_volumes_error_on_plain() {
     write_f32_volume(&f, 4, 4, 4);
     let r = Reader::open(f.path()).unwrap();
     match r.volumes::<f32>() {
-        Err(Error::NotAVolumeStack { .. }) => {},
+        Err(Error::NotAVolumeStack { .. }) => {}
         other => panic!("expected NotAVolumeStack, got {other:?}"),
     }
 }
@@ -308,8 +362,13 @@ fn reader_slabs_u8() {
     let total = 32usize;
     let src: Vec<u16> = (0..total).map(|i| (i % 200) as u16).collect();
     {
-        let mut w = create(f.path()).shape([4, 4, 2]).mode::<u16>().finish().unwrap();
-        w.write_block(&VoxelBlock::new([0, 0, 0], [4, 4, 2], src.clone()).unwrap()).unwrap();
+        let mut w = create(f.path())
+            .shape([4, 4, 2])
+            .mode::<u16>()
+            .finish()
+            .unwrap();
+        w.write_block(&VoxelBlock::new([0, 0, 0], [4, 4, 2], src.clone()).unwrap())
+            .unwrap();
         w.finalize().unwrap();
     }
     let r = Reader::open(f.path()).unwrap();
@@ -322,14 +381,21 @@ fn reader_slices_mode0_unsigned() {
     let f = TempMrc::new("m0_unsigned");
     let src: Vec<i8> = vec![-1, 0, 1, -128, 127];
     {
-        let mut w = create(f.path()).shape([5, 1, 1]).mode::<i8>().finish().unwrap();
-        w.write_block(&VoxelBlock::new([0, 0, 0], [5, 1, 1], src).unwrap()).unwrap();
+        let mut w = create(f.path())
+            .shape([5, 1, 1])
+            .mode::<i8>()
+            .finish()
+            .unwrap();
+        w.write_block(&VoxelBlock::new([0, 0, 0], [5, 1, 1], src).unwrap())
+            .unwrap();
         w.finalize().unwrap();
     }
     let r = Reader::open(f.path()).unwrap();
     // Unsigned interpretation: -1 → 255, -128 → 128
-    let unsigned: Vec<f32> = r.slices_mode0(M0Interpretation::Unsigned)
-        .flat_map(|s| s.unwrap().data).collect();
+    let unsigned: Vec<f32> = r
+        .slices_mode0(M0Interpretation::Unsigned)
+        .flat_map(|s| s.unwrap().data)
+        .collect();
     assert_eq!(unsigned[0], 255.0);
     assert_eq!(unsigned[3], 128.0);
 }
@@ -340,8 +406,13 @@ fn reader_convert_variants() {
     let total = 32usize;
     let src: Vec<i16> = (0..total).map(|i| (i as i16) - 100).collect();
     {
-        let mut w = create(f.path()).shape([4, 4, 2]).mode::<i16>().finish().unwrap();
-        w.write_block(&VoxelBlock::new([0, 0, 0], [4, 4, 2], src.clone()).unwrap()).unwrap();
+        let mut w = create(f.path())
+            .shape([4, 4, 2])
+            .mode::<i16>()
+            .finish()
+            .unwrap();
+        w.write_block(&VoxelBlock::new([0, 0, 0], [4, 4, 2], src.clone()).unwrap())
+            .unwrap();
         w.finalize().unwrap();
     }
     let r = Reader::open(f.path()).unwrap();
@@ -355,7 +426,9 @@ fn reader_convert_variants() {
     assert_eq!(i16_data, src);
 
     // convert with custom complex strategy
-    let _ = r.convert::<f32>().with_complex_strategy(ComplexToRealStrategy::RealPart);
+    let _ = r
+        .convert::<f32>()
+        .with_complex_strategy(ComplexToRealStrategy::RealPart);
 }
 
 #[test]
@@ -376,13 +449,18 @@ fn reader_to_ndarray() {
 fn writer_from_writer() {
     let header = Header::new();
     let mut h = header;
-    h.nx = 4; h.ny = 4; h.nz = 1;
-    h.mx = 4; h.my = 4; h.mz = 1;
+    h.nx = 4;
+    h.ny = 4;
+    h.nz = 1;
+    h.mx = 4;
+    h.my = 4;
+    h.mz = 1;
     h.mode = 2;
     h.nlabl = 0;
     let mut w = Writer::from_writer(Cursor::new(Vec::new()), h, &[]).unwrap();
     let data = vec![1.0f32; 16];
-    w.write_block(&VoxelBlock::new([0, 0, 0], [4, 4, 1], data).unwrap()).unwrap();
+    w.write_block(&VoxelBlock::new([0, 0, 0], [4, 4, 1], data).unwrap())
+        .unwrap();
     w.finalize().unwrap();
 }
 
@@ -403,20 +481,27 @@ fn writer_all_builder_setters() {
         .sampling([4, 4, 2])
         .axis_mapping([1, 2, 3])
         .add_label("test volume")
-        .finish().unwrap();
+        .finish()
+        .unwrap();
     let data = vec![0.0f32; 32];
-    w.write_block(&VoxelBlock::new([0, 0, 0], [4, 4, 2], data).unwrap()).unwrap();
+    w.write_block(&VoxelBlock::new([0, 0, 0], [4, 4, 2], data).unwrap())
+        .unwrap();
     w.finalize().unwrap();
 }
 
 #[test]
 fn writer_header_mut() {
     let f = TempMrc::new("header_mut");
-    let mut w = create(f.path()).shape([4, 4, 1]).mode::<f32>().finish().unwrap();
+    let mut w = create(f.path())
+        .shape([4, 4, 1])
+        .mode::<f32>()
+        .finish()
+        .unwrap();
     // Modify header mid-write
     w.header_mut().add_label("mid-write label");
     let data = vec![0.0f32; 16];
-    w.write_block(&VoxelBlock::new([0, 0, 0], [4, 4, 1], data).unwrap()).unwrap();
+    w.write_block(&VoxelBlock::new([0, 0, 0], [4, 4, 1], data).unwrap())
+        .unwrap();
     w.finalize().unwrap();
     let r = Reader::open(f.path()).unwrap();
     let labels = r.header().get_labels();
@@ -428,8 +513,13 @@ fn writer_write_u8_block() {
     let f = TempMrc::new("write_u8");
     let src: Vec<u8> = (0..16).map(|i| i as u8).collect();
     {
-        let mut w = create(f.path()).shape([4, 4, 1]).mode::<u16>().finish().unwrap();
-        w.write_u8_block(&VoxelBlock::new([0, 0, 0], [4, 4, 1], src.clone()).unwrap()).unwrap();
+        let mut w = create(f.path())
+            .shape([4, 4, 1])
+            .mode::<u16>()
+            .finish()
+            .unwrap();
+        w.write_u8_block(&VoxelBlock::new([0, 0, 0], [4, 4, 1], src.clone()).unwrap())
+            .unwrap();
         w.finalize().unwrap();
     }
     let r = Reader::open(f.path()).unwrap();
@@ -442,8 +532,13 @@ fn writer_write_block_as_float32_passthrough() {
     let f = TempMrc::new("wba_f32");
     let src: Vec<f32> = vec![1.0, 2.0, 3.0, 4.0];
     {
-        let mut w = create(f.path()).shape([2, 2, 1]).mode::<f32>().finish().unwrap();
-        w.write_block_as(&VoxelBlock::new([0, 0, 0], [2, 2, 1], src.clone()).unwrap()).unwrap();
+        let mut w = create(f.path())
+            .shape([2, 2, 1])
+            .mode::<f32>()
+            .finish()
+            .unwrap();
+        w.write_block_as(&VoxelBlock::new([0, 0, 0], [2, 2, 1], src.clone()).unwrap())
+            .unwrap();
         w.finalize().unwrap();
     }
     let r = Reader::open(f.path()).unwrap();
@@ -458,10 +553,13 @@ fn writer_write_block_parallel() {
         let total = 64usize;
         let src: Vec<f32> = (0..total).map(|i| i as f32).collect();
         {
-            let mut w = create(f.path()).shape([4, 4, 4]).mode::<f32>().finish().unwrap();
-            w.write_block_parallel(
-                &VoxelBlock::new([0, 0, 0], [4, 4, 4], src.clone()).unwrap()
-            ).unwrap();
+            let mut w = create(f.path())
+                .shape([4, 4, 4])
+                .mode::<f32>()
+                .finish()
+                .unwrap();
+            w.write_block_parallel(&VoxelBlock::new([0, 0, 0], [4, 4, 4], src.clone()).unwrap())
+                .unwrap();
             w.finalize().unwrap();
         }
         let r = Reader::open(f.path()).unwrap();
@@ -475,8 +573,13 @@ fn writer_update_header_stats_and_validate() {
     let total = 16usize;
     let src: Vec<f32> = (0..total).map(|i| i as f32).collect();
     {
-        let mut w = create(f.path()).shape([4, 4, 1]).mode::<f32>().finish().unwrap();
-        w.write_block(&VoxelBlock::new([0, 0, 0], [4, 4, 1], src.clone()).unwrap()).unwrap();
+        let mut w = create(f.path())
+            .shape([4, 4, 1])
+            .mode::<f32>()
+            .finish()
+            .unwrap();
+        w.write_block(&VoxelBlock::new([0, 0, 0], [4, 4, 1], src.clone()).unwrap())
+            .unwrap();
         w.update_header_stats().unwrap();
         w.finalize().unwrap();
     }
@@ -489,8 +592,12 @@ fn writer_update_header_stats_and_validate() {
 #[test]
 fn header_decode_encode_roundtrip() {
     let mut h = Header::new();
-    h.nx = 64; h.ny = 64; h.nz = 32;
-    h.mx = 64; h.my = 64; h.mz = 32;
+    h.nx = 64;
+    h.ny = 64;
+    h.nz = 32;
+    h.mx = 64;
+    h.my = 64;
+    h.mz = 32;
     h.mode = 2;
     h.nlabl = 0;
     let mut bytes = [0u8; 1024];
@@ -528,9 +635,13 @@ fn header_nversion_roundtrip() {
     h.set_nversion(0);
     assert_eq!(h.nversion(), 0);
     // NVERSION=0 should still pass strict validation
-    h.nx = 64; h.ny = 64; h.nz = 1;
-    h.mx = 64; h.my = 64; h.mz = 1;
-    
+    h.nx = 64;
+    h.ny = 64;
+    h.nz = 1;
+    h.mx = 64;
+    h.my = 64;
+    h.mz = 1;
+
     h.nlabl = 0;
     assert!(h.validate());
 }
@@ -551,14 +662,21 @@ fn header_labels() {
 #[test]
 fn header_volume_type_checks() {
     let mut h = Header::new();
-    h.nx = 64; h.ny = 64; h.nz = 1;
-    h.mx = 64; h.my = 64; h.mz = 1;
+    h.nx = 64;
+    h.ny = 64;
+    h.nz = 1;
+    h.mx = 64;
+    h.my = 64;
+    h.mz = 1;
     assert!(h.is_single_image());
 
-    h.nz = 10; h.ispg = 0; h.mz = 1;
+    h.nz = 10;
+    h.ispg = 0;
+    h.mz = 1;
     assert!(h.is_image_stack());
 
-    h.ispg = 1; h.mz = 10;
+    h.ispg = 1;
+    h.mz = 10;
     assert!(h.is_volume());
     assert!(!h.is_volume_stack());
 
@@ -570,10 +688,17 @@ fn header_volume_type_checks() {
 #[test]
 fn header_cell_volume() {
     let mut h = Header::new();
-    h.xlen = 10.0; h.ylen = 10.0; h.zlen = 10.0;
-    h.alpha = 90.0; h.beta = 90.0; h.gamma = 90.0;
+    h.xlen = 10.0;
+    h.ylen = 10.0;
+    h.zlen = 10.0;
+    h.alpha = 90.0;
+    h.beta = 90.0;
+    h.gamma = 90.0;
     let vol = h.cell_volume();
-    assert!((vol - 1000.0).abs() < 1e-6, "cubic cell volume mismatch: {vol}");
+    assert!(
+        (vol - 1000.0).abs() < 1e-6,
+        "cubic cell volume mismatch: {vol}"
+    );
 }
 
 // ── 7. Error handling ────────────────────────────────────────────────────────
@@ -586,8 +711,8 @@ fn error_invalid_header() {
     let bad = vec![0x00u8; 1024];
     std::fs::write(f.path(), &bad).unwrap();
     match Reader::open(f.path()) {
-        Err(Error::InvalidHeaderDetailed(_)) => {}, // validation caught it
-        Err(Error::InvalidHeader) => {},             // truly unparseable
+        Err(Error::InvalidHeaderDetailed(_)) => {} // validation caught it
+        Err(Error::InvalidHeader) => {}            // truly unparseable
         other => panic!("expected InvalidHeader or InvalidHeaderDetailed, got {other:?}"),
     }
 }
@@ -598,14 +723,22 @@ fn error_unsupported_mode() {
     let f = TempMrc::new("err_mode99");
     // Write raw header with mode 99
     let mut h = Header::new();
-    h.nx = 4; h.ny = 4; h.nz = 1;
-    h.mx = 4; h.my = 4; h.mz = 1;
+    h.nx = 4;
+    h.ny = 4;
+    h.nz = 1;
+    h.mx = 4;
+    h.my = 4;
+    h.mz = 1;
     h.mode = 99;
     h.nlabl = 0;
     let raw_header = {
         let mut h2 = h;
-        h2.nx = 4; h2.ny = 4; h2.nz = 1;
-        h2.mx = 4; h2.my = 4; h2.mz = 1;
+        h2.nx = 4;
+        h2.ny = 4;
+        h2.nz = 1;
+        h2.mx = 4;
+        h2.my = 4;
+        h2.mz = 1;
         h2.mode = 99;
         h2.nlabl = 0;
         let mut bytes = [0u8; 1024];
@@ -618,7 +751,7 @@ fn error_unsupported_mode() {
     file.write_all(&[0u8; 64]).unwrap(); // data
     drop(file);
     match Reader::open(f.path()) {
-        Err(Error::InvalidHeaderDetailed(HeaderValidationError::UnsupportedMode(99))) => {},
+        Err(Error::InvalidHeaderDetailed(HeaderValidationError::UnsupportedMode(99))) => {}
         other => panic!("expected InvalidHeaderDetailed(UnsupportedMode(99)), got {other:?}"),
     }
 }
@@ -629,7 +762,7 @@ fn error_bounds() {
     write_f32_volume(&f, 4, 4, 1);
     let r = Reader::open(f.path()).unwrap();
     match r.subregion::<f32>([0, 0, 0], [10, 10, 10]) {
-        Err(Error::BoundsError { .. }) => {},
+        Err(Error::BoundsError { .. }) => {}
         other => panic!("expected BoundsError, got {other:?}"),
     }
 }
@@ -640,7 +773,7 @@ fn error_mode_mismatch() {
     write_f32_volume(&f, 4, 4, 1);
     let r = Reader::open(f.path()).unwrap();
     match r.slices::<i16>().next() {
-        Some(Err(Error::ModeMismatch { .. })) => {},
+        Some(Err(Error::ModeMismatch { .. })) => {}
         other => panic!("expected ModeMismatch, got {other:?}"),
     }
 }
@@ -649,7 +782,10 @@ fn error_mode_mismatch() {
 fn error_value_out_of_range_u16_to_u8() {
     let src = vec![0u16, 256u16]; // 256 > 255
     match mrc::convert_u16_slice_to_u8(&src) {
-        Err(Error::ValueOutOfRange { value: 256, max: 255 }) => {},
+        Err(Error::ValueOutOfRange {
+            value: 256,
+            max: 255,
+        }) => {}
         other => panic!("expected ValueOutOfRange, got {other:?}"),
     }
 }
@@ -657,7 +793,10 @@ fn error_value_out_of_range_u16_to_u8() {
 #[test]
 fn error_block_shape_mismatch() {
     match VoxelBlock::<f32>::new([0, 0, 0], [2, 2, 2], vec![0.0f32; 5]) {
-        Err(Error::BlockShapeMismatch { expected: 8, actual: 5 }) => {},
+        Err(Error::BlockShapeMismatch {
+            expected: 8,
+            actual: 5,
+        }) => {}
         other => panic!("expected BlockShapeMismatch, got {other:?}"),
     }
 }
@@ -668,11 +807,14 @@ fn error_file_size_mismatch() {
     // Write a valid file, then append trailing garbage
     write_f32_volume(&f, 4, 4, 1);
     // Append extra bytes (trailing garbage)
-    let mut file = std::fs::OpenOptions::new().append(true).open(f.path()).unwrap();
+    let mut file = std::fs::OpenOptions::new()
+        .append(true)
+        .open(f.path())
+        .unwrap();
     file.write_all(b"TRAILING GARBAGE").unwrap();
     drop(file);
     match Reader::open(f.path()) {
-        Err(Error::FileSizeMismatch { .. }) => {},
+        Err(Error::FileSizeMismatch { .. }) => {}
         other => panic!("expected FileSizeMismatch, got {other:?}"),
     }
 }
@@ -695,8 +837,12 @@ fn validate_full_invalid_file() {
     let f = TempMrc::new("validate_bad");
     // Write a file with valid dimensions but bad MAP field
     let mut h = Header::new();
-    h.nx = 4; h.ny = 4; h.nz = 1;
-    h.mx = 4; h.my = 4; h.mz = 1;
+    h.nx = 4;
+    h.ny = 4;
+    h.nz = 1;
+    h.mx = 4;
+    h.my = 4;
+    h.mz = 1;
     h.mode = 2;
     h.nlabl = 0;
     h.map = [0x00, 0x00, 0x00, 0x00]; // all-zero MAP (accepted but non-standard)
@@ -711,7 +857,9 @@ fn validate_full_invalid_file() {
     drop(file);
     let report = mrc::validate::validate_full(f.path(), true).unwrap();
     // Should have warnings (negative NSYMBT) but no hard errors
-    let warnings: Vec<_> = report.by_severity(mrc::validate::Severity::Warning).collect();
+    let warnings: Vec<_> = report
+        .by_severity(mrc::validate::Severity::Warning)
+        .collect();
     assert!(!warnings.is_empty(), "expected at least one warning");
 }
 
@@ -761,7 +909,10 @@ fn permissive_truncated_detection() {
     let f = TempMrc::new("perm_truncated");
     write_f32_volume(&f, 8, 8, 4);
     // Truncate data
-    let file = std::fs::OpenOptions::new().write(true).open(f.path()).unwrap();
+    let file = std::fs::OpenOptions::new()
+        .write(true)
+        .open(f.path())
+        .unwrap();
     file.set_len(1024 + 100).unwrap(); // header + 100 bytes only
     drop(file);
     let (r, _warnings) = Reader::open_permissive(f.path()).unwrap();
@@ -778,7 +929,7 @@ fn ext_header_dispatch_none() {
     write_f32_volume(&f, 4, 4, 1);
     let r = Reader::open(f.path()).unwrap();
     match r.parse_extended_header() {
-        ExtHeaderData::None => {},
+        ExtHeaderData::None => {}
         other => panic!("expected None, got {other:?}"),
     }
 }
@@ -786,7 +937,10 @@ fn ext_header_dispatch_none() {
 #[test]
 fn ext_header_from_header() {
     let header = Header::new();
-    assert_eq!(ExtHeaderType::from_header(&header), ExtHeaderType::Unknown([0;4]));
+    assert_eq!(
+        ExtHeaderType::from_header(&header),
+        ExtHeaderType::Unknown([0; 4])
+    );
     // No known exttyp set
 }
 
@@ -807,7 +961,7 @@ fn decompression_bomb_limit() {
     let f = TempMrc::new("bomb_limit");
     std::fs::write(f.path(), [0x1f, 0x8b, 0x00]).unwrap(); // truncated gzip header
     match Reader::open_gzip_with_limit(f.path(), 10) {
-        Err(_) => {}, // expected: decompression fails or limit exceeded
+        Err(_) => {} // expected: decompression fails or limit exceeded
         Ok(_) => panic!("expected error for tiny limit"),
     }
 }
@@ -817,7 +971,10 @@ fn decompression_bomb_limit() {
 #[test]
 fn writer_set_volume_stack() {
     let f = TempMrc::new("set_volstack");
-    let nx = 4; let ny = 4; let nz = 8; let subvol = 2;
+    let nx = 4;
+    let ny = 4;
+    let nz = 8;
+    let subvol = 2;
     let total = nx * ny * nz;
     let data: Vec<f32> = (0..total).map(|i| i as f32).collect();
     {
@@ -825,8 +982,10 @@ fn writer_set_volume_stack() {
             .shape([nx, ny, nz])
             .mode::<f32>()
             .set_volume_stack(subvol)
-            .finish().unwrap();
-        w.write_block(&VoxelBlock::new([0, 0, 0], [nx, ny, nz], data.clone()).unwrap()).unwrap();
+            .finish()
+            .unwrap();
+        w.write_block(&VoxelBlock::new([0, 0, 0], [nx, ny, nz], data.clone()).unwrap())
+            .unwrap();
         w.finalize().unwrap();
     }
     let r = Reader::open(f.path()).unwrap();
@@ -845,13 +1004,18 @@ fn writer_from_writer_mmap() {
     {
         let f = TempMrc::new("from_writer_mmap");
         let mut h = Header::new();
-        h.nx = 4; h.ny = 4; h.nz = 1;
-        h.mx = 4; h.my = 4; h.mz = 1;
+        h.nx = 4;
+        h.ny = 4;
+        h.nz = 1;
+        h.mx = 4;
+        h.my = 4;
+        h.mz = 1;
         h.mode = 2;
         h.nlabl = 0;
         let mut w = Writer::from_writer_mmap(f.path(), h, &[]).unwrap();
         let data = vec![42.0f32; 16];
-        w.write_block(&VoxelBlock::new([0, 0, 0], [4, 4, 1], data.clone()).unwrap()).unwrap();
+        w.write_block(&VoxelBlock::new([0, 0, 0], [4, 4, 1], data.clone()).unwrap())
+            .unwrap();
         w.finalize().unwrap();
         let r = Reader::open(f.path()).unwrap();
         assert_eq!(r.read_volume::<f32>().unwrap().data, data);
@@ -864,13 +1028,18 @@ fn writer_from_writer_gzip() {
     {
         let f = TempMrc::new("from_writer_gzip");
         let mut h = Header::new();
-        h.nx = 4; h.ny = 4; h.nz = 1;
-        h.mx = 4; h.my = 4; h.mz = 1;
+        h.nx = 4;
+        h.ny = 4;
+        h.nz = 1;
+        h.mx = 4;
+        h.my = 4;
+        h.mz = 1;
         h.mode = 2;
         h.nlabl = 0;
         let mut w = Writer::from_writer_gzip(f.path(), h, &[], Compression::Balanced).unwrap();
         let data = vec![1.0f32; 16];
-        w.write_block(&VoxelBlock::new([0, 0, 0], [4, 4, 1], data.clone()).unwrap()).unwrap();
+        w.write_block(&VoxelBlock::new([0, 0, 0], [4, 4, 1], data.clone()).unwrap())
+            .unwrap();
         w.finalize().unwrap();
         let r = Reader::open(f.path()).unwrap();
         assert_eq!(r.read_volume::<f32>().unwrap().data, data);
@@ -883,16 +1052,20 @@ fn writer_from_writer_bzip2() {
     {
         let f = TempMrc::new("from_writer_bzip2");
         let mut h = Header::new();
-        h.nx = 4; h.ny = 4; h.nz = 1;
-        h.mx = 4; h.my = 4; h.mz = 1;
+        h.nx = 4;
+        h.ny = 4;
+        h.nz = 1;
+        h.mx = 4;
+        h.my = 4;
+        h.mz = 1;
         h.mode = 2;
         h.nlabl = 0;
         let mut w = Writer::from_writer_bzip2(f.path(), h, &[], Compression::Fast).unwrap();
         let data = vec![2.0f32; 16];
-        w.write_block(&VoxelBlock::new([0, 0, 0], [4, 4, 1], data.clone()).unwrap()).unwrap();
+        w.write_block(&VoxelBlock::new([0, 0, 0], [4, 4, 1], data.clone()).unwrap())
+            .unwrap();
         w.finalize().unwrap();
         let r = Reader::open(f.path()).unwrap();
         assert_eq!(r.read_volume::<f32>().unwrap().data, data);
     }
 }
-

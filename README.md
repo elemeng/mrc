@@ -74,6 +74,12 @@ Enable optional features in `Cargo.toml`:
 mrc = { version = "0.5", features = ["ndarray", "serde", "bzip2"] }
 ```
 
+For the CLI binary (`mrc` command), install the companion crate:
+
+```bash
+cargo install mrc-cli
+```
+
 | Feature | Default | What it adds |
 |---|---|---|
 | `mmap` | ✅ | Memory-mapped I/O (auto-selected for large files) |
@@ -316,13 +322,28 @@ writer.finalize()?;
 
 ## CLI Tools
 
-| Binary | Install | What it does |
-|---|---|---|
-| `mrc-validate` | `cargo install mrc --bin mrc-validate` | Header validation, stats cross-check, NaN/Inf scan |
-| `mrc-header` | `cargo install mrc --bin mrc-header` | Human-readable header dump with semantic interpretation |
-| `mrc-invert` | `cargo install mrc --bin mrc-invert` | Contrast inversion v → −v, updates header stats |
+The [`mrc-cli`](https://crates.io/crates/mrc-cli) crate provides the `mrc`
+command-line tool with subcommands for inspection, validation, conversion,
+PNG/GIF export, and resampling.
 
----
+```bash
+cargo install mrc-cli
+mrc info protein.mrc
+mrc header density.mrc
+mrc validate tiltseries.mrc
+mrc stats protein.mrc
+mrc invert input.mrc output.mrc
+mrc convert input.mrc output.mrc --mode i16
+mrc slice volume.mrc -z 42 -o slice.mrc
+mrc crop volume.mrc -o roi.mrc --x 100 --y 100 --z 50 -s 128,128,64
+mrc unstack tiltseries.mrc -o frame
+mrc rescale volume.mrc output.mrc --down 2
+mrc png volume.mrc -z 0 -o slice.png
+mrc movie volume.mrc -o movie.gif --pingpong
+```
+
+See the [`mrc-cli` crate on crates.io](https://crates.io/crates/mrc-cli) for the
+full command reference and examples.
 
 ## Further Reading
 
@@ -330,6 +351,7 @@ writer.finalize()?;
 |---|---|
 | [docs.rs/mrc](https://docs.rs/mrc) | Complete API reference with runnable examples on every method |
 | [APIs.md](APIs.md) | Local API surface overview (offline-friendly) |
+| [mrc-cli on crates.io](https://crates.io/crates/mrc-cli) | CLI binary reference and examples |
 | [roadmap.md](roadmap.md) | Release history and planned features |
 | [AGENTS.md](AGENTS.md) | Code organization & conventions for contributors |
 | [mrcfile-official.md](mrcfile-official.md) | The MRC-2014 specification |

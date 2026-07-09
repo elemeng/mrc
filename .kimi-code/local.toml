@@ -1,0 +1,3 @@
+[workspace]
+additional_dir = [ "/home/meng/softwares/mrc-cli/" ]
+
