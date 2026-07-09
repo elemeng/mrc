@@ -4,7 +4,7 @@ This file contains project-specific context for AI coding agents working on the 
 
 - **Repository**: https://github.com/elemeng/mrc
 - **Crate**: https://crates.io/crates/mrc
-- **Version**: 0.5.2 (check `Cargo.toml`)
+- **Version**: 0.5.3 (check `Cargo.toml`)
 - **Language**: Rust, Edition 2024, MSRV 1.85
 - **Hard deps**: `thiserror` 2.x, `tracing` 0.1
 - **Spec reference**: `mrcfile-official.md` (local copy)
@@ -120,7 +120,7 @@ Key enums (`Error`, `Mode`, `Compression`, `CompressionType`, `ComplexToRealStra
 Unsafe locations and their justifications:
 
 1. **`engine/simd/x86.rs` + `aarch64.rs`** — AVX2/NEON intrinsics. Runtime feature detection via `is_x86_feature_detected!("avx2")` / `is_aarch64_feature_detected!("neon")`. All `unsafe fn` bodies require explicit `unsafe { }` blocks (Rust 2024 `unsafe_op_in_unsafe_fn` lint).
-2. **`io/reader.rs` + `io/writer.rs`** — `memmap2::Mmap` / `MmapMut` construction and `slab_as` zero-copy slice. Alignment, mode, and endianness checked before pointer dereference.
+2. **`io/reader.rs`** — `memmap2::Mmap` / `MmapMut` construction and `slab_as` zero-copy slice (mmap and buffered). Alignment, mode, and endianness checked before pointer dereference.
 3. **`engine/codec.rs`** — `core::ptr::copy_nonoverlapping` for native-endian memcpy; `Vec::set_len` after capacity-guaranteed initialization.
 4. **`engine/convert.rs`** — `reinterpret_vec` and `Vec::from_raw_parts` for type-erased Vec reuse. Type identity verified via `TypeId` before transmute.
 
@@ -129,9 +129,10 @@ All `unsafe` blocks must have a `// SAFETY:` comment documenting the invariant.
 ## Known Issues and Technical Debt
 
 1. **`gather_block_bytes` fast-path assumes origin-aligned XY slabs**: full-row slabs (`ox == 0 && sx == nx && oy == 0 && sy == ny`) use a contiguous copy. Sub-XY blocks correctly scatter/gather row-by-row.
-2. **`Reader::data_bytes()` silently truncates on undersized files in permissive mode**: returns available bytes. Use `is_truncated()` to detect. Strict mode validates on open.
+2. **`Reader::raw_bytes()` silently truncates on undersized files in permissive mode**: returns available bytes. Use `is_truncated()` to detect. Strict mode validates on open.
 3. **`Packed4Bit` sub-block reads require even X-offset**: `validate_block_bounds` rejects odd `ox` for Mode 101. Full-frame and byte-aligned sub-blocks work.
 4. **`write_block_as_body` f32 clone eliminated** in v0.5.0 — existing code paths are clean.
+5. **Buffered `slab_as` relies on runtime alignment check**: `Vec<u8>` has no Rust-level alignment guarantee beyond 1 byte. A runtime check rejects misaligned buffers; this is cosmetic — real-world allocators always return ≥16‑byte aligned memory.
 
 ## Roadmap
 

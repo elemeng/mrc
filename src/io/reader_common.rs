@@ -69,6 +69,34 @@ where
         )))
     }
 
+    /// Iterate over sub-volumes in a volume stack, auto-converting each to `T`.
+    ///
+    /// Each sub-volume has shape `[nx, ny, mz]`. Returns
+    /// [`Error::NotAVolumeStack`] if the file is not a volume stack.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # fn main() -> Result<(), mrc::Error> {
+    /// let reader = mrc::Reader::open("stack.mrc")?;
+    /// for vol in reader.convert::<f32>().volumes()? {
+    ///     let block = vol?;
+    ///     println!("Sub-volume at z={} has {} voxels", block.offset[2], block.data.len());
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn volumes(&self) -> Result<VoxelIter<'_, T>, Error> {
+        let mz = self.reader.header().mz.max(0) as usize;
+        if !self.reader.header().is_volume_stack() || mz == 0 {
+            return Err(crate::Error::NotAVolumeStack {
+                ispg: self.reader.header().ispg,
+                mz: self.reader.header().mz,
+            });
+        }
+        Ok(self.slabs(mz))
+    }
+
     /// Read a single sub-region at `offset` with `block_shape`, auto-converting to `T`.
     pub fn subregion(
         &self,

@@ -87,18 +87,18 @@ macro_rules! write_block_as_body {
 ///
 /// # Example
 /// ```no_run
-/// use mrc::{Compression, create};
+/// use mrc::{CompressionLevel, create};
 ///
 /// let mut writer = create("output.mrc.gz")
 ///     .shape([256, 256, 128])
 ///     .mode::<f32>()
-///     .compression(Compression::Best)
+///     .compression(CompressionLevel::Best)
 ///     .finish_gzip()
 ///     .unwrap();
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[non_exhaustive]
-pub enum Compression {
+pub enum CompressionLevel {
     /// No compression (gzip/bzip2 level 0 — stored format, minimal CPU).
     None,
     /// Fast compression (minimal CPU, larger output).
@@ -110,15 +110,15 @@ pub enum Compression {
     Best,
 }
 
-impl Compression {
+impl CompressionLevel {
     /// Map to flate2 compression level.
     #[cfg(feature = "gzip")]
     pub(crate) fn to_flate2(self) -> flate2::Compression {
         match self {
-            Compression::None => flate2::Compression::none(),
-            Compression::Fast => flate2::Compression::fast(),
-            Compression::Balanced => flate2::Compression::default(),
-            Compression::Best => flate2::Compression::best(),
+            CompressionLevel::None => flate2::Compression::none(),
+            CompressionLevel::Fast => flate2::Compression::fast(),
+            CompressionLevel::Balanced => flate2::Compression::default(),
+            CompressionLevel::Best => flate2::Compression::best(),
         }
     }
 
@@ -126,9 +126,9 @@ impl Compression {
     #[cfg(feature = "bzip2")]
     pub(crate) fn to_bzip2(self) -> bzip2::Compression {
         match self {
-            Compression::None | Compression::Fast => bzip2::Compression::fast(),
-            Compression::Balanced => bzip2::Compression::default(),
-            Compression::Best => bzip2::Compression::best(),
+            CompressionLevel::None | CompressionLevel::Fast => bzip2::Compression::fast(),
+            CompressionLevel::Balanced => bzip2::Compression::default(),
+            CompressionLevel::Best => bzip2::Compression::best(),
         }
     }
 }
@@ -155,7 +155,7 @@ enum DataSink {
     Compressed {
         buf: Vec<u8>,
         path: std::path::PathBuf,
-        compression: Compression,
+        compression: CompressionLevel,
         is_gzip: bool,
     },
 }
@@ -257,18 +257,55 @@ macro_rules! builder_setters {
         /// by `mz` for the header to validate.
         ///
         /// Call **after** [`shape`](Self::shape) so that `nx` and `ny` are
-        /// already set and only `mz` is overridden.
+        /// Example
+        /// ```
+        /// use mrc::create;
+        /// let builder = create("output.mrc")
+        ///     .shape([64, 64, 64])
+        ///     .volume_stack(32);
+        /// ```
+        #[must_use]
+        pub fn volume_stack(mut self, mz: i32) -> Self {
+            self.header.set_volume_stack(mz);
+            self
+        }
+
+        /// Configure as an image stack (`ispg = 0`, `mz = 1`).
+        ///
+        /// An image stack is a series of 2D images stored in a 3D array.
+        ///
+        /// Call **after** [`shape`](Self::shape).
+        ///
+        /// # Examples
+        /// ```
+        /// use mrc::create;
+        /// let builder = create("output.mrc")
+        ///     .shape([64, 64, 10])
+        ///     .image_stack();
+        /// ```
+        #[must_use]
+        pub fn image_stack(mut self) -> Self {
+            self.header.set_image_stack();
+            self
+        }
+
+        /// Configure as a single 3D volume (`ispg = 1`, `mz = nz`).
+        ///
+        /// This is the default for 3D data.  Call only if the file was
+        /// previously configured as an image stack or volume stack.
+        ///
+        /// Call **after** [`shape`](Self::shape).
         ///
         /// # Examples
         /// ```
         /// use mrc::create;
         /// let builder = create("output.mrc")
         ///     .shape([64, 64, 64])
-        ///     .set_volume_stack(32);
+        ///     .volume();
         /// ```
         #[must_use]
-        pub fn set_volume_stack(mut self, mz: i32) -> Self {
-            self.header.set_volume_stack(mz);
+        pub fn volume(mut self) -> Self {
+            self.header.set_volume();
             self
         }
 
@@ -421,7 +458,7 @@ pub struct WriterBuilder {
     path: PathBuf,
     header: Header,
     ext_header: Vec<u8>,
-    compression: Compression,
+    compression: CompressionLevel,
 }
 
 impl WriterBuilder {
@@ -440,7 +477,7 @@ impl WriterBuilder {
             path: path.as_ref().to_path_buf(),
             header: Header::new(),
             ext_header: Vec::new(),
-            compression: Compression::Balanced,
+            compression: CompressionLevel::Balanced,
         }
     }
 
@@ -450,21 +487,21 @@ impl WriterBuilder {
     /// [`finish_bzip2`](Self::finish_bzip2). Has no effect on
     /// [`finish`](Self::finish) (plain) or [`finish_mmap`](Self::finish_mmap).
     ///
-    /// Default: [`Compression::Balanced`].
+    /// Default: [`CompressionLevel::Balanced`].
     ///
     /// # Examples
     /// ```no_run
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// use mrc::{WriterBuilder, Compression};
+    /// use mrc::{WriterBuilder, CompressionLevel};
     /// let mut writer = WriterBuilder::new("output.mrc.gz")
     ///     .shape([64, 64, 64])
     ///     .mode::<f32>()
-    ///     .compression(Compression::Best)
+    ///     .compression(CompressionLevel::Best)
     ///     .finish_gzip()?;
     /// # Ok(()) }
     /// ```
     #[must_use]
-    pub fn compression(mut self, compression: Compression) -> Self {
+    pub fn compression(mut self, compression: CompressionLevel) -> Self {
         self.compression = compression;
         self
     }
@@ -484,12 +521,12 @@ impl WriterBuilder {
     /// let mut writer = WriterBuilder::new("output.mrc")
     ///     .shape([64, 64, 64])
     ///     .mode::<f32>()
-    ///     .ext_header_bytes(vec![0u8; 256])
+    ///     .extended_header(vec![0u8; 256])
     ///     .finish()?;
     /// # Ok(()) }
     /// ```
     #[must_use]
-    pub fn ext_header_bytes(mut self, bytes: Vec<u8>) -> Self {
+    pub fn extended_header(mut self, bytes: Vec<u8>) -> Self {
         self.header.nsymbt = bytes.len() as i32;
         self.ext_header = bytes;
         self
@@ -625,6 +662,7 @@ pub struct Writer {
     mode: Mode,
     shape: VolumeShape,
     sink: DataSink,
+    finalized: bool,
 }
 
 impl std::fmt::Debug for Writer {
@@ -636,6 +674,16 @@ impl std::fmt::Debug for Writer {
             .field("mode", &self.mode)
             .field("shape", &self.shape)
             .finish()
+    }
+}
+
+impl Drop for Writer {
+    fn drop(&mut self) {
+        if !self.finalized {
+            tracing::warn!(
+                "Writer dropped without calling finalize() — header on disk is stale."
+            );
+        }
     }
 }
 
@@ -699,9 +747,9 @@ impl Writer {
     /// # Examples
     /// ```no_run
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// use mrc::{Header, Writer, Compression};
+    /// use mrc::{Header, Writer, CompressionLevel};
     /// let header = Header::new();
-    /// let mut writer = Writer::from_writer_gzip("output.mrc.gz", header, &[], Compression::Balanced)?;
+    /// let mut writer = Writer::from_writer_gzip("output.mrc.gz", header, &[], CompressionLevel::Balanced)?;
     /// # Ok(()) }
     /// ```
     #[cfg(feature = "gzip")]
@@ -709,7 +757,7 @@ impl Writer {
         path: P,
         header: Header,
         ext_header: &[u8],
-        compression: Compression,
+        compression: CompressionLevel,
     ) -> Result<Self, Error> {
         Self::create_compressed(path, header, ext_header, compression, true)
     }
@@ -723,9 +771,9 @@ impl Writer {
     /// # Examples
     /// ```no_run
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// use mrc::{Header, Writer, Compression};
+    /// use mrc::{Header, Writer, CompressionLevel};
     /// let header = Header::new();
-    /// let mut writer = Writer::from_writer_bzip2("output.mrc.bz2", header, &[], Compression::Balanced)?;
+    /// let mut writer = Writer::from_writer_bzip2("output.mrc.bz2", header, &[], CompressionLevel::Balanced)?;
     /// # Ok(()) }
     /// ```
     #[cfg(feature = "bzip2")]
@@ -733,7 +781,7 @@ impl Writer {
         path: P,
         header: Header,
         ext_header: &[u8],
-        compression: Compression,
+        compression: CompressionLevel,
     ) -> Result<Self, Error> {
         Self::create_compressed(path, header, ext_header, compression, false)
     }
@@ -797,6 +845,7 @@ impl Writer {
             mode,
             shape,
             sink: DataSink::File(io),
+            finalized: false,
         })
     }
 
@@ -858,6 +907,7 @@ impl Writer {
             mode,
             shape,
             sink: DataSink::Mmap(mmap),
+            finalized: false,
         })
     }
 
@@ -867,7 +917,7 @@ impl Writer {
         path: P,
         mut header: Header,
         ext_header: &[u8],
-        compression: Compression,
+        compression: CompressionLevel,
         is_gzip: bool,
     ) -> Result<Self, Error> {
         header.set_file_endian(FileEndian::LittleEndian);
@@ -913,6 +963,7 @@ impl Writer {
                 compression,
                 is_gzip,
             },
+            finalized: false,
         })
     }
 
@@ -990,6 +1041,56 @@ impl Writer {
     /// ```
     pub fn header_mut(&mut self) -> &mut Header {
         &mut self.header
+    }
+
+    /// Write an entire volume's worth of data and compute density statistics.
+    ///
+    /// This is a convenience over manual [`write_block`](Self::write_block) +
+    /// [`update_header_stats`](Self::update_header_stats) calls — it writes the
+    /// data then immediately scans and updates header statistics.
+    ///
+    /// The data must cover the full volume (its length must match
+    /// `nx × ny × nz`).
+    ///
+    /// For partial writes, use [`write_block`](Self::write_block) directly.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// use mrc::create;
+    /// let mut writer = create("output.mrc")
+    ///     .shape([64, 64, 32])
+    ///     .mode::<f32>()
+    ///     .finish()?;
+    /// let data = vec![0.0f32; 64 * 64 * 32];
+    /// writer.set_data(&data)?;
+    /// writer.finalize()?;
+    /// # Ok(()) }
+    /// ```
+    pub fn set_data<T: Voxel>(&mut self, data: &[T]) -> Result<(), Error> {
+        let nx = self.shape.nx;
+        let ny = self.shape.ny;
+        let nz = self.shape.nz;
+        let expected = nx
+            .checked_mul(ny)
+            .and_then(|v| v.checked_mul(nz))
+            .ok_or_else(|| {
+                let msg = format!(
+                    "Volume dimensions {nx}×{ny}×{nz} overflow usize"
+                );
+                Error::Io(std::io::Error::other(msg))
+            })?;
+        if data.len() != expected {
+            return Err(Error::TypeMismatch {
+                expected,
+                actual: data.len(),
+            });
+        }
+        let block = VoxelBlock::new([0, 0, 0], [nx, ny, nz], data.to_vec())?;
+        self.write_block(&block)?;
+        self.update_header_stats()?;
+        Ok(())
     }
 
     /// Write a block of voxels to the file.
@@ -1144,8 +1245,8 @@ impl Writer {
 
     /// Write a block with automatic type conversion to the file's mode.
     ///
-    /// The caller provides data as `f32` and it is converted to the file's
-    /// on-disk mode. Supported conversions:
+    /// **Note:** input data must be `f32` (`VoxelBlock<f32>`). The value is
+    /// converted to the file's on-disk mode. Supported conversions:
     ///
     /// | File mode | Conversion |
     /// |-----------|------------|
@@ -1343,7 +1444,7 @@ impl Writer {
         let mut header_bytes = [0u8; 1024];
         self.header.encode_to_bytes(&mut header_bytes);
 
-        match &mut self.sink {
+        let result = match &mut self.sink {
             DataSink::File(io) => {
                 io.seek(SeekFrom::Start(0))?;
                 io.write_all(&header_bytes)?;
@@ -1366,7 +1467,11 @@ impl Writer {
                 std::fs::write(path, compressed)?;
                 Ok(())
             }
+        };
+        if result.is_ok() {
+            self.finalized = true;
         }
+        result
     }
 
     /// Scan the written data block and update header statistics.
@@ -1425,7 +1530,7 @@ impl Writer {
 
 /// Compress MRC data using the appropriate algorithm based on compression level.
 #[cfg(any(feature = "gzip", feature = "bzip2"))]
-fn compress_data(data: &[u8], compression: Compression, is_gzip: bool) -> Result<Vec<u8>, Error> {
+fn compress_data(data: &[u8], compression: CompressionLevel, is_gzip: bool) -> Result<Vec<u8>, Error> {
     #[cfg(feature = "gzip")]
     if is_gzip {
         let mut encoder = flate2::write::GzEncoder::new(Vec::new(), compression.to_flate2());

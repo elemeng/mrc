@@ -56,7 +56,7 @@ The `mrc` API is designed so that **common operations are one-liners** and **com
 | Parse tilt-series metadata | `reader.fei1_metadata()` or `reader.parse_extended_header()` |
 | Validate a file | `validate_full("file.mrc", false)?` |
 | Open a quirky file | `Reader::open_permissive("broken.mrc")?` |
-| Zero-copy mmap access | `reader.slab_as::<f32>(z, k)?` |
+| Zero-copy slab access | `reader.slab_as::<f32>(z, k)?` — mmap or buffered |
 
 **No trait imports required.** Every one of these is an inherent method — no `use SomeTrait` needed.
 
@@ -184,13 +184,13 @@ writer.finalize()?;               // **required** — rewrites header
 ### Writing compressed files
 
 ```rust,no_run
-use mrc::{create, Compression};
+use mrc::{create, CompressionLevel};
 
 // Gzip-compressed output — same API, just finish_gzip()
 let mut writer = create("output.mrc.gz")
     .shape([256, 256, 128])
     .mode::<f32>()
-    .compression(Compression::Best)
+    .compression(CompressionLevel::Best)
     .finish_gzip()?;
 writer.write_block(&mrc::VoxelBlock::new(
     [0, 0, 0], [256, 256, 128], vec![0.0f32; 256 * 256 * 128],
@@ -205,7 +205,7 @@ Files too large for RAM? `Reader::open` automatically uses memory-mapped I/O (re
 ```rust,no_run
 let reader = Reader::open("huge_volume.mrc")?;
 
-// Zero-copy typed access to Z-planes
+// Zero-copy typed access to Z-planes (mmap or buffered)
 let slab: &[f32] = reader.slab_as::<f32>(0, 1)?;  // no allocation
 println!("first plane has {} voxels", slab.len());
 ```

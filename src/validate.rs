@@ -314,9 +314,9 @@ pub fn validate_reader(
     }
 
     // ── 4. Data statistics ──
-    let data_bytes = reader.data_bytes();
+    let raw_bytes = reader.raw_bytes();
     match compute_stats(
-        data_bytes,
+        raw_bytes,
         reader.mode(),
         endian,
         reader.shape().nx,
@@ -411,7 +411,7 @@ pub fn validate_reader(
 
     // ── 5. Data integrity (scan for NaN / Inf in float modes) ──
     if reader.mode().is_float() && !reader.mode().is_complex() {
-        match float_mode_issues(data_bytes, reader.mode(), endian) {
+        match float_mode_issues(raw_bytes, reader.mode(), endian) {
             Ok(has_issues) => {
                 if has_issues.is_empty() {
                     issues.push(ValidationIssue::info(
@@ -432,7 +432,7 @@ pub fn validate_reader(
             }
         }
     } else if reader.mode() == Mode::Float32Complex {
-        match complex_float_mode_issues(data_bytes, endian) {
+        match complex_float_mode_issues(raw_bytes, endian) {
             Ok(has_issues) => {
                 if has_issues.is_empty() {
                     issues.push(ValidationIssue::info(
@@ -540,17 +540,17 @@ pub fn validate_full<P: AsRef<Path>>(path: P, permissive: bool) -> Result<Valida
 // ── Float-mode data integrity helper ──
 
 fn float_mode_issues(
-    data_bytes: &[u8],
+    raw_bytes: &[u8],
     mode: Mode,
     endian: FileEndian,
 ) -> Result<Vec<String>, Error> {
     use crate::engine::codec::decode_slice;
     let data: Vec<f32> = match mode {
-        Mode::Float32 => decode_slice::<f32>(data_bytes, endian)?,
+        Mode::Float32 => decode_slice::<f32>(raw_bytes, endian)?,
         Mode::Float16 => {
             #[cfg(feature = "f16")]
             {
-                let f16_data = decode_slice::<crate::f16>(data_bytes, endian)?;
+                let f16_data = decode_slice::<crate::f16>(raw_bytes, endian)?;
                 f16_data.iter().map(|&v| f32::from(v)).collect()
             }
             #[cfg(not(feature = "f16"))]
@@ -600,10 +600,10 @@ fn float_mode_issues(
 }
 
 /// Scan Float32Complex data for NaN/Inf values in both real and imaginary parts.
-fn complex_float_mode_issues(data_bytes: &[u8], endian: FileEndian) -> Result<Vec<String>, Error> {
+fn complex_float_mode_issues(raw_bytes: &[u8], endian: FileEndian) -> Result<Vec<String>, Error> {
     use crate::engine::codec::decode_slice;
     let data: Vec<crate::mode::Float32Complex> =
-        decode_slice::<crate::mode::Float32Complex>(data_bytes, endian)?;
+        decode_slice::<crate::mode::Float32Complex>(raw_bytes, endian)?;
 
     let mut issues = Vec::with_capacity(3);
     let mut nan_count = 0usize;

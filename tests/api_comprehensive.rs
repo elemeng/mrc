@@ -220,7 +220,7 @@ fn reader_from_bytes_permissive() {
     assert!(r.is_truncated());
     // Warnings may be empty if header itself validated OK
     // but the truncated data should be detectable
-    assert!(r.data_bytes().len() < 16 * 4, "data should be truncated");
+    assert!(r.raw_bytes().len() < 16 * 4, "data should be truncated");
 }
 
 #[test]
@@ -309,10 +309,10 @@ fn reader_accessors() {
 
 #[test]
 fn reader_data_bytes() {
-    let f = TempMrc::new("data_bytes");
+    let f = TempMrc::new("raw_bytes");
     let data = write_f32_volume(&f, 4, 4, 1);
     let r = Reader::open(f.path()).unwrap();
-    let bytes = r.data_bytes();
+    let bytes = r.raw_bytes();
     assert_eq!(bytes.len(), 16 * 4); // 16 f32 values × 4 bytes
     let decoded: &[f32] = unsafe { std::slice::from_raw_parts(bytes.as_ptr() as *const f32, 16) };
     assert_eq!(decoded, &data[..]);
@@ -365,6 +365,71 @@ fn reader_volumes_error_on_plain() {
     match r.volumes::<f32>() {
         Err(Error::NotAVolumeStack { .. }) => {}
         other => panic!("expected NotAVolumeStack, got {other:?}"),
+    }
+}
+
+#[test]
+fn reader_volume_stack_queries_and_iter() {
+    // Write a volume stack: 2 sub-volumes × 4 slices = nz=8
+    let f = TempMrc::new("vol_stack_iter");
+    let nx = 8;
+    let ny = 6;
+    let nz = 8;
+    let mz = 4;
+    let data: Vec<f32> = (0..nx * ny * nz).map(|i| i as f32).collect();
+    {
+        let mut w = create(f.path())
+            .shape([nx, ny, nz])
+            .mode::<f32>()
+            .volume_stack(mz)
+            .finish()
+            .unwrap();
+        w.write_block(&VoxelBlock::new([0, 0, 0], [nx, ny, nz], data.clone()).unwrap())
+            .unwrap();
+        w.finalize().unwrap();
+    }
+
+    let r = Reader::open(f.path()).unwrap();
+
+    // Step 1: reader-level queries
+    assert!(r.is_volume_stack());
+    assert!(!r.is_image_stack());
+    assert!(!r.is_single_image());
+    assert!(!r.is_volume());
+    assert_eq!(r.logical_shape(), [2, 4, 6, 8]);
+
+    let mz_usize = mz as usize;
+
+    // Reader::volumes()
+    let vols: Vec<_> = r.volumes::<f32>().unwrap().collect::<Result<Vec<_>, _>>().unwrap();
+    assert_eq!(vols.len(), 2);
+    for (i, vol) in vols.iter().enumerate() {
+        assert_eq!(vol.shape, [nx, ny, mz_usize]);
+        assert_eq!(vol.offset, [0, 0, i * mz_usize]);
+        let expected = &data[i * mz_usize * nx * ny..(i + 1) * mz_usize * nx * ny];
+        assert_eq!(vol.data.as_slice(), expected);
+    }
+
+    // Step 2: ConvertReader::volumes()
+    let conv_vols: Vec<_> = r.convert::<f32>()
+        .volumes().unwrap()
+        .collect::<Result<Vec<_>, _>>().unwrap();
+    assert_eq!(conv_vols.len(), 2);
+    for (i, vol) in conv_vols.iter().enumerate() {
+        assert_eq!(vol.shape, [nx, ny, mz_usize]);
+        assert_eq!(vol.offset, [0, 0, i * mz_usize]);
+        let expected = &data[i * mz_usize * nx * ny..(i + 1) * mz_usize * nx * ny];
+        assert_eq!(vol.data.as_slice(), expected);
+    }
+
+    // ConvertReader::volumes() on non-stack file → error
+    let f2 = TempMrc::new("vol_stack_plain_err");
+    write_f32_volume(&f2, 4, 4, 4);
+    let r2 = Reader::open(f2.path()).unwrap();
+    match r2.convert::<f32>().volumes() {
+        Err(Error::NotAVolumeStack { .. }) => {}
+        Err(e) => panic!("expected NotAVolumeStack, got {e:?}"),
+        Ok(_) => panic!("expected Err, got Ok"),
     }
 }
 
@@ -954,8 +1019,8 @@ fn permissive_truncated_detection() {
     drop(file);
     let (r, _warnings) = Reader::open_permissive(f.path()).unwrap();
     assert!(r.is_truncated());
-    // data_bytes returns whatever is available
-    assert!(r.data_bytes().len() <= 100);
+    // raw_bytes returns whatever is available
+    assert!(r.raw_bytes().len() <= 100);
 }
 
 // ── 11. Extended header dispatch ─────────────────────────────────────────────
@@ -1018,7 +1083,7 @@ fn writer_set_volume_stack() {
         let mut w = create(f.path())
             .shape([nx, ny, nz])
             .mode::<f32>()
-            .set_volume_stack(subvol)
+            .volume_stack(subvol)
             .finish()
             .unwrap();
         w.write_block(&VoxelBlock::new([0, 0, 0], [nx, ny, nz], data.clone()).unwrap())
@@ -1031,6 +1096,46 @@ fn writer_set_volume_stack() {
     let nvol = nz / subvol as usize;
     let count = r.volumes::<f32>().unwrap().count();
     assert_eq!(count, nvol);
+}
+
+#[test]
+fn writer_builder_image_stack_and_volume() {
+    let f_img = TempMrc::new("builder_imgstack");
+    let f_vol = TempMrc::new("builder_vol");
+
+    // set_image_stack: ispg=0, mz=1
+    {
+        let mut w = create(f_img.path())
+            .shape([8, 8, 10])
+            .mode::<f32>()
+            .image_stack()
+            .finish()
+            .unwrap();
+        let data = vec![0.0f32; 8 * 8 * 10];
+        w.write_block(&VoxelBlock::new([0, 0, 0], [8, 8, 10], data).unwrap()).unwrap();
+        w.finalize().unwrap();
+    }
+    let r = Reader::open(f_img.path()).unwrap();
+    assert!(r.is_image_stack());
+    assert_eq!(r.header().ispg, 0);
+    assert_eq!(r.header().mz, 1);
+
+    // set_volume: ispg=1, mz=nz
+    {
+        let mut w = create(f_vol.path())
+            .shape([8, 8, 10])
+            .mode::<f32>()
+            .volume()
+            .finish()
+            .unwrap();
+        let data = vec![1.0f32; 8 * 8 * 10];
+        w.write_block(&VoxelBlock::new([0, 0, 0], [8, 8, 10], data).unwrap()).unwrap();
+        w.finalize().unwrap();
+    }
+    let r2 = Reader::open(f_vol.path()).unwrap();
+    assert!(r2.is_volume());
+    assert_eq!(r2.header().ispg, 1);
+    assert_eq!(r2.header().mz, 10);
 }
 
 // ── 14. Writer::from_writer_mmap / _gzip / _bzip2 ────────────────────────────
@@ -1073,7 +1178,7 @@ fn writer_from_writer_gzip() {
         h.mz = 1;
         h.mode = 2;
         h.nlabl = 0;
-        let mut w = Writer::from_writer_gzip(f.path(), h, &[], Compression::Balanced).unwrap();
+        let mut w = Writer::from_writer_gzip(f.path(), h, &[], CompressionLevel::Balanced).unwrap();
         let data = vec![1.0f32; 16];
         w.write_block(&VoxelBlock::new([0, 0, 0], [4, 4, 1], data.clone()).unwrap())
             .unwrap();
@@ -1097,7 +1202,7 @@ fn writer_from_writer_bzip2() {
         h.mz = 1;
         h.mode = 2;
         h.nlabl = 0;
-        let mut w = Writer::from_writer_bzip2(f.path(), h, &[], Compression::Fast).unwrap();
+        let mut w = Writer::from_writer_bzip2(f.path(), h, &[], CompressionLevel::Fast).unwrap();
         let data = vec![2.0f32; 16];
         w.write_block(&VoxelBlock::new([0, 0, 0], [4, 4, 1], data.clone()).unwrap())
             .unwrap();
@@ -1105,4 +1210,74 @@ fn writer_from_writer_bzip2() {
         let r = Reader::open(f.path()).unwrap();
         assert_eq!(r.read_volume::<f32>().unwrap().data, data);
     }
+}
+
+// ── 15. One-shot ergonomic API (set_data, read_as, write_as) ──────────
+
+#[test]
+fn writer_set_data_and_finalize() {
+    let f = TempMrc::new("set_data");
+    let nx = 8;
+    let ny = 6;
+    let nz = 4;
+    let data: Vec<f32> = (0..nx * ny * nz).map(|i| i as f32).collect();
+
+    {
+        let mut w = create(f.path())
+            .shape([nx, ny, nz])
+            .mode::<f32>()
+            .finish()
+            .unwrap();
+        w.set_data(&data).unwrap();
+        w.finalize().unwrap();
+    }
+
+    let r = Reader::open(f.path()).unwrap();
+    let block = r.read_volume::<f32>().unwrap();
+    assert_eq!(block.data, data);
+}
+
+#[test]
+fn write_as_roundtrip() {
+    let f = TempMrc::new("write_as");
+    let nx = 8;
+    let ny = 6;
+    let nz = 4;
+    let data: Vec<f32> = (0..nx * ny * nz).map(|i| i as f32).collect();
+
+    write_as(f.path(), &data, [nx, ny, nz]).unwrap();
+
+    let r = Reader::open(f.path()).unwrap();
+    let block = r.read_volume::<f32>().unwrap();
+    assert_eq!(block.data, data);
+}
+
+#[test]
+fn read_as_roundtrip() {
+    let f = TempMrc::new("read_as");
+    let nx = 8;
+    let ny = 6;
+    let nz = 4;
+    let data: Vec<f32> = (0..nx * ny * nz).map(|i| i as f32).collect();
+
+    write_as(f.path(), &data, [nx, ny, nz]).unwrap();
+
+    let (header, read_data): (_, Vec<f32>) = read_as(f.path()).unwrap();
+    assert_eq!(header.nx as usize, nx);
+    assert_eq!(header.ny as usize, ny);
+    assert_eq!(header.nz as usize, nz);
+    assert_eq!(read_data, data);
+}
+
+#[test]
+fn write_as_i16_roundtrip() {
+    let f = TempMrc::new("write_as_i16");
+    let data: Vec<i16> = vec![-100, 0, 100, 32767, -32768];
+
+    write_as(f.path(), &data, [5, 1, 1]).unwrap();
+
+    let r = Reader::open(f.path()).unwrap();
+    assert_eq!(r.mode(), Mode::Int16);
+    let block = r.read_volume::<i16>().unwrap();
+    assert_eq!(block.data, data);
 }

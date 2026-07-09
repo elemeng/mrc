@@ -663,12 +663,12 @@ impl Reader {
     /// # let data = vec![42u8; 64];
     /// # let buf: Vec<u8> = raw.into_iter().chain(data).collect();
     /// # let reader = mrc::Reader::from_bytes(buf)?;
-    /// let bytes = reader.data_bytes();
+    /// let bytes = reader.raw_bytes();
     /// assert_eq!(bytes.len(), 64);
     /// # Ok(())
     /// # }
     /// ```
-    pub fn data_bytes(&self) -> &[u8] {
+    pub fn raw_bytes(&self) -> &[u8] {
         match &self.source {
             DataSource::Buffered { data, .. } => data,
             #[cfg(feature = "mmap")]
@@ -752,6 +752,125 @@ impl Reader {
         }
     }
 
+    // ── Volume type queries (delegated to header) ────────────────────
+
+    /// Returns `true` if the file represents a single 2D image (`nz == 1`).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # fn main() -> Result<(), mrc::Error> {
+    /// # let mut h = mrc::Header::new();
+    /// # h.nx = 4; h.ny = 4; h.nz = 1;
+    /// # h.mx = 4; h.my = 4; h.mz = 1;
+    /// # let mut raw = [0u8; 1024];
+    /// # h.encode_to_bytes(&mut raw);
+    /// # let buf: Vec<u8> = raw.into_iter().chain(vec![0u8; 64]).collect();
+    /// # let reader = mrc::Reader::from_bytes(buf)?;
+    /// assert!(reader.is_single_image());
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn is_single_image(&self) -> bool {
+        self.header.is_single_image()
+    }
+
+    /// Returns `true` if the file is an image stack (`ispg == 0`).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # fn main() -> Result<(), mrc::Error> {
+    /// # let mut h = mrc::Header::new();
+    /// # h.nx = 4; h.ny = 4; h.nz = 4;
+    /// # h.mx = 4; h.my = 4; h.mz = 1;
+    /// # h.ispg = 0;
+    /// # let mut raw = [0u8; 1024];
+    /// # h.encode_to_bytes(&mut raw);
+    /// # let buf: Vec<u8> = raw.into_iter().chain(vec![0u8; 256]).collect();
+    /// # let reader = mrc::Reader::from_bytes(buf)?;
+    /// assert!(reader.is_image_stack());
+    /// assert!(!reader.is_volume());
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn is_image_stack(&self) -> bool {
+        self.header.is_image_stack()
+    }
+
+    /// Returns `true` if the file represents a single 3D volume.
+    ///
+    /// This is `true` when the file is neither an image stack nor a volume stack.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # fn main() -> Result<(), mrc::Error> {
+    /// # let mut h = mrc::Header::new();
+    /// # h.nx = 4; h.ny = 4; h.nz = 4;
+    /// # h.mx = 4; h.my = 4; h.mz = 4;
+    /// # let mut raw = [0u8; 1024];
+    /// # h.encode_to_bytes(&mut raw);
+    /// # let buf: Vec<u8> = raw.into_iter().chain(vec![0u8; 256]).collect();
+    /// # let reader = mrc::Reader::from_bytes(buf)?;
+    /// assert!(reader.is_volume());
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn is_volume(&self) -> bool {
+        self.header.is_volume()
+    }
+
+    /// Returns `true` if the file is a volume stack (`ispg` in 400..=630).
+    ///
+    /// Volume stacks store multiple sub-volumes contiguously in Z.    ///
+    /// Use [`volumes`](Self::volumes) to iterate over sub-volumes.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # fn main() -> Result<(), mrc::Error> {
+    /// # let mut h = mrc::Header::new();
+    /// # h.nx = 4; h.ny = 4; h.nz = 8;
+    /// # h.mx = 4; h.my = 4; h.mz = 2;
+    /// # h.ispg = 401;
+    /// # let mut raw = [0u8; 1024];
+    /// # h.encode_to_bytes(&mut raw);
+    /// # let buf: Vec<u8> = raw.into_iter().chain(vec![0u8; 512]).collect();
+    /// # let reader = mrc::Reader::from_bytes(buf)?;
+    /// assert!(reader.is_volume_stack());
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn is_volume_stack(&self) -> bool {
+        self.header.is_volume_stack()
+    }
+
+    /// Return the logical 4D shape `[nvolumes, mz, ny, nx]`.
+    ///
+    /// For non-stack files this is `[1, nz, ny, nx]`.
+    /// For volume stacks it is `[nz / mz, mz, ny, nx]`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # fn main() -> Result<(), mrc::Error> {
+    /// # let mut h = mrc::Header::new();
+    /// # h.nx = 64; h.ny = 64; h.nz = 60;
+    /// # h.mx = 64; h.my = 64; h.mz = 30;
+    /// # h.ispg = 401;
+    /// # let mut raw = [0u8; 1024];
+    /// # h.encode_to_bytes(&mut raw);
+    /// # let buf: Vec<u8> = raw.into_iter().chain(vec![0u8; 64 * 64 * 60 * 4]).collect();
+    /// # let reader = mrc::Reader::from_bytes(buf)?;
+    /// assert_eq!(reader.logical_shape(), [2, 30, 64, 64]);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn logical_shape(&self) -> [usize; 4] {
+        self.header.logical_shape()
+    }
+
     /// Cross-check header statistics against actual data (1% tolerance).
     ///
     /// # Examples
@@ -771,7 +890,7 @@ impl Reader {
     /// # }
     /// ```
     pub fn validate_header_stats(&self) -> Result<(), Error> {
-        crate::engine::stats::validate_header_stats(&self.header, self.data_bytes())
+        crate::engine::stats::validate_header_stats(&self.header, self.raw_bytes())
     }
 }
 
@@ -909,6 +1028,10 @@ impl Reader {
             }
 
             unsafe {
+                // SAFETY: byte_start ≤ data.len() and count*b ≤ data.len()-byte_start
+                // (verified by byte_end check above). ptr.add(byte_start) is therefore
+                // in-bounds and produces count*BYTE_SIZE valid bytes. Alignment verified
+                // by the abs_offset % align_of::<T>() check above.
                 let p = ptr.add(byte_start) as *const T;
                 return Ok(core::slice::from_raw_parts(p, count));
             }
@@ -966,6 +1089,10 @@ impl Reader {
         }
 
         unsafe {
+            // SAFETY: byte_start ≤ map.len() and count*b ≤ map.len()-byte_start
+            // (verified by byte_end check above). Mmap is page-aligned (≥ 4 KiB),
+            // so byte_start % align_of::<T>() suffices (verified above). The returned
+            // &[T] borrows from 'a via the mmap reference.
             let ptr = map.as_ptr().add(byte_start) as *const T;
             Ok(core::slice::from_raw_parts(ptr, count))
         }

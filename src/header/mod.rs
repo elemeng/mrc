@@ -1176,6 +1176,10 @@ impl Header {
                 self.ny as usize,
                 self.nx as usize,
             ]
+        } else if self.is_volume_stack() {
+            // Volume stack with mz ≤ 0 is degenerate — match the Err from
+            // Reader::volumes() by returning 0 sub-volumes.
+            [0, 0, self.ny as usize, self.nx as usize]
         } else {
             [1, self.nz as usize, self.ny as usize, self.nx as usize]
         }

@@ -31,31 +31,31 @@
 ## Quick Start
 
 ```rust
-use mrc::{open, create, VoxelBlock};
+use mrc::{read_as, write_as, open, create, VoxelBlock};
 
-// ── Reading (auto-detects gzip/bzip2) ──
+// ── One-shot read (open + read_volume) ──
+let (header, data): (_, Vec<f32>) = read_as("protein.mrc")?;
+println!("{}×{}×{}, mode {}", header.nx, header.ny, header.nz, header.mode);
+
+// ── One-shot write (create + write_block + finalize) ──
+write_as("output.mrc", &data, [512, 512, 256])?;
+
+// ── Iterative read (streaming, memory-friendly) ──
 let reader = open("protein.mrc")?;
-
-// Each slice is one Z-plane of [nx, ny, 1]
 for slice in reader.slices::<f32>() {
     let block = slice?;
-    let data: Vec<f32> = block.data;  // nx * ny floats per slice
+    // process one Z-plane at a time
 }
 
-// ── Writing ──
+// ── Streaming write (one slice at a time) ──
 let mut writer = create("output.mrc")
-    .shape([512, 512, 256])       // nx, ny, nz
-    .mode::<f32>()                // voxel type
+    .shape([512, 512, 256])
+    .mode::<f32>()
     .finish()?;
-
-// Write one slice at a time
 writer.write_block(&VoxelBlock::new(
-    [0, 0, 0],                // offset [x, y, z]
-    [512, 512, 1],            // shape  [sx, sy, sz]
-    vec![0.0f32; 512 * 512],  // voxel data
+    [0, 0, 0], [512, 512, 1], vec![0.0f32; 512 * 512],
 )?)?;
-
-writer.finalize()?;   // rewrites header with final metadata
+writer.finalize()?;
 ```
 
 ---
@@ -68,6 +68,12 @@ pub fn open<P: AsRef<Path>>(path: P) -> Result<Reader, Error>
 
 // Create a new MRC file for writing — returns a WriterBuilder.
 pub fn create<P: AsRef<Path>>(path: P) -> WriterBuilder
+
+// One-shot read: open + read_volume, returns (Header, Vec<T>).
+pub fn read_as<T: Voxel, P: AsRef<Path>>(path: P) -> Result<(Header, Vec<T>), Error>
+
+// One-shot write: create + set_data + finalize, single call.
+pub fn write_as<T: Voxel, P: AsRef<Path>>(path: P, data: &[T], shape: [usize; 3]) -> Result<()>
 ```
 
 `open` wraps `Reader::open`. `create` wraps `WriterBuilder::new`. These are the idiomatic entry points for most use cases.
@@ -110,8 +116,8 @@ as **inherent methods** — no trait imports needed for normal use.
 | `reader.mode()` | `Mode` | Voxel data mode |
 | `reader.header()` | `&Header` | Reference to parsed header |
 | `reader.endian()` | `FileEndian` | Detected byte order |
-| `reader.data_bytes()` | `&[u8]` | Raw voxel data bytes |
-| `reader.ext_header_bytes()` | `&[u8]` | Extended header bytes (empty if none) |
+| `reader.raw_bytes()` | `&[u8]` | Raw voxel data bytes |
+| `reader.extended_header()` | `&[u8]` | Extended header bytes (empty if none) |
 | `reader.read_block_bytes(offset, shape)` | `Result<Vec<u8>>` | Read raw bytes for any sub-block |
 | `reader.validate_header_stats()` | `Result<()>` | Cross-check header stats vs actual data (1% tolerance) |
 | `reader.parse_extended_header()` | `ExtHeaderData` | Auto-detect EXTTYP and parse extended header bytes |
@@ -138,6 +144,11 @@ as **inherent methods** — no trait imports needed for normal use.
 | `reader.slabs_u8(k)` | iterator yielding `VoxelBlock<u8>` | Same as `slices_u8` but `k` planes at a time |
 | `reader.slices_mode0(interp)` | iterator yielding `VoxelBlock<f32>` | Mode 0 (Int8) only; signed or unsigned |
 | `reader.slabs_mode0(k, interp)` | iterator yielding `VoxelBlock<f32>` | Same as `slices_mode0` but `k` planes at a time |
+| `reader.is_single_image()` | `bool` | `nz == 1` |
+| `reader.is_image_stack()` | `bool` | `ispg == 0` |
+| `reader.is_volume()` | `bool` | Not a stack and not an image stack |
+| `reader.is_volume_stack()` | `bool` | `ispg` in 401–630 |
+| `reader.logical_shape()` | `[usize; 4]` | `[nvolumes, mz, ny, nx]` |
 | `reader.convert::<T>()` | [`ConvertReader`] | Returns a wrapper; all reads auto-convert to type `T` |
 
 Then use the wrapper's inherent methods:
@@ -147,6 +158,7 @@ Then use the wrapper's inherent methods:
 | `reader.convert::<T>().slices()` | iterator yielding `VoxelBlock<T>` | Auto-convert any mode to target type `T` |
 | `reader.convert::<T>().slabs(k)` | iterator yielding `VoxelBlock<T>` | Same as `slices` but `k` planes at a time |
 | `reader.convert::<T>().tiles(shape)` | iterator yielding `VoxelBlock<T>` | Same as `slices` but arbitrary 3D tiles |
+| `reader.convert::<T>().volumes()` | `Result<...>` | One sub-volume per step (volume stacks only) |
 | `reader.convert::<T>().subregion(offset, shape)` | `Result<VoxelBlock<T>>` | Single block at given offset/shape, auto-converted |
 | `reader.convert::<T>().read_volume()` | `Result<VoxelBlock<T>>` | Full volume as one block, auto-converted |
 | `reader.convert::<T>().with_complex_strategy(s)` | `Self` (builder) | Configure complex‑mode reduction (RealPart, Magnitude, etc.) |
@@ -185,10 +197,12 @@ let writer = create("out.mrc")
     .ispg(1)                      // space group
     .exttyp(*b"CCP4")             // 4-byte extended header type
     .nsymbt(1024)                 // extended header size in bytes
-    .set_volume_stack(30)        // configure as volume stack (ispg=401, mz=30)
+    .volume_stack(30)        // configure as volume stack (ispg=401, mz=30)
+    .image_stack()           // configure as image stack (ispg=0, mz=1)
+    .volume()                // configure as single volume (ispg=1, mz=nz)
     .origin([0.0, 0.0, 0.0])     // origin coordinates
-    .ext_header_bytes(vec![])     // raw extended header bytes (sets nsymbt)
-    .compression(Compression::Best) // compression level for gzip/bzip2
+    .extended_header(vec![])     // raw extended header bytes (sets nsymbt)
+    .compression(CompressionLevel::Best) // compression level for gzip/bzip2
     .finish()?;                   // → Result<Writer>
 ```
 
@@ -214,6 +228,8 @@ Additional builder methods behind feature flags:
 | `writer.write_u4_block(&block)` | Convenience: write `VoxelBlock<u8>` to a Packed4Bit file (auto-packs, values must be 0–15) |
 | `writer.write_block_as(&block)` | Write with auto-conversion to file's mode: `f32` → `i8`/`i16`/`u16`/`f16` (clamped) |
 | `writer.write_block_parallel::<T>(&block)` | Parallel-encoded write (feature `parallel`; contiguous XY slabs only) |
+| `writer.set_data(&data)` | Write the full volume (must match `nx × ny × nz`) and compute statistics — single call |
+| `writer.update_header_stats()` | Scan written data and update `dmin`/`dmax`/`dmean`/`rms` in the header |
 | `writer.finalize()` | **Required.** Rewrites the header with final metadata (updated stats, labels). The header is written optimistically at file creation and rewritten here — without it the header is stale and tools may display wrong contrast. |
 | `writer.update_header_stats()` | Scan all data from disk, compute dmin/dmax/dmean/rms, update header — ⚠️ re-reads entire data block from disk |
 
@@ -297,9 +313,9 @@ The 1024-byte MRC-2014 header. Every field is a public `struct` member.
 | `header.is_image_stack()` | `bool` | `ispg == 0` |
 | `header.is_volume()` | `bool` | Not a stack and not an image stack |
 | `header.is_volume_stack()` | `bool` | `ispg` in 401-630 |
-| `header.set_image_stack()` | `()` | Set as image stack |
-| `header.set_volume()` | `()` | Set as single volume |
-| `header.set_volume_stack(mz)` | `()` | Set as volume stack with sub-volume size `mz` |
+| `header.image_stack()` | `()` | Set as image stack |
+| `header.volume()` | `()` | Set as single volume |
+| `header.volume_stack(mz)` | `()` | Set as volume stack with sub-volume size `mz` |
 | `header.voxel_size()` | `[f32; 3]` | Å/pixel = `cella / mxyz` |
 | `header.sampling()` | `[i32; 3]` | `[mx, my, mz]` |
 | `header.density_stats()` | `(f32, f32, f32, f32)` | `(dmin, dmax, dmean, rms)` |
@@ -330,7 +346,7 @@ HeaderBuilder::new()
     .sampling([mx, my, mz])      // cell sampling rates (independent of shape)
     .axis_mapping([1, 2, 3])     // column/row/section axis mapping (mapc/r/s)
     .add_label("my volume")      // append a text label
-    .set_volume_stack(30)        // configure as volume stack (ispg=401, mz=30)
+    .volume_stack(30)        // configure as volume stack (ispg=401, mz=30)
     .build()?                    // → Result<Header>
 ```
 
@@ -759,7 +775,7 @@ Reading handles both endiannesses transparently.
 **Permissive mode** enables lenient header parsing for legacy / non-standard files.
 Non-critical issues become warnings instead of errors.
 
-**Compression is transparent on read** — `open()` auto-detects gzip/bzip2 from
+**CompressionLevel is transparent on read** — `open()` auto-detects gzip/bzip2 from
 magic bytes and decompresses the whole file into memory. A hard cap of
 [`DEFAULT_MAX_DECOMPRESSED_BYTES`] (256 GiB) prevents decompression bombs.
 Use `open_gzip_with_limit()` / `open_bzip2_with_limit()` for a custom limit.

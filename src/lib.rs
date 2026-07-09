@@ -14,25 +14,16 @@
 //! # Quick example
 //!
 //! ```no_run
-//! use mrc::{open, create, VoxelBlock};
+//! use mrc::{read_as, write_as};
 //!
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! // Read — auto-detects gzip/bzip2 compression
-//! let reader = open("density.mrc")?;
-//! for slice in reader.convert::<f32>().slices() {
-//!     let _block = slice?; // VoxelBlock<f32>
-//! }
+//! // Read an entire volume in one call
+//! let (header, data): (_, Vec<f32>) = read_as("density.mrc")?;
+//! println!("{}×{}×{} volume, {} voxels",
+//!     header.nx, header.ny, header.nz, data.len());
 //!
-//! // Write
-//! let mut writer = create("output.mrc")
-//!     .shape([512, 512, 256])
-//!     .mode::<f32>()
-//!     .finish()?;
-//! writer.write_block(&VoxelBlock::new(
-//!     [0, 0, 0], [512, 512, 1],
-//!     vec![0.0f32; 512 * 512],
-//! )?)?;
-//! writer.finalize()?;
+//! // Write a volume in one call
+//! write_as("output.mrc", &data, [512, 512, 256])?;
 //! # Ok(()) }
 //! ```
 //!
@@ -56,6 +47,7 @@
 //! * [`slices`](Reader::slices) — one Z-plane at a time
 //! * [`slabs`](Reader::slabs) — batches of `k` Z-planes
 //! * [`tiles`](Reader::tiles) — arbitrary 3D blocks
+//! * [`volumes`](Reader::volumes) — sub-volumes in a volume stack
 //! * [`subregion`](Reader::subregion) — a single block by coordinate
 //! * [`read_volume`](Reader::read_volume) — the entire volume as one block
 //!
@@ -162,6 +154,10 @@
 //! memory-mapped I/O (requires the `mmap` feature). Same iterator API,
 //! zero-copy [`slab_as`](Reader::slab_as), OS-managed paging.
 //!
+//! For buffered readers (in-memory buffers, compressed files),
+//! [`slab_as`](Reader::slab_as) also provides zero-copy typed access
+//! under the same conditions (native endian, matching type).
+//!
 //! ### Quirky files
 //!
 //! Common microscope quirks (NVERSION left at 0, `"MAP\0"` instead of `"MAP "`)
@@ -188,6 +184,19 @@
 //!
 //! Use [`create()`] to get a [`WriterBuilder`], set the shape and voxel type,
 //! then call [`finish`](WriterBuilder::finish).
+//!
+//! For the simplest case — write an entire volume — use [`write_as()`] or
+//! [`Writer::set_data`]:
+//!
+//! ```no_run
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! use mrc::write_as;
+//! let data = vec![0.0f32; 256 * 256 * 128];
+//! write_as("output.mrc", &data, [256, 256, 128])?;
+//! # Ok(()) }
+//! ```
+//!
+//! For streaming writes (one slice at a time), use the builder API:
 //!
 //! ```no_run
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -237,17 +246,17 @@
 //! | [`Writer`] (gzip) | [`finish_gzip()`](WriterBuilder::finish_gzip) / [`from_writer_gzip`](Writer::from_writer_gzip) | Compressed output (`gzip` feature) |
 //! | [`Writer`] (bzip2) | [`finish_bzip2()`](WriterBuilder::finish_bzip2) / [`from_writer_bzip2`](Writer::from_writer_bzip2) | Compressed output (`bzip2` feature) |
 //!
-//! Compressed writers support configurable [`Compression`] level via
+//! Compressed writers support configurable [`CompressionLevel`] level via
 //! [`WriterBuilder::compression`]:
 //!
 //! ```no_run
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! use mrc::{Compression, create};
+//! use mrc::{CompressionLevel, create};
 //!
 //! let mut writer = create("output.mrc.gz")
 //!     .shape([256, 256, 128])
 //!     .mode::<f32>()
-//!     .compression(Compression::Best)
+//!     .compression(CompressionLevel::Best)
 //!     .finish_gzip()?;
 //! # Ok(()) }
 //! ```
@@ -718,7 +727,7 @@ pub use iter::{SlabStepper, SliceStepper, TileStepper};
 /// Compression level for compressed MRC writers.
 ///
 /// See [`WriterBuilder::compression`] for usage.
-pub use io::writer::Compression;
+pub use io::writer::CompressionLevel;
 
 /// Default decompression safety limit for gzip/bzip2 files (256 GiB).
 ///
@@ -769,4 +778,58 @@ pub fn open<P: AsRef<std::path::Path>>(path: P) -> Result<Reader, Error> {
 /// ```
 pub fn create<P: AsRef<std::path::Path>>(path: P) -> WriterBuilder {
     WriterBuilder::new(path)
+}
+
+/// Read an entire MRC volume into a `Vec<T>` with auto-mode detection.
+///
+/// This is a one-shot convenience over manually opening a [`Reader`] and
+/// calling [`read_volume`](Reader::read_volume). The type `T` must match
+/// the file's on-disk mode.
+///
+/// Returns the parsed [`Header`] and the voxel data.
+///
+/// # Examples
+///
+/// ```no_run
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// use mrc::read_as;
+/// let (header, data): (_, Vec<f32>) = read_as("density.mrc")?;
+/// println!("{}×{}×{} volume, {} voxels",
+///     header.nx, header.ny, header.nz, data.len());
+/// # Ok(()) }
+/// ```
+pub fn read_as<T: Voxel, P: AsRef<std::path::Path>>(path: P) -> Result<(Header, Vec<T>), Error> {
+    let reader = Reader::open(path)?;
+    let header = *reader.header();
+    let volume = reader.read_volume::<T>()?;
+    Ok((header, volume.data))
+}
+
+/// Write an entire MRC volume from a `&[T]` with a single call.
+///
+/// Creates the file, writes the data, computes density statistics,
+/// and finalizes — all in one step. The type `T` determines the
+/// file's MRC mode (e.g. `f32` → Mode 2, `i16` → Mode 1).
+///
+/// # Examples
+///
+/// ```no_run
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// use mrc::write_as;
+/// let data = vec![0.0f32; 64 * 64 * 32];
+/// write_as("output.mrc", &data, [64, 64, 32])?;
+/// # Ok(()) }
+/// ```
+pub fn write_as<T: Voxel, P: AsRef<std::path::Path>>(
+    path: P,
+    data: &[T],
+    shape: [usize; 3],
+) -> Result<(), Error> {
+    let mut writer = WriterBuilder::new(path)
+        .shape(shape)
+        .mode::<T>()
+        .finish()?;
+    writer.set_data(data)?;
+    writer.finalize()?;
+    Ok(())
 }

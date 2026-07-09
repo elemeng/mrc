@@ -196,7 +196,7 @@ pub(crate) fn is_close(a: f32, b: f32, rtol: f32) -> bool {
 /// For complex modes, only RMS is checked.
 pub(crate) fn validate_header_stats(
     header: &crate::Header,
-    data_bytes: &[u8],
+    raw_bytes: &[u8],
 ) -> Result<(), crate::Error> {
     let endian = header.detect_endian();
     let mode = match crate::Mode::from_i32(header.mode) {
@@ -204,7 +204,7 @@ pub(crate) fn validate_header_stats(
         None => return Err(crate::Error::UnsupportedMode),
     };
     let (actual_dmin, actual_dmax, actual_dmean, actual_rms) = compute_stats(
-        data_bytes,
+        raw_bytes,
         mode,
         endian,
         header.nx as usize,
