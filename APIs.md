@@ -117,7 +117,7 @@ as **inherent methods** — no trait imports needed for normal use.
 | `reader.header()` | `&Header` | Reference to parsed header |
 | `reader.endian()` | `FileEndian` | Detected byte order |
 | `reader.raw_bytes()` | `&[u8]` | Raw voxel data bytes |
-| `reader.extended_header()` | `&[u8]` | Extended header bytes (empty if none) |
+| `reader.ext_header_bytes()` | `&[u8]` | Extended header bytes (empty if none) |
 | `reader.read_block_bytes(offset, shape)` | `Result<Vec<u8>>` | Read raw bytes for any sub-block |
 | `reader.validate_header_stats()` | `Result<()>` | Cross-check header stats vs actual data (1% tolerance) |
 | `reader.parse_extended_header()` | `ExtHeaderData` | Auto-detect EXTTYP and parse extended header bytes |
@@ -313,9 +313,9 @@ The 1024-byte MRC-2014 header. Every field is a public `struct` member.
 | `header.is_image_stack()` | `bool` | `ispg == 0` |
 | `header.is_volume()` | `bool` | Not a stack and not an image stack |
 | `header.is_volume_stack()` | `bool` | `ispg` in 401-630 |
-| `header.image_stack()` | `()` | Set as image stack |
-| `header.volume()` | `()` | Set as single volume |
-| `header.volume_stack(mz)` | `()` | Set as volume stack with sub-volume size `mz` |
+| `header.set_image_stack()` | `()` | Set as image stack |
+| `header.set_volume()` | `()` | Set as single volume |
+| `header.set_volume_stack(mz)` | `()` | Set as volume stack with sub-volume size `mz` |
 | `header.voxel_size()` | `[f32; 3]` | Å/pixel = `cella / mxyz` |
 | `header.sampling()` | `[i32; 3]` | `[mx, my, mz]` |
 | `header.density_stats()` | `(f32, f32, f32, f32)` | `(dmin, dmax, dmean, rms)` |
@@ -346,7 +346,7 @@ HeaderBuilder::new()
     .sampling([mx, my, mz])      // cell sampling rates (independent of shape)
     .axis_mapping([1, 2, 3])     // column/row/section axis mapping (mapc/r/s)
     .add_label("my volume")      // append a text label
-    .volume_stack(30)        // configure as volume stack (ispg=401, mz=30)
+    .set_volume_stack(30)        // configure as volume stack (ispg=401, mz=30)
     .build()?                    // → Result<Header>
 ```
 

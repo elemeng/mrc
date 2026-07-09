@@ -14,27 +14,18 @@ A type-safe Rust encoder/decoder for MRC files — the standard format in cryo-e
 
 ## Quick Start
 
-Three lines to read any MRC file. Three more to write one.
+One line to read any MRC file. One line to write one.
 
 ```rust,no_run
-use mrc::{open, create, VoxelBlock};
+use mrc::{read_as, write_as};
 
 // Read — auto-detects gzip/bzip2, handles quirky headers
-let reader = open("density.mrc")?;
-let volume: VoxelBlock<f32> = reader.convert::<f32>().read_volume()?;
+let (header, data): (_, Vec<f32>) = read_as("density.mrc")?;
 println!("{}×{}×{} = {} voxels",
-    volume.shape[0], volume.shape[1], volume.shape[2], volume.data.len());
+    header.nx, header.ny, header.nz, data.len());
 
-// Write — type-safe, compile-time mode checking
-let mut writer = create("output.mrc")
-    .shape([512, 512, 256])
-    .mode::<f32>()
-    .finish()?;
-writer.write_block(&VoxelBlock::new(
-    [0, 0, 0], [512, 512, 256], vec![0.0f32; 512 * 512 * 256],
-)?)?;
-writer.update_header_stats()?;  // compute dmin/dmax/dmean/rms
-writer.finalize()?;             // rewrites header — always call this
+// Write — type-safe, single call
+write_as("output.mrc", &data, [512, 512, 256])?;
 ```
 
 ---
@@ -46,11 +37,12 @@ The `mrc` API is designed so that **common operations are one-liners** and **com
 | What you want | How you write it |
 |---|---|
 | Open any MRC file (plain / gzip / bzip2) | `Reader::open("file.mrc")?` |
+| One-shot read (open + read_volume) | `let (h, d): (_, Vec<f32>) = read_as("file.mrc")?;` |
+| One-shot write (create + write + finalize) | `write_as("out.mrc", &data, [512, 512, 256])?;` |
 | Read the whole volume as `f32` | `reader.convert::<f32>().read_volume()?` |
 | Read a sub-region | `reader.subregion::<f32>([x, y, z], [sx, sy, sz])?` |
 | Iterate Z-slices | `reader.slices::<f32>()` → `for slice in ...` |
-| Iterate batches of 16 Z-planes | `reader.slabs::<f32>(16)` → `for slab in ...` |
-| Iterate 3D tiles | `reader.tiles::<f32>([64, 64, 64])?` → `for tile in ...` |
+| Iterate sub-volumes in a stack | `reader.volumes::<f32>()?` → `for vol in ...` |
 | Create a new file | `create("out.mrc").shape([512, 512, 256]).mode::<f32>().finish()?` |
 | Write with auto-conversion (f32 → i16) | `writer.write_block_as(&f32_block)?` |
 | Parse tilt-series metadata | `reader.fei1_metadata()` or `reader.parse_extended_header()` |
