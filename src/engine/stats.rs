@@ -50,12 +50,12 @@ pub(crate) fn compute_stats(
         }
         Mode::Float32Complex => {
             let data = decode_slice::<Float32Complex>(bytes, endian)?;
-            let rms = rms_complex_f32(&data);
+            let rms = rms_complex(&data);
             (0.0, -1.0, -2.0, rms)
         }
         Mode::Int16Complex => {
             let data = decode_slice::<Int16Complex>(bytes, endian)?;
-            let rms = rms_complex_i16(&data);
+            let rms = rms_complex(&data);
             (0.0, -1.0, -2.0, rms)
         }
         #[cfg(feature = "f16")]
@@ -126,46 +126,55 @@ fn stats_f32_simd_inner(data: &[f32]) -> (f32, f32, f32, f32) {
     stats_f32_simd(data)
 }
 
-fn rms_complex_f32(data: &[Float32Complex]) -> f32 {
-    if data.is_empty() {
-        return -1.0;
-    }
-    let mut sum_real = 0.0f64;
-    let mut sum_imag = 0.0f64;
-    for c in data {
-        sum_real += c.real as f64;
-        sum_imag += c.imag as f64;
-    }
-    let mean_real = sum_real / data.len() as f64;
-    let mean_imag = sum_imag / data.len() as f64;
-    let mut variance_sum = 0.0f64;
-    for c in data {
-        let dr = c.real as f64 - mean_real;
-        let di = c.imag as f64 - mean_imag;
-        variance_sum += dr * dr + di * di;
-    }
-    ((variance_sum / data.len() as f64).sqrt()) as f32
+/// Internal trait to extract real/imaginary components as f64 for RMS computation.
+trait ComplexLike {
+    fn real_f64(&self) -> f64;
+    fn imag_f64(&self) -> f64;
 }
 
-fn rms_complex_i16(data: &[Int16Complex]) -> f32 {
+impl ComplexLike for Float32Complex {
+    #[inline]
+    fn real_f64(&self) -> f64 {
+        self.real as f64
+    }
+    #[inline]
+    fn imag_f64(&self) -> f64 {
+        self.imag as f64
+    }
+}
+
+impl ComplexLike for Int16Complex {
+    #[inline]
+    fn real_f64(&self) -> f64 {
+        self.real as f64
+    }
+    #[inline]
+    fn imag_f64(&self) -> f64 {
+        self.imag as f64
+    }
+}
+
+/// Compute RMS deviation for complex data, generic over component type.
+fn rms_complex<T: ComplexLike>(data: &[T]) -> f32 {
     if data.is_empty() {
         return -1.0;
     }
     let mut sum_real = 0.0f64;
     let mut sum_imag = 0.0f64;
     for c in data {
-        sum_real += c.real as f64;
-        sum_imag += c.imag as f64;
+        sum_real += c.real_f64();
+        sum_imag += c.imag_f64();
     }
-    let mean_real = sum_real / data.len() as f64;
-    let mean_imag = sum_imag / data.len() as f64;
+    let len = data.len() as f64;
+    let mean_real = sum_real / len;
+    let mean_imag = sum_imag / len;
     let mut variance_sum = 0.0f64;
     for c in data {
-        let dr = c.real as f64 - mean_real;
-        let di = c.imag as f64 - mean_imag;
+        let dr = c.real_f64() - mean_real;
+        let di = c.imag_f64() - mean_imag;
         variance_sum += dr * dr + di * di;
     }
-    ((variance_sum / data.len() as f64).sqrt()) as f32
+    ((variance_sum / len).sqrt()) as f32
 }
 
 /// Check whether two f32 values are "close" within a relative tolerance.
