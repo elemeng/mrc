@@ -59,6 +59,40 @@ pub trait EndianCodec: Sized {
 // Primitive Implementations
 // ============================================================================
 
+/// Macro to generate EndianCodec for fixed-size integer/float types.
+/// All 2/4/8-byte primitives use the same pattern: read array, from_le/be_bytes.
+macro_rules! impl_endian_codec {
+    ($ty:ty, $size:literal) => {
+        impl EndianCodec for $ty {
+            const BYTE_SIZE: usize = $size;
+
+            #[inline]
+            fn from_bytes(bytes: &[u8], offset: usize, endian: FileEndian) -> Self {
+                let mut arr = [0u8; $size];
+                arr.copy_from_slice(&bytes[offset..offset + $size]);
+                match endian {
+                    FileEndian::LittleEndian => Self::from_le_bytes(arr),
+                    FileEndian::BigEndian => Self::from_be_bytes(arr),
+                }
+            }
+
+            #[inline]
+            fn to_bytes(&self, bytes: &mut [u8], offset: usize, endian: FileEndian) {
+                let arr = match endian {
+                    FileEndian::LittleEndian => self.to_le_bytes(),
+                    FileEndian::BigEndian => self.to_be_bytes(),
+                };
+                bytes[offset..offset + $size].copy_from_slice(&arr);
+            }
+        }
+    };
+}
+
+impl_endian_codec!(i16, 2);
+impl_endian_codec!(u16, 2);
+impl_endian_codec!(i32, 4);
+impl_endian_codec!(f32, 4);
+
 impl EndianCodec for i8 {
     const BYTE_SIZE: usize = 1;
 
@@ -73,105 +107,6 @@ impl EndianCodec for i8 {
     }
 }
 
-impl EndianCodec for i16 {
-    const BYTE_SIZE: usize = 2;
-
-    #[inline]
-    fn from_bytes(bytes: &[u8], offset: usize, endian: FileEndian) -> Self {
-        let arr: [u8; 2] = [bytes[offset], bytes[offset + 1]];
-        match endian {
-            FileEndian::LittleEndian => Self::from_le_bytes(arr),
-            FileEndian::BigEndian => Self::from_be_bytes(arr),
-        }
-    }
-
-    #[inline]
-    fn to_bytes(&self, bytes: &mut [u8], offset: usize, endian: FileEndian) {
-        let arr = match endian {
-            FileEndian::LittleEndian => self.to_le_bytes(),
-            FileEndian::BigEndian => self.to_be_bytes(),
-        };
-        bytes[offset..offset + 2].copy_from_slice(&arr);
-    }
-}
-
-impl EndianCodec for u16 {
-    const BYTE_SIZE: usize = 2;
-
-    #[inline]
-    fn from_bytes(bytes: &[u8], offset: usize, endian: FileEndian) -> Self {
-        let arr: [u8; 2] = [bytes[offset], bytes[offset + 1]];
-        match endian {
-            FileEndian::LittleEndian => Self::from_le_bytes(arr),
-            FileEndian::BigEndian => Self::from_be_bytes(arr),
-        }
-    }
-
-    #[inline]
-    fn to_bytes(&self, bytes: &mut [u8], offset: usize, endian: FileEndian) {
-        let arr = match endian {
-            FileEndian::LittleEndian => self.to_le_bytes(),
-            FileEndian::BigEndian => self.to_be_bytes(),
-        };
-        bytes[offset..offset + 2].copy_from_slice(&arr);
-    }
-}
-
-impl EndianCodec for i32 {
-    const BYTE_SIZE: usize = 4;
-
-    #[inline]
-    fn from_bytes(bytes: &[u8], offset: usize, endian: FileEndian) -> Self {
-        let arr: [u8; 4] = [
-            bytes[offset],
-            bytes[offset + 1],
-            bytes[offset + 2],
-            bytes[offset + 3],
-        ];
-        match endian {
-            FileEndian::LittleEndian => Self::from_le_bytes(arr),
-            FileEndian::BigEndian => Self::from_be_bytes(arr),
-        }
-    }
-
-    #[inline]
-    fn to_bytes(&self, bytes: &mut [u8], offset: usize, endian: FileEndian) {
-        let arr = match endian {
-            FileEndian::LittleEndian => self.to_le_bytes(),
-            FileEndian::BigEndian => self.to_be_bytes(),
-        };
-        bytes[offset..offset + 4].copy_from_slice(&arr);
-    }
-}
-
-impl EndianCodec for f32 {
-    const BYTE_SIZE: usize = 4;
-
-    #[inline]
-    fn from_bytes(bytes: &[u8], offset: usize, endian: FileEndian) -> Self {
-        let arr: [u8; 4] = [
-            bytes[offset],
-            bytes[offset + 1],
-            bytes[offset + 2],
-            bytes[offset + 3],
-        ];
-        match endian {
-            FileEndian::LittleEndian => Self::from_le_bytes(arr),
-            FileEndian::BigEndian => Self::from_be_bytes(arr),
-        }
-    }
-
-    #[inline]
-    fn to_bytes(&self, bytes: &mut [u8], offset: usize, endian: FileEndian) {
-        let arr = match endian {
-            FileEndian::LittleEndian => self.to_le_bytes(),
-            FileEndian::BigEndian => self.to_be_bytes(),
-        };
-        bytes[offset..offset + 4].copy_from_slice(&arr);
-    }
-}
-
-// ============================================================================
 // Complex Type Implementations
 // ============================================================================
 
