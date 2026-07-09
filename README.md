@@ -177,12 +177,28 @@ match reader.parse_extended_header() {
 
 ---
 
-## License
-
-MIT — see the [LICENSE](LICENSE) file.
-
 ## Acknowledgments
 
 - [CCP-EM](https://www.ccpem.ac.uk/) for the MRC-2014 specification
-- EMDB for providing real-world test data
+- [EMDB](https://www.ebi.ac.uk/emdb/) for providing real-world test data
 - The cryo-EM community for invaluable feedback
+
+## Contributing
+
+**Contributions are welcome — whatever your skill level.**
+
+This crate is built by and for the cryo-EM community. Whether you're fixing a typo, adding a test, implementing a new feature, or just asking a question, your input makes the project better.
+
+- **Report bugs** — open an issue with steps to reproduce
+- **Request features** — what format feature or workflow is missing from your pipeline?
+- **Submit PRs** — see [AGENTS.md](AGENTS.md) for code organization and conventions
+- **Improve docs** — better examples, clearer explanations, fix typos
+- **Share real files** — MRC files with unusual extended headers or edge cases help us test
+
+All contributions are subject to the [MIT License](LICENSE).
+
+---
+
+*Format specs come and go, but cryo-EM data is forever — make yours readable by the next generation of tools.*
+
+MIT — see the [LICENSE](LICENSE) file.
