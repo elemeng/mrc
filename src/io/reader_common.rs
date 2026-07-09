@@ -9,6 +9,7 @@ use crate::iter::{SlabStepper, SliceStepper, Stepper, TileStepper};
 use crate::mode::Voxel;
 use crate::{Error, Mode};
 use crate::{VolumeShape, VoxelBlock};
+use std::borrow::Cow;
 use std::io::Read;
 
 /// Internal helper: type-erased voxel block iterator.
@@ -174,12 +175,12 @@ impl<'a, S> RawConvertIter<'a, S> {
 }
 
 impl<'a, S: Stepper> Iterator for RawConvertIter<'a, S> {
-    type Item = Result<(Vec<u8>, [usize; 3], [usize; 3]), Error>;
+    type Item = Result<(Cow<'a, [u8]>, [usize; 3], [usize; 3]), Error>;
 
     fn next(&mut self) -> Option<Self::Item> {
         let (offset, shape) = self.stepper.next(self.volume_shape)?;
         match self.reader.read_block_bytes_cow(offset, shape) {
-            Ok(bytes) => Some(Ok((bytes.into_owned(), offset, shape))),
+            Ok(bytes) => Some(Ok((bytes, offset, shape))),
             Err(e) => Some(Err(e)),
         }
     }

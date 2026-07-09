@@ -94,8 +94,11 @@ enum DataSource {
 ///
 /// When backed by a memory map (which [`open`](Self::open) selects
 /// automatically for files), [`slab_as`](Self::slab_as) returns `&[T]`
-/// directly into the mapped memory with no allocation. Requires native
-/// endianness and matching voxel type.
+/// directly into the mapped memory with no allocation. The same zero-copy
+/// access is also available for buffered readers (created via
+/// [`from_bytes`](Self::from_bytes), [`from_reader`](Self::from_reader),
+/// or compressed-file constructors) under the same conditions.
+/// Requires native endianness and matching voxel type.
 ///
 /// # Example
 /// ```no_run
@@ -821,15 +824,35 @@ impl Reader {
 
     /// Zero-copy read of a contiguous Z-slab as `&[T]`.
     ///
-    /// Only available for memory-mapped readers with native endianness
-    /// and matching voxel type. Returns [`Error::TypeMismatch`] for
-    /// buffered readers — use [`subregion`](Self::subregion) instead.
+    /// Zero-copy access is supported when both of these hold:
+    /// - The file's endianness matches the host (native endian).
+    /// - The requested type `T` matches the file's on-disk mode.
+    ///
+    /// When available, this method returns `&[T]` directly into the internal
+    /// data buffer — no allocation, no memcpy. This works for **both**
+    /// memory-mapped and buffered readers (including compressed files).
+    ///
+    /// When the conditions are *not* met, returns [`Error::TypeMismatch`] or
+    /// [`Error::ModeMismatch`]. Use [`subregion`](Self::subregion) as a
+    /// fallback that handles all modes and endianness via copying.
     ///
     /// # Examples
     ///
     /// ```no_run
     /// # fn main() -> Result<(), mrc::Error> {
     /// let reader = mrc::Reader::open("density.mrc")?;
+    /// let slab: &[f32] = reader.slab_as::<f32>(0, 1)?;
+    /// println!("Slab has {} voxels", slab.len());
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// With a buffered reader (e.g. from a byte buffer):
+    ///
+    /// ```no_run
+    /// # fn main() -> Result<(), mrc::Error> {
+    /// let bytes: Vec<u8> = std::fs::read("density.mrc")?;
+    /// let reader = mrc::Reader::from_bytes(bytes)?;
     /// let slab: &[f32] = reader.slab_as::<f32>(0, 1)?;
     /// println!("Slab has {} voxels", slab.len());
     /// # Ok(())
@@ -843,6 +866,54 @@ impl Reader {
         {
             return self._slab_as_mmap::<T>(map, *data_offset, z, k);
         }
+
+        // Buffered fast path: zero-copy reinterpret when native endian + matching type.
+        if let DataSource::Buffered { data, .. } = &self.source {
+            if T::MODE != self.mode() {
+                return Err(Error::ModeMismatch {
+                    file_mode: self.mode(),
+                    requested_mode: T::MODE,
+                    offset: None,
+                });
+            }
+            if !self.endian.is_native() {
+                return Err(Error::TypeMismatch {
+                    expected: T::BYTE_SIZE,
+                    actual: 0,
+                });
+            }
+
+            let b = T::BYTE_SIZE;
+            let [nx, ny, nz] = [self.shape.nx, self.shape.ny, self.shape.nz];
+
+            if k == 0 || z + k > nz {
+                return Err(Error::bounds_err());
+            }
+
+            let linear_start = z * nx * ny;
+            let byte_start = linear_start * b;
+            let count = nx * ny * k;
+            let byte_end = byte_start + count * b;
+
+            if byte_end > data.len() {
+                return Err(Error::bounds_err());
+            }
+
+            let ptr = data.as_ptr();
+            let abs_offset = ptr as usize + byte_start;
+            if abs_offset % core::mem::align_of::<T>() != 0 {
+                return Err(Error::TypeMismatch {
+                    expected: core::mem::align_of::<T>(),
+                    actual: abs_offset % core::mem::align_of::<T>(),
+                });
+            }
+
+            unsafe {
+                let p = ptr.add(byte_start) as *const T;
+                return Ok(core::slice::from_raw_parts(p, count));
+            }
+        }
+
         Err(Error::TypeMismatch {
             expected: 0,
             actual: 0,
@@ -915,6 +986,23 @@ impl Reader {
                     offset,
                     shape,
                 )?;
+
+                let [nx, ny, ..] = [self.shape.nx, self.shape.ny, self.shape.nz];
+                let [ox, oy, oz] = offset;
+                let [sx, sy, sz] = shape;
+
+                if ox == 0 && sx == nx && oy == 0 && sy == ny {
+                    let (start, byte_len) = if self.mode == Mode::Packed4Bit {
+                        let row_bytes = nx.div_ceil(2);
+                        (oz * ny * row_bytes, row_bytes * ny * sz)
+                    } else {
+                        let linear = oz * nx * ny;
+                        let b = self.mode.byte_size();
+                        (linear * b, sx * sy * sz * b)
+                    };
+                    return Ok(Cow::Borrowed(&data[start..start + byte_len]));
+                }
+
                 Ok(Cow::Owned(crate::io::reader_common::gather_block_bytes(
                     data,
                     self.shape,

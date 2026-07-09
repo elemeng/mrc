@@ -233,6 +233,43 @@ fn reader_from_reader() {
 }
 
 #[test]
+fn reader_buffered_slab_as() {
+    // from_bytes creates a DataSource::Buffered reader.
+    // slab_as should now work via the Buffered zero-copy path.
+    let f = TempMrc::new("buffered_slab");
+    let nx = 8;
+    let ny = 6;
+    let nz = 4;
+    let data: Vec<f32> = (0..nx * ny * nz).map(|i| i as f32).collect();
+    {
+        let mut w = create(f.path())
+            .shape([nx, ny, nz])
+            .mode::<f32>()
+            .finish()
+            .unwrap();
+        w.write_block(&VoxelBlock::new([0, 0, 0], [nx, ny, nz], data.clone()).unwrap())
+            .unwrap();
+        w.finalize().unwrap();
+    }
+    let bytes = std::fs::read(f.path()).unwrap();
+    let r = Reader::from_bytes(bytes).unwrap();
+
+    // slab_as returns &[T] directly into the buffered data
+    let slab: &[f32] = r.slab_as::<f32>(1, 2).unwrap();
+    assert_eq!(slab.len(), nx * ny * 2);
+    let expected = &data[nx * ny * 1..][..nx * ny * 2];
+    assert_eq!(slab, expected);
+
+    // slices iterator via read_block_bytes_cow fast path (Cow::Borrowed)
+    let slice_count = r.slices::<f32>().count();
+    assert_eq!(slice_count, nz);
+    for (z, slice_result) in r.slices::<f32>().enumerate() {
+        let block = slice_result.unwrap();
+        assert_eq!(block.data.as_slice(), &data[z * nx * ny..(z + 1) * nx * ny]);
+    }
+}
+
+#[test]
 fn reader_gzip_open_detect() {
     let f = TempMrc::new("gzip_detect");
     let data: Vec<f32> = vec![1.0, 2.0, 3.0, 4.0];

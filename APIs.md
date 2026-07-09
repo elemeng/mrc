@@ -153,16 +153,17 @@ Then use the wrapper's inherent methods:
 | `reader.convert::<T>().with_m0_interpretation(i)` | `Self` (builder) | Configure Mode 0 as Signed or Unsigned |
 | `reader.convert::<T>().to_ndarray()` | `Result<Array3<T>>` (feature `ndarray`) | Full volume as an `ndarray::Array3` |
 
-### Performance note: memory-mapped access
+### Performance note: zero-copy access
 
 [`Reader::open`] automatically uses memory-mapped I/O (zero-copy, demand-paged)
 when available (requires the `mmap` feature). The [`slab_as`](crate::Reader::slab_as)
-method provides zero-copy typed access into the mmap when the file endianness
-matches the host and the voxel type matches the file mode.
+method provides zero-copy typed access into the internal data buffer (mmap or
+buffered alike) when the file endianness matches the host and the voxel type
+matches the file mode.
 
 | Method | Returns | Description |
 |---|---|---|
-| `reader.slab_as::<T>(z, k)` | `Result<&[T]>` | Zero-copy typed access into the mmap |
+| `reader.slab_as::<T>(z, k)` | `Result<&[T]>` | Zero-copy typed access (mmap or buffered) |
 | `reader.is_truncated()` | `bool` | `true` if permissive-mode file is shorter than header claims |
 
 ---
