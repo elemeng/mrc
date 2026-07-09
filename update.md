@@ -1,6 +1,59 @@
 # Update Log
 
-## 2026-07-09 — Documentation refinements
+## 2026-07-09 — API naming cleanup, ergonomic improvements, semantic fixes
+
+~11 files changed, +628/−109. This batch focuses on naming consistency, one-shot ergonomics,
+and corner-case correctness.
+
+### Naming (backward-incompatible for 0.x)
+
+| Old | New | Reason |
+|-----|-----|--------|
+| `WriterBuilder::set_volume_stack(mz)` | `.volume_stack(mz)` | Builder bare-noun convention (all other builder methods are bare nouns) |
+| `WriterBuilder::set_image_stack()` | `.image_stack()` | Same |
+| `WriterBuilder::set_volume()` | `.volume()` | Same |
+| `Compression` (enum) | `CompressionLevel` | Distinguish from `CompressionType` (auto-detection) |
+| `WriterBuilder::ext_header_bytes()` | `.extended_header()` | Setter name reads as setter, not getter |
+| `Reader::data_bytes()` | `raw_bytes()` | Clarifies "raw file bytes, not decoded typed view" |
+
+### Ergonomic Additions
+
+- **`Writer::set_data(&[T])`** — write full volume + compute stats in one call.
+  Shape taken from pre-configured `Writer`; uses `checked_mul` to guard against
+  overflow (matching `VolumeShape::total_voxels`).
+- **`read_as::<T>(path)`** — one-shot: `open` + `read_volume`, returns `(Header, Vec<T>)`.
+- **`write_as(path, data, shape)`** — one-shot: `create` + `set_data` + `finalize`.
+- **`Reader::is_single_image()` / `is_image_stack()` / `is_volume()` / `is_volume_stack()`** —
+  delegation to `Header`, avoiding `reader.header().is_volume_stack()`.
+- **`Reader::logical_shape()`** — 4D shape `[nvolumes, mz, ny, nx]`.
+- **`ConvertReader::volumes()`** — iterate sub-volumes with auto-conversion; returns
+  `Err(NotAVolumeStack)` on non-stack files, matching `Reader::volumes()`.
+
+### Semantic Fixes
+
+- **`Writer::finalize()` — `finalized` flag set after I/O, not before.** Previously
+  `self.finalized = true` was written before any I/O. If disk-write failed, the Drop
+  guard would silently suppress the warning. Now `finalized = true` is set only after
+  all I/O succeeds (line 1447: `if result.is_ok() { self.finalized = true; }`).
+- **`Writer::set_data()` — `checked_mul` for volume size.** `nx * ny * nz` could
+  overflow on 32-bit. Now uses `checked_mul` chain like `VolumeShape::total_voxels`.
+- **`Header::logical_shape()` — handle degenerate volume stack (mz=0).** Previously
+  fell through to the `else` branch and returned `[1, nz, ny, nx]`, making a volume
+  stack with mz=0 look like a single volume. Now returns `[0, 0, ny, nx]`, consistent
+  with `Reader::volumes()` returning `Err(NotAVolumeStack)`.
+- **`// SAFETY:` comments added** to both `slab_as` unsafe blocks (mmap + buffered),
+  per AGENTS.md convention.
+- **`write_block_as` doc** — first line now reads "Note: input data must be `f32`"
+  to clarify the `VoxelBlock<f32>` signature constraint.
+
+### Write‑side ergonomics
+
+- **`Writer` Drop guard** — emits `tracing::warn!` (zero I/O) when dropped without
+  calling `finalize()`. No data-loss risk; purely advisory.
+
+### Testing
+
+- 416 tests, clippy clean, doc clean.
 
 ### API Exposure
 
