@@ -41,6 +41,7 @@ writer.finalize()?;             // **required** — rewrites header
 
 | Feature | What it means for you |
 |---|---|
+| **Friendly, consistent API** | `reader.slices::<f32>()` and `writer.write_block(&block)` — same pattern everywhere, no trait imports, no surprises |
 | **Type-safe I/O** | `reader.slices::<f32>()` — wrong type won't compile, not just a runtime error |
 | **Zero-copy mmap** | Files too large for RAM? Memory-mapped access with OS demand-paging |
 | **Auto-conversion** | `reader.convert::<f32>().slices()` — read any mode as `f32` without thinking |
