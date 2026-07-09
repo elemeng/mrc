@@ -175,6 +175,87 @@ impl EndianCodec for crate::f16 {
 // Slice Operations - Decode
 // ============================================================================
 
+/// Decode bytes into an existing typed slice, avoiding a new allocation.
+///
+/// For native-endian files, this is a plain `memcpy`.  For non-native endian,
+/// uses SIMD byte-swap when available.
+///
+/// # Errors
+/// Returns `Error::TypeMismatch` if `bytes.len() != values.len() * T::BYTE_SIZE`.
+///
+/// # Example
+/// ```rust
+/// use mrc::decode_into;
+/// use mrc::FileEndian;
+///
+/// let bytes = [0x34, 0x12, 0x78, 0x56];
+/// let mut vals = [0i16, 0i16];
+/// decode_into(&bytes, &mut vals, FileEndian::LittleEndian).unwrap();
+/// assert_eq!(vals, [0x1234, 0x5678]);
+/// ```
+#[allow(dead_code)]
+pub fn decode_into<T: EndianCodec + Copy>(
+    bytes: &[u8],
+    values: &mut [T],
+    endian: FileEndian,
+) -> Result<(), crate::Error> {
+    let expected = values
+        .len()
+        .checked_mul(T::BYTE_SIZE)
+        .ok_or(crate::Error::TypeMismatch {
+            expected: 0,
+            actual: bytes.len(),
+        })?;
+    if bytes.len() != expected {
+        return Err(crate::Error::TypeMismatch {
+            expected,
+            actual: bytes.len(),
+        });
+    }
+
+    // Fast path: native endian is a simple memcpy.
+    if endian == FileEndian::native() {
+        // SAFETY: `bytes.len() == values.len() * T::BYTE_SIZE` (checked above),
+        // both slices are valid and non-overlapping.
+        unsafe {
+            core::ptr::copy_nonoverlapping(
+                bytes.as_ptr(),
+                values.as_mut_ptr() as *mut u8,
+                bytes.len(),
+            );
+        }
+        return Ok(());
+    }
+
+    // Non-native endian: byte-swap raw bytes into the output slice.
+    #[cfg(feature = "simd")]
+    {
+        match T::BYTE_SIZE {
+            2 => crate::engine::simd::swap_2byte_simd(bytes, unsafe {
+                core::slice::from_raw_parts_mut(values.as_mut_ptr() as *mut u8, bytes.len())
+            }),
+            4 => crate::engine::simd::swap_4byte_simd(bytes, unsafe {
+                core::slice::from_raw_parts_mut(values.as_mut_ptr() as *mut u8, bytes.len())
+            }),
+            8 => crate::engine::simd::swap_8byte_simd(bytes, unsafe {
+                core::slice::from_raw_parts_mut(values.as_mut_ptr() as *mut u8, bytes.len())
+            }),
+            _ => {
+                for (i, val) in values.iter_mut().enumerate() {
+                    *val = T::from_bytes(bytes, i * T::BYTE_SIZE, endian);
+                }
+            }
+        }
+    }
+    #[cfg(not(feature = "simd"))]
+    {
+        for (i, val) in values.iter_mut().enumerate() {
+            *val = T::from_bytes(bytes, i * T::BYTE_SIZE, endian);
+        }
+    }
+    Ok(())
+}
+
 /// Decode a slice of values from bytes with automatic parallel processing.
 ///
 /// Uses 1MB chunks for optimal cache behaviour when the `parallel` feature is enabled.
@@ -393,6 +474,47 @@ fn per_element_encode<T: EndianCodec + Sync>(values: &[T], bytes: &mut [u8], end
         for (i, val) in values.iter().enumerate() {
             val.to_bytes(bytes, i * T::BYTE_SIZE, endian);
         }
+    }
+}
+
+// ============================================================================
+// In-place byte-order swap (public API)
+// ============================================================================
+
+/// Swap byte order of typed voxel data in-place.
+///
+/// Converts a slice of voxels from one endianness to the other by byte-swapping
+/// each element's bytes in-place.  When `from == FileEndian::native()` this is
+/// a no-op — the data is already in host order.
+///
+/// Uses SIMD acceleration (AVX2 / NEON) when the `simd` feature is enabled
+/// and the required ISA is detected at runtime.
+///
+/// # Example
+///
+/// ```rust
+/// use mrc::swap_bytes_in_place;
+/// use mrc::FileEndian;
+///
+/// let mut data = [0x1234u16.to_be(), 0x5678u16.to_be()];
+/// swap_bytes_in_place(&mut data, FileEndian::BigEndian);
+/// assert_eq!(data, [0x1234, 0x5678]);
+/// ```
+#[allow(dead_code)]
+pub fn swap_bytes_in_place<T: crate::Voxel>(data: &mut [T], from: FileEndian) {
+    if from == FileEndian::native() || data.is_empty() {
+        return;
+    }
+    // Reinterpret as raw bytes and reverse each element's bytes in-place.
+    // Using slice::reverse on each element avoids the SIMD src≠dst constraint.
+    let byte_len = data.len() * T::BYTE_SIZE;
+    // SAFETY: the byte_len calculation is exact; the pointer casts produce
+    // a valid mutable byte slice of the same length.
+    let bytes = unsafe { core::slice::from_raw_parts_mut(data.as_mut_ptr() as *mut u8, byte_len) };
+    // Reverse bytes within each element: for BYTE_SIZE=2, [a,b]→[b,a];
+    // for BYTE_SIZE=4, [a,b,c,d]→[d,c,b,a].
+    for chunk in bytes.chunks_exact_mut(T::BYTE_SIZE) {
+        chunk.reverse();
     }
 }
 

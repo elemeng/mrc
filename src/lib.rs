@@ -6,7 +6,10 @@
 //! encoding) and works with plain, gzip, and (optionally) bzip2 files.
 //!
 //! See the [README](https://github.com/elemeng/mrc#readme) for installation
-//! instructions, CLI tools, and the project roadmap.
+//! instructions.  The [`mrc-cli`](https://crates.io/crates/mrc-cli) companion
+//! crate provides a CLI binary (`mrc`) with subcommands for inspection,
+//! validation, conversion, PNG/GIF export, and resampling — install it with
+//! `cargo install mrc-cli`.
 //!
 //! # Quick example
 //!
@@ -620,13 +623,13 @@
 //!
 //! | Error | Likely cause | What to try |
 //! |---|---|---|
-//! | [`InvalidHeader`](Error::InvalidHeader) | Not an MRC file, or header corruption | Run `mrc-validate file.mrc`; try [`open_permissive`](Reader::open_permissive) |
-//! | [`FileSizeMismatch`](Error::FileSizeMismatch) | File truncated or has trailing garbage | Re-download or check `mrc-validate` output |
+//! | [`InvalidHeader`](Error::InvalidHeader) | Not an MRC file, or header corruption | Run `mrc validate file.mrc`; try [`open_permissive`](Reader::open_permissive) |
+//! | [`FileSizeMismatch`](Error::FileSizeMismatch) | File truncated or has trailing garbage | Re-download or check `mrc validate` output |
 //! | [`ModeMismatch`](Error::ModeMismatch) | Using `slices::<f32>()` on an Int16 file | Use [`convert::<f32>()`](Reader::convert) — auto-converts any mode |
 //! | [`BoundsError`](Error::BoundsError) | Block outside volume | Check offset + shape against dimensions |
 //! | [`UnsupportedMode`](Error::UnsupportedMode) | Unrecognized mode, or mode needs the `f16` feature | Enable `f16` feature or convert with another tool |
 //! | `Io` error | File permissions, filesystem issue | Check the file path and permissions |
-//! | Values look wrong | Endianness mismatch | The endianness fallback handles most cases; try `mrc-validate` |
+//! | Values look wrong | Endianness mismatch | The endianness fallback handles most cases; try `mrc validate` |
 //!
 //! # Philosophy
 //!
@@ -697,6 +700,9 @@ pub use io::writer::Compression;
 /// Override via [`Reader::open_gzip_with_limit`] or
 /// [`Reader::open_bzip2_with_limit`].
 pub use io::reader_common::DEFAULT_MAX_DECOMPRESSED_BYTES;
+
+#[doc(hidden)]
+pub use engine::codec::{decode_into, swap_bytes_in_place};
 
 #[doc(hidden)]
 pub use io::reader::{CompressionType, detect_compression};
