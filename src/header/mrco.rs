@@ -34,21 +34,7 @@ impl MrcoRecord {
     }
 }
 
-/// Parse extended header bytes as MRCO records.
-pub fn parse_mrco_records(bytes: &[u8]) -> Option<Vec<MrcoRecord>> {
-    if bytes.is_empty() || bytes.len() % MRCO_RECORD_SIZE != 0 {
-        return None;
-    }
-    let count = bytes.len() / MRCO_RECORD_SIZE;
-    let mut records = Vec::with_capacity(count);
-    for i in 0..count {
-        let start = i * MRCO_RECORD_SIZE;
-        records.push(MrcoRecord::from_bytes(
-            &bytes[start..start + MRCO_RECORD_SIZE],
-        )?);
-    }
-    Some(records)
-}
+crate::impl_record_parser!(MrcoRecord, MRCO_RECORD_SIZE, parse_mrco_records);
 
 #[cfg(test)]
 mod tests {

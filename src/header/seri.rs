@@ -41,21 +41,7 @@ impl SeriRecord {
     }
 }
 
-/// Parse extended header bytes as SerialEM records.
-pub fn parse_seri_records(bytes: &[u8]) -> Option<Vec<SeriRecord>> {
-    if bytes.is_empty() || bytes.len() % SERI_RECORD_SIZE != 0 {
-        return None;
-    }
-    let count = bytes.len() / SERI_RECORD_SIZE;
-    let mut records = Vec::with_capacity(count);
-    for i in 0..count {
-        let start = i * SERI_RECORD_SIZE;
-        records.push(SeriRecord::from_bytes(
-            &bytes[start..start + SERI_RECORD_SIZE],
-        )?);
-    }
-    Some(records)
-}
+crate::impl_record_parser!(SeriRecord, SERI_RECORD_SIZE, parse_seri_records);
 
 #[cfg(test)]
 mod tests {

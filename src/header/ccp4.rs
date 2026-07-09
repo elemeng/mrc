@@ -48,24 +48,7 @@ impl Ccp4Record {
     }
 }
 
-/// Parse extended header bytes as CCP4 symmetry records.
-///
-/// Returns `None` if `bytes` is empty or if its length is not a multiple of
-/// [`CCP4_RECORD_SIZE`].
-pub fn parse_ccp4_records(bytes: &[u8]) -> Option<Vec<Ccp4Record>> {
-    if bytes.is_empty() || bytes.len() % CCP4_RECORD_SIZE != 0 {
-        return None;
-    }
-    let count = bytes.len() / CCP4_RECORD_SIZE;
-    let mut records = Vec::with_capacity(count);
-    for i in 0..count {
-        let start = i * CCP4_RECORD_SIZE;
-        records.push(Ccp4Record::from_bytes(
-            &bytes[start..start + CCP4_RECORD_SIZE],
-        )?);
-    }
-    Some(records)
-}
+crate::impl_record_parser!(Ccp4Record, CCP4_RECORD_SIZE, parse_ccp4_records);
 
 #[cfg(test)]
 mod tests {

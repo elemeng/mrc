@@ -32,21 +32,7 @@ impl AgarRecord {
     }
 }
 
-/// Parse extended header bytes as Agard records.
-pub fn parse_agar_records(bytes: &[u8]) -> Option<Vec<AgarRecord>> {
-    if bytes.is_empty() || bytes.len() % AGAR_RECORD_SIZE != 0 {
-        return None;
-    }
-    let count = bytes.len() / AGAR_RECORD_SIZE;
-    let mut records = Vec::with_capacity(count);
-    for i in 0..count {
-        let start = i * AGAR_RECORD_SIZE;
-        records.push(AgarRecord::from_bytes(
-            &bytes[start..start + AGAR_RECORD_SIZE],
-        )?);
-    }
-    Some(records)
-}
+crate::impl_record_parser!(AgarRecord, AGAR_RECORD_SIZE, parse_agar_records);
 
 #[cfg(test)]
 mod tests {

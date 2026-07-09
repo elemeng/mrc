@@ -71,10 +71,7 @@ pub fn detect_compression<P: AsRef<Path>>(path: P) -> Result<CompressionType, Er
 #[derive(Debug)]
 enum DataSource {
     /// Loaded entirely into memory.
-    Buffered {
-        data: Vec<u8>,
-        truncated: bool,
-    },
+    Buffered { data: Vec<u8>, truncated: bool },
     /// Memory-mapped file (zero-copy).
     #[cfg(feature = "mmap")]
     Mmap {
@@ -1527,6 +1524,9 @@ impl Reader {
     /// # }
     /// ```
     pub fn fei1_metadata(&self) -> Option<Vec<crate::Fei1Metadata>> {
+        if crate::ExtHeaderType::from_header(&self.header) != crate::ExtHeaderType::Fei1 {
+            return None;
+        }
         crate::parse_fei1_records(self.ext_header_bytes())
     }
 
@@ -1549,6 +1549,9 @@ impl Reader {
     /// # }
     /// ```
     pub fn fei2_metadata(&self) -> Option<Vec<crate::Fei2Metadata>> {
+        if crate::ExtHeaderType::from_header(&self.header) != crate::ExtHeaderType::Fei2 {
+            return None;
+        }
         crate::parse_fei2_records(self.ext_header_bytes())
     }
 
@@ -1571,6 +1574,9 @@ impl Reader {
     /// # }
     /// ```
     pub fn ccp4_records(&self) -> Option<Vec<crate::Ccp4Record>> {
+        if crate::ExtHeaderType::from_header(&self.header) != crate::ExtHeaderType::Ccp4 {
+            return None;
+        }
         crate::parse_ccp4_records(self.ext_header_bytes())
     }
 
@@ -1593,6 +1599,9 @@ impl Reader {
     /// # }
     /// ```
     pub fn mrco_records(&self) -> Option<Vec<crate::MrcoRecord>> {
+        if crate::ExtHeaderType::from_header(&self.header) != crate::ExtHeaderType::Mrco {
+            return None;
+        }
         crate::parse_mrco_records(self.ext_header_bytes())
     }
 
@@ -1615,6 +1624,9 @@ impl Reader {
     /// # }
     /// ```
     pub fn seri_records(&self) -> Option<Vec<crate::SeriRecord>> {
+        if crate::ExtHeaderType::from_header(&self.header) != crate::ExtHeaderType::Seri {
+            return None;
+        }
         crate::parse_seri_records(self.ext_header_bytes())
     }
 
@@ -1637,6 +1649,9 @@ impl Reader {
     /// # }
     /// ```
     pub fn agar_records(&self) -> Option<Vec<crate::AgarRecord>> {
+        if crate::ExtHeaderType::from_header(&self.header) != crate::ExtHeaderType::Agar {
+            return None;
+        }
         crate::parse_agar_records(self.ext_header_bytes())
     }
 

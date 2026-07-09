@@ -57,6 +57,33 @@ pub use seri::{SERI_RECORD_SIZE, SeriRecord, parse_seri_records};
 
 use crate::Mode;
 
+// ============================================================================
+// Macro: generate parse_*_records() for fixed-size extended header types.
+// The `from_bytes` method on the record type must exist and return Option.
+// ============================================================================
+#[doc(hidden)]
+#[macro_export]
+macro_rules! impl_record_parser {
+    ($record:ident, $size:ident, $parse_fn:ident) => {
+        /// Parse extended header bytes as typed records.
+        ///
+        /// Returns `None` if `bytes` is empty or if its length is not a
+        /// multiple of the record size.
+        pub fn $parse_fn(bytes: &[u8]) -> Option<Vec<$record>> {
+            if bytes.is_empty() || bytes.len() % $size != 0 {
+                return None;
+            }
+            let count = bytes.len() / $size;
+            let mut records = Vec::with_capacity(count);
+            for i in 0..count {
+                let start = i * $size;
+                records.push($record::from_bytes(&bytes[start..start + $size])?);
+            }
+            Some(records)
+        }
+    };
+}
+
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
@@ -1316,6 +1343,54 @@ impl core::fmt::Display for EndianFallbackWarning {
     }
 }
 
+// ============================================================================
+// Macro: generate decode + encode for all numeric header fields from one list.
+// Defines `decode_numeric_fields!` and `encode_numeric_fields!` helpers that
+// expand to the field-by-field read/write calls.  The field order in the
+// macro matches the MRC2014 specification layout.
+// ============================================================================
+macro_rules! header_numeric_fields {
+    ( $( ($field:ident, $offset:ident, $ty:ty) ),+ $(,)? ) => {
+        macro_rules! decode_numeric_fields {
+            ($_h:ident, $_b:expr, $_e:expr) => {
+                $( $_h.$field = <$ty>::decode($_b, $offset, $_e); )+
+            }
+        }
+        macro_rules! encode_numeric_fields {
+            ($_h:expr, $_o:expr, $_e:expr) => {
+                $( $_h.$field.encode($_o, $offset, $_e); )+
+            }
+        }
+    }
+}
+
+header_numeric_fields! {
+    (nx, OFFSET_NX, i32),
+    (ny, OFFSET_NY, i32),
+    (nz, OFFSET_NZ, i32),
+    (mode, OFFSET_MODE, i32),
+    (nxstart, OFFSET_NXSTART, i32),
+    (nystart, OFFSET_NYSTART, i32),
+    (nzstart, OFFSET_NZSTART, i32),
+    (mx, OFFSET_MX, i32),
+    (my, OFFSET_MY, i32),
+    (mz, OFFSET_MZ, i32),
+    (xlen, OFFSET_XLEN, f32),
+    (ylen, OFFSET_YLEN, f32),
+    (zlen, OFFSET_ZLEN, f32),
+    (alpha, OFFSET_ALPHA, f32),
+    (beta, OFFSET_BETA, f32),
+    (gamma, OFFSET_GAMMA, f32),
+    (mapc, OFFSET_MAPC, i32),
+    (mapr, OFFSET_MAPR, i32),
+    (maps, OFFSET_MAPS, i32),
+    (dmin, OFFSET_DMIN, f32),
+    (dmax, OFFSET_DMAX, f32),
+    (dmean, OFFSET_DMEAN, f32),
+    (ispg, OFFSET_ISPG, i32),
+    (nsymbt, OFFSET_NSYMBT, i32),
+}
+
 impl Header {
     /// Decode header and return any byte-order fallback that occurred.
     ///
@@ -1376,34 +1451,7 @@ impl Header {
 
         let mut header = Self::new();
 
-        header.nx = i32::decode(bytes, OFFSET_NX, file_endian);
-        header.ny = i32::decode(bytes, OFFSET_NY, file_endian);
-        header.nz = i32::decode(bytes, OFFSET_NZ, file_endian);
-        header.mode = i32::decode(bytes, OFFSET_MODE, file_endian);
-        header.nxstart = i32::decode(bytes, OFFSET_NXSTART, file_endian);
-        header.nystart = i32::decode(bytes, OFFSET_NYSTART, file_endian);
-        header.nzstart = i32::decode(bytes, OFFSET_NZSTART, file_endian);
-        header.mx = i32::decode(bytes, OFFSET_MX, file_endian);
-        header.my = i32::decode(bytes, OFFSET_MY, file_endian);
-        header.mz = i32::decode(bytes, OFFSET_MZ, file_endian);
-
-        header.xlen = f32::decode(bytes, OFFSET_XLEN, file_endian);
-        header.ylen = f32::decode(bytes, OFFSET_YLEN, file_endian);
-        header.zlen = f32::decode(bytes, OFFSET_ZLEN, file_endian);
-        header.alpha = f32::decode(bytes, OFFSET_ALPHA, file_endian);
-        header.beta = f32::decode(bytes, OFFSET_BETA, file_endian);
-        header.gamma = f32::decode(bytes, OFFSET_GAMMA, file_endian);
-
-        header.mapc = i32::decode(bytes, OFFSET_MAPC, file_endian);
-        header.mapr = i32::decode(bytes, OFFSET_MAPR, file_endian);
-        header.maps = i32::decode(bytes, OFFSET_MAPS, file_endian);
-
-        header.dmin = f32::decode(bytes, OFFSET_DMIN, file_endian);
-        header.dmax = f32::decode(bytes, OFFSET_DMAX, file_endian);
-        header.dmean = f32::decode(bytes, OFFSET_DMEAN, file_endian);
-
-        header.ispg = i32::decode(bytes, OFFSET_ISPG, file_endian);
-        header.nsymbt = i32::decode(bytes, OFFSET_NSYMBT, file_endian);
+        decode_numeric_fields!(header, bytes, file_endian);
 
         header
             .extra
@@ -1445,39 +1493,8 @@ impl Header {
 
         let file_endian = self.detect_endian();
 
-        // Write all i32 fields
-        self.nx.encode(out, OFFSET_NX, file_endian);
-        self.ny.encode(out, OFFSET_NY, file_endian);
-        self.nz.encode(out, OFFSET_NZ, file_endian);
-        self.mode.encode(out, OFFSET_MODE, file_endian);
-        self.nxstart.encode(out, OFFSET_NXSTART, file_endian);
-        self.nystart.encode(out, OFFSET_NYSTART, file_endian);
-        self.nzstart.encode(out, OFFSET_NZSTART, file_endian);
-        self.mx.encode(out, OFFSET_MX, file_endian);
-        self.my.encode(out, OFFSET_MY, file_endian);
-        self.mz.encode(out, OFFSET_MZ, file_endian);
-
-        // Write all f32 fields
-        self.xlen.encode(out, OFFSET_XLEN, file_endian);
-        self.ylen.encode(out, OFFSET_YLEN, file_endian);
-        self.zlen.encode(out, OFFSET_ZLEN, file_endian);
-        self.alpha.encode(out, OFFSET_ALPHA, file_endian);
-        self.beta.encode(out, OFFSET_BETA, file_endian);
-        self.gamma.encode(out, OFFSET_GAMMA, file_endian);
-
-        // Write axis mapping fields
-        self.mapc.encode(out, OFFSET_MAPC, file_endian);
-        self.mapr.encode(out, OFFSET_MAPR, file_endian);
-        self.maps.encode(out, OFFSET_MAPS, file_endian);
-
-        // Write density statistics
-        self.dmin.encode(out, OFFSET_DMIN, file_endian);
-        self.dmax.encode(out, OFFSET_DMAX, file_endian);
-        self.dmean.encode(out, OFFSET_DMEAN, file_endian);
-
-        // Write space group and extended header size
-        self.ispg.encode(out, OFFSET_ISPG, file_endian);
-        self.nsymbt.encode(out, OFFSET_NSYMBT, file_endian);
+        // Write all numeric fields via the shared macro (22 fields)
+        encode_numeric_fields!(self, out, file_endian);
 
         // Write extra bytes
         out[OFFSET_EXTRA..OFFSET_ORIGIN].copy_from_slice(&self.extra);
