@@ -56,13 +56,13 @@ The `mrc` API is designed so that **common operations are one-liners** and **com
 
 ```toml
 [dependencies]
-mrc = "0.6"
+mrc = "0.7"
 ```
 
 Enable optional features in `Cargo.toml`:
 
 ```toml
-mrc = { version = "0.6", features = ["ndarray", "serde", "bzip2"] }
+mrc = { version = "0.7", features = ["ndarray", "serde", "bzip2"] }
 ```
 
 For the `mrc-cli` binary, install the companion crate:

@@ -4,7 +4,7 @@ This file contains project-specific context for AI coding agents working on the 
 
 - **Repository**: https://github.com/elemeng/mrc
 - **Crate**: https://crates.io/crates/mrc
-- **Version**: 0.6.0 (check `Cargo.toml`)
+- **Version**: 0.7.0 (check `Cargo.toml`)
 - **Language**: Rust, Edition 2024, MSRV 1.85
 - **Hard deps**: `thiserror` 2.x, `tracing` 0.1
 - **Spec reference**: `mrcfile-official.md` (local copy)

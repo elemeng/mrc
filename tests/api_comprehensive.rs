@@ -1,6 +1,6 @@
 //! Comprehensive public API tests — covers every method listed in APIs.md.
 //!
-//! This file is the v0.6 test plan: every public API item must be exercised.
+//! This file is the v0.7 test plan: every public API item must be exercised.
 //! Tests use synthetic data generated programmatically (no external fixtures).
 //! Run with: `cargo test --all-features --test api_comprehensive`
 
