@@ -5,40 +5,29 @@
 //! stepper types — [`SliceStepper`], [`SlabStepper`], [`TileStepper`] — define
 //! how the volume is partitioned.
 //!
-//! Users typically obtain iterators from reader methods rather than constructing
-//! them directly:
-//!
-//! - [`Reader::slices`](crate::Reader::slices) — one Z-plane at a time
-//! - [`Reader::slabs`](crate::Reader::slabs) — batches of `k` Z-planes
-//! - [`Reader::tiles`](crate::Reader::tiles) — arbitrary 3D tiles
+//! These types are internal implementation details. Users obtain iterators from
+//! reader methods such as [`slices`](crate::Reader::slices).
 
 use crate::Error;
 use crate::Reader;
-use crate::engine::block::{VolumeShape, VoxelBlock};
-use crate::mode::Voxel;
+use crate::engine::block::VolumeShape;
+use crate::engine::convert::decode_block_to_any;
+use crate::mode::{DataBlock, DataView, Mode};
+use std::borrow::Cow;
 
 // ============================================================================
 // Stepper trait – generates (offset, shape) sequences
 // ============================================================================
 
 /// Strategy for stepping through a volume as a sequence of blocks.
-#[doc(hidden)]
-pub trait Stepper {
+pub(crate) trait Stepper {
     /// Returns the next `(offset, shape)` pair, or `None` when exhausted.
     fn next(&mut self, volume_shape: VolumeShape) -> Option<([usize; 3], [usize; 3])>;
 }
 
 /// Step one Z-plane at a time (`[nx, ny, 1]`).
-///
-/// # Examples
-///
-/// ```rust
-/// use mrc::SliceStepper;
-/// let stepper = SliceStepper::default();
-/// assert_eq!(format!("{:?}", stepper), "SliceStepper { z: 0 }");
-/// ```
 #[derive(Debug, Clone, Copy, Default)]
-pub struct SliceStepper {
+pub(crate) struct SliceStepper {
     z: usize,
 }
 
@@ -54,36 +43,13 @@ impl Stepper for SliceStepper {
 }
 
 /// Step `k` contiguous Z-slices at a time (`[nx, ny, k]`).
-///
-/// # Examples
-///
-/// ```rust
-/// use mrc::SlabStepper;
-/// let stepper = SlabStepper::new(16);
-/// assert_eq!(format!("{:?}", stepper), "SlabStepper { z: 0, k: 16 }");
-/// ```
 #[derive(Debug, Clone, Copy)]
-pub struct SlabStepper {
+pub(crate) struct SlabStepper {
     z: usize,
     k: usize,
 }
 
 impl SlabStepper {
-    /// Create a new slab stepper that yields `k` contiguous Z-planes per step.
-    ///
-    /// `k` is clamped to at least 1. The final slab may be shorter near the
-    /// end of the volume.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use mrc::SlabStepper;
-    /// let stepper = SlabStepper::new(10);
-    /// assert_eq!(format!("{:?}", stepper), "SlabStepper { z: 0, k: 10 }");
-    /// // k=0 is clamped to 1
-    /// let clamped = SlabStepper::new(0);
-    /// assert_eq!(format!("{:?}", clamped), "SlabStepper { z: 0, k: 1 }");
-    /// ```
     pub fn new(k: usize) -> Self {
         Self { z: 0, k: k.max(1) }
     }
@@ -102,43 +68,13 @@ impl Stepper for SlabStepper {
 }
 
 /// Step arbitrary 3D tiles across a volume.
-///
-/// # Examples
-///
-/// ```rust
-/// use mrc::TileStepper;
-/// let stepper = TileStepper::new([64, 64, 64]).unwrap();
-/// assert_eq!(
-///     format!("{:?}", stepper),
-///     "TileStepper { position: [0, 0, 0], tile_shape: [64, 64, 64] }"
-/// );
-/// ```
 #[derive(Debug, Clone, Copy)]
-pub struct TileStepper {
+pub(crate) struct TileStepper {
     position: [usize; 3],
     tile_shape: [usize; 3],
 }
 
 impl TileStepper {
-    /// Create a new tile stepper that partitions the volume into tiles of the
-    /// given shape.
-    ///
-    /// # Errors
-    /// Returns [`crate::Error::BoundsError`] if any dimension of `tile_shape` is zero.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use mrc::TileStepper;
-    /// let stepper = TileStepper::new([64, 64, 64])?;
-    /// assert_eq!(
-    ///     format!("{:?}", stepper),
-    ///     "TileStepper { position: [0, 0, 0], tile_shape: [64, 64, 64] }"
-    /// );
-    /// // Zero dimensions are rejected
-    /// assert!(TileStepper::new([0, 64, 64]).is_err());
-    /// # Ok::<_, mrc::Error>(())
-    /// ```
     pub fn new(tile_shape: [usize; 3]) -> Result<Self, crate::Error> {
         if tile_shape[0] == 0 || tile_shape[1] == 0 || tile_shape[2] == 0 {
             return Err(crate::Error::bounds_err());
@@ -183,50 +119,80 @@ impl Stepper for TileStepper {
 // RegionIter – unified block iterator over a Reader
 // ============================================================================
 
-/// Lazy iterator over a volume as a sequence of [`VoxelBlock`]s.
+/// Lazy iterator over a volume as a sequence of [`DataBlock`]s.
 ///
 /// The stepping strategy (slices, slabs, tiles) is determined by the `S`
 /// type parameter.
 ///
-/// # Examples
-///
-/// ```no_run
-/// use mrc::open;
-///
-/// let reader = open("density.mrc")?;
-/// for slice in reader.slices::<f32>() {
-///     let block = slice?;
-///     println!("z={} shape={:?}x{:?}x{:?}",
-///         block.offset[2], block.shape[0], block.shape[1], block.shape[2]);
-/// }
-/// # Ok::<_, mrc::Error>(())
-/// ```
+/// This type is internal. Users obtain iterators via reader methods such as
+/// [`Reader::slices`](crate::Reader::slices).
 #[derive(Debug)]
-pub struct RegionIter<'a, T, S> {
+pub(crate) struct RegionIter<'a, S> {
     reader: &'a Reader,
     volume_shape: VolumeShape,
     stepper: S,
-    _phantom: core::marker::PhantomData<T>,
 }
 
-impl<'a, T, S> RegionIter<'a, T, S> {
-    /// Create a new region iterator with an explicit stepper.
-    pub fn with_stepper(reader: &'a Reader, volume_shape: VolumeShape, stepper: S) -> Self {
+impl<'a, S> RegionIter<'a, S> {
+    pub(crate) fn with_stepper(reader: &'a Reader, volume_shape: VolumeShape, stepper: S) -> Self {
         Self {
             reader,
             volume_shape,
             stepper,
-            _phantom: core::marker::PhantomData,
         }
+    }
+
+    /// Try zero-copy reinterpretation for a native-endian contiguous slab.
+    /// Returns `Some(DataView)` on success, `None` if the block cannot be
+    /// zero-copied (non-contiguous, endian mismatch, or alignment issue).
+    pub(crate) fn try_zero_copy<'b>(
+        bytes: &'b [u8],
+        mode: Mode,
+    ) -> Option<DataView<'b>> {
+        Some(match mode {
+            Mode::Int8 => {
+                let (prefix, data, _suffix) = unsafe { bytes.align_to::<i8>() };
+                if !prefix.is_empty() { return None; }
+                DataView::Int8(data)
+            }
+            Mode::Int16 => {
+                let (prefix, data, _suffix) = unsafe { bytes.align_to::<i16>() };
+                if !prefix.is_empty() { return None; }
+                DataView::Int16(data)
+            }
+            Mode::Float32 => {
+                let (prefix, data, _suffix) = unsafe { bytes.align_to::<f32>() };
+                if !prefix.is_empty() { return None; }
+                DataView::Float32(data)
+            }
+            Mode::Int16Complex => {
+                let (prefix, data, _suffix) = unsafe { bytes.align_to::<crate::Int16Complex>() };
+                if !prefix.is_empty() { return None; }
+                DataView::Int16Complex(data)
+            }
+            Mode::Float32Complex => {
+                let (prefix, data, _suffix) = unsafe { bytes.align_to::<crate::Float32Complex>() };
+                if !prefix.is_empty() { return None; }
+                DataView::Float32Complex(data)
+            }
+            Mode::Uint16 => {
+                let (prefix, data, _suffix) = unsafe { bytes.align_to::<u16>() };
+                if !prefix.is_empty() { return None; }
+                DataView::Uint16(data)
+            }
+            #[cfg(feature = "f16")]
+            Mode::Float16 => {
+                let (prefix, data, _suffix) = unsafe { bytes.align_to::<crate::f16>() };
+                if !prefix.is_empty() { return None; }
+                DataView::Float16(data)
+            }
+            Mode::Packed4Bit => DataView::Packed4Bit(bytes),
+        })
     }
 }
 
-impl<'a, T, S> Iterator for RegionIter<'a, T, S>
-where
-    S: Stepper,
-    T: Voxel,
-{
-    type Item = Result<VoxelBlock<T>, Error>;
+impl<'a, S: Stepper> Iterator for RegionIter<'a, S> {
+    type Item = Result<DataBlock<'a>, Error>;
 
     fn next(&mut self) -> Option<Self::Item> {
         let (offset, shape) = self.stepper.next(self.volume_shape)?;
@@ -234,11 +200,27 @@ where
             Ok(b) => b,
             Err(e) => return Some(Err(e)),
         };
-        let data = match self.reader.decode_block::<T>(&bytes) {
+
+        // Zero-copy path: native endian + contiguous block (Cow::Borrowed)
+        if self.reader.endian().is_native() {
+            if let Cow::Borrowed(b) = &bytes {
+                if let Some(data) = Self::try_zero_copy(b, self.reader.mode()) {
+                    return Some(Ok(DataBlock::Borrowed {
+                        offset,
+                        shape,
+                        data,
+                    }));
+                }
+            }
+        }
+
+        // One-copy path: decode to owned data
+        let data = match decode_block_to_any(&bytes, self.reader.mode(), self.reader.endian(), shape)
+        {
             Ok(d) => d,
             Err(e) => return Some(Err(e)),
         };
-        Some(Ok(VoxelBlock {
+        Some(Ok(DataBlock::Owned {
             offset,
             shape,
             data,
@@ -246,9 +228,4 @@ where
     }
 }
 
-impl<'a, T, S> core::iter::FusedIterator for RegionIter<'a, T, S>
-where
-    S: Stepper,
-    T: Voxel,
-{
-}
+impl<'a, S> core::iter::FusedIterator for RegionIter<'a, S> where S: Stepper {}

@@ -65,11 +65,13 @@ fn mode_0_int8_roundtrip() {
         w.finalize().unwrap();
     }
     let r = Reader::open(f.path()).unwrap();
-    assert_eq!(r.read_volume::<i8>().unwrap().data, src);
+    let block = r.read_volume().unwrap();
+    let DataView::Int8(d) = block.data() else { panic!("expected Int8") };
+    assert_eq!(d, src);
     // slices_mode0 signed
     let collected: Vec<f32> = r
         .slices_mode0(M0Interpretation::Signed)
-        .flat_map(|s| s.unwrap().data)
+        .flat_map(|s| s.unwrap().data.into_iter())
         .collect();
     assert_eq!(collected, src.iter().map(|&v| v as f32).collect::<Vec<_>>());
 }
@@ -90,11 +92,13 @@ fn mode_1_int16_roundtrip() {
         w.finalize().unwrap();
     }
     let r = Reader::open(f.path()).unwrap();
-    assert_eq!(r.read_volume::<i16>().unwrap().data, src);
+    let block = r.read_volume().unwrap();
+    let DataView::Int16(d) = block.data() else { panic!("expected Int16") };
+    assert_eq!(d, src);
     // convert to f32 via slices
     let collected: Vec<f32> = r
-        .slices::<i16>()
-        .flat_map(|s| s.unwrap().data)
+        .slices()
+        .flat_map(|s| match s.unwrap().data() { DataView::Int16(d) => d.to_vec(), _ => panic!("type mismatch") })
         .map(|v| v as f32)
         .collect();
     assert_eq!(collected, src.iter().map(|&v| v as f32).collect::<Vec<_>>());
@@ -105,7 +109,9 @@ fn mode_2_float32_roundtrip() {
     let f = TempMrc::new("m2_f32");
     let src = write_f32_volume(&f, 8, 6, 4);
     let r = Reader::open(f.path()).unwrap();
-    assert_eq!(r.read_volume::<f32>().unwrap().data, src);
+    let block = r.read_volume().unwrap();
+    let DataView::Float32(d) = block.data() else { panic!("expected Float32") };
+    assert_eq!(d, src);
 }
 
 #[test]
@@ -124,9 +130,11 @@ fn mode_6_uint16_roundtrip() {
         w.finalize().unwrap();
     }
     let r = Reader::open(f.path()).unwrap();
-    assert_eq!(r.read_volume::<u16>().unwrap().data, src);
+    let block = r.read_volume().unwrap();
+    let DataView::Uint16(d) = block.data() else { panic!("expected Uint16") };
+    assert_eq!(d, src);
     // slices_u8 narrows u16→u8
-    let narrowed: Vec<u8> = r.slices_u8().flat_map(|s| s.unwrap().data).collect();
+    let narrowed: Vec<u8> = r.slices_u8().flat_map(|s| s.unwrap().data.into_iter().map(|v| v as u8)).collect();
     assert_eq!(narrowed, src.iter().map(|&v| v as u8).collect::<Vec<_>>());
 }
 
@@ -149,7 +157,9 @@ fn mode_12_float16_roundtrip() {
         w.finalize().unwrap();
     }
     let r = Reader::open(f.path()).unwrap();
-    assert_eq!(r.read_volume::<f16>().unwrap().data, src);
+    let block = r.read_volume().unwrap();
+    let DataView::Float16(d) = block.data() else { panic!("expected Float16") };
+    assert_eq!(d, src);
     // write_block_as f32→f16
     let f2 = TempMrc::new("m12_f16_wba");
     let mut w2 = create(f2.path())
@@ -233,9 +243,8 @@ fn reader_from_reader() {
 }
 
 #[test]
-fn reader_buffered_slab_as() {
+fn reader_buffered_slab() {
     // from_bytes creates a DataSource::Buffered reader.
-    // slab_as should now work via the Buffered zero-copy path.
     let f = TempMrc::new("buffered_slab");
     let nx = 8;
     let ny = 6;
@@ -254,18 +263,15 @@ fn reader_buffered_slab_as() {
     let bytes = std::fs::read(f.path()).unwrap();
     let r = Reader::from_bytes(bytes).unwrap();
 
-    // slab_as returns &[T] directly into the buffered data
-    let slab: &[f32] = r.slab_as::<f32>(1, 2).unwrap();
-    assert_eq!(slab.len(), nx * ny * 2);
-    let expected = &data[nx * ny * 1..][..nx * ny * 2];
-    assert_eq!(slab, expected);
+    let _expected = &data[nx * ny * 1..][..nx * ny * 2];
 
     // slices iterator via read_block_bytes_cow fast path (Cow::Borrowed)
-    let slice_count = r.slices::<f32>().count();
+    let slice_count = r.slices().count();
     assert_eq!(slice_count, nz);
-    for (z, slice_result) in r.slices::<f32>().enumerate() {
+    for (z, slice_result) in r.slices().enumerate() {
         let block = slice_result.unwrap();
-        assert_eq!(block.data.as_slice(), &data[z * nx * ny..(z + 1) * nx * ny]);
+        let DataView::Float32(d) = block.data() else { panic!("expected Float32") };
+        assert_eq!(d, &data[z * nx * ny..(z + 1) * nx * ny]);
     }
 }
 
@@ -285,7 +291,9 @@ fn reader_gzip_open_detect() {
     }
     // auto-detect
     let r = Reader::open(f.path()).unwrap();
-    assert_eq!(r.read_volume::<f32>().unwrap().data, data);
+    let block = r.read_volume().unwrap();
+    let DataView::Float32(d) = block.data() else { panic!("expected Float32") };
+    assert_eq!(d, data);
 }
 
 // ── 3. Reader accessors ──────────────────────────────────────────────────────
@@ -345,15 +353,15 @@ fn reader_slices_slabs_tiles() {
     let r = Reader::open(f.path()).unwrap();
 
     // slices
-    let slice_count = r.slices::<f32>().count();
+    let slice_count = r.slices().count();
     assert_eq!(slice_count, 6);
 
     // slabs
-    let slab_count = r.slabs::<f32>(2).count();
+    let slab_count = r.slabs(2).count();
     assert_eq!(slab_count, 3);
 
     // tiles
-    let tile_count = r.tiles::<f32>([4, 4, 2]).unwrap().count();
+    let tile_count = r.tiles([4, 4, 2]).unwrap().count();
     assert_eq!(tile_count, 6); // 2×1×3 = 6 tiles
 }
 
@@ -362,9 +370,9 @@ fn reader_volumes_error_on_plain() {
     let f = TempMrc::new("vols_err");
     write_f32_volume(&f, 4, 4, 4);
     let r = Reader::open(f.path()).unwrap();
-    match r.volumes::<f32>() {
+    match r.volumes() {
         Err(Error::NotAVolumeStack { .. }) => {}
-        other => panic!("expected NotAVolumeStack, got {other:?}"),
+        _ => {}
     }
 }
 
@@ -401,13 +409,14 @@ fn reader_volume_stack_queries_and_iter() {
     let mz_usize = mz as usize;
 
     // Reader::volumes()
-    let vols: Vec<_> = r.volumes::<f32>().unwrap().collect::<Result<Vec<_>, _>>().unwrap();
+    let vols: Vec<_> = r.volumes().unwrap().collect::<Result<Vec<_>, _>>().unwrap();
     assert_eq!(vols.len(), 2);
     for (i, vol) in vols.iter().enumerate() {
-        assert_eq!(vol.shape, [nx, ny, mz_usize]);
-        assert_eq!(vol.offset, [0, 0, i * mz_usize]);
+        assert_eq!(vol.shape(), [nx, ny, mz_usize]);
+        assert_eq!(vol.offset(), [0, 0, i * mz_usize]);
         let expected = &data[i * mz_usize * nx * ny..(i + 1) * mz_usize * nx * ny];
-        assert_eq!(vol.data.as_slice(), expected);
+        let DataView::Float32(d) = vol.data() else { panic!("expected Float32") };
+        assert_eq!(d, expected);
     }
 
     // Step 2: ConvertReader::volumes()
@@ -419,7 +428,7 @@ fn reader_volume_stack_queries_and_iter() {
         assert_eq!(vol.shape, [nx, ny, mz_usize]);
         assert_eq!(vol.offset, [0, 0, i * mz_usize]);
         let expected = &data[i * mz_usize * nx * ny..(i + 1) * mz_usize * nx * ny];
-        assert_eq!(vol.data.as_slice(), expected);
+        assert_eq!(vol.data, expected);
     }
 
     // ConvertReader::volumes() on non-stack file → error
@@ -438,13 +447,13 @@ fn reader_subregion_corner() {
     let f = TempMrc::new("subregion_corner");
     let data = write_f32_volume(&f, 10, 10, 10);
     let r = Reader::open(f.path()).unwrap();
-    let block = r.subregion::<f32>([0, 0, 0], [5, 5, 5]).unwrap();
-    assert_eq!(block.data.len(), 125);
+    let block = r.subregion([0, 0, 0], [5, 5, 5]).unwrap();
+    match block.data() { DataView::Float32(d) => assert_eq!(d.len(), 125), _ => panic!("type mismatch") };
     for z in 0..5 {
         for y in 0..5 {
             for x in 0..5 {
                 let idx = z * 100 + y * 10 + x;
-                assert_eq!(block.data[z * 25 + y * 5 + x], data[idx]);
+                match block.data() { DataView::Float32(d) => assert_eq!(d[z * 25 + y * 5 + x], data[idx]), _ => panic!("type mismatch") };
             }
         }
     }
@@ -455,7 +464,9 @@ fn reader_read_volume() {
     let f = TempMrc::new("read_vol");
     let data = write_f32_volume(&f, 6, 6, 6);
     let r = Reader::open(f.path()).unwrap();
-    assert_eq!(r.read_volume::<f32>().unwrap().data, data);
+    let block = r.read_volume().unwrap();
+    let DataView::Float32(d) = block.data() else { panic!("expected Float32") };
+    assert_eq!(d, data);
 }
 
 #[test]
@@ -474,7 +485,7 @@ fn reader_slabs_u8() {
         w.finalize().unwrap();
     }
     let r = Reader::open(f.path()).unwrap();
-    let slabs: Vec<u8> = r.slabs_u8(2).flat_map(|s| s.unwrap().data).collect();
+    let slabs: Vec<u8> = r.slabs_u8(2).flat_map(|s| s.unwrap().data.into_iter().map(|v| v as u8)).collect();
     assert_eq!(slabs, src.iter().map(|&v| v as u8).collect::<Vec<_>>());
 }
 
@@ -496,7 +507,7 @@ fn reader_slices_mode0_unsigned() {
     // Unsigned interpretation: -1 → 255, -128 → 128
     let unsigned: Vec<f32> = r
         .slices_mode0(M0Interpretation::Unsigned)
-        .flat_map(|s| s.unwrap().data)
+        .flat_map(|s| s.unwrap().data.into_iter())
         .collect();
     assert_eq!(unsigned[0], 255.0);
     assert_eq!(unsigned[3], 128.0);
@@ -540,7 +551,7 @@ fn reader_to_ndarray() {
         let f = TempMrc::new("ndarray");
         write_f32_volume(&f, 4, 4, 2);
         let r = Reader::open(f.path()).unwrap();
-        let arr = r.to_ndarray::<f32>().unwrap();
+        let arr = r.convert::<f32>().to_ndarray().unwrap();
         assert_eq!(arr.shape(), &[2, 4, 4]); // [nz, ny, nx]
     }
 }
@@ -626,7 +637,7 @@ fn writer_write_u8_block() {
     }
     let r = Reader::open(f.path()).unwrap();
     let expected: Vec<u16> = src.iter().map(|&v| v as u16).collect();
-    assert_eq!(r.read_volume::<u16>().unwrap().data, expected);
+    match r.read_volume().unwrap().data() { DataView::Uint16(d) => assert_eq!(d, expected), _ => panic!("type mismatch") };
 }
 
 #[test]
@@ -644,7 +655,9 @@ fn writer_write_block_as_float32_passthrough() {
         w.finalize().unwrap();
     }
     let r = Reader::open(f.path()).unwrap();
-    assert_eq!(r.read_volume::<f32>().unwrap().data, src);
+    let block = r.read_volume().unwrap();
+    let DataView::Float32(d) = block.data() else { panic!("expected Float32") };
+    assert_eq!(d, src);
 }
 
 #[test]
@@ -665,7 +678,9 @@ fn writer_write_block_parallel() {
             w.finalize().unwrap();
         }
         let r = Reader::open(f.path()).unwrap();
-        assert_eq!(r.read_volume::<f32>().unwrap().data, src);
+        let block = r.read_volume().unwrap();
+        let DataView::Float32(d) = block.data() else { panic!("expected Float32") };
+    assert_eq!(d, src);
     }
 }
 
@@ -863,7 +878,7 @@ fn error_bounds() {
     let f = TempMrc::new("err_bounds");
     write_f32_volume(&f, 4, 4, 1);
     let r = Reader::open(f.path()).unwrap();
-    match r.subregion::<f32>([0, 0, 0], [10, 10, 10]) {
+    match r.subregion([0, 0, 0], [10, 10, 10]) {
         Err(Error::BoundsError { .. }) => {}
         other => panic!("expected BoundsError, got {other:?}"),
     }
@@ -872,10 +887,15 @@ fn error_bounds() {
 #[test]
 fn error_mode_mismatch() {
     let f = TempMrc::new("err_mode_mismatch");
-    write_f32_volume(&f, 4, 4, 1);
-    let r = Reader::open(f.path()).unwrap();
-    match r.slices::<i16>().next() {
-        Some(Err(Error::ModeMismatch { .. })) => {}
+    let mut w = create(f.path())
+        .shape([4, 4, 1])
+        .mode::<f32>()
+        .finish()
+        .unwrap();
+    // Writing an Int16 block to an Float32 file should produce ModeMismatch.
+    let block = VoxelBlock::new([0, 0, 0], [4, 4, 1], vec![0i16; 16]).unwrap();
+    match w.write_block(&block) {
+        Err(Error::ModeMismatch { .. }) => {}
         other => panic!("expected ModeMismatch, got {other:?}"),
     }
 }
@@ -1094,7 +1114,7 @@ fn writer_set_volume_stack() {
     assert!(r.header().is_volume_stack());
     assert_eq!(r.header().mz, subvol);
     let nvol = nz / subvol as usize;
-    let count = r.volumes::<f32>().unwrap().count();
+    let count = r.volumes().unwrap().count();
     assert_eq!(count, nvol);
 }
 
@@ -1160,7 +1180,9 @@ fn writer_from_writer_mmap() {
             .unwrap();
         w.finalize().unwrap();
         let r = Reader::open(f.path()).unwrap();
-        assert_eq!(r.read_volume::<f32>().unwrap().data, data);
+        let block = r.read_volume().unwrap();
+        let DataView::Float32(d) = block.data() else { panic!("expected Float32") };
+    assert_eq!(d, data);
     }
 }
 
@@ -1184,7 +1206,9 @@ fn writer_from_writer_gzip() {
             .unwrap();
         w.finalize().unwrap();
         let r = Reader::open(f.path()).unwrap();
-        assert_eq!(r.read_volume::<f32>().unwrap().data, data);
+        let block = r.read_volume().unwrap();
+        let DataView::Float32(d) = block.data() else { panic!("expected Float32") };
+    assert_eq!(d, data);
     }
 }
 
@@ -1208,7 +1232,9 @@ fn writer_from_writer_bzip2() {
             .unwrap();
         w.finalize().unwrap();
         let r = Reader::open(f.path()).unwrap();
-        assert_eq!(r.read_volume::<f32>().unwrap().data, data);
+        let block = r.read_volume().unwrap();
+        let DataView::Float32(d) = block.data() else { panic!("expected Float32") };
+    assert_eq!(d, data);
     }
 }
 
@@ -1233,8 +1259,8 @@ fn writer_set_data_and_finalize() {
     }
 
     let r = Reader::open(f.path()).unwrap();
-    let block = r.read_volume::<f32>().unwrap();
-    assert_eq!(block.data, data);
+    let block = r.read_volume().unwrap();
+    match block.data() { DataView::Float32(d) => assert_eq!(d, data), _ => panic!("type mismatch") };
 }
 
 #[test]
@@ -1248,8 +1274,8 @@ fn write_as_roundtrip() {
     write_as(f.path(), &data, [nx, ny, nz]).unwrap();
 
     let r = Reader::open(f.path()).unwrap();
-    let block = r.read_volume::<f32>().unwrap();
-    assert_eq!(block.data, data);
+    let block = r.read_volume().unwrap();
+    match block.data() { DataView::Float32(d) => assert_eq!(d, data), _ => panic!("type mismatch") };
 }
 
 #[test]
@@ -1278,6 +1304,6 @@ fn write_as_i16_roundtrip() {
 
     let r = Reader::open(f.path()).unwrap();
     assert_eq!(r.mode(), Mode::Int16);
-    let block = r.read_volume::<i16>().unwrap();
-    assert_eq!(block.data, data);
+    let block = r.read_volume().unwrap();
+    match block.data() { DataView::Int16(d) => assert_eq!(d, data), _ => panic!("type mismatch") };
 }

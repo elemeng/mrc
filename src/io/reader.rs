@@ -93,20 +93,26 @@ enum DataSource {
 /// # Zero-copy access
 ///
 /// When backed by a memory map (which [`open`](Self::open) selects
-/// automatically for files), [`slab_as`](Self::slab_as) returns `&[T]`
-/// directly into the mapped memory with no allocation. The same zero-copy
-/// access is also available for buffered readers (created via
+/// automatically for files), the default reader methods return a
+/// [`DataBlock`](crate::DataBlock) whose [`DataView`](crate::DataView)
+/// borrows directly from the mapped memory with no allocation. The same
+/// zero-copy access is available for buffered readers (created via
 /// [`from_bytes`](Self::from_bytes), [`from_reader`](Self::from_reader),
-/// or compressed-file constructors) under the same conditions.
-/// Requires native endianness and matching voxel type.
+/// or compressed-file constructors) when the block is a native-endian
+/// contiguous full-row slab.
 ///
 /// # Example
 /// ```no_run
 /// use mrc::Reader;
 ///
 /// let reader = Reader::open("density.mrc")?;
-/// for slice in reader.slices::<f32>() {
+/// for slice in reader.slices() {
 ///     let block = slice?;
+///     match block.data() {
+///         mrc::DataView::Float32(data) => println!("f32 slice: {} voxels", data.len()),
+///         mrc::DataView::Int16(data)   => println!("i16 slice: {} voxels", data.len()),
+///         _ => {}
+///     }
 /// }
 /// # Ok::<_, mrc::Error>(())
 /// ```
@@ -941,161 +947,23 @@ impl Reader {
         ))
     }
 
-    /// Zero-copy read of a contiguous Z-slab as `&[T]`.
-    ///
-    /// Zero-copy access is supported when both of these hold:
-    /// - The file's endianness matches the host (native endian).
-    /// - The requested type `T` matches the file's on-disk mode.
-    ///
-    /// When available, this method returns `&[T]` directly into the internal
-    /// data buffer — no allocation, no memcpy. This works for **both**
-    /// memory-mapped and buffered readers (including compressed files).
-    ///
-    /// When the conditions are *not* met, returns [`Error::TypeMismatch`] or
-    /// [`Error::ModeMismatch`]. Use [`subregion`](Self::subregion) as a
-    /// fallback that handles all modes and endianness via copying.
+    /// Return a `&[u8]` to the full data region regardless of backend (mmap
+    /// or buffered). This is a low-level method — most callers should use
+    /// [`read_block_bytes`](Self::read_block_bytes) instead.
     ///
     /// # Examples
     ///
     /// ```no_run
     /// # fn main() -> Result<(), mrc::Error> {
     /// let reader = mrc::Reader::open("density.mrc")?;
-    /// let slab: &[f32] = reader.slab_as::<f32>(0, 1)?;
-    /// println!("Slab has {} voxels", slab.len());
+    /// let bytes = reader.raw_bytes();
+    /// println!("File has {} raw data bytes", bytes.len());
     /// # Ok(())
     /// # }
     /// ```
-    ///
-    /// With a buffered reader (e.g. from a byte buffer):
-    ///
-    /// ```no_run
-    /// # fn main() -> Result<(), mrc::Error> {
-    /// let bytes: Vec<u8> = std::fs::read("density.mrc")?;
-    /// let reader = mrc::Reader::from_bytes(bytes)?;
-    /// let slab: &[f32] = reader.slab_as::<f32>(0, 1)?;
-    /// println!("Slab has {} voxels", slab.len());
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub fn slab_as<T: Voxel>(&self, z: usize, k: usize) -> Result<&[T], Error> {
-        #[cfg(feature = "mmap")]
-        if let DataSource::Mmap {
-            map, data_offset, ..
-        } = &self.source
-        {
-            return self._slab_as_mmap::<T>(map, *data_offset, z, k);
-        }
-
-        // Buffered fast path: zero-copy reinterpret when native endian + matching type.
-        if let DataSource::Buffered { data, .. } = &self.source {
-            if T::MODE != self.mode() {
-                return Err(Error::ModeMismatch {
-                    file_mode: self.mode(),
-                    requested_mode: T::MODE,
-                    offset: None,
-                });
-            }
-            if !self.endian.is_native() {
-                return Err(Error::TypeMismatch {
-                    expected: T::BYTE_SIZE,
-                    actual: 0,
-                });
-            }
-
-            let b = T::BYTE_SIZE;
-            let [nx, ny, nz] = [self.shape.nx, self.shape.ny, self.shape.nz];
-
-            if k == 0 || z + k > nz {
-                return Err(Error::bounds_err());
-            }
-
-            let linear_start = z * nx * ny;
-            let byte_start = linear_start * b;
-            let count = nx * ny * k;
-            let byte_end = byte_start + count * b;
-
-            if byte_end > data.len() {
-                return Err(Error::bounds_err());
-            }
-
-            let ptr = data.as_ptr();
-            let abs_offset = ptr as usize + byte_start;
-            if abs_offset % core::mem::align_of::<T>() != 0 {
-                return Err(Error::TypeMismatch {
-                    expected: core::mem::align_of::<T>(),
-                    actual: abs_offset % core::mem::align_of::<T>(),
-                });
-            }
-
-            unsafe {
-                // SAFETY: byte_start ≤ data.len() and count*b ≤ data.len()-byte_start
-                // (verified by byte_end check above). ptr.add(byte_start) is therefore
-                // in-bounds and produces count*BYTE_SIZE valid bytes. Alignment verified
-                // by the abs_offset % align_of::<T>() check above.
-                let p = ptr.add(byte_start) as *const T;
-                return Ok(core::slice::from_raw_parts(p, count));
-            }
-        }
-
-        Err(Error::TypeMismatch {
-            expected: 0,
-            actual: 0,
-        })
-    }
-
-    #[cfg(feature = "mmap")]
-    fn _slab_as_mmap<'a, T: Voxel>(
-        &self,
-        map: &'a memmap2::Mmap,
-        data_offset: usize,
-        z: usize,
-        k: usize,
-    ) -> Result<&'a [T], Error> {
-        if T::MODE != self.mode() {
-            return Err(Error::ModeMismatch {
-                file_mode: self.mode(),
-                requested_mode: T::MODE,
-                offset: None,
-            });
-        }
-        if !self.endian.is_native() {
-            return Err(Error::TypeMismatch {
-                expected: T::BYTE_SIZE,
-                actual: 0,
-            });
-        }
-
-        let b = T::BYTE_SIZE;
-        let [nx, ny, nz] = [self.shape.nx, self.shape.ny, self.shape.nz];
-
-        if k == 0 || z + k > nz {
-            return Err(Error::bounds_err());
-        }
-
-        let linear_start = z * nx * ny;
-        let byte_start = data_offset + linear_start * b;
-        let count = nx * ny * k;
-        let byte_end = byte_start + count * b;
-
-        if byte_end > map.len() {
-            return Err(Error::bounds_err());
-        }
-
-        if byte_start % core::mem::align_of::<T>() != 0 {
-            return Err(Error::TypeMismatch {
-                expected: core::mem::align_of::<T>(),
-                actual: byte_start % core::mem::align_of::<T>(),
-            });
-        }
-
-        unsafe {
-            // SAFETY: byte_start ≤ map.len() and count*b ≤ map.len()-byte_start
-            // (verified by byte_end check above). Mmap is page-aligned (≥ 4 KiB),
-            // so byte_start % align_of::<T>() suffices (verified above). The returned
-            // &[T] borrows from 'a via the mmap reference.
-            let ptr = map.as_ptr().add(byte_start) as *const T;
-            Ok(core::slice::from_raw_parts(ptr, count))
-        }
+    #[doc(hidden)]
+    pub fn raw_data(&self) -> &[u8] {
+        self._source_data()
     }
 
     pub(crate) fn read_block_bytes_cow<'a>(
@@ -1177,10 +1045,6 @@ impl Reader {
         }
     }
 
-    pub(crate) fn decode_block<T: Voxel>(&self, bytes: &[u8]) -> Result<Vec<T>, Error> {
-        crate::io::reader_common::decode_block(bytes, self.mode(), self.endian)
-    }
-
     /// Internal: return a `&[u8]` to the full data region regardless of backend.
     fn _source_data(&self) -> &[u8] {
         match &self.source {
@@ -1194,27 +1058,13 @@ impl Reader {
 
     // ── Iteration methods ─────────────────────────────────────────────
 
-    /// Iterate over Z-slices.
+    /// Return a region iterator over Z-slices.
     ///
-    /// # Examples
-    ///
-    /// ```
-    /// # fn main() -> Result<(), mrc::Error> {
-    /// # let mut h = mrc::Header::new();
-    /// # h.nx = 4; h.ny = 4; h.nz = 2;
-    /// # h.mx = 4; h.my = 4; h.mz = 2;
-    /// # let mut raw = [0u8; 1024];
-    /// # h.encode_to_bytes(&mut raw);
-    /// # let buf: Vec<u8> = raw.into_iter().chain(vec![0u8; 128]).collect();
-    /// # let reader = mrc::Reader::from_bytes(buf)?;
-    /// for slice in reader.slices::<f32>() {
-    ///     let block = slice?;
-    ///     println!("Slice at z={} has {} voxels", block.offset[2], block.data.len());
-    /// }
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub fn slices<T: Voxel>(&self) -> crate::iter::RegionIter<'_, T, crate::iter::SliceStepper> {
+    /// The returned [`crate::DataBlock`] borrows from the reader's internal buffer
+    /// (zero-copy for native-endian contiguous blocks).
+    pub fn slices(
+        &self,
+    ) -> impl Iterator<Item = Result<crate::mode::DataBlock<'_>, Error>> + '_ {
         crate::iter::RegionIter::with_stepper(
             self,
             self.shape(),
@@ -1222,57 +1072,19 @@ impl Reader {
         )
     }
 
-    /// Iterate over Z-slabs.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// # fn main() -> Result<(), mrc::Error> {
-    /// # let mut h = mrc::Header::new();
-    /// # h.nx = 4; h.ny = 4; h.nz = 4;
-    /// # h.mx = 4; h.my = 4; h.mz = 4;
-    /// # let mut raw = [0u8; 1024];
-    /// # h.encode_to_bytes(&mut raw);
-    /// # let buf: Vec<u8> = raw.into_iter().chain(vec![0u8; 256]).collect();
-    /// # let reader = mrc::Reader::from_bytes(buf)?;
-    /// for slab in reader.slabs::<f32>(2) {
-    ///     let block = slab?;
-    ///     println!("Slab at z={} depth={}", block.offset[2], block.shape[2]);
-    /// }
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub fn slabs<T: Voxel>(
+    /// Return a region iterator over Z-slabs of `k` slices.
+    pub fn slabs(
         &self,
         k: usize,
-    ) -> crate::iter::RegionIter<'_, T, crate::iter::SlabStepper> {
+    ) -> impl Iterator<Item = Result<crate::mode::DataBlock<'_>, Error>> + '_ {
         crate::iter::RegionIter::with_stepper(self, self.shape(), crate::iter::SlabStepper::new(k))
     }
 
-    /// Iterate over 3D tiles.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// # fn main() -> Result<(), mrc::Error> {
-    /// # let mut h = mrc::Header::new();
-    /// # h.nx = 4; h.ny = 4; h.nz = 4;
-    /// # h.mx = 4; h.my = 4; h.mz = 4;
-    /// # let mut raw = [0u8; 1024];
-    /// # h.encode_to_bytes(&mut raw);
-    /// # let buf: Vec<u8> = raw.into_iter().chain(vec![0u8; 256]).collect();
-    /// # let reader = mrc::Reader::from_bytes(buf)?;
-    /// for tile in reader.tiles::<f32>([2, 2, 2])? {
-    ///     let block = tile?;
-    ///     println!("Tile: {:?}", block.shape);
-    /// }
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub fn tiles<T: Voxel>(
+    /// Return a region iterator over 3D tiles of the given shape.
+    pub fn tiles(
         &self,
         tile_shape: [usize; 3],
-    ) -> Result<crate::iter::RegionIter<'_, T, crate::iter::TileStepper>, Error> {
+    ) -> Result<impl Iterator<Item = Result<crate::mode::DataBlock<'_>, Error>> + '_, Error> {
         Ok(crate::iter::RegionIter::with_stepper(
             self,
             self.shape(),
@@ -1280,30 +1092,13 @@ impl Reader {
         ))
     }
 
-    /// Iterate over sub-volumes (volume stacks only).
+    /// Iterate over sub-volumes in a volume stack.
     ///
-    /// # Examples
-    ///
-    /// ```
-    /// # fn main() -> Result<(), mrc::Error> {
-    /// # let mut h = mrc::Header::new();
-    /// # h.nx = 4; h.ny = 4; h.nz = 4;
-    /// # h.mx = 4; h.my = 4; h.mz = 2;
-    /// # h.ispg = 401;
-    /// # let mut raw = [0u8; 1024];
-    /// # h.encode_to_bytes(&mut raw);
-    /// # let buf: Vec<u8> = raw.into_iter().chain(vec![0u8; 256]).collect();
-    /// # let reader = mrc::Reader::from_bytes(buf)?;
-    /// for vol in reader.volumes::<f32>()? {
-    ///     let block = vol?;
-    ///     println!("Volume depth: {}", block.shape[2]);
-    /// }
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub fn volumes<T: Voxel>(
+    /// Each sub-volume has shape `[nx, ny, mz]`. Returns
+    /// [`Error::NotAVolumeStack`] if the file is not a volume stack.
+    pub fn volumes(
         &self,
-    ) -> Result<crate::iter::RegionIter<'_, T, crate::iter::SlabStepper>, Error> {
+    ) -> Result<impl Iterator<Item = Result<crate::mode::DataBlock<'_>, Error>> + '_, Error> {
         let mz = self.header().mz.max(0) as usize;
         if !self.header().is_volume_stack() || mz == 0 {
             return Err(Error::NotAVolumeStack {
@@ -1314,57 +1109,47 @@ impl Reader {
         Ok(self.slabs(mz))
     }
 
-    /// Read a single sub-region.
+    /// Read a single 3D sub-region at `offset` with `block_shape`.
     ///
-    /// # Examples
-    ///
-    /// ```
-    /// # fn main() -> Result<(), mrc::Error> {
-    /// # let mut h = mrc::Header::new();
-    /// # h.nx = 4; h.ny = 4; h.nz = 2;
-    /// # h.mx = 4; h.my = 4; h.mz = 2;
-    /// # let mut raw = [0u8; 1024];
-    /// # h.encode_to_bytes(&mut raw);
-    /// # let buf: Vec<u8> = raw.into_iter().chain(vec![0u8; 128]).collect();
-    /// # let reader = mrc::Reader::from_bytes(buf)?;
-    /// let block = reader.subregion::<f32>([0, 0, 0], [2, 2, 1])?;
-    /// assert_eq!(block.data.len(), 4);
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub fn subregion<T: Voxel>(
+    /// Returns a [`crate::DataBlock`] whose [`crate::DataView`] variant matches the file's
+    /// on-disk mode.  The data borrows from the reader's internal buffer
+    /// when possible (zero-copy for native-endian contiguous blocks).
+    pub fn subregion(
         &self,
         offset: [usize; 3],
-        shape: [usize; 3],
-    ) -> Result<VoxelBlock<T>, Error> {
-        let bytes = self.read_block_bytes_cow(offset, shape)?;
-        let data = self.decode_block::<T>(&bytes)?;
-        Ok(VoxelBlock {
+        block_shape: [usize; 3],
+    ) -> Result<crate::mode::DataBlock<'_>, Error> {
+        let bytes = self.read_block_bytes_cow(offset, block_shape)?;
+
+        // Try zero-copy: native endian + contiguous block
+        if self.endian().is_native() {
+            if let Cow::Borrowed(b) = &bytes {
+                if let Some(data) = crate::iter::RegionIter::<crate::iter::SliceStepper>::try_zero_copy(b, self.mode()) {
+                    return Ok(crate::mode::DataBlock::Borrowed {
+                        offset,
+                        shape: block_shape,
+                        data,
+                    });
+                }
+            }
+        }
+
+        // One-copy path
+        let data = crate::engine::convert::decode_block_to_any(
+            &bytes,
+            self.mode(),
+            self.endian(),
+            block_shape,
+        )?;
+        Ok(crate::mode::DataBlock::Owned {
             offset,
-            shape,
+            shape: block_shape,
             data,
         })
     }
 
-    /// Read the entire volume.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// # fn main() -> Result<(), mrc::Error> {
-    /// # let mut h = mrc::Header::new();
-    /// # h.nx = 4; h.ny = 4; h.nz = 2;
-    /// # h.mx = 4; h.my = 4; h.mz = 2;
-    /// # let mut raw = [0u8; 1024];
-    /// # h.encode_to_bytes(&mut raw);
-    /// # let buf: Vec<u8> = raw.into_iter().chain(vec![0u8; 128]).collect();
-    /// # let reader = mrc::Reader::from_bytes(buf)?;
-    /// let volume = reader.read_volume::<f32>()?;
-    /// assert_eq!(volume.data.len(), 32);
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub fn read_volume<T: Voxel>(&self) -> Result<VoxelBlock<T>, Error> {
+    /// Read the entire volume as a single block.
+    pub fn read_volume(&self) -> Result<crate::mode::DataBlock<'_>, Error> {
         self.subregion([0, 0, 0], [self.shape.nx, self.shape.ny, self.shape.nz])
     }
 
@@ -1412,13 +1197,35 @@ impl Reader {
                 offset: None,
             })));
         }
-        Box::new(self.slices::<u16>().map(|b| {
-            let b = b?;
-            Ok(VoxelBlock {
-                offset: b.offset,
-                shape: b.shape,
-                data: crate::engine::convert::convert_u16_slice_to_u8(&b.data)?,
-            })
+        // Uint16 → u8 narrowing: use direct block reads
+        let volume_shape = self.shape();
+        let nx = volume_shape.nx;
+        let ny = volume_shape.ny;
+        let nz = volume_shape.nz;
+        let mut z = 0usize;
+        Box::new(std::iter::from_fn(move || {
+            if z >= nz {
+                return None;
+            }
+            let start = z;
+            z += 1;
+            let bytes = match self.read_block_bytes_cow([0, 0, start], [nx, ny, 1]) {
+                Ok(b) => b,
+                Err(e) => return Some(Err(e)),
+            };
+            let src: Vec<u16> = match crate::engine::codec::decode_slice(&bytes, self.endian()) {
+                Ok(v) => v,
+                Err(e) => return Some(Err(e)),
+            };
+            let data = match crate::engine::convert::convert_u16_slice_to_u8(&src) {
+                Ok(v) => v,
+                Err(e) => return Some(Err(e)),
+            };
+            Some(Ok(VoxelBlock {
+                offset: [0, 0, start],
+                shape: [nx, ny, 1],
+                data,
+            }))
         }))
     }
 
@@ -1477,13 +1284,35 @@ impl Reader {
             })));
         }
         let k = k.max(1);
-        Box::new(self.slabs::<u16>(k).map(|b| {
-            let b = b?;
-            Ok(VoxelBlock {
-                offset: b.offset,
-                shape: b.shape,
-                data: crate::engine::convert::convert_u16_slice_to_u8(&b.data)?,
-            })
+        let volume_shape = self.shape();
+        let nx = volume_shape.nx;
+        let ny = volume_shape.ny;
+        let nz = volume_shape.nz;
+        let mut z = 0usize;
+        Box::new(std::iter::from_fn(move || {
+            if z >= nz {
+                return None;
+            }
+            let start = z;
+            let sz = k.min(nz - z);
+            z += sz;
+            let bytes = match self.read_block_bytes_cow([0, 0, start], [nx, ny, sz]) {
+                Ok(b) => b,
+                Err(e) => return Some(Err(e)),
+            };
+            let src: Vec<u16> = match crate::engine::codec::decode_slice(&bytes, self.endian()) {
+                Ok(v) => v,
+                Err(e) => return Some(Err(e)),
+            };
+            let data = match crate::engine::convert::convert_u16_slice_to_u8(&src) {
+                Ok(v) => v,
+                Err(e) => return Some(Err(e)),
+            };
+            Some(Ok(VoxelBlock {
+                offset: [0, 0, start],
+                shape: [nx, ny, sz],
+                data,
+            }))
         }))
     }
 
@@ -1635,25 +1464,6 @@ impl Reader {
             m0_interp,
             _target: std::marker::PhantomData,
         }
-    }
-
-    /// Read the entire volume as an ndarray (requires `ndarray` feature).
-    ///
-    /// # Examples
-    ///
-    /// ```no_run
-    /// # fn main() -> Result<(), mrc::Error> {
-    /// let reader = mrc::Reader::open("density.mrc")?;
-    /// let array = reader.to_ndarray::<f32>()?;
-    /// println!("Array shape: {:?}", array.shape());
-    /// # Ok(())
-    /// # }
-    /// ```
-    #[cfg(feature = "ndarray")]
-    pub fn to_ndarray<T: Voxel>(&self) -> Result<ndarray::Array3<T>, Error> {
-        let block = self.read_volume::<T>()?;
-        ndarray::Array3::from_shape_vec([self.shape.nz, self.shape.ny, self.shape.nx], block.data)
-            .map_err(|_| Error::bounds_err())
     }
 
     /// Read the entire volume as u8 (Packed4Bit unpack).

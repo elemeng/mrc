@@ -8,6 +8,174 @@
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
+/// Borrowed typed slice into an MRC volume's raw data.
+///
+/// Returned by the default (non-convert) reader methods such as
+/// [`slices`](crate::Reader::slices) and [`subregion`](crate::Reader::subregion).
+/// The slice borrows from the reader's internal buffer (mmap or `Vec<u8>`),
+/// so no copy is needed for native-endian contiguous blocks.
+///
+/// # Examples
+///
+/// ```no_run
+/// # fn main() -> Result<(), mrc::Error> {
+/// # let reader = mrc::Reader::open("density.mrc")?;
+/// for block in reader.slices() {
+///     let block = block?;
+///     match block.data() {
+///         mrc::DataView::Float32(data) => println!("f32 slice: {} voxels", data.len()),
+///         mrc::DataView::Int16(data)   => println!("i16 slice: {} voxels", data.len()),
+///         _ => panic!("unhandled mode"),
+///     }
+/// }
+/// # Ok(()) }
+/// ```
+#[derive(Debug)]
+pub enum DataView<'a> {
+    /// Signed 8-bit integer (Mode 0).
+    Int8(&'a [i8]),
+    /// Signed 16-bit integer (Mode 1).
+    Int16(&'a [i16]),
+    /// 32-bit floating point (Mode 2).
+    Float32(&'a [f32]),
+    /// Complex number with 16-bit integer components (Mode 3).
+    Int16Complex(&'a [Int16Complex]),
+    /// Complex number with 32-bit float components (Mode 4).
+    Float32Complex(&'a [Float32Complex]),
+    /// Unsigned 16-bit integer (Mode 6).
+    Uint16(&'a [u16]),
+    /// 16-bit floating point (Mode 12, requires `f16` feature).
+    #[cfg(feature = "f16")]
+    Float16(&'a [crate::f16]),
+    /// Packed 4-bit data (Mode 101). Raw packed bytes — two nibbles per byte.
+    Packed4Bit(&'a [u8]),
+}
+
+/// Owned typed data — returned when a copy is unavoidable (sub-block scatter/gather,
+/// endian mismatch).
+#[derive(Debug, Clone)]
+pub enum OwnedData {
+    /// Signed 8-bit integer (Mode 0).
+    Int8(Vec<i8>),
+    /// Signed 16-bit integer (Mode 1).
+    Int16(Vec<i16>),
+    /// 32-bit floating point (Mode 2).
+    Float32(Vec<f32>),
+    /// Complex number with 16-bit integer components (Mode 3).
+    Int16Complex(Vec<Int16Complex>),
+    /// Complex number with 32-bit float components (Mode 4).
+    Float32Complex(Vec<Float32Complex>),
+    /// Unsigned 16-bit integer (Mode 6).
+    Uint16(Vec<u16>),
+    /// 16-bit floating point (Mode 12, requires `f16` feature).
+    #[cfg(feature = "f16")]
+    Float16(Vec<crate::f16>),
+    /// Packed 4-bit data (Mode 101). Raw packed bytes — two nibbles per byte.
+    Packed4Bit(Vec<u8>),
+}
+
+impl<'a> From<&'a OwnedData> for DataView<'a> {
+    fn from(owned: &'a OwnedData) -> Self {
+        match owned {
+            OwnedData::Int8(v) => DataView::Int8(v),
+            OwnedData::Int16(v) => DataView::Int16(v),
+            OwnedData::Float32(v) => DataView::Float32(v),
+            OwnedData::Int16Complex(v) => DataView::Int16Complex(v),
+            OwnedData::Float32Complex(v) => DataView::Float32Complex(v),
+            OwnedData::Uint16(v) => DataView::Uint16(v),
+            #[cfg(feature = "f16")]
+            OwnedData::Float16(v) => DataView::Float16(v),
+            OwnedData::Packed4Bit(v) => DataView::Packed4Bit(v),
+        }
+    }
+}
+
+/// A block of voxel data with a 3D offset and shape, returned by the default
+/// (non-convert) reader methods.
+///
+/// Unlike [`VoxelBlock<T>`](crate::VoxelBlock), the data type is determined at
+/// runtime via the [`DataView`] enum.  The `Borrowed` variant borrows from the
+/// reader's internal buffer (zero-copy).  The `Owned` variant owns the decoded
+/// data (one-copy, e.g. for sub-block reads or endian conversion).
+///
+/// # Examples
+///
+/// ```no_run
+/// # fn main() -> Result<(), mrc::Error> {
+/// # let reader = mrc::Reader::open("density.mrc")?;
+/// for block in reader.slices() {
+///     let block: mrc::DataBlock<'_> = block?;
+///     let offset = block.offset();
+///     let shape = block.shape();
+///     match block.data() {
+///         mrc::DataView::Float32(data) => println!("z={}: {} voxels", offset[2], data.len()),
+///         mrc::DataView::Int16(data)   => println!("z={}: {} voxels", offset[2], data.len()),
+///         _ => panic!("unhandled mode"),
+///     }
+/// }
+/// # Ok(()) }
+/// ```
+#[derive(Debug)]
+pub enum DataBlock<'a> {
+    /// Zero-copy variant: borrows from the reader's internal buffer.
+    Borrowed {
+        /// Corner of the block within the volume, in voxels `[x, y, z]`.
+        offset: [usize; 3],
+        /// Extent of the block along each axis `[sx, sy, sz]`.
+        shape: [usize; 3],
+        /// The typed voxel data, determined by the file's mode.
+        data: DataView<'a>,
+    },
+    /// Owned variant: the decoded data is owned by this block.
+    Owned {
+        /// Corner of the block within the volume, in voxels `[x, y, z]`.
+        offset: [usize; 3],
+        /// Extent of the block along each axis `[sx, sy, sz]`.
+        shape: [usize; 3],
+        /// The typed voxel data, determined by the file's mode.
+        data: OwnedData,
+    },
+}
+
+impl<'a> DataBlock<'a> {
+    /// Return the 3D offset of this block within the volume.
+    #[inline]
+    pub fn offset(&self) -> [usize; 3] {
+        match self {
+            DataBlock::Borrowed { offset, .. } => *offset,
+            DataBlock::Owned { offset, .. } => *offset,
+        }
+    }
+
+    /// Return the 3D shape of this block.
+    #[inline]
+    pub fn shape(&self) -> [usize; 3] {
+        match self {
+            DataBlock::Borrowed { shape, .. } => *shape,
+            DataBlock::Owned { shape, .. } => *shape,
+        }
+    }
+
+    /// Return a [`DataView`] borrowing from this block's data.
+    #[inline]
+    pub fn data(&self) -> DataView<'_> {
+        match self {
+            DataBlock::Borrowed { data, .. } => match data {
+                DataView::Int8(v) => DataView::Int8(v),
+                DataView::Int16(v) => DataView::Int16(v),
+                DataView::Float32(v) => DataView::Float32(v),
+                DataView::Int16Complex(v) => DataView::Int16Complex(v),
+                DataView::Float32Complex(v) => DataView::Float32Complex(v),
+                DataView::Uint16(v) => DataView::Uint16(v),
+                #[cfg(feature = "f16")]
+                DataView::Float16(v) => DataView::Float16(v),
+                DataView::Packed4Bit(v) => DataView::Packed4Bit(v),
+            },
+            DataBlock::Owned { data, .. } => data.into(),
+        }
+    }
+}
+
 /// Strategy for converting complex numbers to real values.
 ///
 /// # Example

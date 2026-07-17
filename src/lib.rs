@@ -1,15 +1,10 @@
 //! Read and write MRC-2014 files — the standard in cryo-EM and structural
-//! biology.
+//! biology. Handles byte-order, type conversion, and compression so you
+//! can focus on your science. SIMD-accelerated, mmap-enabled.
 //!
-//! This crate handles file I/O, byte-order detection, and type-safe data
-//! access so you can focus on your science. It's fast (SIMD, parallel
-//! encoding) and works with plain, gzip, and (optionally) bzip2 files.
-//!
-//! See the [README](https://github.com/elemeng/mrc#readme) for installation
-//! instructions.  The [`mrc-cli`](https://crates.io/crates/mrc-cli) companion
-//! crate provides a `mrc-cli` binary with subcommands for inspection,
-//! validation, conversion, PNG/GIF export, and resampling — install it with
-//! `cargo install mrc-cli`.
+//! See the [README](https://github.com/elemeng/mrc#readme) for installation.
+//! The companion [`mrc-cli`](https://crates.io/crates/mrc-cli) crate provides
+//! a command-line tool for inspection, validation, conversion, and export.
 //!
 //! # Quick example
 //!
@@ -42,7 +37,9 @@
 //! # Ok(()) }
 //! ```
 //!
-//! Then pick an iteration method, each returning [`VoxelBlock<T>`] chunks:
+//! Then pick an iteration method, each returning [`DataBlock`] chunks
+//! whose [`DataView`] variant is determined by the file's mode — no
+//! compile-time type guessing, no `ModeMismatch` errors at runtime:
 //!
 //! * [`slices`](Reader::slices) — one Z-plane at a time
 //! * [`slabs`](Reader::slabs) — batches of `k` Z-planes
@@ -51,61 +48,36 @@
 //! * [`subregion`](Reader::subregion) — a single block by coordinate
 //! * [`read_volume`](Reader::read_volume) — the entire volume as one block
 //!
-//! All iteration methods share the same API pattern:
+//! The file's voxel type is known at runtime via [`reader.mode()`](Reader::mode):
 //!
 //! ```no_run
 //! # fn main() -> Result<(), mrc::Error> {
 //! # let reader = mrc::Reader::open("density.mrc")?;
-//! // One slice at a time:
-//! for slice in reader.slices::<f32>() {
+//! for slice in reader.slices() {
 //!     let block = slice?;
-//! }
-//! // Or batches of 16 Z-planes:
-//! for slab in reader.slabs::<f32>(16) {
-//!     let block = slab?;
-//! }
-//! // Or arbitrary 3D tiles:
-//! for tile in reader.tiles::<f32>([64, 64, 64])? {
-//!     let block = tile?;
+//!     match block.data() {
+//!         mrc::DataView::Float32(data) => { /* process f32 slice */ }
+//!         mrc::DataView::Int16(data)   => { /* process i16 slice */ }
+//!         mrc::DataView::Uint16(data)  => { /* process u16 slice */ }
+//!         mrc::DataView::Int8(data)    => { /* process i8 slice */ }
+//!         other                        => panic!("unhandled mode: {:?}", other),
+//!     }
 //! }
 //! # Ok(()) }
 //! ```
 //!
-//! Each block contains the `offset`, `shape`, and flat `data: Vec<T>`.
-//! Read the entire volume with [`read_volume`](Reader::read_volume):
-//!
-//! ```no_run
-//! # fn main() -> Result<(), mrc::Error> {
-//! # let reader = mrc::Reader::open("density.mrc")?;
-//! let block: mrc::VoxelBlock<f32> = reader.read_volume::<f32>()?;
-//! println!("shape: {:?}, voxels: {}", block.shape, block.data.len());
-//! # Ok(()) }
-//! ```
-//!
-//! > **No trait imports needed:** All iterator and conversion methods are
-//! > available as inherent methods on `Reader` without any import.
-//!
-//! For automatic mode conversion, use [`convert`](Reader::convert):
+//! Or just use [`convert::<f32>()`](Reader::convert) — the **fire-and-forget**
+//! option that reads any mode as `f32`:
 //!
 //! ```no_run
 //! # fn main() -> Result<(), mrc::Error> {
 //! # let reader = mrc::Reader::open("density.mrc")?;
 //! for slice in reader.convert::<f32>().slices() {
 //!     let block = slice?;
-//!     println!("slice {} mean density: {:.2}",
-//!         block.offset[2],
-//!         block.data.iter().sum::<f32>() / block.data.len() as f32);
+//!     println!("z={}: {} voxels", block.offset[2], block.data.len());
 //! }
-//! # Ok(()) }
-//! ```
-//!
-//! Or read the full volume in one call:
-//!
-//! ```no_run
-//! # fn main() -> Result<(), mrc::Error> {
-//! # let reader = mrc::Reader::open("density.mrc")?;
+//! // Full volume in one call:
 //! let block = reader.convert::<f32>().read_volume()?;
-//! println!("read {} voxels", block.data.len());
 //! # Ok(()) }
 //! ```
 //!
@@ -152,11 +124,11 @@
 //!
 //! When the file does not fit in RAM, [`Reader::open`] automatically uses
 //! memory-mapped I/O (requires the `mmap` feature). Same iterator API,
-//! zero-copy [`slab_as`](Reader::slab_as), OS-managed paging.
+//! zero-copy [`DataBlock`] views, OS-managed paging.
 //!
-//! For buffered readers (in-memory buffers, compressed files),
-//! [`slab_as`](Reader::slab_as) also provides zero-copy typed access
-//! under the same conditions (native endian, matching type).
+//! For buffered readers (in-memory buffers, compressed files), the default
+//! reader methods also return zero-copy views when the requested block is a
+//! native-endian contiguous full-row slab.
 //!
 //! ### Quirky files
 //!
@@ -231,6 +203,12 @@
 //!    For Uint16 files, [`write_u8_block`](Writer::write_u8_block) auto-widens
 //!    `u8` data; for Packed4Bit files, [`write_u4_block`](Writer::write_u4_block)
 //!    packs `u8` values (0–15) two-per-byte.
+//! * [`convert_u8_slice_to_u16`] — widen `&[u8]` to `Vec<u16>` for writing to
+//!   Uint16 files (used internally by [`write_u8_block`](Writer::write_u8_block))
+//! * [`convert_u16_slice_to_u8`] — narrow `&[u16]` to `Vec<u8>` (returns `Err`
+//!   if any value exceeds 255)
+//! * [`reinterpret_m0`] — reinterpret Mode 0 data as signed or unsigned `f32`
+//!
 //! 2. Optionally call [`update_header_stats`](Writer::update_header_stats)
 //!    to fill in `dmin`/`dmax`/`dmean`/`rms`.
 //! 3. **Finalize** with [`finalize`](Writer::finalize) to rewrite the header
@@ -241,10 +219,16 @@
 //! | Backend | Builder method | Best for |
 //! |---|---|---|
 //! | [`Writer`] | [`finish()`](WriterBuilder::finish) | General use, writes straight to disk |
-//! | [`Writer`] (in-memory) | [`Writer::from_writer`] | Memory buffer, e.g. `Cursor<Vec<u8>>` |
-//! | [`Writer`] (mmap) | [`finish_mmap()`](WriterBuilder::finish_mmap) / [`from_writer_mmap`](Writer::from_writer_mmap) | Very large files (`mmap` feature) |
-//! | [`Writer`] (gzip) | [`finish_gzip()`](WriterBuilder::finish_gzip) / [`from_writer_gzip`](Writer::from_writer_gzip) | Compressed output (`gzip` feature) |
-//! | [`Writer`] (bzip2) | [`finish_bzip2()`](WriterBuilder::finish_bzip2) / [`from_writer_bzip2`](Writer::from_writer_bzip2) | Compressed output (`bzip2` feature) |
+//! | [`Writer`] (in-memory) | [`finish_buffer()`](WriterBuilder::finish_buffer) | Memory buffer, e.g. testing or in-memory processing |
+//! | [`Writer`] (mmap) | [`finish_mmap()`](WriterBuilder::finish_mmap) | Very large files (`mmap` feature) |
+//! | [`Writer`] (gzip) | [`finish_gzip()`](WriterBuilder::finish_gzip) | Compressed output (`gzip` feature) |
+//! | [`Writer`] (bzip2) | [`finish_bzip2()`](WriterBuilder::finish_bzip2) | Compressed output (`bzip2` feature) |
+//!
+//! > **Note:** The builder is the recommended path. The lower-level
+//! > [`Writer::from_writer`], [`Writer::from_writer_mmap`],
+//! > [`Writer::from_writer_gzip`], and [`Writer::from_writer_bzip2`]
+//! > constructors are also available for callers who already have a
+//! > [`Header`] or a custom I/O target — see their respective docs for details.
 //!
 //! Compressed writers support configurable [`CompressionLevel`] level via
 //! [`WriterBuilder::compression`]:
@@ -369,15 +353,40 @@
 //!
 //! The [`Header`] provides computed properties for common queries:
 //!
-//! ```rust
-//! use mrc::Header;
-//! let h = Header::new();
-//! let vol = h.cell_volume();      // unit cell volume in Å³
-//! let (dmin, dmax, dmean, rms) = h.density_stats();
-//! let sampling = h.sampling();    // [mx, my, mz]
-//! let label = h.label_at(0);      // first label, or None
-//! assert!(h.is_standard_map());   // MAP field is "MAP "
-//! ```
+//! | Method | Returns | Description |
+//! |---|---|---|
+//! | [`validate()`](Header::validate) | `bool` | Quick validity check |
+//! | [`validate_detailed()`](Header::validate_detailed) | `Result<(), HeaderValidationError>` | Full structural validation with diagnostics |
+//! | [`validate_permissive()`](Header::validate_permissive) | `Result<Vec<String>>` | Lenient validation, returns warnings |
+//! | [`is_single_image()`](Header::is_single_image) | `bool` | `nz == 1` |
+//! | [`is_image_stack()`](Header::is_image_stack) | `bool` | `ispg == 0` |
+//! | [`is_volume()`](Header::is_volume) | `bool` | Not a stack and not an image stack |
+//! | [`is_volume_stack()`](Header::is_volume_stack) | `bool` | `ispg` in 401–630 |
+//! | [`set_image_stack()`](Header::set_image_stack) | `()` | Set as image stack (`ispg = 0`, `mz = 1`) |
+//! | [`set_volume()`](Header::set_volume) | `()` | Set as single volume (`ispg = 1`, `mz = nz`) |
+//! | [`set_volume_stack(mz)`](Header::set_volume_stack) | `()` | Set as volume stack with sub-volume size `mz` |
+//! | [`logical_shape()`](Header::logical_shape) | `[usize; 4]` | `[nvolumes, mz, ny, nx]` |
+//! | [`exttyp()`](Header::exttyp) | `[u8; 4]` | Extended header type from `extra[8..12]` |
+//! | [`exttyp_str()`](Header::exttyp_str) | `Result<&str>` | Extended header type as string (UTF-8 decoded) |
+//! | [`nversion()`](Header::nversion) | `i32` | NVERSION from `extra[12..16]` |
+//! | [`get_labels()`](Header::get_labels) | `Vec<String>` | Read up to `nlabl` non-empty labels |
+//! | [`label_at(i)`](Header::label_at) | `Option<&str>` | Trimmed label at index `i`, or `None` if empty |
+//! | [`add_label(text)`](Header::add_label) | `()` | Append a text label (FIFO when full) |
+//! | [`density_stats()`](Header::density_stats) | `(f32, f32, f32, f32)` | `(dmin, dmax, dmean, rms)` |
+//! | [`sampling()`](Header::sampling) | `[i32; 3]` | `[mx, my, mz]` |
+//! | [`voxel_size()`](Header::voxel_size) | `[f32; 3]` | Å/pixel = `cella / mxyz` |
+//! | [`cell_lengths()`](Header::cell_lengths) | `[f32; 3]` | `[xlen, ylen, zlen]` |
+//! | [`cell_angles()`](Header::cell_angles) | `[f32; 3]` | `[alpha, beta, gamma]` |
+//! | [`cell_volume()`](Header::cell_volume) | `f64` | Unit cell volume in Å³ (triclinic formula) |
+//! | [`nstart()`](Header::nstart) | `[i32; 3]` | `[nxstart, nystart, nzstart]` |
+//! | [`detect_endian()`](Header::detect_endian) | `FileEndian` | Detect byte order from MACHST |
+//! | [`set_file_endian(endian)`](Header::set_file_endian) | `()` | Set MACHST and re-encode NVERSION |
+//! | [`is_standard_map()`](Header::is_standard_map) | `bool` | MAP field is exactly `"MAP "` |
+//! | [`detect_imod()`](Header::detect_imod) | `Option<ImodInfo>` | Detect IMOD stamp in `extra` bytes |
+//! | [`is_y_inverted()`](Header::is_y_inverted) | `bool` | `true` when `mapr == -2` (IMOD convention) |
+//! | [`decode_from_bytes(bytes)`](Header::decode_from_bytes) | `Header` | Parse from raw 1024 bytes (auto endian) |
+//! | [`decode_from_bytes_with_info(bytes)`](Header::decode_from_bytes_with_info) | `(Header, Option<EndianFallbackWarning>)` | Parse with endian fallback diagnostics |
+//! | [`encode_to_bytes(&mut [u8; 1024])`](Header::encode_to_bytes) | `()` | Encode to raw bytes |
 //!
 //! ### Manual header parsing
 //!
@@ -498,9 +507,11 @@
 //!
 //! * [`Io`](Error::Io) — the file could not be read or written
 //! * [`InvalidHeader`](Error::InvalidHeader) — not a valid MRC file
-//! * [`ModeMismatch`](Error::ModeMismatch) — calling `slices::<f32>()` on
-//!   an Int16 file; use `convert::<f32>()` instead
+//! * [`ModeMismatch`](Error::ModeMismatch) — writing a `VoxelBlock<i16>` to
+//!   a Float32 file; use [`write_block_as`](Writer::write_block_as) instead
 //! * [`BoundsError`](Error::BoundsError) — read or write outside the volume
+//! * [`NotAVolumeStack`](Error::NotAVolumeStack) — calling [`volumes()`](Reader::volumes)
+//!   on a file that is not a volume stack
 //! * [`FileSizeMismatch`](Error::FileSizeMismatch) — file truncated or
 //!   has trailing garbage
 //!
@@ -643,10 +654,10 @@
 //! ```no_run
 //! # fn main() -> Result<(), mrc::Error> {
 //! # let reader = mrc::Reader::open("averages.mrc")?;
-//! for volume in reader.volumes::<f32>()? {
+//! for volume in reader.volumes()? {
 //!     let vol = volume?;
 //!     println!("sub-volume at z={} ({}×{}×{} voxels)",
-//!         vol.offset[2], vol.shape[0], vol.shape[1], vol.shape[2]);
+//!         vol.offset()[2], vol.shape()[0], vol.shape()[1], vol.shape()[2]);
 //! }
 //! # Ok(()) }
 //! ```
@@ -657,8 +668,10 @@
 //! |---|---|---|
 //! | [`InvalidHeader`](Error::InvalidHeader) | Not an MRC file, or header corruption | Run `mrc validate file.mrc`; try [`open_permissive`](Reader::open_permissive) |
 //! | [`FileSizeMismatch`](Error::FileSizeMismatch) | File truncated or has trailing garbage | Re-download or check `mrc validate` output |
-//! | [`ModeMismatch`](Error::ModeMismatch) | Using `slices::<f32>()` on an Int16 file | Use [`convert::<f32>()`](Reader::convert) — auto-converts any mode |
+//! | [`ModeMismatch`](Error::ModeMismatch) | Writing a `VoxelBlock<i16>` to an Float32 file | Use [`write_block_as`](Writer::write_block_as) — auto-converts any mode |
+//! | [`NotAVolumeStack`](Error::NotAVolumeStack) | Calling `volumes()` on a non-stack file | Check `reader.is_volume_stack()` first |
 //! | [`BoundsError`](Error::BoundsError) | Block outside volume | Check offset + shape against dimensions |
+//! | [`BlockShapeMismatch`](Error::BlockShapeMismatch) | Data length doesn't match block shape | Verify `sx * sy * sz * sizeof(T)` matches data length |
 //! | [`UnsupportedMode`](Error::UnsupportedMode) | Unrecognized mode, or mode needs the `f16` feature | Enable `f16` feature or convert with another tool |
 //! | `Io` error | File permissions, filesystem issue | Check the file path and permissions |
 //! | Values look wrong | Endianness mismatch | The endianness fallback handles most cases; try `mrc validate` |
@@ -705,7 +718,8 @@ pub use header::{
 };
 
 pub use mode::{
-    ComplexToRealStrategy, Float32Complex, Int16Complex, M0Interpretation, Mode, Voxel,
+    ComplexToRealStrategy, DataBlock, DataView, Float32Complex, Int16Complex, M0Interpretation,
+    Mode, OwnedData, Voxel,
 };
 
 /// Half-precision floating point type (requires `f16` feature).
@@ -719,10 +733,6 @@ pub use io::reader_common::ConvertReader;
 
 /// MRC file writer and its builder.
 pub use io::writer::{Writer, WriterBuilder};
-/// Lazy iterator over MRC voxel blocks.
-pub use iter::RegionIter;
-/// Stepping strategies for [`RegionIter`].
-pub use iter::{SlabStepper, SliceStepper, TileStepper};
 
 /// Compression level for compressed MRC writers.
 ///
@@ -741,6 +751,13 @@ pub use engine::codec::{decode_into, swap_bytes_in_place};
 
 #[doc(hidden)]
 pub use io::reader::{CompressionType, detect_compression};
+
+/// Internal helper trait for [`read_as`] — users do not need to interact with it directly.
+///
+/// All standard voxel types (`f32`, `i16`, `u16`, `i8`, etc.) implement this trait.
+#[doc(hidden)]
+pub trait ReadAsTarget: Voxel + crate::engine::convert::ConvertFrom<f32> {}
+impl<T: Voxel + crate::engine::convert::ConvertFrom<f32>> ReadAsTarget for T {}
 
 /// Open an MRC file for reading, auto-detecting gzip or bzip2 compression.
 ///
@@ -783,8 +800,8 @@ pub fn create<P: AsRef<std::path::Path>>(path: P) -> WriterBuilder {
 /// Read an entire MRC volume into a `Vec<T>` with auto-mode detection.
 ///
 /// This is a one-shot convenience over manually opening a [`Reader`] and
-/// calling [`read_volume`](Reader::read_volume). The type `T` must match
-/// the file's on-disk mode.
+/// calling [`convert::<T>()`](Reader::convert) then [`read_volume`](Reader::read_volume).
+/// The file can be in any MRC mode — the data is auto-converted to `T`.
 ///
 /// Returns the parsed [`Header`] and the voxel data.
 ///
@@ -798,10 +815,10 @@ pub fn create<P: AsRef<std::path::Path>>(path: P) -> WriterBuilder {
 ///     header.nx, header.ny, header.nz, data.len());
 /// # Ok(()) }
 /// ```
-pub fn read_as<T: Voxel, P: AsRef<std::path::Path>>(path: P) -> Result<(Header, Vec<T>), Error> {
+pub fn read_as<T: ReadAsTarget, P: AsRef<std::path::Path>>(path: P) -> Result<(Header, Vec<T>), Error> {
     let reader = Reader::open(path)?;
     let header = *reader.header();
-    let volume = reader.read_volume::<T>()?;
+    let volume = reader.convert::<T>().read_volume()?;
     Ok((header, volume.data))
 }
 

@@ -44,10 +44,11 @@ fn roundtrip_f32() {
     }
 
     let r = Reader::open(f.path()).unwrap();
-    let block = r.read_volume::<f32>().unwrap();
-    assert_eq!(block.data, data);
-    assert_eq!(&block.offset, &[0, 0, 0]);
-    assert_eq!(&block.shape, &[nx, ny, nz]);
+    let block = r.read_volume().unwrap();
+    let DataView::Float32(d) = block.data() else { panic!("expected Float32") };
+    assert_eq!(d, data);
+    assert_eq!(block.offset(), [0, 0, 0]);
+    assert_eq!(block.shape(), [nx, ny, nz]);
 
     // convert_volume::<f32> on Float32 should give the same result
     let block2 = r.convert::<f32>().read_volume().unwrap();
@@ -111,8 +112,9 @@ fn roundtrip_u16() {
     }
 
     let r = Reader::open(f.path()).unwrap();
-    let block = r.read_volume::<u16>().unwrap();
-    assert_eq!(block.data, src);
+    let block = r.read_volume().unwrap();
+    let DataView::Uint16(d) = block.data() else { panic!("expected Uint16") };
+    assert_eq!(d, src);
 }
 
 /// Write multiple slabs, read back with subregion.
@@ -137,10 +139,11 @@ fn roundtrip_subregion() {
 
     let r = Reader::open(f.path()).unwrap();
     // Read a middle subregion
-    let block = r.subregion::<f32>([4, 4, 2], [8, 8, 3]).unwrap();
-    assert_eq!(block.offset, [4, 4, 2]);
-    assert_eq!(block.shape, [8, 8, 3]);
-    assert_eq!(block.data.len(), 8 * 8 * 3);
+    let block = r.subregion([4, 4, 2], [8, 8, 3]).unwrap();
+    assert_eq!(block.offset(), [4, 4, 2]);
+    assert_eq!(block.shape(), [8, 8, 3]);
+    let DataView::Float32(d) = block.data() else { panic!("expected Float32") };
+    assert_eq!(d.len(), 8 * 8 * 3);
 }
 
 /// Read entire volume via read_volume matches collecting as::<f32>().slices().
@@ -164,13 +167,14 @@ fn read_volume_via_convert_slices_f32() {
     }
 
     let r = Reader::open(f.path()).unwrap();
-    let vol = r.read_volume::<f32>().unwrap();
+    let vol = r.read_volume().unwrap();
     let collected: Vec<f32> = r
         .convert::<f32>()
         .slices()
         .flat_map(|s| s.unwrap().data)
         .collect();
-    assert_eq!(vol.data, collected);
+    let DataView::Float32(d) = vol.data() else { panic!("expected Float32") };
+    assert_eq!(d, collected);
 }
 
 /// Gzip compressed roundtrip.
@@ -196,8 +200,9 @@ fn roundtrip_gzip() {
 
     // Reader::open auto-detects gzip
     let r = Reader::open(f.path()).unwrap();
-    let block = r.read_volume::<f32>().unwrap();
-    assert_eq!(block.data, data);
+    let block = r.read_volume().unwrap();
+    let DataView::Float32(d) = block.data() else { panic!("expected Float32") };
+    assert_eq!(d, data);
 }
 
 /// Header statistics roundtrip: write data, update stats, read back.
@@ -353,9 +358,10 @@ fn roundtrip_complex_i16() {
     }
 
     let r = Reader::open(f.path()).unwrap();
-    let block = r.read_volume::<Int16Complex>().unwrap();
-    assert_eq!(block.data.len(), total);
-    for (a, b) in block.data.iter().zip(src.iter()) {
+    let block = r.read_volume().unwrap();
+    let DataView::Int16Complex(d) = block.data() else { panic!("expected Int16Complex") };
+    assert_eq!(d.len(), total);
+    for (a, b) in d.iter().zip(src.iter()) {
         assert_eq!(a.real, b.real);
         assert_eq!(a.imag, b.imag);
     }
@@ -395,9 +401,10 @@ fn roundtrip_complex_f32() {
     }
 
     let r = Reader::open(f.path()).unwrap();
-    let block = r.read_volume::<Float32Complex>().unwrap();
-    assert_eq!(block.data.len(), total);
-    for (a, b) in block.data.iter().zip(src.iter()) {
+    let block = r.read_volume().unwrap();
+    let DataView::Float32Complex(d) = block.data() else { panic!("expected Float32Complex") };
+    assert_eq!(d.len(), total);
+    for (a, b) in d.iter().zip(src.iter()) {
         assert_eq!(a.real, b.real);
         assert_eq!(a.imag, b.imag);
     }
@@ -428,13 +435,10 @@ fn mmap_roundtrip_f32() {
 
     // Reader::open auto-selects mmap when the mmap feature is available
     let r = Reader::open(f.path()).unwrap();
-    let block = r.read_volume::<f32>().unwrap();
-    assert_eq!(block.data, data);
+    let block = r.read_volume().unwrap();
+    let DataView::Float32(d) = block.data() else { panic!("expected Float32") };
+    assert_eq!(d, data);
 
-    // Zero-copy slab_as
-    let slab: &[f32] = r.slab_as::<f32>(0, 1).unwrap();
-    assert_eq!(slab.len(), nx * ny);
-    assert_eq!(slab, &data[..nx * ny]);
 }
 
 // ── Bzip2 roundtrip test ──────────────────────────────────────────────
@@ -461,8 +465,9 @@ fn roundtrip_bzip2() {
 
     // Reader::open auto-detects bzip2
     let r = Reader::open(f.path()).unwrap();
-    let block = r.read_volume::<f32>().unwrap();
-    assert_eq!(block.data, data);
+    let block = r.read_volume().unwrap();
+    let DataView::Float32(d) = block.data() else { panic!("expected Float32") };
+    assert_eq!(d, data);
 }
 
 // ── write_block_as roundtrip tests ────────────────────────────────────
@@ -489,8 +494,9 @@ fn write_block_as_i16() {
     }
 
     let r = Reader::open(f.path()).unwrap();
-    let block = r.read_volume::<i16>().unwrap();
-    assert_eq!(block.data, expected_i16);
+    let block = r.read_volume().unwrap();
+    let DataView::Int16(d) = block.data() else { panic!("expected Int16") };
+    assert_eq!(d, expected_i16);
 }
 
 #[test]
@@ -511,8 +517,9 @@ fn write_block_as_u16() {
     }
 
     let r = Reader::open(f.path()).unwrap();
-    let block = r.read_volume::<u16>().unwrap();
-    assert_eq!(block.data, expected_u16);
+    let block = r.read_volume().unwrap();
+    let DataView::Uint16(d) = block.data() else { panic!("expected Uint16") };
+    assert_eq!(d, expected_u16);
 }
 
 #[test]
@@ -533,8 +540,9 @@ fn write_block_as_i8() {
     }
 
     let r = Reader::open(f.path()).unwrap();
-    let block = r.read_volume::<i8>().unwrap();
-    assert_eq!(block.data, expected_i8);
+    let block = r.read_volume().unwrap();
+    let DataView::Int8(d) = block.data() else { panic!("expected Int8") };
+    assert_eq!(d, expected_i8);
 }
 
 // ── Volume stack test ─────────────────────────────────────────────────
@@ -556,7 +564,7 @@ fn volume_stack_error_on_plain_volume() {
     }
 
     let r = Reader::open(f.path()).unwrap();
-    match r.volumes::<f32>() {
+    match r.volumes() {
         Err(Error::NotAVolumeStack { .. }) => {} // expected
         other => panic!("expected NotAVolumeStack, got {:?}", other.map(|_| ())),
     }
@@ -591,8 +599,9 @@ fn open_permissive_trailing_garbage() {
     assert!(Reader::open(f.path()).is_err());
     // Permissive mode should still read correctly (ignores trailing data)
     let (reader, _warnings) = Reader::open_permissive(f.path()).unwrap();
-    let block = reader.read_volume::<f32>().unwrap();
-    assert_eq!(block.data, vec![1.0f32; 16]);
+    let block = reader.read_volume().unwrap();
+    let DataView::Float32(d) = block.data() else { panic!("expected Float32") };
+    assert_eq!(d, &vec![1.0f32; 16]);
 }
 
 #[test]
@@ -661,8 +670,9 @@ fn roundtrip_f16() {
 
     // Read back as f16 directly
     let r = Reader::open(f.path()).unwrap();
-    let block_f16 = r.read_volume::<half::f16>().unwrap();
-    assert_eq!(block_f16.data, src_f16);
+    let block = r.read_volume().unwrap();
+    let DataView::Float16(d) = block.data() else { panic!("expected Float16") };
+    assert_eq!(d, src_f16);
 
     // Read back via convert::<f32>()
     let block_f32 = r.convert::<f32>().read_volume().unwrap();
@@ -723,13 +733,14 @@ fn volumes_iterator() {
     assert_eq!(r.header().mz, subvol_slices as i32, "mz should be patched");
 
     let mut vol_count = 0;
-    for result in r.volumes::<f32>().unwrap() {
+    for result in r.volumes().unwrap() {
         let vol = result.unwrap();
-        assert_eq!(vol.shape, [nx, ny, subvol_slices]);
+        assert_eq!(vol.shape(), [nx, ny, subvol_slices]);
         // Verify data for this sub-volume
         let z_start = vol_count * subvol_slices;
         let expected_slice = &all_data[z_start * nx * ny..(z_start + subvol_slices) * nx * ny];
-        assert_eq!(&vol.data, expected_slice);
+        let DataView::Float32(d) = vol.data() else { panic!("expected Float32") };
+        assert_eq!(d, expected_slice);
         vol_count += 1;
     }
     assert_eq!(vol_count, nvol, "expected {nvol} sub-volumes");

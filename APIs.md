@@ -42,9 +42,12 @@ write_as("output.mrc", &data, [512, 512, 256])?;
 
 // ── Iterative read (streaming, memory-friendly) ──
 let reader = open("protein.mrc")?;
-for slice in reader.slices::<f32>() {
+for slice in reader.slices() {
     let block = slice?;
-    // process one Z-plane at a time
+    match block.data() {
+        mrc::DataView::Float32(data) => { /* process &[f32] */ }
+        _ => {}
+    }
 }
 
 // ── Streaming write (one slice at a time) ──
@@ -133,14 +136,16 @@ as **inherent methods** — no trait imports needed for normal use.
 
 | Method | Returns | Description |
 |---|---|---|
-| `reader.subregion::<T>(offset, shape)` | `Result<VoxelBlock<T>>` | Read and decode typed sub-block at any offset |
-| `reader.read_volume::<T>()` | `Result<VoxelBlock<T>>` | Read the entire volume as a single block |
+| `reader.subregion(offset, shape)` | `Result<DataBlock<'_>>` | Read and decode sub-block at any offset (returns `DataBlock` with runtime `DataView` variant) |
+| `reader.read_volume()` | `Result<DataBlock<'_>>` | Read the entire volume as a single block |
 | `reader.read_volume_u8()` | `Result<VoxelBlock<u8>>` | Read Packed4Bit volume as `u8` (nibble unpack) |
-| `reader.slices::<T>()` | `RegionIter<'_, T, SliceStepper>` | One Z-plane at a time |
-| `reader.slabs::<T>(k)` | `RegionIter<'_, T, SlabStepper>` | `k` contiguous Z-planes |
-| `reader.tiles::<T>(shape)` | `RegionIter<'_, T, TileStepper>` | Arbitrary 3D tiles |
-| `reader.volumes::<T>()` | `Result<RegionIter<'_, T, SlabStepper>>` | One sub-volume per step (volume stacks only) |
+| `reader.slices()` | `impl Iterator<Item = Result<DataBlock<'_>>>` | One Z-plane at a time |
+| `reader.slabs(k)` | `impl Iterator<Item = Result<DataBlock<'_>>>` | `k` contiguous Z-planes |
+| `reader.tiles(shape)` | `impl Iterator<Item = Result<DataBlock<'_>>>` | Arbitrary 3D tiles |
+| `reader.volumes()` | `Result<impl Iterator<Item = Result<DataBlock<'_>>>>` | One sub-volume per step (volume stacks only) |
 | `reader.slices_u8()` | iterator yielding `VoxelBlock<u8>` | Mode 6 (Uint16) or Mode 101 (Packed4Bit); narrows/nibble-unpacks to `u8` |
+
+> **Tip:** Check the runtime `DataView` variant from `block.data()` to handle each mode, or use `reader.convert::<f32>()` to always get f32.
 | `reader.slabs_u8(k)` | iterator yielding `VoxelBlock<u8>` | Same as `slices_u8` but `k` planes at a time |
 | `reader.slices_mode0(interp)` | iterator yielding `VoxelBlock<f32>` | Mode 0 (Int8) only; signed or unsigned |
 | `reader.slabs_mode0(k, interp)` | iterator yielding `VoxelBlock<f32>` | Same as `slices_mode0` but `k` planes at a time |
@@ -168,14 +173,13 @@ Then use the wrapper's inherent methods:
 ### Performance note: zero-copy access
 
 [`Reader::open`] automatically uses memory-mapped I/O (zero-copy, demand-paged)
-when available (requires the `mmap` feature). The [`slab_as`](crate::Reader::slab_as)
-method provides zero-copy typed access into the internal data buffer (mmap or
-buffered alike) when the file endianness matches the host and the voxel type
-matches the file mode.
+when available (requires the `mmap` feature). The default reader methods return
+[`DataBlock::Borrowed`](crate::DataBlock) views that borrow directly from the mapped
+memory — no allocation. The same zero-copy access works for buffered readers when
+the requested block is a native-endian contiguous full-row slab.
 
 | Method | Returns | Description |
 |---|---|---|
-| `reader.slab_as::<T>(z, k)` | `Result<&[T]>` | Zero-copy typed access (mmap or buffered) |
 | `reader.is_truncated()` | `bool` | `true` if permissive-mode file is shorter than header claims |
 
 ---
@@ -350,7 +354,7 @@ HeaderBuilder::new()
     .build()?                    // → Result<Header>
 ```
 
-### `VolumeShape` / `VoxelBlock`
+### `VolumeShape` / `VoxelBlock` / `DataBlock` / `DataView`
 
 ```rust
 pub struct VolumeShape {
@@ -384,6 +388,49 @@ pub struct VoxelBlock<T> {
 | `block.len()` | `usize` | Number of voxels |
 | `block.is_empty()` | `bool` | Zero voxels |
 | `block.is_full_volume(&VolumeShape)` | `bool` | Covers entire volume from origin |
+
+**`DataBlock`** — returned by the default (non-convert) reader methods. Holds data as a runtime `DataView` variant determined by the file's mode.
+
+```rust
+pub enum DataBlock<'a> {
+    Borrowed { offset: [usize; 3], shape: [usize; 3], data: DataView<'a> },
+    Owned { offset: [usize; 3], shape: [usize; 3], data: OwnedData },
+}
+```
+
+| Method | Returns | Description |
+|---|---|---|
+| `block.offset()` | `[usize; 3]` | Block origin `[x, y, z]` |
+| `block.shape()` | `[usize; 3]` | Block dimensions `[sx, sy, sz]` |
+| `block.data()` | `DataView<'_>` | Typed view into the block's data |
+
+**`DataView`** — a typed reference slice whose variant is determined at runtime:
+
+```rust
+pub enum DataView<'a> {
+    Int8(&'a [i8]),
+    Int16(&'a [i16]),
+    Float32(&'a [f32]),
+    Int16Complex(&'a [Int16Complex]),
+    Float32Complex(&'a [Float32Complex]),
+    Uint16(&'a [u16]),
+    Float16(&'a [half::f16]),       // requires `f16` feature
+    Packed4Bit(&'a [u8]),
+}
+```
+
+Usage pattern:
+
+```rust
+for slice in reader.slices() {
+    let block = slice?;
+    match block.data() {
+        mrc::DataView::Float32(data) => { /* process &[f32] */ }
+        mrc::DataView::Int16(data)   => { /* process &[i16] */ }
+        _ => {}
+    }
+}
+```
 
 ### `Mode`, `Voxel`, `FileEndian`
 
@@ -548,36 +595,30 @@ Accessible via `reader.imod_metadata()` on any reader.
 
 ## Iterators
 
-### `RegionIter` and Steppers
+### `DataBlock` and `VoxelBlock` iterators
 
-`RegionIter<'a, T, S>` is a **lazy iterator** that yields `Result<VoxelBlock<T>>`.
-Created by reader methods like `.slices::<f32>()`.
+The default reader methods (`slices()`, `slabs()`, `tiles()`, `volumes()`) return
+`impl Iterator<Item = Result<DataBlock<'_>>>` — each call yields a `DataBlock`
+whose `DataView` variant is determined at runtime by the file's mode.
 
-```rust
-pub trait Stepper { /* internal, #[doc(hidden)] */ }
-
-pub struct SliceStepper;    // one Z-plane at a time
-pub struct SlabStepper;     // k contiguous Z-planes
-pub struct TileStepper;     // arbitrary 3D tiles
-```
-
-| Stepper | Construct | Behaviour |
-|---|---|---|
-| `SliceStepper` | `SliceStepper::default()` | Steps `z` from 0..nz, block shape = `[nx, ny, 1]` |
-| `SlabStepper` | `SlabStepper::new(k)` | Steps `k` slices at a time, block shape = `[nx, ny, k]` |
-| `TileStepper` | `TileStepper::new([sx, sy, sz])` | Raster-scans volume in `[sx, sy, sz]` tiles |
-
-You don't normally interact with `RegionIter` directly — just use the reader
-methods returned by `slices()`, `slabs()`, `tiles()` etc.:
+The `ConvertReader` methods return `impl Iterator<Item = Result<VoxelBlock<T>>>`
+— each call yields a typed `VoxelBlock<T>` with auto-converted data.
 
 ```rust
-for slice in reader.slices::<f32>() {
+// Default reader: returns DataBlock — match on DataView
+for slice in reader.slices() {
     let block = slice?;
-    // block.offset, block.shape, block.data
+    match block.data() {
+        DataView::Float32(data) => println!("f32 slice: {} voxels", data.len()),
+        _ => {}
+    }
 }
 
-for slab in reader.slabs::<i16>(4) { ... }  // 4 planes at a time
-for tile in reader.tiles::<u16>([64, 64, 8]) { ... }
+// ConvertReader: returns VoxelBlock<T> — typed fields
+for slab in reader.convert::<f32>().slabs(4) {
+    let block = slab?;
+    println!("f32 slab: {} voxels", block.data.len());
+}
 ```
 
 ---

@@ -4,7 +4,7 @@ This file contains project-specific context for AI coding agents working on the 
 
 - **Repository**: https://github.com/elemeng/mrc
 - **Crate**: https://crates.io/crates/mrc
-- **Version**: 0.5.3 (check `Cargo.toml`)
+- **Version**: 0.6.0 (check `Cargo.toml`)
 - **Language**: Rust, Edition 2024, MSRV 1.85
 - **Hard deps**: `thiserror` 2.x, `tracing` 0.1
 - **Spec reference**: `mrcfile-official.md` (local copy)
@@ -34,7 +34,7 @@ cargo fmt --check
 cargo doc --all-features       # verify no broken intra-doc links
 ```
 
-Unit tests: inline `#[cfg(test)]` modules. Integration tests: `tests/integration.rs`. Benchmarks: `benches/bench.rs` (criterion).
+Unit tests: inline `#[cfg(test)]` modules. Integration tests: `tests/integration.rs` (~23 roundtrip tests). Comprehensive API tests: `tests/api_comprehensive.rs` (~80 tests covering every public API). Benchmarks: `benches/bench.rs` (criterion).
 
 All commands should be prefixed with `rtk` when available (e.g. `rtk cargo test`).
 
@@ -84,9 +84,9 @@ The only public entry point is `lib.rs`. Internal modules are `mod` (private) or
 
 | Visibility | Items |
 |------------|-------|
-| **Public** | `open`, `create`, `Reader`, `ConvertReader`, `WriterBuilder`, `Writer`, `Header`, `HeaderBuilder`, `Mode`, `Voxel`, `VoxelBlock`, `VolumeShape`, `RegionIter`, steppers, `FileEndian`, `Error`, `HeaderValidationError`, `Compression`, validate types, FEI/CCP4/MRCO/SERI/AGAR/IMOD types, ExtHeaderType/Data, conversion utilities, `DEFAULT_MAX_DECOMPRESSED_BYTES` |
+| **Public** | `open`, `create`, `Reader`, `ConvertReader`, `WriterBuilder`, `Writer`, `Header`, `HeaderBuilder`, `Mode`, `Voxel`, `VoxelBlock`, `VolumeShape`, `DataView`, `DataBlock`, `OwnedData`, `FileEndian`, `Error`, `HeaderValidationError`, `Compression`, validate types, FEI/CCP4/MRCO/SERI/AGAR/IMOD types, ExtHeaderType/Data, conversion utilities, `DEFAULT_MAX_DECOMPRESSED_BYTES` |
 | **`#[doc(hidden)]`** | `EndianCodec`, `MachstInfo`, `CompressionType`, `detect_compression`, `EndianFallbackWarning`, `serde_byte_array` |
-| **`pub(crate)` only** | `validate_block_bounds`, `gather_block_bytes`, `encode_block_to_buf`, `decode_block`, `decode_slice`, `encode_slice`, `convert_block`, `parse_header`, `open_compressed`, `compute_stats`, `validate_header_stats`, SIMD wrapper functions, converter functions |
+| **`pub(crate)` only** | `RegionIter`, `SliceStepper`, `SlabStepper`, `TileStepper`, `validate_block_bounds`, `gather_block_bytes`, `encode_block_to_buf`, `decode_block`, `decode_slice`, `encode_slice`, `convert_block`, `decode_block_to_any`, `parse_header`, `open_compressed`, `compute_stats`, `validate_header_stats`, SIMD wrapper functions, converter functions |
 
 Key enums (`Error`, `Mode`, `Compression`, `CompressionType`, `ComplexToRealStrategy`, `M0Interpretation`, `ExtHeaderType`, `ExtHeaderData`) are `#[non_exhaustive]`.
 
@@ -110,8 +110,8 @@ Key enums (`Error`, `Mode`, `Compression`, `CompressionType`, `ComplexToRealStra
 
 ### Type Safety
 
-- `Voxel` trait connects Rust types to MRC modes at compile time.
-- Generic read/write APIs require `T: Voxel`.
+- `Voxel` trait connects Rust types to MRC modes at compile time for the typed `ConvertReader` and writer APIs.
+- Default reader methods (`slices`, `slabs`, `tiles`, `subregion`, `read_volume`, `volumes`) are **non-generic** — they return `DataBlock` whose `DataView` variant is determined at runtime by the file's mode. This avoids mode-mismatch errors at the cost of a runtime match.
 - `Packed4Bit` (Mode 101) has no `Voxel` impl — use `slices_u8`/`read_volume_u8`/`write_u4_block`.
 - No `unsafe` in the public API — all `unsafe` is internal.
 
@@ -120,7 +120,7 @@ Key enums (`Error`, `Mode`, `Compression`, `CompressionType`, `ComplexToRealStra
 Unsafe locations and their justifications:
 
 1. **`engine/simd/x86.rs` + `aarch64.rs`** — AVX2/NEON intrinsics. Runtime feature detection via `is_x86_feature_detected!("avx2")` / `is_aarch64_feature_detected!("neon")`. All `unsafe fn` bodies require explicit `unsafe { }` blocks (Rust 2024 `unsafe_op_in_unsafe_fn` lint).
-2. **`io/reader.rs`** — `memmap2::Mmap` / `MmapMut` construction and `slab_as` zero-copy slice (mmap and buffered). Alignment, mode, and endianness checked before pointer dereference.
+2. **`io/reader.rs`** — `memmap2::Mmap` / `MmapMut` construction and `DataBlock::Borrowed` zero-copy view (mmap and buffered). Alignment, mode, and endianness checked before pointer dereference.
 3. **`engine/codec.rs`** — `core::ptr::copy_nonoverlapping` for native-endian memcpy; `Vec::set_len` after capacity-guaranteed initialization.
 4. **`engine/convert.rs`** — `reinterpret_vec` and `Vec::from_raw_parts` for type-erased Vec reuse. Type identity verified via `TypeId` before transmute.
 
@@ -132,7 +132,7 @@ All `unsafe` blocks must have a `// SAFETY:` comment documenting the invariant.
 2. **`Reader::raw_bytes()` silently truncates on undersized files in permissive mode**: returns available bytes. Use `is_truncated()` to detect. Strict mode validates on open.
 3. **`Packed4Bit` sub-block reads require even X-offset**: `validate_block_bounds` rejects odd `ox` for Mode 101. Full-frame and byte-aligned sub-blocks work.
 4. **`write_block_as_body` f32 clone eliminated** in v0.5.0 — existing code paths are clean.
-5. **Buffered `slab_as` relies on runtime alignment check**: `Vec<u8>` has no Rust-level alignment guarantee beyond 1 byte. A runtime check rejects misaligned buffers; this is cosmetic — real-world allocators always return ≥16‑byte aligned memory.
+5. **`DataBlock::data()` borrows from reader or `OwnedData`**: the returned `DataView` has the block's lifetime, so chaining `reader.read_volume()?.data()` produces a temporary — bind the block first. This is a deliberate lifetime choice that prevents dangling references.
 
 ## Roadmap
 

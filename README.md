@@ -40,15 +40,14 @@ The `mrc` API is designed so that **common operations are one-liners** and **com
 | One-shot read (open + read_volume) | `let (h, d): (_, Vec<f32>) = read_as("file.mrc")?;` |
 | One-shot write (create + write + finalize) | `write_as("out.mrc", &data, [512, 512, 256])?;` |
 | Read the whole volume as `f32` | `reader.convert::<f32>().read_volume()?` |
-| Read a sub-region | `reader.subregion::<f32>([x, y, z], [sx, sy, sz])?` |
-| Iterate Z-slices | `reader.slices::<f32>()` → `for slice in ...` |
-| Iterate sub-volumes in a stack | `reader.volumes::<f32>()?` → `for vol in ...` |
+| Read a sub-region | `reader.subregion([x, y, z], [sx, sy, sz])?` |
+| Iterate Z-slices | `reader.slices()` → `for slice in ...` |
+| Iterate sub-volumes in a stack | `reader.volumes()?` → `for vol in ...` |
 | Create a new file | `create("out.mrc").shape([512, 512, 256]).mode::<f32>().finish()?` |
 | Write with auto-conversion (f32 → i16) | `writer.write_block_as(&f32_block)?` |
 | Parse tilt-series metadata | `reader.fei1_metadata()` or `reader.parse_extended_header()` |
 | Validate a file | `validate_full("file.mrc", false)?` |
 | Open a quirky file | `Reader::open_permissive("broken.mrc")?` |
-| Zero-copy slab access | `reader.slab_as::<f32>(z, k)?` — mmap or buffered |
 
 **No trait imports required.** Every one of these is an inherent method — no `use SomeTrait` needed.
 
@@ -57,13 +56,13 @@ The `mrc` API is designed so that **common operations are one-liners** and **com
 
 ```toml
 [dependencies]
-mrc = "0.5"
+mrc = "0.6"
 ```
 
 Enable optional features in `Cargo.toml`:
 
 ```toml
-mrc = { version = "0.5", features = ["ndarray", "serde", "bzip2"] }
+mrc = { version = "0.6", features = ["ndarray", "serde", "bzip2"] }
 ```
 
 For the `mrc-cli` binary, install the companion crate:
@@ -100,31 +99,43 @@ println!("{}×{}×{} voxels, mode {:?}",
     reader.shape().nx, reader.shape().ny, reader.shape().nz,
     reader.mode());
 
-// Iterate — slices, slabs, tiles, or subregion
-for slice in reader.slices::<f32>() {          // one Z-plane
-    let block = slice?;                        // VoxelBlock<f32>
+// Check the file's mode at runtime and dispatch accordingly:
+match reader.mode() {
+    mrc::Mode::Float32 => { /* process f32 slices */ }
+    mrc::Mode::Int16   => { /* process i16 slices */ }
+    mrc::Mode::Uint16  => { /* process u16 slices */ }
+    mrc::Mode::Int8    => { /* process i8 slices */ }
+    other              => todo!("mode {other:?}"),
 }
-for slab in reader.slabs::<f32>(16) {          // 16 planes at a time
-    let block = slab?;
-}
-for tile in reader.tiles::<f32>([64, 64, 64])? { // 3D tiles
-    let block = tile?;
+
+// Or just use slices() and match DataView:
+for slice in reader.slices() {
+    let block = slice?;
+    match block.data() {
+        mrc::DataView::Float32(data) => { /* process &[f32] */ }
+        mrc::DataView::Int16(data)   => { /* process &[i16] */ }
+        _ => {}
+    }
 }
 
 // Full volume in one call
-let volume = reader.read_volume::<f32>()?;
-println!("{} voxels", volume.data.len());
+let block = reader.read_volume()?;
+let DataView::Float32(data) = block.data() else { panic!("expected Float32") };
+println!("{} voxels", data.len());
 
 // Any sub-region by coordinate
-let patch = reader.subregion::<f32>([10, 10, 5], [32, 32, 8])?;
+let block = reader.subregion([10, 10, 5], [32, 32, 8])?;
+let DataView::Float32(patch) = block.data() else { panic!("expected Float32") };
 ```
 
 ### Auto-conversion — read any MRC mode as `f32`
 
-Don't care whether the file is Int8, Int16, Uint16, Float16, or even Packed4Bit? Use `convert::<f32>()` and the crate handles the rest.
+Don't care whether the file is Int8, Int16, Uint16, Float16, or even Packed4Bit?
+Use `convert::<f32>()` and the crate handles the rest — or match on `reader.mode()`
+to handle each type individually.
 
 ```rust,no_run
-// Read any file mode as f32 — Int16, Uint16, Float16, even Packed4Bit
+// Option A: auto-convert everything to f32 in one call
 for slice in reader.convert::<f32>().slices() {
     let block: mrc::VoxelBlock<f32> = slice?;
     println!("slice {}: mean = {:.2}",
@@ -132,6 +143,22 @@ for slice in reader.convert::<f32>().slices() {
         block.data.iter().sum::<f32>() / block.data.len() as f32);
 }
 
+// Option B: use default reader methods and match on DataView
+match reader.mode() {
+    mrc::Mode::Int16 => {
+        for slice in reader.slices() {
+            let block = slice?;
+            let DataView::Int16(data) = block.data() else { panic!("expected Int16") };
+            println!("i16 slice, min={}", data.iter().min().unwrap());
+        }
+    }
+    mrc::Mode::Float32 => {
+        let block = reader.read_volume()?;
+        let DataView::Float32(data) = block.data() else { panic!("expected Float32") };
+        println!("f32 volume: {} voxels", data.len());
+    }
+    _ => { /* handle other modes */ }
+}
 // Or read the whole converted volume in one call
 let block = reader.convert::<f32>().read_volume()?;
 
@@ -192,14 +219,17 @@ writer.finalize()?;  // compresses & writes to disk
 
 ### Memory-mapped I/O — zero-copy for large files
 
-Files too large for RAM? `Reader::open` automatically uses memory-mapped I/O (requires `mmap` feature). The OS pages data on demand.
+Files too large for RAM? `Reader::open` automatically uses memory-mapped I/O (requires `mmap` feature). The OS pages data on demand. The default reader methods return `DataBlock` views that borrow directly from the mapped memory.
 
 ```rust,no_run
 let reader = Reader::open("huge_volume.mrc")?;
 
-// Zero-copy typed access to Z-planes (mmap or buffered)
-let slab: &[f32] = reader.slab_as::<f32>(0, 1)?;  // no allocation
-println!("first plane has {} voxels", slab.len());
+// Default methods return DataBlock with zero-copy DataView
+for slice in reader.slices() {
+    let block = slice?;
+    let DataView::Float32(data) = block.data() else { continue; };
+    println!("plane with {} voxels (zero-copy)", data.len());
+}
 ```
 
 ### Reading Extended Metadata — one method call
@@ -242,10 +272,10 @@ if let Some(imod) = reader.imod_metadata() {
 Volume stacks (ISPG 401–630) pack multiple sub-volumes in one file.
 
 ```rust,no_run
-for result in reader.volumes::<f32>()? {
+for result in reader.volumes()? {
     let vol = result?;
     println!("sub-volume at z={}: {}×{}×{}",
-        vol.offset[2], vol.shape[0], vol.shape[1], vol.shape[2]);
+        vol.offset()[2], vol.shape()[0], vol.shape()[1], vol.shape()[2]);
 }
 ```
 

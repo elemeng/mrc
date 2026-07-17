@@ -3,7 +3,7 @@
 //! This module contains the helper functions used by [`Reader`](crate::Reader)
 //! internally, plus the [`ConvertReader`] wrapper for automatic mode conversion.
 
-use crate::engine::codec::{EndianCodec, decode_slice, encode_slice};
+use crate::engine::codec::{EndianCodec, encode_slice};
 use crate::engine::endian::FileEndian;
 use crate::iter::{SlabStepper, SliceStepper, Stepper, TileStepper};
 use crate::mode::Voxel;
@@ -451,38 +451,6 @@ pub(crate) fn write_block_bytes(
         }
     }
     Ok(())
-}
-
-/// Decode a raw byte block to the requested voxel type.
-pub(crate) fn decode_block<T: Voxel>(
-    bytes: &[u8],
-    file_mode: Mode,
-    endian: FileEndian,
-) -> Result<Vec<T>, Error> {
-    if T::MODE != file_mode {
-        return Err(Error::ModeMismatch {
-            file_mode,
-            requested_mode: T::MODE,
-            offset: None,
-        });
-    }
-    if endian == FileEndian::native() {
-        decode_native_endian(bytes)
-    } else {
-        decode_slice(bytes, endian)
-    }
-}
-
-/// Fast native-endian decode: copy bytes directly into `Vec<T>`.
-fn decode_native_endian<T: EndianCodec + Copy>(bytes: &[u8]) -> Result<Vec<T>, Error> {
-    let n = bytes.len() / T::BYTE_SIZE;
-    debug_assert_eq!(bytes.len() % T::BYTE_SIZE, 0);
-    let mut result = Vec::with_capacity(n);
-    unsafe {
-        core::ptr::copy_nonoverlapping(bytes.as_ptr(), result.as_mut_ptr() as *mut u8, bytes.len());
-        result.set_len(n);
-    }
-    Ok(result)
 }
 
 /// Parse and validate an MRC header from raw bytes.

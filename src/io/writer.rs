@@ -629,6 +629,31 @@ impl WriterBuilder {
             false,
         )
     }
+
+    /// Build an in-memory writer backed by a [`Cursor<Vec<u8>>`](std::io::Cursor).
+    ///
+    /// The returned writer buffers all data in memory until
+    /// [`finalize`](Writer::finalize). Useful for testing or generating MRC
+    /// data without writing to disk.
+    ///
+    /// # Examples
+    /// ```
+    /// use mrc::WriterBuilder;
+    ///
+    /// let mut writer = WriterBuilder::new("ignored")
+    ///     .shape([4, 4, 1])
+    ///     .mode::<f32>()
+    ///     .finish_buffer()
+    ///     .unwrap();
+    /// let data = vec![0.0f32; 16];
+    /// writer.write_block(&mrc::VoxelBlock::new([0, 0, 0], [4, 4, 1], data).unwrap()).unwrap();
+    /// writer.finalize().unwrap();
+    /// ```
+    pub fn finish_buffer(self) -> Result<Writer, Error> {
+        let header = self.header;
+        let ext_header = self.ext_header;
+        Writer::from_writer(std::io::Cursor::new(Vec::new()), header, &ext_header)
+    }
 }
 
 /// MRC file writer using standard file I/O.

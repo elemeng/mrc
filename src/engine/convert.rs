@@ -418,6 +418,59 @@ pub(crate) fn convert_u16_slice_to_i16(src: &[u16]) -> Vec<i16> {
 // Generic conversion dispatcher — single match over all source modes
 // ============================================================================
 
+/// Decode a raw byte block to its native MRC type, dispatching at runtime.
+///
+/// Returns [`OwnedData`] with the correct typed `Vec` for the file's mode.
+/// This is the runtime-dispatched counterpart of [`decode_block`] which
+/// requires a compile-time type parameter.
+///
+/// For native-endian data this is a simple memcpy.  For non-native endian
+/// it decodes element-by-element with byte swapping.
+pub(crate) fn decode_block_to_any(
+    bytes: &[u8],
+    mode: Mode,
+    endian: FileEndian,
+    _block_shape: [usize; 3],
+) -> Result<crate::mode::OwnedData, Error> {
+    Ok(match mode {
+        Mode::Int8 => {
+            let src = decode_slice::<i8>(bytes, endian)?;
+            crate::mode::OwnedData::Int8(src)
+        }
+        Mode::Int16 => {
+            let src = decode_slice::<i16>(bytes, endian)?;
+            crate::mode::OwnedData::Int16(src)
+        }
+        Mode::Float32 => {
+            let src = decode_slice::<f32>(bytes, endian)?;
+            crate::mode::OwnedData::Float32(src)
+        }
+        Mode::Int16Complex => {
+            let src = decode_slice::<Int16Complex>(bytes, endian)?;
+            crate::mode::OwnedData::Int16Complex(src)
+        }
+        Mode::Float32Complex => {
+            let src = decode_slice::<Float32Complex>(bytes, endian)?;
+            crate::mode::OwnedData::Float32Complex(src)
+        }
+        Mode::Uint16 => {
+            let src = decode_slice::<u16>(bytes, endian)?;
+            crate::mode::OwnedData::Uint16(src)
+        }
+        #[cfg(feature = "f16")]
+        Mode::Float16 => {
+            let src = decode_slice::<crate::f16>(bytes, endian)?;
+            crate::mode::OwnedData::Float16(src)
+        }
+        #[cfg(not(feature = "f16"))]
+        Mode::Float16 => return Err(Error::UnsupportedMode),
+        Mode::Packed4Bit => {
+            // Packed4Bit data is stored as raw bytes; no endian conversion needed.
+            crate::mode::OwnedData::Packed4Bit(bytes.to_vec())
+        }
+    })
+}
+
 /// Convert a raw byte slice from any MRC mode to target type `T`.
 ///
 /// This is the single dispatch point for all reader-side conversions.
