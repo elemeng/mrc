@@ -1062,9 +1062,7 @@ impl Reader {
     ///
     /// The returned [`crate::DataBlock`] borrows from the reader's internal buffer
     /// (zero-copy for native-endian contiguous blocks).
-    pub fn slices(
-        &self,
-    ) -> impl Iterator<Item = Result<crate::mode::DataBlock<'_>, Error>> + '_ {
+    pub fn slices(&self) -> impl Iterator<Item = Result<crate::mode::DataBlock<'_>, Error>> + '_ {
         crate::iter::RegionIter::with_stepper(
             self,
             self.shape(),
@@ -1124,7 +1122,12 @@ impl Reader {
         // Try zero-copy: native endian + contiguous block
         if self.endian().is_native() {
             if let Cow::Borrowed(b) = &bytes {
-                if let Some(data) = crate::iter::RegionIter::<crate::iter::SliceStepper>::try_zero_copy(b, self.mode()) {
+                if let Some(data) =
+                    crate::iter::RegionIter::<crate::iter::SliceStepper>::try_zero_copy(
+                        b,
+                        self.mode(),
+                    )
+                {
                     return Ok(crate::mode::DataBlock::Borrowed {
                         offset,
                         shape: block_shape,

@@ -815,7 +815,9 @@ pub fn create<P: AsRef<std::path::Path>>(path: P) -> WriterBuilder {
 ///     header.nx, header.ny, header.nz, data.len());
 /// # Ok(()) }
 /// ```
-pub fn read_as<T: ReadAsTarget, P: AsRef<std::path::Path>>(path: P) -> Result<(Header, Vec<T>), Error> {
+pub fn read_as<T: ReadAsTarget, P: AsRef<std::path::Path>>(
+    path: P,
+) -> Result<(Header, Vec<T>), Error> {
     let reader = Reader::open(path)?;
     let header = *reader.header();
     let volume = reader.convert::<T>().read_volume()?;
@@ -842,10 +844,7 @@ pub fn write_as<T: Voxel, P: AsRef<std::path::Path>>(
     data: &[T],
     shape: [usize; 3],
 ) -> Result<(), Error> {
-    let mut writer = WriterBuilder::new(path)
-        .shape(shape)
-        .mode::<T>()
-        .finish()?;
+    let mut writer = WriterBuilder::new(path).shape(shape).mode::<T>().finish()?;
     writer.set_data(data)?;
     writer.finalize()?;
     Ok(())

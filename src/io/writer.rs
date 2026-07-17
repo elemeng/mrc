@@ -705,9 +705,7 @@ impl std::fmt::Debug for Writer {
 impl Drop for Writer {
     fn drop(&mut self) {
         if !self.finalized {
-            tracing::warn!(
-                "Writer dropped without calling finalize() — header on disk is stale."
-            );
+            tracing::warn!("Writer dropped without calling finalize() — header on disk is stale.");
         }
     }
 }
@@ -1101,9 +1099,7 @@ impl Writer {
             .checked_mul(ny)
             .and_then(|v| v.checked_mul(nz))
             .ok_or_else(|| {
-                let msg = format!(
-                    "Volume dimensions {nx}×{ny}×{nz} overflow usize"
-                );
+                let msg = format!("Volume dimensions {nx}×{ny}×{nz} overflow usize");
                 Error::Io(std::io::Error::other(msg))
             })?;
         if data.len() != expected {
@@ -1555,7 +1551,11 @@ impl Writer {
 
 /// Compress MRC data using the appropriate algorithm based on compression level.
 #[cfg(any(feature = "gzip", feature = "bzip2"))]
-fn compress_data(data: &[u8], compression: CompressionLevel, is_gzip: bool) -> Result<Vec<u8>, Error> {
+fn compress_data(
+    data: &[u8],
+    compression: CompressionLevel,
+    is_gzip: bool,
+) -> Result<Vec<u8>, Error> {
     #[cfg(feature = "gzip")]
     if is_gzip {
         let mut encoder = flate2::write::GzEncoder::new(Vec::new(), compression.to_flate2());

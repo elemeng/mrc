@@ -145,45 +145,56 @@ impl<'a, S> RegionIter<'a, S> {
     /// Try zero-copy reinterpretation for a native-endian contiguous slab.
     /// Returns `Some(DataView)` on success, `None` if the block cannot be
     /// zero-copied (non-contiguous, endian mismatch, or alignment issue).
-    pub(crate) fn try_zero_copy<'b>(
-        bytes: &'b [u8],
-        mode: Mode,
-    ) -> Option<DataView<'b>> {
+    pub(crate) fn try_zero_copy<'b>(bytes: &'b [u8], mode: Mode) -> Option<DataView<'b>> {
         Some(match mode {
             Mode::Int8 => {
                 let (prefix, data, _suffix) = unsafe { bytes.align_to::<i8>() };
-                if !prefix.is_empty() { return None; }
+                if !prefix.is_empty() {
+                    return None;
+                }
                 DataView::Int8(data)
             }
             Mode::Int16 => {
                 let (prefix, data, _suffix) = unsafe { bytes.align_to::<i16>() };
-                if !prefix.is_empty() { return None; }
+                if !prefix.is_empty() {
+                    return None;
+                }
                 DataView::Int16(data)
             }
             Mode::Float32 => {
                 let (prefix, data, _suffix) = unsafe { bytes.align_to::<f32>() };
-                if !prefix.is_empty() { return None; }
+                if !prefix.is_empty() {
+                    return None;
+                }
                 DataView::Float32(data)
             }
             Mode::Int16Complex => {
                 let (prefix, data, _suffix) = unsafe { bytes.align_to::<crate::Int16Complex>() };
-                if !prefix.is_empty() { return None; }
+                if !prefix.is_empty() {
+                    return None;
+                }
                 DataView::Int16Complex(data)
             }
             Mode::Float32Complex => {
                 let (prefix, data, _suffix) = unsafe { bytes.align_to::<crate::Float32Complex>() };
-                if !prefix.is_empty() { return None; }
+                if !prefix.is_empty() {
+                    return None;
+                }
                 DataView::Float32Complex(data)
             }
             Mode::Uint16 => {
                 let (prefix, data, _suffix) = unsafe { bytes.align_to::<u16>() };
-                if !prefix.is_empty() { return None; }
+                if !prefix.is_empty() {
+                    return None;
+                }
                 DataView::Uint16(data)
             }
             #[cfg(feature = "f16")]
             Mode::Float16 => {
                 let (prefix, data, _suffix) = unsafe { bytes.align_to::<crate::f16>() };
-                if !prefix.is_empty() { return None; }
+                if !prefix.is_empty() {
+                    return None;
+                }
                 DataView::Float16(data)
             }
             Mode::Packed4Bit => DataView::Packed4Bit(bytes),
@@ -215,11 +226,11 @@ impl<'a, S: Stepper> Iterator for RegionIter<'a, S> {
         }
 
         // One-copy path: decode to owned data
-        let data = match decode_block_to_any(&bytes, self.reader.mode(), self.reader.endian(), shape)
-        {
-            Ok(d) => d,
-            Err(e) => return Some(Err(e)),
-        };
+        let data =
+            match decode_block_to_any(&bytes, self.reader.mode(), self.reader.endian(), shape) {
+                Ok(d) => d,
+                Err(e) => return Some(Err(e)),
+            };
         Some(Ok(DataBlock::Owned {
             offset,
             shape,

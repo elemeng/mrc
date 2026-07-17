@@ -45,7 +45,9 @@ fn roundtrip_f32() {
 
     let r = Reader::open(f.path()).unwrap();
     let block = r.read_volume().unwrap();
-    let DataView::Float32(d) = block.data() else { panic!("expected Float32") };
+    let DataView::Float32(d) = block.data() else {
+        panic!("expected Float32")
+    };
     assert_eq!(d, data);
     assert_eq!(block.offset(), [0, 0, 0]);
     assert_eq!(block.shape(), [nx, ny, nz]);
@@ -113,7 +115,9 @@ fn roundtrip_u16() {
 
     let r = Reader::open(f.path()).unwrap();
     let block = r.read_volume().unwrap();
-    let DataView::Uint16(d) = block.data() else { panic!("expected Uint16") };
+    let DataView::Uint16(d) = block.data() else {
+        panic!("expected Uint16")
+    };
     assert_eq!(d, src);
 }
 
@@ -142,7 +146,9 @@ fn roundtrip_subregion() {
     let block = r.subregion([4, 4, 2], [8, 8, 3]).unwrap();
     assert_eq!(block.offset(), [4, 4, 2]);
     assert_eq!(block.shape(), [8, 8, 3]);
-    let DataView::Float32(d) = block.data() else { panic!("expected Float32") };
+    let DataView::Float32(d) = block.data() else {
+        panic!("expected Float32")
+    };
     assert_eq!(d.len(), 8 * 8 * 3);
 }
 
@@ -173,7 +179,9 @@ fn read_volume_via_convert_slices_f32() {
         .slices()
         .flat_map(|s| s.unwrap().data)
         .collect();
-    let DataView::Float32(d) = vol.data() else { panic!("expected Float32") };
+    let DataView::Float32(d) = vol.data() else {
+        panic!("expected Float32")
+    };
     assert_eq!(d, collected);
 }
 
@@ -201,7 +209,9 @@ fn roundtrip_gzip() {
     // Reader::open auto-detects gzip
     let r = Reader::open(f.path()).unwrap();
     let block = r.read_volume().unwrap();
-    let DataView::Float32(d) = block.data() else { panic!("expected Float32") };
+    let DataView::Float32(d) = block.data() else {
+        panic!("expected Float32")
+    };
     assert_eq!(d, data);
 }
 
@@ -359,7 +369,9 @@ fn roundtrip_complex_i16() {
 
     let r = Reader::open(f.path()).unwrap();
     let block = r.read_volume().unwrap();
-    let DataView::Int16Complex(d) = block.data() else { panic!("expected Int16Complex") };
+    let DataView::Int16Complex(d) = block.data() else {
+        panic!("expected Int16Complex")
+    };
     assert_eq!(d.len(), total);
     for (a, b) in d.iter().zip(src.iter()) {
         assert_eq!(a.real, b.real);
@@ -402,7 +414,9 @@ fn roundtrip_complex_f32() {
 
     let r = Reader::open(f.path()).unwrap();
     let block = r.read_volume().unwrap();
-    let DataView::Float32Complex(d) = block.data() else { panic!("expected Float32Complex") };
+    let DataView::Float32Complex(d) = block.data() else {
+        panic!("expected Float32Complex")
+    };
     assert_eq!(d.len(), total);
     for (a, b) in d.iter().zip(src.iter()) {
         assert_eq!(a.real, b.real);
@@ -436,9 +450,10 @@ fn mmap_roundtrip_f32() {
     // Reader::open auto-selects mmap when the mmap feature is available
     let r = Reader::open(f.path()).unwrap();
     let block = r.read_volume().unwrap();
-    let DataView::Float32(d) = block.data() else { panic!("expected Float32") };
+    let DataView::Float32(d) = block.data() else {
+        panic!("expected Float32")
+    };
     assert_eq!(d, data);
-
 }
 
 // ── Bzip2 roundtrip test ──────────────────────────────────────────────
@@ -466,7 +481,9 @@ fn roundtrip_bzip2() {
     // Reader::open auto-detects bzip2
     let r = Reader::open(f.path()).unwrap();
     let block = r.read_volume().unwrap();
-    let DataView::Float32(d) = block.data() else { panic!("expected Float32") };
+    let DataView::Float32(d) = block.data() else {
+        panic!("expected Float32")
+    };
     assert_eq!(d, data);
 }
 
@@ -495,7 +512,9 @@ fn write_block_as_i16() {
 
     let r = Reader::open(f.path()).unwrap();
     let block = r.read_volume().unwrap();
-    let DataView::Int16(d) = block.data() else { panic!("expected Int16") };
+    let DataView::Int16(d) = block.data() else {
+        panic!("expected Int16")
+    };
     assert_eq!(d, expected_i16);
 }
 
@@ -518,7 +537,9 @@ fn write_block_as_u16() {
 
     let r = Reader::open(f.path()).unwrap();
     let block = r.read_volume().unwrap();
-    let DataView::Uint16(d) = block.data() else { panic!("expected Uint16") };
+    let DataView::Uint16(d) = block.data() else {
+        panic!("expected Uint16")
+    };
     assert_eq!(d, expected_u16);
 }
 
@@ -541,7 +562,9 @@ fn write_block_as_i8() {
 
     let r = Reader::open(f.path()).unwrap();
     let block = r.read_volume().unwrap();
-    let DataView::Int8(d) = block.data() else { panic!("expected Int8") };
+    let DataView::Int8(d) = block.data() else {
+        panic!("expected Int8")
+    };
     assert_eq!(d, expected_i8);
 }
 
@@ -600,7 +623,9 @@ fn open_permissive_trailing_garbage() {
     // Permissive mode should still read correctly (ignores trailing data)
     let (reader, _warnings) = Reader::open_permissive(f.path()).unwrap();
     let block = reader.read_volume().unwrap();
-    let DataView::Float32(d) = block.data() else { panic!("expected Float32") };
+    let DataView::Float32(d) = block.data() else {
+        panic!("expected Float32")
+    };
     assert_eq!(d, &vec![1.0f32; 16]);
 }
 
@@ -671,7 +696,9 @@ fn roundtrip_f16() {
     // Read back as f16 directly
     let r = Reader::open(f.path()).unwrap();
     let block = r.read_volume().unwrap();
-    let DataView::Float16(d) = block.data() else { panic!("expected Float16") };
+    let DataView::Float16(d) = block.data() else {
+        panic!("expected Float16")
+    };
     assert_eq!(d, src_f16);
 
     // Read back via convert::<f32>()
@@ -739,7 +766,9 @@ fn volumes_iterator() {
         // Verify data for this sub-volume
         let z_start = vol_count * subvol_slices;
         let expected_slice = &all_data[z_start * nx * ny..(z_start + subvol_slices) * nx * ny];
-        let DataView::Float32(d) = vol.data() else { panic!("expected Float32") };
+        let DataView::Float32(d) = vol.data() else {
+            panic!("expected Float32")
+        };
         assert_eq!(d, expected_slice);
         vol_count += 1;
     }
