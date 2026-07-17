@@ -48,10 +48,24 @@ Also see the [README](README.md) for a quick-start guide and feature overview.
 - [x] Comprehensive documentation audit across all doc files
 - [x] Restructured and enriched crate-level docs.rs documentation
 
-**v0.6.x** — Robust real-world testing across all public APIs
+**v0.6.x** — Runtime DataView dispatch, removed generic Reader API ✅
+
+- [x] Replace generic reader methods (`slices::<T>()`, `read_volume::<T>()`, etc.) with non-generic runtime dispatch via `DataView`/`DataBlock`
+- [x] Add `DataView<'a>` enum with typed slice variants for all MRC modes
+- [x] Add `DataBlock<'a>` (Borrowed/Owned) returned by all default reader methods
+- [x] Add `decode_block_to_any()` helper for runtime mode→`OwnedData` decoding
+- [x] Rewrite `RegionIter` to be non-generic, decode to `DataBlock` with zero-copy path
+- [x] Remove `slab_as()` from Reader
+- [x] Add `WriterBuilder::finish_buffer()` for consistent in-memory writer construction
+- [x] Add complete `Header` convenience methods table to crate-level docs
+
+**v0.7.0** — Robust real-world testing across all public APIs
 
 - [ ] Test every public API item with real MRC files in every mode
 - [ ] Cover all read/write/convert/validate/header paths with actual cryo-EM data
 - [ ] Ensure edge cases (truncated, compressed, permissive, volume stacks, extended headers) are exercised with real files
+
+
+
 
 **Note:** This crate is under active development. While most features are functional, occasional API changes are possible. Contributions welcome — please report issues and share your ideas!

@@ -1,5 +1,73 @@
 # Update Log
 
+## 2026-07-16 — v0.6.0 → v0.7.0: Runtime DataView dispatch, removed generic Reader API
+
+~12 files changed, +832/−706. This release replaces the generic reader methods with
+runtime dispatch via `DataView`/`DataBlock`, eliminating ModeMismatch errors on the
+read path.
+
+### Breaking Changes
+
+| Old (v0.6.x) | New (v0.7.0) |
+|-----|-----|
+| `reader.slices::<f32>()` | `reader.slices()` → match on `DataView::Float32` |
+| `reader.read_volume::<T>()` | `reader.read_volume()` → match on `DataView` |
+| `reader.subregion::<T>(...)` | `reader.subregion(...)` → match on `DataView` |
+| `reader.volumes::<T>()` | `reader.volumes()` → match on `DataView` |
+| `reader.slabs::<T>(k)` | `reader.slabs(k)` → match on `DataView` |
+| `reader.tiles::<T>(shape)` | `reader.tiles(shape)` → match on `DataView` |
+| `reader.slab_as::<T>(z, k)` | Removed. Use `reader.subregion([0,0,z], [nx,ny,k])` instead |
+
+**What changed:** The default reader methods are no longer generic over `T:
+Voxel`. Instead they return `DataBlock<'_>` whose `DataView` variant is
+determined at runtime by the file's mode. Users match on the enum variant
+(`DataView::Float32(data)` / `DataView::Int16(data)` / etc.) instead of
+specifying a compile-time type.
+
+This means:
+- No more `ModeMismatch` errors when reading — the file's mode always
+  determines the returned `DataView` variant.
+- No need to know the file's mode ahead of time — just call `.slices()`
+  and match.
+- The writer and `ConvertReader` APIs remain generic (`T: Voxel`) and
+  unchanged.
+
+### New Types
+
+| Type | Description |
+|------|-------------|
+| `DataView<'a>` | Typed reference slice (Int8, Int16, Float32, Int16Complex, Float32Complex, Uint16, Float16, Packed4Bit) |
+| `DataBlock<'a>` | Block with `offset()`, `shape()`, `data()` methods, either Borrowed (zero-copy) or Owned |
+| `OwnedData` | Owned variant of DataView |
+
+### Additions
+
+- **`decode_block_to_any()`** — decodes `&[u8]` to `OwnedData` by matching on
+  `Mode` at runtime, used by `RegionIter` and `subregion`
+- **`WriterBuilder::finish_buffer()`** — builds an in-memory writer backed by
+  `Cursor<Vec<u8>>`, consistent with `finish_mmap`/`finish_gzip`/`finish_bzip2`
+- **`Header` convenience table** — full list of 32+ header methods in
+  crate-level documentation
+- **`NotAVolumeStack`, `BlockShapeMismatch`** — added to error troubleshooting tables
+
+### Removals
+
+- `Reader::slab_as()` — zero-copy typed access is now implicit in `DataBlock::Borrowed`
+
+### Documentation
+
+- All doc examples updated to use non-generic API and `DataView` pattern matching
+- `APIs.md` — corrected Reader method signatures, added `DataBlock`/`DataView` types
+- `AGENTS.md` — `RegionIter`/steppers moved to `pub(crate)`, added `DataView`/`DataBlock`/`OwnedData`
+- Writer backend table simplified to show only builder methods
+
+### Testing
+
+- 402 tests (98 unit + 67 api_comprehensive + 23 integration + 214 doc-tests)
+- All pass cleanly across --all-features builds, 0 clippy warnings
+
+---
+
 ## 2026-07-09 — API naming cleanup, ergonomic improvements, semantic fixes
 
 ~11 files changed, +628/−109. This batch focuses on naming consistency, one-shot ergonomics,
