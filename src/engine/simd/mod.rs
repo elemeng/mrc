@@ -24,6 +24,9 @@
 use std::arch::is_x86_feature_detected;
 
 #[cfg(target_arch = "aarch64")]
+use std::arch::is_aarch64_feature_detected;
+
+#[cfg(target_arch = "aarch64")]
 mod aarch64;
 #[cfg(target_arch = "x86_64")]
 mod x86;
@@ -41,7 +44,7 @@ pub(crate) fn convert_i8_to_f32_simd(src: &[i8]) -> Vec<f32> {
 
     #[cfg(target_arch = "aarch64")]
     {
-        if core::arch::is_aarch64_feature_detected!("neon") {
+        if is_aarch64_feature_detected!("neon") {
             return unsafe { aarch64::convert_i8_to_f32_neon(src) };
         }
     }
@@ -63,7 +66,7 @@ pub(crate) fn convert_i16_to_f32_simd(src: &[i16]) -> Vec<f32> {
 
     #[cfg(target_arch = "aarch64")]
     {
-        if core::arch::is_aarch64_feature_detected!("neon") {
+        if is_aarch64_feature_detected!("neon") {
             return unsafe { aarch64::convert_i16_to_f32_neon(src) };
         }
     }
@@ -83,7 +86,7 @@ pub(crate) fn convert_u16_to_f32_simd(src: &[u16]) -> Vec<f32> {
 
     #[cfg(target_arch = "aarch64")]
     {
-        if core::arch::is_aarch64_feature_detected!("neon") {
+        if is_aarch64_feature_detected!("neon") {
             return unsafe { aarch64::convert_u16_to_f32_neon(src) };
         }
     }
@@ -106,7 +109,7 @@ pub(crate) fn convert_u8_to_f32_simd(src: &[u8]) -> Vec<f32> {
 
     #[cfg(target_arch = "aarch64")]
     {
-        if core::arch::is_aarch64_feature_detected!("neon") {
+        if is_aarch64_feature_detected!("neon") {
             return unsafe { aarch64::convert_u8_to_f32_neon(src) };
         }
     }
@@ -129,7 +132,7 @@ pub(crate) fn convert_f16_to_f32_simd(src: &[crate::f16]) -> Vec<f32> {
 
     #[cfg(target_arch = "aarch64")]
     {
-        if core::arch::is_aarch64_feature_detected!("fp16") {
+        if is_aarch64_feature_detected!("fp16") {
             return unsafe { aarch64::convert_f16_to_f32_neon(src) };
         }
     }
@@ -152,7 +155,7 @@ pub(crate) fn convert_f32_to_f16_simd(src: &[f32]) -> Vec<crate::f16> {
 
     #[cfg(target_arch = "aarch64")]
     {
-        if core::arch::is_aarch64_feature_detected!("fp16") {
+        if is_aarch64_feature_detected!("fp16") {
             return unsafe { aarch64::convert_f32_to_f16_neon(src) };
         }
     }
@@ -180,7 +183,7 @@ pub(crate) fn stats_f32_simd(data: &[f32]) -> (f32, f32, f32, f32) {
 
     #[cfg(target_arch = "aarch64")]
     {
-        if core::arch::is_aarch64_feature_detected!("neon") {
+        if is_aarch64_feature_detected!("neon") {
             return unsafe { aarch64::stats_f32_neon(data) };
         }
     }
@@ -230,7 +233,7 @@ pub(crate) fn swap_2byte_simd(src: &[u8], dst: &mut [u8]) {
 
     #[cfg(target_arch = "aarch64")]
     {
-        if core::arch::is_aarch64_feature_detected!("neon") {
+        if is_aarch64_feature_detected!("neon") {
             return unsafe { aarch64::swap_2byte_neon(src, dst) };
         }
     }
@@ -256,7 +259,7 @@ pub(crate) fn swap_4byte_simd(src: &[u8], dst: &mut [u8]) {
 
     #[cfg(target_arch = "aarch64")]
     {
-        if core::arch::is_aarch64_feature_detected!("neon") {
+        if is_aarch64_feature_detected!("neon") {
             return unsafe { aarch64::swap_4byte_neon(src, dst) };
         }
     }
@@ -284,7 +287,7 @@ pub(crate) fn swap_8byte_simd(src: &[u8], dst: &mut [u8]) {
 
     #[cfg(target_arch = "aarch64")]
     {
-        if core::arch::is_aarch64_feature_detected!("neon") {
+        if is_aarch64_feature_detected!("neon") {
             return unsafe { aarch64::swap_8byte_neon(src, dst) };
         }
     }
@@ -320,7 +323,7 @@ pub(crate) fn convert_f32_to_i16_simd(src: &[f32]) -> Vec<i16> {
 
     #[cfg(target_arch = "aarch64")]
     {
-        if core::arch::is_aarch64_feature_detected!("neon") {
+        if is_aarch64_feature_detected!("neon") {
             return unsafe { aarch64::convert_f32_to_i16_neon(src) };
         }
     }
@@ -353,7 +356,7 @@ pub(crate) fn convert_f32_to_u16_simd(src: &[f32]) -> Vec<u16> {
 
     #[cfg(target_arch = "aarch64")]
     {
-        if core::arch::is_aarch64_feature_detected!("neon") {
+        if is_aarch64_feature_detected!("neon") {
             return unsafe { aarch64::convert_f32_to_u16_neon(src) };
         }
     }
@@ -386,7 +389,7 @@ pub(crate) fn convert_f32_to_i8_simd(src: &[f32]) -> Vec<i8> {
 
     #[cfg(target_arch = "aarch64")]
     {
-        if core::arch::is_aarch64_feature_detected!("neon") {
+        if is_aarch64_feature_detected!("neon") {
             return unsafe { aarch64::convert_f32_to_i8_neon(src) };
         }
     }
