@@ -134,7 +134,7 @@ fn mode_6_uint16_roundtrip() {
     let DataView::Uint16(d) = block.data() else { panic!("expected Uint16") };
     assert_eq!(d, src);
     // slices_u8 narrows u16→u8
-    let narrowed: Vec<u8> = r.slices_u8().flat_map(|s| s.unwrap().data.into_iter().map(|v| v as u8)).collect();
+    let narrowed: Vec<u8> = r.slices_u8().flat_map(|s| s.unwrap().data.into_iter()).collect();
     assert_eq!(narrowed, src.iter().map(|&v| v as u8).collect::<Vec<_>>());
 }
 
@@ -263,7 +263,7 @@ fn reader_buffered_slab() {
     let bytes = std::fs::read(f.path()).unwrap();
     let r = Reader::from_bytes(bytes).unwrap();
 
-    let _expected = &data[nx * ny * 1..][..nx * ny * 2];
+    let _expected = &data[nx * ny..][..nx * ny * 2];
 
     // slices iterator via read_block_bytes_cow fast path (Cow::Borrowed)
     let slice_count = r.slices().count();
@@ -370,10 +370,7 @@ fn reader_volumes_error_on_plain() {
     let f = TempMrc::new("vols_err");
     write_f32_volume(&f, 4, 4, 4);
     let r = Reader::open(f.path()).unwrap();
-    match r.volumes() {
-        Err(Error::NotAVolumeStack { .. }) => {}
-        _ => {}
-    }
+    if let Err(Error::NotAVolumeStack { .. }) = r.volumes() {}
 }
 
 #[test]
@@ -485,7 +482,7 @@ fn reader_slabs_u8() {
         w.finalize().unwrap();
     }
     let r = Reader::open(f.path()).unwrap();
-    let slabs: Vec<u8> = r.slabs_u8(2).flat_map(|s| s.unwrap().data.into_iter().map(|v| v as u8)).collect();
+    let slabs: Vec<u8> = r.slabs_u8(2).flat_map(|s| s.unwrap().data.into_iter()).collect();
     assert_eq!(slabs, src.iter().map(|&v| v as u8).collect::<Vec<_>>());
 }
 

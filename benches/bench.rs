@@ -69,7 +69,7 @@ fn bench_read_volume_f32(c: &mut Criterion) {
     c.bench_function("read_volume_f32", |b| {
         b.iter(|| {
             let reader = mrc::Reader::open(black_box(&path)).unwrap();
-            let vol = reader.read_volume::<f32>().unwrap();
+            let vol = reader.read_volume().unwrap();
             black_box(vol);
         })
     });
@@ -97,7 +97,7 @@ fn bench_iterate_slices_f32(c: &mut Criterion) {
     c.bench_function("iterate_slices_f32", |b| {
         b.iter(|| {
             let reader = mrc::Reader::open(black_box(&path)).unwrap();
-            for slice in reader.slices::<f32>() {
+            for slice in reader.slices() {
                 let _ = black_box(slice.unwrap());
             }
         })
@@ -115,7 +115,7 @@ fn bench_mmap_read_volume_f32(c: &mut Criterion) {
     c.bench_function("mmap_read_volume_f32", |b| {
         b.iter(|| {
             let reader = mrc::Reader::open(black_box(&path)).unwrap();
-            let vol = reader.read_volume::<f32>().unwrap();
+            let vol = reader.read_volume().unwrap();
             black_box(vol);
         })
     });
