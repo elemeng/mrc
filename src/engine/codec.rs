@@ -296,12 +296,43 @@ pub fn decode_slice<T: EndianCodec + Send + Copy>(
     {
         let dst_bytes =
             unsafe { std::slice::from_raw_parts_mut(result.as_mut_ptr() as *mut u8, bytes.len()) };
-        match T::BYTE_SIZE {
-            2 => crate::engine::simd::swap_2byte_simd(bytes, dst_bytes),
-            4 => crate::engine::simd::swap_4byte_simd(bytes, dst_bytes),
-            8 => crate::engine::simd::swap_8byte_simd(bytes, dst_bytes),
-            _ => {
-                per_element_decode::<T>(&mut result, bytes, n, endian);
+
+        #[cfg(feature = "parallel")]
+        if n >= PAR_MIN_VOXELS {
+            use rayon::prelude::*;
+            let chunk_voxels = PAR_MIN_VOXELS;
+            let chunk_bytes = chunk_voxels * T::BYTE_SIZE;
+            dst_bytes
+                .par_chunks_mut(chunk_bytes)
+                .zip(bytes.par_chunks(chunk_bytes))
+                .for_each(|(dst, src)| {
+                    match T::BYTE_SIZE {
+                        2 => crate::engine::simd::swap_2byte_simd(src, dst),
+                        4 => crate::engine::simd::swap_4byte_simd(src, dst),
+                        8 => crate::engine::simd::swap_8byte_simd(src, dst),
+                        _ => unreachable!(),
+                    }
+                });
+        } else {
+            match T::BYTE_SIZE {
+                2 => crate::engine::simd::swap_2byte_simd(bytes, dst_bytes),
+                4 => crate::engine::simd::swap_4byte_simd(bytes, dst_bytes),
+                8 => crate::engine::simd::swap_8byte_simd(bytes, dst_bytes),
+                _ => {
+                    per_element_decode::<T>(&mut result, bytes, n, endian);
+                }
+            }
+        }
+
+        #[cfg(not(feature = "parallel"))]
+        {
+            match T::BYTE_SIZE {
+                2 => crate::engine::simd::swap_2byte_simd(bytes, dst_bytes),
+                4 => crate::engine::simd::swap_4byte_simd(bytes, dst_bytes),
+                8 => crate::engine::simd::swap_8byte_simd(bytes, dst_bytes),
+                _ => {
+                    per_element_decode::<T>(&mut result, bytes, n, endian);
+                }
             }
         }
     }
@@ -406,6 +437,16 @@ pub fn encode_slice<T: EndianCodec + Sync>(
     }
     Ok(())
 }
+
+// ============================================================================
+// Parallel minimum threshold
+// ============================================================================
+
+/// Minimum number of voxels required to trigger parallel processing.
+///
+/// Blocks smaller than this are processed sequentially, avoiding rayon
+/// overhead for small requests.
+pub(crate) const PAR_MIN_VOXELS: usize = 262_144;
 
 // ============================================================================
 // Per-element fallback helpers (used when simd feature is disabled)

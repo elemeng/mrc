@@ -507,6 +507,67 @@ pub(crate) fn convert_block<T>(
 where
     T: Voxel + ConvertFrom<f32>,
 {
+    let [sx, sy, sz] = block_shape;
+
+    // Parallel path for large multi-plane blocks (Packed4Bit excluded — its
+    // nibble layout makes Z-splitting non-trivial, and it is rarely used with
+    // large volumes).
+    #[cfg(feature = "parallel")]
+    if sz > 1 && sx * sy * sz >= crate::engine::codec::PAR_MIN_VOXELS && mode != Mode::Packed4Bit {
+        use rayon::prelude::*;
+        let b = mode.byte_size();
+        let plane_bytes = sx * sy * b;
+        let planes_per_chunk = (crate::engine::codec::PAR_MIN_VOXELS / (sx * sy)).max(1);
+
+        let specs: Vec<(usize, usize)> = (0..sz)
+            .step_by(planes_per_chunk)
+            .map(|z_start| {
+                let nplanes = planes_per_chunk.min(sz - z_start);
+                (z_start, nplanes)
+            })
+            .collect();
+
+        let results: Vec<Result<Vec<T>, Error>> = specs
+            .into_par_iter()
+            .map(|(z_start, nplanes)| {
+                let byte_off = z_start * plane_bytes;
+                let chunk_bytes = &bytes[byte_off..byte_off + nplanes * plane_bytes];
+                let chunk_shape = [sx, sy, nplanes];
+                convert_block_seq(
+                    chunk_bytes, mode, endian, nx, ny, chunk_shape,
+                    complex_strategy, m0_interp,
+                )
+            })
+            .collect();
+
+        let mut output = Vec::with_capacity(sx * sy * sz);
+        for r in results {
+            output.extend(r?);
+        }
+        return Ok(output);
+    }
+
+    convert_block_seq(bytes, mode, endian, nx, ny, block_shape, complex_strategy, m0_interp)
+}
+
+/// Sequential implementation of [`convert_block`] (no parallelism).
+///
+/// Extracted so parallel chunks can call it directly without re-entering the
+/// parallel dispatch in [`convert_block`].
+#[allow(clippy::too_many_arguments)]
+fn convert_block_seq<T>(
+    bytes: &[u8],
+    mode: Mode,
+    endian: FileEndian,
+    nx: usize,
+    ny: usize,
+    block_shape: [usize; 3],
+    complex_strategy: ComplexToRealStrategy,
+    m0_interp: M0Interpretation,
+) -> Result<Vec<T>, Error>
+where
+    T: Voxel + ConvertFrom<f32>,
+{
     // Direct integer↔integer shortcuts — avoids the f32 intermediate
     // (which would add 4N bytes of intermediate storage for narrow types).
     // i16 → i8 shortcut also handles the m0_interp distinction for i8 target

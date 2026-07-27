@@ -278,7 +278,7 @@
 //! | `mmap` | Memory-mapped readers and writers | ✅ |
 //! | `f16` | Half-precision float via the `half` crate | ✅ |
 //! | `simd` | AVX2 / NEON acceleration for integer↔f32, f16↔f32, byte-swap, stats, and f32→integer clamping | ✅ |
-//! | `parallel` | Parallel encoding via `rayon` | ✅ |
+//! | `parallel` | Parallel decode/convert/encode via `rayon` — transparent for any block ≥512³ | ✅ |
 //! | `gzip` | Gzip-compressed I/O | ✅ |
 //! | `bzip2` | Bzip2-compressed I/O | ❌ |
 //! | `ndarray` | Return volumes as `ndarray::Array3<T>` via `to_ndarray()` | ❌ |
