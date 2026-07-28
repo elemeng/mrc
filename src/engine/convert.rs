@@ -16,20 +16,20 @@ use crate::mode::M0Interpretation;
 /// Reinterpret a `Vec<S>` as `Vec<T>` without copying.
 ///
 /// # Safety
-/// The caller must ensure that `S` and `T` have the same size and alignment,
-/// and that the byte pattern of `S` is valid for `T`.  This is satisfied when
-/// the caller has verified `TypeId::of::<S>() == TypeId::of::<T>()` (which
-/// guarantees `S` and `T` are the same type at the monomorphized call site).
-unsafe fn reinterpret_vec<S, T>(v: Vec<S>) -> Vec<T> {
-    debug_assert_eq!(core::mem::size_of::<S>(), core::mem::size_of::<T>());
-    debug_assert_eq!(core::mem::align_of::<S>(), core::mem::align_of::<T>());
+/// The caller must ensure that `S` and `T` are the same type at the
+/// monomorphized call site, i.e. `TypeId::of::<S>() == TypeId::of::<T>()`.
+/// This function verifies this invariant at runtime.
+unsafe fn reinterpret_vec<S: 'static, T: 'static>(v: Vec<S>) -> Vec<T> {
+    assert!(
+        core::any::TypeId::of::<S>() == core::any::TypeId::of::<T>(),
+        "reinterpret_vec called with mismatched types"
+    );
     let ptr = v.as_ptr() as *mut T;
     let len = v.len();
     let cap = v.capacity();
     core::mem::forget(v);
-    // SAFETY: This function is itself `unsafe`; the caller must uphold the
-    // invariants documented above.  The debug_assert_eq! calls above verify
-    // size and alignment parity at runtime in debug builds.
+    // SAFETY: S and T are the same type (TypeId verified above), so size,
+    // alignment, and validity invariants are identical.
     unsafe { Vec::from_raw_parts(ptr, len, cap) }
 }
 
@@ -504,7 +504,7 @@ where
     // nibble layout makes Z-splitting non-trivial, and it is rarely used with
     // large volumes).
     #[cfg(feature = "parallel")]
-    if sz > 1 && sx * sy * sz >= crate::engine::codec::PAR_MIN_VOXELS && mode != Mode::Packed4Bit {
+    if sz > 1 && sx * sy > 0 && sx * sy * sz >= crate::engine::codec::PAR_MIN_VOXELS && mode != Mode::Packed4Bit {
         use rayon::prelude::*;
         let b = mode.byte_size();
         let plane_bytes = sx * sy * b;
@@ -1081,7 +1081,7 @@ pub(crate) fn decode_u16_to_u8(bytes: &[u8], endian: FileEndian) -> Result<Vec<u
             for chunk in bytes.chunks_exact(2) {
                 if chunk[1] != 0 {
                     return Err(crate::Error::ValueOutOfRange {
-                        value: chunk[1] as u64,
+                        value: u16::from_le_bytes([chunk[0], chunk[1]]) as u64,
                         max: 255,
                     });
                 }
@@ -1093,7 +1093,7 @@ pub(crate) fn decode_u16_to_u8(bytes: &[u8], endian: FileEndian) -> Result<Vec<u
             for chunk in bytes.chunks_exact(2) {
                 if chunk[0] != 0 {
                     return Err(crate::Error::ValueOutOfRange {
-                        value: chunk[0] as u64,
+                        value: u16::from_be_bytes([chunk[0], chunk[1]]) as u64,
                         max: 255,
                     });
                 }

@@ -59,11 +59,13 @@ Also see the [README](README.md) for a quick-start guide and feature overview.
 - [x] Add `WriterBuilder::finish_buffer()` for consistent in-memory writer construction
 - [x] Add complete `Header` convenience methods table to crate-level docs
 
-**v0.7.0** — Robust real-world testing across all public APIs
+**v0.7.0** — Robust real-world testing across all public APIs ✅
 
-- [ ] Test every public API item with real MRC files in every mode
-- [ ] Cover all read/write/convert/validate/header paths with actual cryo-EM data
-- [ ] Ensure edge cases (truncated, compressed, permissive, volume stacks, extended headers) are exercised with real files
+- [x] Test every public API item with real MRC files in every mode
+- [x] Cover all read/write/convert/validate/header paths with actual cryo-EM data
+- [x] Ensure edge cases (truncated, compressed, permissive, volume stacks, extended headers) are exercised with real files
+
+**v0.8.x** — Planned
 
 
 

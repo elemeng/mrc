@@ -22,7 +22,6 @@
 //! ```
 
 use crate::engine::endian::FileEndian;
-#[cfg(feature = "f16")]
 use crate::engine::codec::EndianCodec;
 use crate::engine::stats::validate_header_stats;
 use crate::{Error, Mode, Reader};
@@ -253,10 +252,23 @@ pub fn validate_reader(
     // ── 2. File size ──
     if let Some(data_size) = header.data_size() {
         let expected_total = 1024 + header.nsymbt.max(0) as usize + data_size;
-        issues.push(ValidationIssue::info(
-            "File size",
-            format!("Expected {} bytes (header + ext + data)", expected_total),
-        ));
+        let actual_total = 1024 + reader.ext_header_bytes().len() + reader.raw_bytes().len();
+        if actual_total == expected_total {
+            issues.push(ValidationIssue::info(
+                "File size",
+                format!("{} bytes as expected (header + ext + data)", actual_total),
+            ));
+        } else {
+            issues.push(ValidationIssue::error(
+                "File size",
+                format!(
+                    "Size mismatch: expected {} bytes, got {} (difference: {})",
+                    expected_total,
+                    actual_total,
+                    (expected_total as i64 - actual_total as i64).abs()
+                ),
+            ));
+        }
     }
 
     // ── 3. Endianness ──
@@ -455,22 +467,6 @@ struct NonFiniteCounts {
     neg_inf: usize,
 }
 
-fn count_non_finite(values: impl Iterator<Item = f32>) -> NonFiniteCounts {
-    let mut counts = NonFiniteCounts { nan: 0, pos_inf: 0, neg_inf: 0 };
-    for v in values {
-        if v.is_nan() {
-            counts.nan += 1;
-        } else if v.is_infinite() {
-            if v.is_sign_negative() {
-                counts.neg_inf += 1;
-            } else {
-                counts.pos_inf += 1;
-            }
-        }
-    }
-    counts
-}
-
 fn format_finite_issues(counts: &NonFiniteCounts, total: usize, prefix: &str) -> Vec<String> {
     let mut issues = Vec::with_capacity(3);
     if counts.nan > 0 {
@@ -499,12 +495,20 @@ fn float_mode_issues(
     mode: Mode,
     endian: FileEndian,
 ) -> Result<Vec<String>, Error> {
-    use crate::engine::codec::decode_slice;
     match mode {
         Mode::Float32 => {
-            let data = decode_slice::<f32>(raw_bytes, endian)?;
-            let counts = count_non_finite(data.iter().copied());
-            Ok(format_finite_issues(&counts, data.len(), ""))
+            // Fused: scan f32 bytes without allocating Vec<f32>.
+            let n = raw_bytes.len() / 4;
+            let mut counts = NonFiniteCounts { nan: 0, pos_inf: 0, neg_inf: 0 };
+            for i in 0..n {
+                let v = f32::from_bytes(raw_bytes, i * 4, endian);
+                if v.is_nan() { counts.nan += 1; }
+                else if v.is_infinite() {
+                    if v.is_sign_negative() { counts.neg_inf += 1; }
+                    else { counts.pos_inf += 1; }
+                }
+            }
+            Ok(format_finite_issues(&counts, n, ""))
         }
         Mode::Float16 => {
             #[cfg(feature = "f16")]
@@ -531,10 +535,20 @@ fn float_mode_issues(
 
 /// Scan Float32Complex data for NaN/Inf values in both real and imaginary parts.
 fn complex_float_mode_issues(raw_bytes: &[u8], endian: FileEndian) -> Result<Vec<String>, Error> {
-    use crate::engine::codec::decode_slice;
-    let data: Vec<crate::mode::Float32Complex> =
-        decode_slice::<crate::mode::Float32Complex>(raw_bytes, endian)?;
-
-    let counts = count_non_finite(data.iter().flat_map(|c| [c.real, c.imag]));
-    Ok(format_finite_issues(&counts, data.len() * 2, " in complex components"))
+    // Fused: scan complex f32 bytes without allocating Vec<Float32Complex>.
+    let n = raw_bytes.len() / 8;
+    let mut counts = NonFiniteCounts { nan: 0, pos_inf: 0, neg_inf: 0 };
+    for i in 0..n {
+        let real = f32::from_bytes(raw_bytes, i * 8, endian);
+        let imag = f32::from_bytes(raw_bytes, i * 8 + 4, endian);
+        for v in [real, imag] {
+            if v.is_nan() { counts.nan += 1; }
+            else if v.is_infinite() {
+                if v.is_sign_negative() { counts.neg_inf += 1; }
+                else { counts.pos_inf += 1; }
+            }
+        }
+    }
+    let total = n * 2;
+    Ok(format_finite_issues(&counts, total, " in complex components"))
 }

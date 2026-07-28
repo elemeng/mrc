@@ -540,16 +540,6 @@ pub(crate) fn open_compressed<D: std::io::Read>(
     let data = rest.split_off(ext_end);
     let ext_header = rest;
 
-    if let Some(mode) = Mode::from_i32(header.mode) {
-        if mode == Mode::Int8 {
-            if let Some(imod) = header.detect_imod() {
-                if !imod.bytes_are_signed {
-                    warnings.push(IMOD_UNSIGNED_M0_WARNING.into());
-                }
-            }
-        }
-    }
-
     Ok(DecompressedMrc {
         header,
         ext_header,

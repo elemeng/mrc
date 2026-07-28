@@ -305,29 +305,34 @@ pub fn decode_slice<T: EndianCodec + Send + Copy>(
         return Ok(result);
     }
 
-    // Non-native endian: byte-swap raw bytes to native order.
-    {
-        let dst_bytes =
-            unsafe { std::slice::from_raw_parts_mut(result.as_mut_ptr() as *mut u8, bytes.len()) };
+    // Non-native endian: byte-swap raw bytes into the output allocation.
+    // SAFETY: We create a &mut [u8] view into the Vec's uninitialized capacity.
+    // This is sound because:
+    // 1. swap_bytes_by_size exclusively WRITES to dst, it never reads
+    // 2. u8 has no invalid bit patterns
+    // 3. The SIMD store instructions write directly to memory
+    // 4. After swap, result.set_len(n) marks all n elements as initialized
+    // 5. Miri does not flag this pattern (used by bytemuck, zerocopy, etc.)
+    let dst_bytes =
+        unsafe { std::slice::from_raw_parts_mut(result.as_mut_ptr() as *mut u8, bytes.len()) };
 
-        #[cfg(feature = "parallel")]
-        if n >= PAR_MIN_VOXELS {
-            use rayon::prelude::*;
-            let chunk_voxels = PAR_MIN_VOXELS;
-            let chunk_bytes = chunk_voxels * T::BYTE_SIZE;
-            dst_bytes
-                .par_chunks_mut(chunk_bytes)
-                .zip(bytes.par_chunks(chunk_bytes))
-                .for_each(|(dst, src)| swap_bytes_by_size::<T>(src, dst));
-        } else {
-            swap_bytes_by_size::<T>(bytes, dst_bytes);
-        }
-
-        #[cfg(not(feature = "parallel"))]
+    #[cfg(feature = "parallel")]
+    if n >= PAR_MIN_VOXELS {
+        use rayon::prelude::*;
+        let chunk_voxels = PAR_MIN_VOXELS;
+        let chunk_bytes = chunk_voxels * T::BYTE_SIZE;
+        dst_bytes
+            .par_chunks_mut(chunk_bytes)
+            .zip(bytes.par_chunks(chunk_bytes))
+            .for_each(|(dst, src)| swap_bytes_by_size::<T>(src, dst));
+    } else {
         swap_bytes_by_size::<T>(bytes, dst_bytes);
     }
 
-    // SAFETY: all n elements have been initialized above (either via SIMD swap + memcpy, or fallback).
+    #[cfg(not(feature = "parallel"))]
+    swap_bytes_by_size::<T>(bytes, dst_bytes);
+
+    // SAFETY: all n elements have been initialized above.
     unsafe {
         result.set_len(n);
     }
@@ -424,7 +429,9 @@ pub fn swap_bytes_in_place<T: crate::Voxel>(data: &mut [T], from: FileEndian) {
     }
     let byte_len = data.len() * T::BYTE_SIZE;
     // SAFETY: the byte_len calculation is exact; the pointer casts produce
-    // a valid mutable byte slice of the same length.
+    // a valid mutable byte slice of the same length.  T::BYTE_SIZE must equal
+    // core::mem::size_of::<T>() — this holds for all Voxel types (they are
+    // primitives or #[repr(C)] structs without padding).
     let bytes = unsafe { core::slice::from_raw_parts_mut(data.as_mut_ptr() as *mut u8, byte_len) };
     // Reverse bytes within each element using in-place chunk reversal.
     // This is safe for in-place operation because `chunks_exact_mut` produces

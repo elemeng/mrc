@@ -406,11 +406,9 @@ impl Reader {
             crate::io::reader_common::parse_header(&data[..1024], permissive)?;
 
         let ext_size = header.nsymbt as usize;
-        // split header off — data now holds ext_header + voxel_data
-        let mut rest = data.split_off(1024);
-        let ext_end = ext_size.min(rest.len());
-        let voxel_data = rest.split_off(ext_end);
-        let ext_header = rest;
+        let ext_end = ext_size.min(data.len().saturating_sub(1024));
+        let voxel_data = data.split_off(1024 + ext_end);
+        let ext_header = data.split_off(1024);
 
         if ext_size > 0 && ext_end < ext_size {
             warnings.push(format!(
@@ -1122,14 +1120,14 @@ impl Reader {
             let nx = volume_shape.nx;
             let ny = volume_shape.ny;
             let nz = volume_shape.nz;
-            let k = k.max(1);
+            let step = k.max(1);
             let mut z = 0usize;
             return Box::new(std::iter::from_fn(move || {
                 if z >= nz {
                     return None;
                 }
                 let start = z;
-                let sz = k.min(nz - z);
+                let sz = step.min(nz - z);
                 z += sz;
                 let bytes = match self.read_block_bytes_cow([0, 0, start], [nx, ny, sz]) {
                     Ok(b) => b,
@@ -1150,7 +1148,7 @@ impl Reader {
                 offset: None,
             })));
         }
-        let k = k.max(1);
+        let step = k.max(1);
         let volume_shape = self.shape();
         let nx = volume_shape.nx;
         let ny = volume_shape.ny;
@@ -1161,7 +1159,7 @@ impl Reader {
                 return None;
             }
             let start = z;
-            let sz = k.min(nz - z);
+            let sz = step.min(nz - z);
             z += sz;
             let bytes = match self.read_block_bytes_cow([0, 0, start], [nx, ny, sz]) {
                 Ok(b) => b,

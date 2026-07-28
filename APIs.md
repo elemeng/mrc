@@ -19,7 +19,7 @@
    - [`Mode`, `Voxel`, `FileEndian`](#mode-voxel-fileendian)
    - [Complex and Special Types](#complex-and-special-types)
 6. [Iterators](#iterators)
-   - [`RegionIter` and Steppers](#regioniter-and-steppers)
+   - [`DataBlock` and `VoxelBlock` iterators](#datablock-and-voxelblock-iterators)
 7. [Validation](#validation)
 8. [FEI Extended Headers](#fei-extended-headers)
 9. [Error Types](#error-types)
@@ -152,6 +152,7 @@ as **inherent methods** — no trait imports needed for normal use.
 | `reader.slices_u8()` | iterator yielding `VoxelBlock<u8>` | Mode 6 (Uint16) or Mode 101 (Packed4Bit); narrows/nibble-unpacks to `u8` |
 
 > **Tip:** Check the runtime `DataView` variant from `block.data()` to handle each mode, or use `reader.convert::<f32>()` to always get f32.
+
 | `reader.slabs_u8(k)` | iterator yielding `VoxelBlock<u8>` | Same as `slices_u8` but `k` planes at a time |
 | `reader.slices_mode0(interp)` | iterator yielding `VoxelBlock<f32>` | Mode 0 (Int8) only; signed or unsigned |
 | `reader.slabs_mode0(k, interp)` | iterator yielding `VoxelBlock<f32>` | Same as `slices_mode0` but `k` planes at a time |
@@ -231,7 +232,8 @@ let writer = create("out.mrc")
     .finish()?;                   // → Result<Writer>
 ```
 
-Additional builder methods behind feature flags:
+Additional builder methods:
+- `.finish_buffer()?` → `Writer` backed by in-memory `Cursor<Vec<u8>>` (useful for testing)
 - `.finish_mmap()?` → `Writer` backed by mmap (feature `mmap`)
 - `.finish_gzip()?` → `Writer` backed by in-memory buffer, gzip-compressed on finalize (feature `gzip`)
 - `.finish_bzip2()?` → `Writer` backed by in-memory buffer, bzip2-compressed on finalize (feature `bzip2`)
@@ -255,7 +257,6 @@ Additional builder methods behind feature flags:
 | `writer.set_data(&data)` | Write the full volume (must match `nx × ny × nz`) and compute statistics — single call |
 | `writer.update_header_stats()` | Scan written data and update `dmin`/`dmax`/`dmean`/`rms` in the header |
 | `writer.finalize()` | **Required.** Rewrites the header with final metadata (updated stats, labels). The header is written optimistically at file creation and rewritten here — without it the header is stale and tools may display wrong contrast. |
-| `writer.update_header_stats()` | Scan all data from disk, compute dmin/dmax/dmean/rms, update header — ⚠️ re-reads entire data block from disk |
 
 ### Memory-mapped Writer (`Writer` with mmap)
 
@@ -404,7 +405,7 @@ pub struct VoxelBlock<T> {
 | Method | Returns | Description |
 |---|---|---|
 | `VoxelBlock::new(offset, shape, data)` | `Result<Self>` | Validates data length matches shape |
-| `VoxelBlock::try_new(offset, shape, data)` | `Result<Self>` | Like `new`, validates data length matches shape |
+
 | `block.len()` | `usize` | Number of voxels |
 | `block.is_empty()` | `bool` | Zero voxels |
 | `block.is_full_volume(&VolumeShape)` | `bool` | Covers entire volume from origin |
@@ -646,7 +647,7 @@ for slab in reader.convert::<f32>().slabs(4) {
 ## Validation
 
 ```rust
-use mrc::validate::{validate_full, ValidationReport, ValidationIssue, Severity};
+use mrc::{validate_full, ValidationReport, ValidationIssue, Severity};
 ```
 
 | Function | Returns | Description |

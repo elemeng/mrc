@@ -284,7 +284,7 @@ for result in reader.volumes()? {
 ### Validation — catch issues early
 
 ```rust,no_run
-use mrc::validate::{validate_full, Severity};
+use mrc::{validate_full, Severity};
 
 let report = validate_full("protein.mrc", false)?;
 if !report.is_valid() {

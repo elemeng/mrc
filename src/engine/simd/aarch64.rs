@@ -442,8 +442,8 @@ pub(super) unsafe fn convert_f32_to_i16_neon(src: &[f32]) -> Vec<i16> {
 
     while i + 4 <= src.len() {
         let v = vld1q_f32(src.as_ptr().add(i));
-        // Replace NaN with 0 using the fact that NaN != NaN
-        let isnan = vcgtzq_f32(vsubq_f32(v, v));
+        // Replace NaN with 0: vceqq_f32(v,v) is 0 for NaN, ~0 for non-NaN
+        let isnan = vmvnq_u32(vceqq_f32(v, v));
         let v_ok = vreinterpretq_f32_u32(vbicq_u32(vreinterpretq_u32_f32(v), isnan));
         // Clamp and convert
         let clamped = vminq_f32(vmaxq_f32(v_ok, vmin), vmax);
@@ -478,7 +478,7 @@ pub(super) unsafe fn convert_f32_to_u16_neon(src: &[f32]) -> Vec<u16> {
 
     while i + 4 <= src.len() {
         let v = vld1q_f32(src.as_ptr().add(i));
-        let isnan = vcgtzq_f32(vsubq_f32(v, v));
+        let isnan = vmvnq_u32(vceqq_f32(v, v));
         let v_ok = vreinterpretq_f32_u32(vbicq_u32(vreinterpretq_u32_f32(v), isnan));
         let clamped = vmaxq_f32(vminq_f32(v_ok, vmax), zero);
         let i32x4 = vcvtq_s32_f32(clamped);
@@ -513,13 +513,13 @@ pub(super) unsafe fn convert_f32_to_i8_neon(src: &[f32]) -> Vec<i8> {
     // Process 8 elements at a time (narrow i32→i16→i8)
     while i + 8 <= src.len() {
         let v0 = vld1q_f32(src.as_ptr().add(i));
-        let isnan0 = vcgtzq_f32(vsubq_f32(v0, v0));
+        let isnan0 = vmvnq_u32(vceqq_f32(v0, v0));
         let v0_ok = vreinterpretq_f32_u32(vbicq_u32(vreinterpretq_u32_f32(v0), isnan0));
         let c0 = vminq_f32(vmaxq_f32(v0_ok, vmin), vmax);
         let i32_0 = vcvtq_s32_f32(c0);
 
         let v1 = vld1q_f32(src.as_ptr().add(i + 4));
-        let isnan1 = vcgtzq_f32(vsubq_f32(v1, v1));
+        let isnan1 = vmvnq_u32(vceqq_f32(v1, v1));
         let v1_ok = vreinterpretq_f32_u32(vbicq_u32(vreinterpretq_u32_f32(v1), isnan1));
         let c1 = vminq_f32(vmaxq_f32(v1_ok, vmin), vmax);
         let i32_1 = vcvtq_s32_f32(c1);

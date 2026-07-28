@@ -1,7 +1,6 @@
 //! MRC file writer with block-based API.
 //!
 //! Provides [`Writer`], a unified writer supporting file, mmap, gzip, and bzip2 output.
-//! (memory-mapped, requires `mmap`), and [`CompressedWriter`] (gzip/bzip2 backend).
 //! Use [`WriterBuilder`] or the [`create`](crate::create) convenience function
 //! to construct a writer.
 //!
@@ -70,9 +69,23 @@ macro_rules! write_block_as_body {
                 $self.write_encoded_data(&bytes, $block.offset, $block.shape)
             }
             Mode::Float32 => {
+                let [sx, sy, _sz] = $block.shape;
+                let [ox, oy, _oz] = $block.offset;
+                let [nx, ny, _nz] = [$self.shape.nx, $self.shape.ny, $self.shape.nz];
+                // For native-endian full-XY slabs: skip encoding entirely.
+                // The f32 bytes are already in file-native byte order.
+                if endian == FileEndian::native() && ox == 0 && oy == 0 && sx == nx && sy == ny {
+                    let data_slice = $block.data.as_slice();
+                    let bytes = unsafe {
+                        core::slice::from_raw_parts(
+                            data_slice.as_ptr() as *const u8,
+                            core::mem::size_of_val(data_slice),
+                        )
+                    };
+                    return $self.write_encoded_data(bytes, $block.offset, $block.shape);
+                }
                 let b = $self.bytes_per_voxel as u64;
-                let [sx, sy, sz] = $block.shape;
-                let byte_len = (sx as u64) * (sy as u64) * (sz as u64) * b;
+                let byte_len = (sx as u64) * (sy as u64) * ($block.shape[2] as u64) * b;
                 let byte_len_usize = byte_len.try_into().map_err(|_| Error::bounds_err())?;
                 let mut buffer = vec![0u8; byte_len_usize];
                 crate::engine::codec::encode_slice(&$block.data, &mut buffer, endian)?;
@@ -260,12 +273,12 @@ macro_rules! builder_setters {
 
         /// Configure as a volume stack with the given sub-volume thickness.
         ///
-        /// Shorthand for calling [`ispg(401)`](Self::ispg) and
-        /// [`sampling([nx, ny, mz])`](Self::sampling).  `nz` must be divisible
-        /// by `mz` for the header to validate.
+        /// Shorthand for calling [`ispg(401)`](Self::ispg) and setting `mz` to
+        /// the given value.  `nz` must be divisible by `mz` for the header to
+        /// validate.  Call **after** [`shape`](Self::shape) so that `nx`, `ny`,
+        /// and `nz` are already set.
         ///
-        /// Call **after** [`shape`](Self::shape) so that `nx` and `ny` are
-        /// Example
+        /// # Examples
         /// ```
         /// use mrc::create;
         /// let builder = create("output.mrc")
@@ -1262,17 +1275,28 @@ impl Writer {
                         io.write_all(bytes)?;
                         return Ok(());
                     }
-                    let plane_voxels = sx * sy;
-                    let plane_bytes = plane_voxels * b;
-                    let mut plane_buf = vec![0u8; plane_bytes];
-                    for z in 0..sz {
-                        let plane = &data[z * plane_voxels..(z + 1) * plane_voxels];
-                        encode_slice(plane, &mut plane_buf, file_endian)?;
-                        let z_offset = start_offset + (z as u64) * (plane_bytes as u64);
-                        io.seek(SeekFrom::Start(z_offset))?;
-                        io.write_all(&plane_buf)?;
+                    // Non-native full-XY slab: use parallel SIMD encoding
+                    #[cfg(feature = "parallel")]
+                    {
+                        let encoded = encode_block_parallel(data, file_endian)?;
+                        io.seek(SeekFrom::Start(start_offset))?;
+                        io.write_all(&encoded)?;
+                        return Ok(());
                     }
-                    return Ok(());
+                    #[cfg(not(feature = "parallel"))]
+                    {
+                        let plane_voxels = sx * sy;
+                        let plane_bytes = plane_voxels * b;
+                        let mut plane_buf = vec![0u8; plane_bytes];
+                        for z in 0..sz {
+                            let plane = &data[z * plane_voxels..(z + 1) * plane_voxels];
+                            encode_slice(plane, &mut plane_buf, file_endian)?;
+                            let z_offset = start_offset + (z as u64) * (plane_bytes as u64);
+                            io.seek(SeekFrom::Start(z_offset))?;
+                            io.write_all(&plane_buf)?;
+                        }
+                        return Ok(());
+                    }
                 }
 
                 let mut row_bytes = vec![0u8; sx * b];
@@ -1805,7 +1829,10 @@ fn compress_data(
 ) -> Result<Vec<u8>, Error> {
     #[cfg(feature = "gzip")]
     if is_gzip {
-        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), compression.to_flate2());
+        let mut encoder = flate2::write::GzEncoder::new(
+            Vec::with_capacity(data.len() / 2),
+            compression.to_flate2(),
+        );
         std::io::Write::write_all(&mut encoder, data)?;
         return Ok(encoder.finish()?);
     }

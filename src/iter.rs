@@ -23,6 +23,10 @@ use std::borrow::Cow;
 pub(crate) trait Stepper {
     /// Returns the next `(offset, shape)` pair, or `None` when exhausted.
     fn next(&mut self, volume_shape: VolumeShape) -> Option<([usize; 3], [usize; 3])>;
+
+    /// Returns the next `(offset, shape)` pair **without** advancing state,
+    /// or `None` when exhausted.
+    fn peek(&self, volume_shape: VolumeShape) -> Option<([usize; 3], [usize; 3])>;
 }
 
 /// Step one Z-plane at a time (`[nx, ny, 1]`).
@@ -39,6 +43,13 @@ impl Stepper for SliceStepper {
         let z = self.z;
         self.z += 1;
         Some(([0, 0, z], [volume_shape.nx, volume_shape.ny, 1]))
+    }
+
+    fn peek(&self, volume_shape: VolumeShape) -> Option<([usize; 3], [usize; 3])> {
+        if self.z >= volume_shape.nz {
+            return None;
+        }
+        Some(([0, 0, self.z], [volume_shape.nx, volume_shape.ny, 1]))
     }
 }
 
@@ -64,6 +75,14 @@ impl Stepper for SlabStepper {
         let sz = self.k.min(volume_shape.nz - z);
         self.z += sz;
         Some(([0, 0, z], [volume_shape.nx, volume_shape.ny, sz]))
+    }
+
+    fn peek(&self, volume_shape: VolumeShape) -> Option<([usize; 3], [usize; 3])> {
+        if self.z >= volume_shape.nz {
+            return None;
+        }
+        let sz = self.k.min(volume_shape.nz - self.z);
+        Some(([0, 0, self.z], [volume_shape.nx, volume_shape.ny, sz]))
     }
 }
 
@@ -110,6 +129,33 @@ impl Stepper for TileStepper {
                 self.position[2] += cz;
             }
         }
+
+        Some(([px, py, pz], [sx, sy, sz]))
+    }
+
+    fn peek(&self, volume_shape: VolumeShape) -> Option<([usize; 3], [usize; 3])> {
+        TileStepper::peek_at(self.position, self.tile_shape, volume_shape)
+    }
+}
+
+impl TileStepper {
+    #[inline]
+    fn peek_at(
+        position: [usize; 3],
+        tile_shape: [usize; 3],
+        volume_shape: VolumeShape,
+    ) -> Option<([usize; 3], [usize; 3])> {
+        let [nx, ny, nz] = [volume_shape.nx, volume_shape.ny, volume_shape.nz];
+        let [cx, cy, cz] = tile_shape;
+        let [px, py, pz] = position;
+
+        if pz >= nz {
+            return None;
+        }
+
+        let sx = cx.min(nx - px);
+        let sy = cy.min(ny - py);
+        let sz = cz.min(nz - pz);
 
         Some(([px, py, pz], [sx, sy, sz]))
     }
@@ -172,11 +218,17 @@ impl<'a, S: Stepper> Iterator for RegionIter<'a, S> {
     type Item = Result<DataBlock<'a>, Error>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let (offset, shape) = self.stepper.next(self.shape())?;
+        let (offset, shape) = self.stepper.peek(self.shape())?;
         let bytes = match self.reader.read_block_bytes_cow(offset, shape) {
             Ok(b) => b,
-            Err(e) => return Some(Err(e)),
+            Err(e) => {
+                self.stepper.next(self.shape());
+                return Some(Err(e));
+            }
         };
+
+        // Commit: advance stepper only after successful read
+        self.stepper.next(self.shape());
 
         // Zero-copy path: native endian + contiguous block (Cow::Borrowed)
         if self.reader.endian().is_native() {

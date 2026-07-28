@@ -152,6 +152,7 @@ impl VolumeShape {
 /// assert_eq!(block.len(), 8);
 /// ```
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[repr(C)]
 #[derive(Debug, Clone)]
 pub struct VoxelBlock<T> {
     /// Corner of the block within the volume, in voxels `[x, y, z]`.

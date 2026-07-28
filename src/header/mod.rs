@@ -612,7 +612,7 @@ impl Header {
     #[inline]
     fn check_volume_stack(&self) -> Result<(), crate::HeaderValidationError> {
         use crate::HeaderValidationError;
-        if self.ispg >= 400 && self.ispg <= 630 && self.mz != 0 && self.nz % self.mz != 0 {
+        if (401..=630).contains(&self.ispg) && self.mz != 0 && self.nz % self.mz != 0 {
             return Err(HeaderValidationError::InvalidVolumeStack {
                 nz: self.nz,
                 mz: self.mz,
@@ -684,13 +684,14 @@ impl Header {
             ));
         }
 
+        if self.mapr == -2 {
+            warnings.push("mapr = -2 indicates Y-inverted image data (IMOD convention)".into());
+        }
         if let Err(_e) = self.check_axes() {
             warnings.push(format!(
                 "Axis mapping ({}, {}, {}) is not a valid permutation of axis indices",
                 self.mapc, self.mapr, self.maps
             ));
-        } else if self.mapr == -2 {
-            warnings.push("mapr = -2 indicates Y-inverted image data (IMOD convention)".into());
         }
 
         if let Err(_e) = self.check_nsymbt() {
@@ -1290,7 +1291,7 @@ impl Header {
                 .iter()
                 .rposition(|&b| b != b' ')
                 .map_or(0, |p| p + 1);
-        let trimmed = core::str::from_utf8(&self.label[start..end]).unwrap_or("<invalid utf-8>");
+        let trimmed = core::str::from_utf8(&self.label[start..end]).ok()?;
         Some(trimmed)
     }
 
@@ -1481,7 +1482,9 @@ impl Header {
                     FileEndian::LittleEndian => EndianFallbackWarning::MachstLeDataBe,
                     FileEndian::BigEndian => EndianFallbackWarning::MachstBeDataLe,
                 };
-                return (candidate, Some(warning));
+                let mut h = candidate;
+                h.machst = opposite.to_machst();
+                return (h, Some(warning));
             }
         }
 
