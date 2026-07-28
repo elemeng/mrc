@@ -545,13 +545,20 @@ fn float_mode_issues(
     endian: FileEndian,
 ) -> Result<Vec<String>, Error> {
     use crate::engine::codec::decode_slice;
+    use crate::engine::codec::EndianCodec;
     let data: Vec<f32> = match mode {
         Mode::Float32 => decode_slice::<f32>(raw_bytes, endian)?,
         Mode::Float16 => {
             #[cfg(feature = "f16")]
             {
-                let f16_data = decode_slice::<crate::f16>(raw_bytes, endian)?;
-                f16_data.iter().map(|&v| f32::from(v)).collect()
+                // Fused: decode f16 bytes directly to f32, skipping Vec<f16>.
+                let n = raw_bytes.len() / 2;
+                let mut out = Vec::with_capacity(n);
+                for i in 0..n {
+                    let v = crate::f16::from_bytes(raw_bytes, i * 2, endian);
+                    out.push(f32::from(v));
+                }
+                out
             }
             #[cfg(not(feature = "f16"))]
             return Ok(vec![

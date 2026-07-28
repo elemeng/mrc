@@ -396,43 +396,32 @@ impl Reader {
         )
     }
 
-    fn _read_from_buf(data: Vec<u8>, permissive: bool) -> Result<(Self, Vec<String>), Error> {
+    fn _read_from_buf(mut data: Vec<u8>, permissive: bool) -> Result<(Self, Vec<String>), Error> {
         if data.len() < 1024 {
             return Err(Error::InvalidHeader);
         }
-        let mut header_bytes = [0u8; 1024];
-        header_bytes.copy_from_slice(&data[..1024]);
         let (header, mut warnings, _endian, data_size) =
-            crate::io::reader_common::parse_header(&header_bytes, permissive)?;
+            crate::io::reader_common::parse_header(&data[..1024], permissive)?;
 
         let ext_size = header.nsymbt as usize;
-        let ext_end = (1024 + ext_size).min(data.len());
-        let ext_header = if ext_size > 0 && ext_end > 1024 {
-            if ext_end < 1024 + ext_size {
-                warnings.push(format!(
-                    "Extended header truncated: expected {} bytes, got {}",
-                    ext_size,
-                    ext_end - 1024
-                ));
-            }
-            data[1024..ext_end].to_vec()
-        } else {
-            Vec::new()
-        };
+        // split header off — data now holds ext_header + voxel_data
+        let mut rest = data.split_off(1024);
+        let ext_end = ext_size.min(rest.len());
+        let voxel_data = rest.split_off(ext_end);
+        let ext_header = rest;
 
-        let data_offset = header.data_offset();
-        let voxel_data = if data_offset < data.len() {
-            let available = data.len() - data_offset;
-            let expected = data_size.min(available);
-            data[data_offset..data_offset + expected].to_vec()
-        } else {
-            Vec::new()
-        };
+        if ext_size > 0 && ext_end < ext_size {
+            warnings.push(format!(
+                "Extended header truncated: expected {} bytes, got {}",
+                ext_size,
+                ext_end
+            ));
+        }
 
         if !permissive && voxel_data.len() != data_size {
             return Err(Error::FileSizeMismatch {
                 expected: header.data_offset() + data_size,
-                actual: data.len(),
+                actual: 1024 + ext_header.len() + voxel_data.len(),
             });
         }
 
@@ -467,11 +456,8 @@ impl Reader {
         if mmap.len() < 1024 {
             return Err(Error::InvalidHeader);
         }
-        let mut header_bytes = [0u8; 1024];
-        header_bytes.copy_from_slice(&mmap[..1024]);
-
         let (header, warnings, _endian, data_size) =
-            crate::io::reader_common::parse_header(&header_bytes, permissive)?;
+            crate::io::reader_common::parse_header(&mmap[..1024], permissive)?;
 
         let expected_size = header
             .data_offset()

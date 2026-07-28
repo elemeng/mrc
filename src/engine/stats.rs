@@ -12,8 +12,132 @@
 
 use crate::Error;
 use crate::engine::codec::decode_slice;
+use crate::engine::codec::EndianCodec;
 use crate::engine::endian::FileEndian;
 use crate::mode::{Float32Complex, Int16Complex, Mode};
+
+// ============================================================================
+// RunningStats — online Welford accumulator
+// ============================================================================
+
+/// Online single-pass statistics accumulator using Welford's algorithm.
+///
+/// Tracks min, max, mean, and running variance (m2) across a stream of values.
+/// Finalize produces `(dmin, dmax, dmean, rms)` matching the MRC header format.
+#[derive(Debug, Clone)]
+pub(crate) struct RunningStats {
+    n: u64,
+    min: f64,
+    max: f64,
+    mean: f64,
+    m2: f64,
+}
+
+impl RunningStats {
+    pub fn new() -> Self {
+        Self {
+            n: 0,
+            min: f64::INFINITY,
+            max: f64::NEG_INFINITY,
+            mean: 0.0,
+            m2: 0.0,
+        }
+    }
+
+    /// Feed a single f64 value into the accumulator.
+    pub fn push(&mut self, x: f64) {
+        self.n += 1;
+        if x < self.min {
+            self.min = x;
+        }
+        if x > self.max {
+            self.max = x;
+        }
+        let delta = x - self.mean;
+        self.mean += delta / self.n as f64;
+        let delta2 = x - self.mean;
+        self.m2 += delta * delta2;
+    }
+
+    /// Feed a decoded slice of voxels. Each element is cast to f64.
+    ///
+    /// When the `simd` feature is enabled and `T = f32`, this delegates to
+    /// the SIMD-accelerated [`crate::engine::simd::stats_f32_simd`] path.
+    pub fn update<T>(&mut self, data: &[T])
+    where
+        T: Copy + Into<f64> + 'static,
+    {
+        #[cfg(feature = "simd")]
+        {
+            if core::any::TypeId::of::<T>() == core::any::TypeId::of::<f32>() {
+                let f32_data: &[f32] = unsafe {
+                    core::slice::from_raw_parts(data.as_ptr() as *const f32, data.len())
+                };
+                return self.update_f32(f32_data);
+            }
+        }
+        for &v in data {
+            self.push(v.into());
+        }
+    }
+
+    /// SIMD-accelerated f32 path.
+    #[cfg(feature = "simd")]
+    fn update_f32(&mut self, data: &[f32]) {
+        use crate::engine::simd::stats_f32_simd;
+        let (chunk_min, chunk_max, chunk_mean, chunk_rms) = stats_f32_simd(data);
+        let chunk_n = data.len() as u64;
+        let chunk = RunningStats {
+            n: chunk_n,
+            min: chunk_min as f64,
+            max: chunk_max as f64,
+            mean: chunk_mean as f64,
+            m2: (chunk_rms as f64).powi(2) * chunk_n as f64,
+        };
+        self.merge(&chunk);
+    }
+
+    /// Merge another `RunningStats` instance (for parallel chunks).
+    #[allow(dead_code)]
+    pub fn merge(&mut self, other: &Self) {
+        if other.n == 0 {
+            return;
+        }
+        if self.n == 0 {
+            *self = other.clone();
+            return;
+        }
+        let n1 = self.n as f64;
+        let n2 = other.n as f64;
+        let n_total = self.n + other.n;
+        let delta = other.mean - self.mean;
+        let new_mean = (n1 * self.mean + n2 * other.mean) / (n_total as f64);
+        let new_m2 = self.m2 + other.m2 + delta * delta * n1 * n2 / (n_total as f64);
+        self.n = n_total;
+        self.min = self.min.min(other.min);
+        self.max = self.max.max(other.max);
+        self.mean = new_mean;
+        self.m2 = new_m2;
+    }
+
+    /// Produce `(dmin, dmax, dmean, rms)`. Returns sentinel values for empty data.
+    pub fn finalize(&self) -> (f32, f32, f32, f32) {
+        if self.n == 0 {
+            return (0.0, -1.0, -2.0, -1.0);
+        }
+        let rms = (self.m2 / self.n as f64).sqrt();
+        (
+            self.min as f32,
+            self.max as f32,
+            self.mean as f32,
+            rms as f32,
+        )
+    }
+}
+
+// ============================================================================
+// Compute stats
+// ============================================================================
 
 /// Compute (dmin, dmax, dmean, rms) from raw data bytes.
 ///
@@ -60,9 +184,14 @@ pub(crate) fn compute_stats(
         }
         #[cfg(feature = "f16")]
         Mode::Float16 => {
-            let data = decode_slice::<crate::f16>(bytes, endian)?;
-            let data_f32 = crate::engine::convert::convert_f16_slice_to_f32(&data);
-            stats_real(&data_f32)
+            // Fused: decode f16 bytes directly to f32, skipping Vec<f16> intermediate.
+            let n = bytes.len() / 2;
+            let mut stats = RunningStats::new();
+            for i in 0..n {
+                let v = crate::f16::from_bytes(bytes, i * 2, endian);
+                stats.push(f32::from(v) as f64);
+            }
+            stats.finalize()
         }
         #[cfg(not(feature = "f16"))]
         Mode::Float16 => return Err(Error::UnsupportedMode),
@@ -84,8 +213,6 @@ where
     // Specialized SIMD path for f32 (most common case).
     #[cfg(feature = "simd")]
     {
-        // SAFETY: we check the type identity via pointer comparison after
-        // monomorphization — the compiler optimizes the branch away.
         if core::any::TypeId::of::<T>() == core::any::TypeId::of::<f32>() {
             let f32_data: &[f32] =
                 unsafe { core::slice::from_raw_parts(data.as_ptr() as *const f32, data.len()) };
@@ -93,7 +220,6 @@ where
         }
     }
 
-    // Generic single-pass scalar using Welford's online algorithm.
     let len = data.len();
     let mut min = f64::INFINITY;
     let mut max = f64::NEG_INFINITY;
@@ -178,9 +304,6 @@ fn rms_complex<T: ComplexLike>(data: &[T]) -> f32 {
 }
 
 /// Check whether two f32 values are "close" within a relative tolerance.
-///
-/// Uses the same logic as Python's `np.isclose(rtol=0.01, atol=0.0)`:
-/// `|a - b| <= rtol * max(|a|, |b|)`.
 pub(crate) fn is_close(a: f32, b: f32, rtol: f32) -> bool {
     if a == b {
         return true;
@@ -191,9 +314,6 @@ pub(crate) fn is_close(a: f32, b: f32, rtol: f32) -> bool {
 }
 
 /// Validate header statistics against actual data bytes.
-///
-/// Uses a 1% relative tolerance (matching Python `mrcfile`'s `np.isclose(rtol=0.01)`).
-/// For complex modes, only RMS is checked.
 pub(crate) fn validate_header_stats(
     header: &crate::Header,
     raw_bytes: &[u8],
@@ -212,17 +332,11 @@ pub(crate) fn validate_header_stats(
     )?;
 
     let rtol = 0.01f32;
-
-    // For complex modes, dmin/dmax/dmean are not meaningful (sentinel values)
     let complex = matches!(
         mode,
         crate::Mode::Float32Complex | crate::Mode::Int16Complex
     );
 
-    // Per MRC-2014 convention, dmin > dmax indicates stats have not been
-    // well-determined (the header builder sets dmin=0, dmax=-1 for this).
-    // Using this relational check is robust — it avoids conflating legitimate
-    // data values (e.g. actual dmin == 0.0) with the unset sentinel.
     let stats_unset = header.dmin > header.dmax;
     let rms_unset = header.rms < 0.0;
 
@@ -247,6 +361,10 @@ pub(crate) fn validate_header_stats(
     Ok(())
 }
 
+// ============================================================================
+// Tests
+// ============================================================================
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -258,7 +376,6 @@ mod tests {
         assert_eq!(min, 1.0);
         assert_eq!(max, 4.0);
         assert_eq!(mean, 2.5);
-        // population stddev of [1,2,3,4] = sqrt(1.25) ≈ 1.118
         assert!((rms - 1.118_034).abs() < 1e-4);
     }
 
@@ -279,8 +396,8 @@ mod tests {
 
     #[test]
     fn test_is_close_within_tol() {
-        assert!(is_close(100.0, 100.5, 0.01)); // 0.5% diff < 1%
-        assert!(!is_close(100.0, 102.0, 0.01)); // 2% diff > 1%
+        assert!(is_close(100.0, 100.5, 0.01));
+        assert!(!is_close(100.0, 102.0, 0.01));
     }
 
     #[test]
@@ -332,7 +449,6 @@ mod tests {
     fn test_validate_header_stats_sentinels_ok() {
         let mut header = crate::Header::new();
         header.mode = Mode::Float32.as_i32();
-        // Sentinel values should be accepted without error
         header.dmin = 0.0;
         header.dmax = -1.0;
         header.dmean = -2.0;
@@ -344,90 +460,6 @@ mod tests {
             .collect();
         assert!(validate_header_stats(&header, &bytes).is_ok());
     }
-}
-
-// ============================================================================
-// RunningStats — online Welford accumulator (test-only; unused in production)
-// ============================================================================
-
-/// Online single-pass statistics accumulator using Welford's algorithm.
-#[cfg(test)]
-#[derive(Debug, Clone)]
-pub(crate) struct RunningStats {
-    n: u64,
-    min: f64,
-    max: f64,
-    mean: f64,
-    m2: f64,
-}
-
-#[cfg(test)]
-impl RunningStats {
-    pub fn new() -> Self {
-        Self {
-            n: 0,
-            min: f64::INFINITY,
-            max: f64::NEG_INFINITY,
-            mean: 0.0,
-            m2: 0.0,
-        }
-    }
-
-    pub fn update(&mut self, data: &[f32]) {
-        for &v in data {
-            let x = v as f64;
-            self.n += 1;
-            if x < self.min {
-                self.min = x;
-            }
-            if x > self.max {
-                self.max = x;
-            }
-            let delta = x - self.mean;
-            self.mean += delta / self.n as f64;
-            let delta2 = x - self.mean;
-            self.m2 += delta * delta2;
-        }
-    }
-
-    pub fn merge(&mut self, other: &Self) {
-        if other.n == 0 {
-            return;
-        }
-        if self.n == 0 {
-            *self = other.clone();
-            return;
-        }
-        let n1 = self.n as f64;
-        let n2 = other.n as f64;
-        let n_total = self.n + other.n;
-        let delta = other.mean - self.mean;
-        let new_mean = (n1 * self.mean + n2 * other.mean) / (n_total as f64);
-        let new_m2 = self.m2 + other.m2 + delta * delta * n1 * n2 / (n_total as f64);
-        self.n = n_total;
-        self.min = self.min.min(other.min);
-        self.max = self.max.max(other.max);
-        self.mean = new_mean;
-        self.m2 = new_m2;
-    }
-
-    pub fn finalize(&self) -> (f32, f32, f32, f32) {
-        if self.n == 0 {
-            return (0.0, -1.0, -2.0, -1.0);
-        }
-        let rms = (self.m2 / self.n as f64).sqrt();
-        (
-            self.min as f32,
-            self.max as f32,
-            self.mean as f32,
-            rms as f32,
-        )
-    }
-}
-
-#[cfg(test)]
-mod running_stats_tests {
-    use super::*;
 
     #[test]
     fn running_stats_empty() {
@@ -450,7 +482,7 @@ mod running_stats_tests {
     fn running_stats_i16() {
         let mut s = RunningStats::new();
         for &v in &[-100i16, 0, 100, 200] {
-            s.update(&[v as f32]);
+            s.push(v as f64);
         }
         let (dmin, dmax, dmean, _) = s.finalize();
         assert_eq!(dmin, -100.0);
@@ -462,7 +494,7 @@ mod running_stats_tests {
     fn running_stats_u16() {
         let mut s = RunningStats::new();
         for &v in &[10u16, 20, 30] {
-            s.update(&[v as f32]);
+            s.push(v as f64);
         }
         let (min, max, mean, _) = s.finalize();
         assert_eq!(min, 10.0);

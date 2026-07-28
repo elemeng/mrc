@@ -142,6 +142,7 @@ use crate::engine::block::{VolumeShape, VoxelBlock};
 #[cfg(feature = "parallel")]
 use crate::engine::codec::encode_block_parallel;
 use crate::engine::codec::encode_slice;
+use crate::engine::codec::EndianCodec;
 use crate::engine::endian::FileEndian;
 use crate::mode::Voxel;
 use crate::{DataBlock, DataView, Error, Float32Complex, Header, Int16Complex, Mode};
@@ -854,11 +855,15 @@ impl Writer {
             if ext_header.len() >= ext_size {
                 io.write_all(&ext_header[..ext_size])?;
             } else {
-                // Pad with zeros if provided bytes are shorter than nsymbt
                 io.write_all(ext_header)?;
                 let remaining = ext_size - ext_header.len();
-                let zeros = vec![0u8; remaining];
-                io.write_all(&zeros)?;
+                let mut to_write = remaining;
+                const ZBUF: [u8; 4096] = [0u8; 4096];
+                while to_write > 0 {
+                    let n = to_write.min(4096);
+                    io.write_all(&ZBUF[..n])?;
+                    to_write -= n;
+                }
             }
         }
 
@@ -916,7 +921,13 @@ impl Writer {
                     (&file).write_all(&ext_header[..ext_size])?;
                 } else {
                     (&file).write_all(ext_header)?;
-                    (&file).write_all(&vec![0u8; ext_size - ext_header.len()])?;
+                    let mut to_write = ext_size - ext_header.len();
+                    const ZBUF: [u8; 4096] = [0u8; 4096];
+                    while to_write > 0 {
+                        let n = to_write.min(4096);
+                        (&file).write_all(&ZBUF[..n])?;
+                        to_write -= n;
+                    }
                 }
             }
             unsafe {
@@ -1276,12 +1287,16 @@ impl Writer {
                         io.write_all(bytes)?;
                         return Ok(());
                     }
-                    let byte_len = (sx as u64) * (sy as u64) * (sz as u64) * (b as u64);
-                    let byte_len_usize = byte_len.try_into().map_err(|_| Error::bounds_err())?;
-                    let mut buffer = vec![0u8; byte_len_usize];
-                    encode_slice(data, &mut buffer, file_endian)?;
-                    io.seek(SeekFrom::Start(start_offset))?;
-                    io.write_all(&buffer)?;
+                    let plane_voxels = sx * sy;
+                    let plane_bytes = plane_voxels * b;
+                    let mut plane_buf = vec![0u8; plane_bytes];
+                    for z in 0..sz {
+                        let plane = &data[z * plane_voxels..(z + 1) * plane_voxels];
+                        encode_slice(plane, &mut plane_buf, file_endian)?;
+                        let z_offset = start_offset + (z as u64) * (plane_bytes as u64);
+                        io.seek(SeekFrom::Start(z_offset))?;
+                        io.write_all(&plane_buf)?;
+                    }
                     return Ok(());
                 }
 
@@ -1304,13 +1319,10 @@ impl Writer {
             }
             #[cfg(feature = "mmap")]
             DataSink::Mmap(mmap) => {
-                let block = VoxelBlock {
+                crate::io::reader_common::encode_block_to_buf(
+                    data,
                     offset,
                     shape,
-                    data: data.to_vec(),
-                };
-                crate::io::reader_common::encode_block_to_buf(
-                    &block,
                     self.shape,
                     self.bytes_per_voxel,
                     file_endian,
@@ -1319,13 +1331,10 @@ impl Writer {
                 )
             }
             DataSink::Compressed { buf, .. } => {
-                let block = VoxelBlock {
+                crate::io::reader_common::encode_block_to_buf(
+                    data,
                     offset,
                     shape,
-                    data: data.to_vec(),
-                };
-                crate::io::reader_common::encode_block_to_buf(
-                    &block,
                     self.shape,
                     self.bytes_per_voxel,
                     file_endian,
@@ -1411,6 +1420,11 @@ impl Writer {
     {
         if !self.shape().contains_block(block.offset, block.shape) {
             return Err(Error::bounds_err());
+        }
+
+        // Direct path: input type matches the file mode — skip f32 conversion.
+        if T::MODE == self.mode() {
+            return self.write_block_data::<T>(block.offset, block.shape, &block.data);
         }
 
         // Fast path: T = f32 — zero-copy, avoids the identity ConvertFrom copy.
@@ -1687,10 +1701,91 @@ impl Writer {
         };
         match &mut self.sink {
             DataSink::File(io) => {
-                let mut buf = vec![0u8; data_size];
-                io.seek(SeekFrom::Start(self.data_offset))?;
-                io.read_exact(&mut buf)?;
-                update_header_stats_from_bytes(&mut self.header, &buf)
+                #[allow(unused_mut)]
+                let (dmin, dmax, dmean, rms) = {
+                    use std::io::Read;
+                    let mode = Mode::from_i32(self.header.mode).ok_or(Error::UnsupportedMode)?;
+                    let endian = self.header.detect_endian();
+                    let nx = self.header.nx.max(0) as usize;
+                    let b = self.bytes_per_voxel;
+                    io.seek(SeekFrom::Start(self.data_offset))?;
+
+                    // Chunked path: avoids full-volume buffer for real-valued modes.
+                    // Complex modes fall back to the full read.
+                    match mode {
+                        Mode::Float32 | Mode::Int16 | Mode::Uint16 | Mode::Int8
+                        | Mode::Packed4Bit
+                        | Mode::Float16 => {
+                            let chunk_bytes = if mode == Mode::Packed4Bit {
+                                let row_bytes = nx.div_ceil(2);
+                                (262_144 / row_bytes).max(1) * row_bytes
+                            } else {
+                                262_144 * b
+                            };
+                            let mut chunk = vec![0u8; chunk_bytes];
+                            let mut stats = crate::engine::stats::RunningStats::new();
+                            let mut remaining = data_size;
+
+                            while remaining > 0 {
+                                let to_read = chunk_bytes.min(remaining);
+                                let buf = &mut chunk[..to_read];
+                                io.read_exact(buf)?;
+                                match mode {
+                                    Mode::Float32 => {
+                                        let d = crate::engine::codec::decode_slice::<f32>(buf, endian)?;
+                                        stats.update(&d);
+                                    }
+                                    Mode::Int16 => {
+                                        let d = crate::engine::codec::decode_slice::<i16>(buf, endian)?;
+                                        stats.update(&d);
+                                    }
+                                    Mode::Uint16 => {
+                                        let d = crate::engine::codec::decode_slice::<u16>(buf, endian)?;
+                                        stats.update(&d);
+                                    }
+                                    Mode::Int8 => {
+                                        let d = crate::engine::codec::decode_slice::<i8>(buf, endian)?;
+                                        stats.update(&d);
+                                    }
+                                    #[cfg(feature = "f16")]
+                                    Mode::Float16 => {
+                                        let n = to_read / 2;
+                                        for i in 0..n {
+                                            let v = crate::f16::from_bytes(buf, i * 2, endian);
+                                            stats.push(f32::from(v) as f64);
+                                        }
+                                    }
+                                    Mode::Packed4Bit => {
+                                        let row_bytes = nx.div_ceil(2);
+                                        let rows_in_chunk = to_read / row_bytes;
+                                        let unpacked = crate::engine::convert::unpack_u4_bytes_to_u8(
+                                            buf, nx, rows_in_chunk,
+                                        );
+                                        stats.update(&unpacked);
+                                    }
+                                    _ => unreachable!(),
+                                }
+                                remaining -= to_read;
+                            }
+                            stats.finalize()
+                        }
+                        _ => {
+                            // Fallback for complex and other modes: read full data.
+                            let mut buf = vec![0u8; data_size];
+                            io.read_exact(&mut buf)?;
+                            crate::engine::stats::compute_stats(
+                                &buf, mode, endian,
+                                self.header.nx.max(0) as usize,
+                                self.header.ny.max(0) as usize * self.header.nz.max(0) as usize,
+                            )?
+                        }
+                    }
+                };
+                self.header.dmin = dmin;
+                self.header.dmax = dmax;
+                self.header.dmean = dmean;
+                self.header.rms = rms;
+                Ok(())
             }
             #[cfg(feature = "mmap")]
             DataSink::Mmap(mmap) => {

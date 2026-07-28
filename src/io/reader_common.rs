@@ -352,8 +352,11 @@ pub(crate) fn gather_block_bytes(
 }
 
 /// Encode a typed voxel block into a mutable byte buffer.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn encode_block_to_buf<T: EndianCodec + Sync>(
-    block: &VoxelBlock<T>,
+    data: &[T],
+    offset: [usize; 3],
+    shape: [usize; 3],
     volume_shape: VolumeShape,
     bytes_per_voxel: usize,
     file_endian: FileEndian,
@@ -361,8 +364,8 @@ pub(crate) fn encode_block_to_buf<T: EndianCodec + Sync>(
     buf: &mut [u8],
 ) -> Result<(), Error> {
     let [nx, ny, _nz] = [volume_shape.nx, volume_shape.ny, volume_shape.nz];
-    let [ox, oy, oz] = block.offset;
-    let [sx, sy, sz] = block.shape;
+    let [ox, oy, oz] = offset;
+    let [sx, sy, sz] = shape;
     let b = bytes_per_voxel;
 
     if ox == 0 && sx == nx && oy == 0 && sy == ny {
@@ -373,7 +376,7 @@ pub(crate) fn encode_block_to_buf<T: EndianCodec + Sync>(
         if end_byte > buf.len() {
             return Err(cold_bounds_error());
         }
-        encode_slice(&block.data, &mut buf[start_byte..end_byte], file_endian)?;
+        encode_slice(data, &mut buf[start_byte..end_byte], file_endian)?;
         return Ok(());
     }
 
@@ -382,10 +385,10 @@ pub(crate) fn encode_block_to_buf<T: EndianCodec + Sync>(
             let file_linear = ox + (oy + y) * nx + (oz + z) * nx * ny;
             let file_start = data_offset + file_linear * b;
             let block_idx = y * sx + z * sx * sy;
-            if block_idx + sx > block.data.len() {
+            if block_idx + sx > data.len() {
                 return Err(cold_bounds_error());
             }
-            let row_values = &block.data[block_idx..block_idx + sx];
+            let row_values = &data[block_idx..block_idx + sx];
             let row_end = file_start + sx * b;
             if row_end > buf.len() {
                 return Err(cold_bounds_error());
@@ -446,10 +449,13 @@ pub(crate) fn write_block_bytes(
 
 /// Parse and validate an MRC header from raw bytes.
 pub(crate) fn parse_header(
-    header_bytes: &[u8; 1024],
+    header_bytes: &[u8],
     permissive: bool,
 ) -> Result<(crate::Header, Vec<String>, crate::FileEndian, usize), crate::Error> {
-    let (header, endian_warning) = crate::Header::decode_from_bytes_with_info(header_bytes);
+    let header_arr: &[u8; 1024] = header_bytes
+        .try_into()
+        .map_err(|_| crate::Error::InvalidHeader)?;
+    let (header, endian_warning) = crate::Header::decode_from_bytes_with_info(header_arr);
     let mut warnings = if permissive {
         header
             .validate_permissive()
@@ -500,9 +506,7 @@ pub(crate) fn open_compressed<D: std::io::Read>(
         return Err(crate::Error::InvalidHeader);
     }
 
-    let mut header_bytes = [0u8; 1024];
-    header_bytes.copy_from_slice(&buf[..1024]);
-    let (header, mut warnings, _endian, data_size) = parse_header(&header_bytes, permissive)?;
+    let (header, mut warnings, _endian, data_size) = parse_header(&buf[..1024], permissive)?;
     let ext_size = header.nsymbt as usize;
 
     if !permissive {
@@ -520,13 +524,10 @@ pub(crate) fn open_compressed<D: std::io::Read>(
         ));
     }
 
-    let ext_end = (1024 + ext_size).min(buf.len());
-    let ext_header = buf[1024..ext_end].to_vec();
-    let data = if ext_end < buf.len() {
-        buf[ext_end..].to_vec()
-    } else {
-        Vec::new()
-    };
+    let mut rest = buf.split_off(1024);
+    let ext_end = ext_size.min(rest.len());
+    let data = rest.split_off(ext_end);
+    let ext_header = rest;
 
     if let Some(mode) = Mode::from_i32(header.mode) {
         if mode == Mode::Int8 {
