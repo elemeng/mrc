@@ -249,7 +249,6 @@ Additional builder methods behind feature flags:
 | `writer.write_u8_block(&block)` | Convenience: write `VoxelBlock<u8>` to a Uint16 file (auto-widens) |
 | `writer.write_u4_block(&block)` | Convenience: write `VoxelBlock<u8>` to a Packed4Bit file (auto-packs, values must be 0–15) |
 | `writer.write_block_as(&block)` | Write with auto-conversion to file's mode: `f32` → `i8`/`i16`/`u16`/`f16` (clamped) |
-| `writer.write_block_parallel::<T>(&block)` | Parallel-encoded write (feature `parallel`; contiguous XY slabs only) |
 | `writer.set_data(&data)` | Write the full volume (must match `nx × ny × nz`) and compute statistics — single call |
 | `writer.update_header_stats()` | Scan written data and update `dmin`/`dmax`/`dmean`/`rms` in the header |
 | `writer.finalize()` | **Required.** Rewrites the header with final metadata (updated stats, labels). The header is written optimistically at file creation and rewritten here — without it the header is stale and tools may display wrong contrast. |
@@ -261,7 +260,7 @@ Memory-mapped writer. Created via `WriterBuilder::finish_mmap()`.
 Requires `mmap` feature.
 
 Same API as the file-backed `Writer` (`write_block`, `write_block_as`, `write_u8_block`,
-`write_u4_block`, `write_block_parallel`, `finalize`, `update_header_stats`).
+`write_u4_block`, `finalize`, `update_header_stats`).
 
 **`finalize()` is required** — flushes the mmap to disk. Without it the header
 is stale (density statistics missing, tools display wrong contrast).

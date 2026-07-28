@@ -191,8 +191,8 @@ writer.write_block_as(&mrc::VoxelBlock::new(
     vec![0.0f32; 512 * 512],
 )?)?;
 
-// Write in parallel (requires `parallel` feature)
-writer.write_block_parallel(&mrc::VoxelBlock::new(
+// Write with automatic parallel encoding (requires `parallel` feature)
+writer.write_block(&mrc::VoxelBlock::new(
     [0, 0, 0], [512, 512, 256], vec![0.0f32; 512 * 512 * 256],
 )?)?;
 

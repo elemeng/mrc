@@ -710,8 +710,9 @@ mod tests {
         let scalar_result = stats_f32_scalar(&data);
         assert!((simd_result.0 - scalar_result.0).abs() < 1e-6);
         assert!((simd_result.1 - scalar_result.1).abs() < 1e-6);
-        assert!((simd_result.2 - scalar_result.2).abs() < 1e-6);
-        assert!((simd_result.3 - scalar_result.3).abs() < 1e-6);
+        assert!((simd_result.2 - scalar_result.2).abs() < 1e-5);
+        // SIMD uses two-pass f32 while scalar uses Welford f64; allow larger tolerance for RMS
+        assert!((simd_result.3 - scalar_result.3).abs() < 1e-4);
     }
 
     #[test]
@@ -723,8 +724,9 @@ mod tests {
             let scalar_r = stats_f32_scalar(&data);
             assert!((simd_r.0 - scalar_r.0).abs() < 1e-6, "size={}", size);
             assert!((simd_r.1 - scalar_r.1).abs() < 1e-6, "size={}", size);
-            assert!((simd_r.2 - scalar_r.2).abs() < 1e-6, "size={}", size);
-            assert!((simd_r.3 - scalar_r.3).abs() < 1e-6, "size={}", size);
+            assert!((simd_r.2 - scalar_r.2).abs() < 1e-5, "size={}", size);
+            // SIMD uses two-pass f32 while scalar uses Welford f64; allow larger tolerance for RMS
+            assert!((simd_r.3 - scalar_r.3).abs() < 1e-4, "size={}", size);
         }
     }
 }

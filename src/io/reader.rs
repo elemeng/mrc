@@ -46,7 +46,7 @@ pub fn detect_compression_from_bytes(bytes: &[u8]) -> CompressionType {
         return CompressionType::Gzip;
     }
     #[cfg(feature = "bzip2")]
-    if magic == [b'B', b'Z'] {
+    if magic == *b"BZ" {
         return CompressionType::Bzip2;
     }
     CompressionType::Plain

@@ -41,8 +41,12 @@ fn write_f32_volume(f: &TempMrc, nx: usize, ny: usize, nz: usize) -> Vec<f32> {
         .mode::<f32>()
         .finish()
         .unwrap();
-    w.write_block(&VoxelBlock::new([0, 0, 0], [nx, ny, nz], data.clone()).unwrap())
-        .unwrap();
+    let block = DataBlock::Owned {
+        offset: [0, 0, 0],
+        shape: [nx, ny, nz],
+        data: OwnedData::Float32(data.clone()),
+    };
+    w.write_data_block(&block).unwrap();
     w.finalize().unwrap();
     data
 }
@@ -60,8 +64,11 @@ fn mode_0_int8_roundtrip() {
             .mode::<i8>()
             .finish()
             .unwrap();
-        w.write_block(&VoxelBlock::new([0, 0, 0], [4, 4, 2], src.clone()).unwrap())
-            .unwrap();
+        w.write_data_block(&DataBlock::Owned {
+            offset: [0, 0, 0],
+            shape: [4, 4, 2],
+            data: OwnedData::Int8(src.clone()),
+        }).unwrap();
         w.finalize().unwrap();
     }
     let r = Reader::open(f.path()).unwrap();
@@ -89,8 +96,11 @@ fn mode_1_int16_roundtrip() {
             .mode::<i16>()
             .finish()
             .unwrap();
-        w.write_block(&VoxelBlock::new([0, 0, 0], [4, 4, 2], src.clone()).unwrap())
-            .unwrap();
+        w.write_data_block(&DataBlock::Owned {
+            offset: [0, 0, 0],
+            shape: [4, 4, 2],
+            data: OwnedData::Int16(src.clone()),
+        }).unwrap();
         w.finalize().unwrap();
     }
     let r = Reader::open(f.path()).unwrap();
@@ -134,8 +144,11 @@ fn mode_6_uint16_roundtrip() {
             .mode::<u16>()
             .finish()
             .unwrap();
-        w.write_block(&VoxelBlock::new([0, 0, 0], [4, 4, 2], src.clone()).unwrap())
-            .unwrap();
+        w.write_data_block(&DataBlock::Owned {
+            offset: [0, 0, 0],
+            shape: [4, 4, 2],
+            data: OwnedData::Uint16(src.clone()),
+        }).unwrap();
         w.finalize().unwrap();
     }
     let r = Reader::open(f.path()).unwrap();
@@ -166,8 +179,11 @@ fn mode_12_float16_roundtrip() {
             .mode::<f16>()
             .finish()
             .unwrap();
-        w.write_block(&VoxelBlock::new([0, 0, 0], [4, 4, 2], src.clone()).unwrap())
-            .unwrap();
+        w.write_data_block(&DataBlock::Owned {
+            offset: [0, 0, 0],
+            shape: [4, 4, 2],
+            data: OwnedData::Float16(src.clone()),
+        }).unwrap();
         w.finalize().unwrap();
     }
     let r = Reader::open(f.path()).unwrap();
@@ -272,8 +288,11 @@ fn reader_buffered_slab() {
             .mode::<f32>()
             .finish()
             .unwrap();
-        w.write_block(&VoxelBlock::new([0, 0, 0], [nx, ny, nz], data.clone()).unwrap())
-            .unwrap();
+        w.write_data_block(&DataBlock::Owned {
+            offset: [0, 0, 0],
+            shape: [nx, ny, nz],
+            data: OwnedData::Float32(data.clone()),
+        }).unwrap();
         w.finalize().unwrap();
     }
     let bytes = std::fs::read(f.path()).unwrap();
@@ -303,8 +322,11 @@ fn reader_gzip_open_detect() {
             .mode::<f32>()
             .finish_gzip()
             .unwrap();
-        w.write_block(&VoxelBlock::new([0, 0, 0], [2, 2, 1], data.clone()).unwrap())
-            .unwrap();
+        w.write_data_block(&DataBlock::Owned {
+            offset: [0, 0, 0],
+            shape: [2, 2, 1],
+            data: OwnedData::Float32(data.clone()),
+        }).unwrap();
         w.finalize().unwrap();
     }
     // auto-detect
@@ -409,8 +431,11 @@ fn reader_volume_stack_queries_and_iter() {
             .volume_stack(mz)
             .finish()
             .unwrap();
-        w.write_block(&VoxelBlock::new([0, 0, 0], [nx, ny, nz], data.clone()).unwrap())
-            .unwrap();
+        w.write_data_block(&DataBlock::Owned {
+            offset: [0, 0, 0],
+            shape: [nx, ny, nz],
+            data: OwnedData::Float32(data.clone()),
+        }).unwrap();
         w.finalize().unwrap();
     }
 
@@ -510,8 +535,11 @@ fn reader_slabs_u8() {
             .mode::<u16>()
             .finish()
             .unwrap();
-        w.write_block(&VoxelBlock::new([0, 0, 0], [4, 4, 2], src.clone()).unwrap())
-            .unwrap();
+        w.write_data_block(&DataBlock::Owned {
+            offset: [0, 0, 0],
+            shape: [4, 4, 2],
+            data: OwnedData::Uint16(src.clone()),
+        }).unwrap();
         w.finalize().unwrap();
     }
     let r = Reader::open(f.path()).unwrap();
@@ -532,8 +560,11 @@ fn reader_slices_mode0_unsigned() {
             .mode::<i8>()
             .finish()
             .unwrap();
-        w.write_block(&VoxelBlock::new([0, 0, 0], [5, 1, 1], src).unwrap())
-            .unwrap();
+        w.write_data_block(&DataBlock::Owned {
+            offset: [0, 0, 0],
+            shape: [5, 1, 1],
+            data: OwnedData::Int8(src),
+        }).unwrap();
         w.finalize().unwrap();
     }
     let r = Reader::open(f.path()).unwrap();
@@ -557,8 +588,11 @@ fn reader_convert_variants() {
             .mode::<i16>()
             .finish()
             .unwrap();
-        w.write_block(&VoxelBlock::new([0, 0, 0], [4, 4, 2], src.clone()).unwrap())
-            .unwrap();
+        w.write_data_block(&DataBlock::Owned {
+            offset: [0, 0, 0],
+            shape: [4, 4, 2],
+            data: OwnedData::Int16(src.clone()),
+        }).unwrap();
         w.finalize().unwrap();
     }
     let r = Reader::open(f.path()).unwrap();
@@ -605,8 +639,11 @@ fn writer_from_writer() {
     h.nlabl = 0;
     let mut w = Writer::from_writer(Cursor::new(Vec::new()), h, &[]).unwrap();
     let data = vec![1.0f32; 16];
-    w.write_block(&VoxelBlock::new([0, 0, 0], [4, 4, 1], data).unwrap())
-        .unwrap();
+    w.write_data_block(&DataBlock::Owned {
+        offset: [0, 0, 0],
+        shape: [4, 4, 1],
+        data: OwnedData::Float32(data),
+    }).unwrap();
     w.finalize().unwrap();
 }
 
@@ -630,8 +667,11 @@ fn writer_all_builder_setters() {
         .finish()
         .unwrap();
     let data = vec![0.0f32; 32];
-    w.write_block(&VoxelBlock::new([0, 0, 0], [4, 4, 2], data).unwrap())
-        .unwrap();
+    w.write_data_block(&DataBlock::Owned {
+        offset: [0, 0, 0],
+        shape: [4, 4, 2],
+        data: OwnedData::Float32(data),
+    }).unwrap();
     w.finalize().unwrap();
 }
 
@@ -646,8 +686,11 @@ fn writer_header_mut() {
     // Modify header mid-write
     w.header_mut().add_label("mid-write label");
     let data = vec![0.0f32; 16];
-    w.write_block(&VoxelBlock::new([0, 0, 0], [4, 4, 1], data).unwrap())
-        .unwrap();
+    w.write_data_block(&DataBlock::Owned {
+        offset: [0, 0, 0],
+        shape: [4, 4, 1],
+        data: OwnedData::Float32(data),
+    }).unwrap();
     w.finalize().unwrap();
     let r = Reader::open(f.path()).unwrap();
     let labels = r.header().get_labels();
@@ -711,8 +754,11 @@ fn writer_write_block_parallel() {
                 .mode::<f32>()
                 .finish()
                 .unwrap();
-            w.write_block_parallel(&VoxelBlock::new([0, 0, 0], [4, 4, 4], src.clone()).unwrap())
-                .unwrap();
+            w.write_data_block(&DataBlock::Owned {
+                offset: [0, 0, 0],
+                shape: [4, 4, 4],
+                data: OwnedData::Float32(src.clone()),
+            }).unwrap();
             w.finalize().unwrap();
         }
         let r = Reader::open(f.path()).unwrap();
@@ -735,8 +781,11 @@ fn writer_update_header_stats_and_validate() {
             .mode::<f32>()
             .finish()
             .unwrap();
-        w.write_block(&VoxelBlock::new([0, 0, 0], [4, 4, 1], src.clone()).unwrap())
-            .unwrap();
+        w.write_data_block(&DataBlock::Owned {
+            offset: [0, 0, 0],
+            shape: [4, 4, 1],
+            data: OwnedData::Float32(src.clone()),
+        }).unwrap();
         w.update_header_stats().unwrap();
         w.finalize().unwrap();
     }
@@ -925,18 +974,44 @@ fn error_bounds() {
 }
 
 #[test]
-fn error_mode_mismatch() {
-    let f = TempMrc::new("err_mode_mismatch");
-    let mut w = create(f.path())
-        .shape([4, 4, 1])
-        .mode::<f32>()
-        .finish()
-        .unwrap();
-    // Writing an Int16 block to an Float32 file should produce ModeMismatch.
-    let block = VoxelBlock::new([0, 0, 0], [4, 4, 1], vec![0i16; 16]).unwrap();
-    match w.write_block(&block) {
-        Err(Error::ModeMismatch { .. }) => {}
-        other => panic!("expected ModeMismatch, got {other:?}"),
+fn write_data_block_read_and_rewrite() {
+    // Read a DataBlock from a reader, then write it to a new file.
+    let f = TempMrc::new("write_data_block_src");
+    {
+        let mut w = create(f.path())
+            .shape([4, 4, 2])
+            .mode::<f32>()
+            .finish()
+            .unwrap();
+        let src = vec![1.0f32; 32];
+        let block = DataBlock::Owned {
+            offset: [0, 0, 0],
+            shape: [4, 4, 2],
+            data: OwnedData::Float32(src),
+        };
+        w.write_data_block(&block).unwrap();
+        w.finalize().unwrap();
+    }
+
+    let r = Reader::open(f.path()).unwrap();
+    let read_block = r.read_volume().unwrap();
+
+    let out = TempMrc::new("write_data_block_dst");
+    {
+        let mut w2 = create(out.path())
+            .shape([4, 4, 2])
+            .mode::<f32>()
+            .finish()
+            .unwrap();
+        w2.write_data_block(&read_block).unwrap();
+        w2.finalize().unwrap();
+    }
+
+    let r2 = Reader::open(out.path()).unwrap();
+    let v = r2.read_volume().unwrap();
+    match v.data() {
+        mrc::DataView::Float32(data) => assert_eq!(data.len(), 32),
+        other => panic!("expected Float32, got {other:?}"),
     }
 }
 
@@ -1146,8 +1221,11 @@ fn writer_set_volume_stack() {
             .volume_stack(subvol)
             .finish()
             .unwrap();
-        w.write_block(&VoxelBlock::new([0, 0, 0], [nx, ny, nz], data.clone()).unwrap())
-            .unwrap();
+        w.write_data_block(&DataBlock::Owned {
+            offset: [0, 0, 0],
+            shape: [nx, ny, nz],
+            data: OwnedData::Float32(data.clone()),
+        }).unwrap();
         w.finalize().unwrap();
     }
     let r = Reader::open(f.path()).unwrap();
@@ -1172,8 +1250,11 @@ fn writer_builder_image_stack_and_volume() {
             .finish()
             .unwrap();
         let data = vec![0.0f32; 8 * 8 * 10];
-        w.write_block(&VoxelBlock::new([0, 0, 0], [8, 8, 10], data).unwrap())
-            .unwrap();
+        w.write_data_block(&DataBlock::Owned {
+            offset: [0, 0, 0],
+            shape: [8, 8, 10],
+            data: OwnedData::Float32(data),
+        }).unwrap();
         w.finalize().unwrap();
     }
     let r = Reader::open(f_img.path()).unwrap();
@@ -1190,8 +1271,11 @@ fn writer_builder_image_stack_and_volume() {
             .finish()
             .unwrap();
         let data = vec![1.0f32; 8 * 8 * 10];
-        w.write_block(&VoxelBlock::new([0, 0, 0], [8, 8, 10], data).unwrap())
-            .unwrap();
+        w.write_data_block(&DataBlock::Owned {
+            offset: [0, 0, 0],
+            shape: [8, 8, 10],
+            data: OwnedData::Float32(data),
+        }).unwrap();
         w.finalize().unwrap();
     }
     let r2 = Reader::open(f_vol.path()).unwrap();
@@ -1218,8 +1302,11 @@ fn writer_from_writer_mmap() {
         h.nlabl = 0;
         let mut w = Writer::from_writer_mmap(f.path(), h, &[]).unwrap();
         let data = vec![42.0f32; 16];
-        w.write_block(&VoxelBlock::new([0, 0, 0], [4, 4, 1], data.clone()).unwrap())
-            .unwrap();
+        w.write_data_block(&DataBlock::Owned {
+            offset: [0, 0, 0],
+            shape: [4, 4, 1],
+            data: OwnedData::Float32(data.clone()),
+        }).unwrap();
         w.finalize().unwrap();
         let r = Reader::open(f.path()).unwrap();
         let block = r.read_volume().unwrap();
@@ -1246,8 +1333,11 @@ fn writer_from_writer_gzip() {
         h.nlabl = 0;
         let mut w = Writer::from_writer_gzip(f.path(), h, &[], CompressionLevel::Balanced).unwrap();
         let data = vec![1.0f32; 16];
-        w.write_block(&VoxelBlock::new([0, 0, 0], [4, 4, 1], data.clone()).unwrap())
-            .unwrap();
+        w.write_data_block(&DataBlock::Owned {
+            offset: [0, 0, 0],
+            shape: [4, 4, 1],
+            data: OwnedData::Float32(data.clone()),
+        }).unwrap();
         w.finalize().unwrap();
         let r = Reader::open(f.path()).unwrap();
         let block = r.read_volume().unwrap();
@@ -1274,8 +1364,11 @@ fn writer_from_writer_bzip2() {
         h.nlabl = 0;
         let mut w = Writer::from_writer_bzip2(f.path(), h, &[], CompressionLevel::Fast).unwrap();
         let data = vec![2.0f32; 16];
-        w.write_block(&VoxelBlock::new([0, 0, 0], [4, 4, 1], data.clone()).unwrap())
-            .unwrap();
+        w.write_data_block(&DataBlock::Owned {
+            offset: [0, 0, 0],
+            shape: [4, 4, 1],
+            data: OwnedData::Float32(data.clone()),
+        }).unwrap();
         w.finalize().unwrap();
         let r = Reader::open(f.path()).unwrap();
         let block = r.read_volume().unwrap();

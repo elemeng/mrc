@@ -6,7 +6,7 @@
 //! ```
 
 use criterion::{Criterion, criterion_group, criterion_main};
-use mrc::{VoxelBlock, create};
+use mrc::{DataBlock, OwnedData, create};
 use std::hint::black_box;
 
 // ============================================================================
@@ -27,7 +27,7 @@ fn make_f32_mrc(nx: usize, ny: usize, nz: usize) -> std::path::PathBuf {
             .mode::<f32>()
             .finish()
             .unwrap();
-        w.write_block(&VoxelBlock::new([0, 0, 0], [nx, ny, nz], data).unwrap())
+        w.write_data_block(&DataBlock::Owned { offset: [0, 0, 0], shape: [nx, ny, nz], data: OwnedData::Float32(data) })
             .unwrap();
         w.finalize().unwrap();
     }
@@ -48,7 +48,7 @@ fn make_i16_mrc(nx: usize, ny: usize, nz: usize) -> std::path::PathBuf {
             .mode::<i16>()
             .finish()
             .unwrap();
-        w.write_block(&VoxelBlock::new([0, 0, 0], [nx, ny, nz], data).unwrap())
+        w.write_data_block(&DataBlock::Owned { offset: [0, 0, 0], shape: [nx, ny, nz], data: OwnedData::Int16(data) })
             .unwrap();
         w.finalize().unwrap();
     }
@@ -133,7 +133,7 @@ fn bench_write_block_full_volume(c: &mut Criterion) {
 
     let total = NX * NY * NZ;
     let data: Vec<f32> = (0..total).map(|i| (i % 1000) as f32).collect();
-    let block = VoxelBlock::new([0, 0, 0], [NX, NY, NZ], data).unwrap();
+    let block = DataBlock::Owned { offset: [0, 0, 0], shape: [NX, NY, NZ], data: OwnedData::Float32(data) };
 
     c.bench_function("write_block_full_f32", |b| {
         b.iter(|| {
@@ -142,7 +142,7 @@ fn bench_write_block_full_volume(c: &mut Criterion) {
                 .mode::<f32>()
                 .finish()
                 .unwrap();
-            w.write_block(black_box(&block)).unwrap();
+            w.write_data_block(black_box(&block)).unwrap();
             w.finalize().unwrap();
         })
     });
@@ -195,7 +195,7 @@ fn bench_convert_i16_to_f32_slice(c: &mut Criterion) {
             .mode::<i16>()
             .finish()
             .unwrap();
-        w.write_block(&VoxelBlock::new([0, 0, 0], [1024, 1024, 1], src).unwrap())
+        w.write_data_block(&DataBlock::Owned { offset: [0, 0, 0], shape: [1024, 1024, 1], data: OwnedData::Int16(src) })
             .unwrap();
         w.finalize().unwrap();
     }

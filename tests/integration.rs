@@ -1,4 +1,5 @@
 use mrc::*;
+use mrc::{DataBlock, OwnedData};
 
 /// Create a unique temp file path that is automatically deleted on drop.
 struct TempMrc(std::path::PathBuf);
@@ -38,7 +39,7 @@ fn roundtrip_f32() {
             .mode::<f32>()
             .finish()
             .unwrap();
-        w.write_block(&VoxelBlock::new([0, 0, 0], [nx, ny, nz], data.clone()).unwrap())
+        w.write_data_block(&DataBlock::Owned { offset: [0, 0, 0], shape: [nx, ny, nz], data: OwnedData::Float32(data.clone()) })
             .unwrap();
         w.finalize().unwrap();
     }
@@ -74,7 +75,7 @@ fn roundtrip_i16_to_f32() {
             .mode::<i16>()
             .finish()
             .unwrap();
-        w.write_block(&VoxelBlock::new([0, 0, 0], [nx, ny, nz], src).unwrap())
+        w.write_data_block(&DataBlock::Owned { offset: [0, 0, 0], shape: [nx, ny, nz], data: OwnedData::Int16(src) })
             .unwrap();
         w.finalize().unwrap();
     }
@@ -108,7 +109,7 @@ fn roundtrip_u16() {
             .mode::<u16>()
             .finish()
             .unwrap();
-        w.write_block(&VoxelBlock::new([0, 0, 0], [nx, ny, nz], src.clone()).unwrap())
+        w.write_data_block(&DataBlock::Owned { offset: [0, 0, 0], shape: [nx, ny, nz], data: OwnedData::Uint16(src.clone()) })
             .unwrap();
         w.finalize().unwrap();
     }
@@ -136,7 +137,7 @@ fn roundtrip_subregion() {
         .unwrap();
     for z in 0..nz {
         let slice = vec![(z * nx * ny) as f32; nx * ny];
-        w.write_block(&VoxelBlock::new([0, 0, z], [nx, ny, 1], slice).unwrap())
+        w.write_data_block(&DataBlock::Owned { offset: [0, 0, z], shape: [nx, ny, 1], data: OwnedData::Float32(slice) })
             .unwrap();
     }
     w.finalize().unwrap();
@@ -167,7 +168,7 @@ fn read_volume_via_convert_slices_f32() {
             .mode::<f32>()
             .finish()
             .unwrap();
-        w.write_block(&VoxelBlock::new([0, 0, 0], [nx, ny, nz], data.clone()).unwrap())
+        w.write_data_block(&DataBlock::Owned { offset: [0, 0, 0], shape: [nx, ny, nz], data: OwnedData::Float32(data.clone()) })
             .unwrap();
         w.finalize().unwrap();
     }
@@ -201,7 +202,7 @@ fn roundtrip_gzip() {
             .mode::<f32>()
             .finish_gzip()
             .unwrap();
-        w.write_block(&VoxelBlock::new([0, 0, 0], [nx, ny, nz], data.clone()).unwrap())
+        w.write_data_block(&DataBlock::Owned { offset: [0, 0, 0], shape: [nx, ny, nz], data: OwnedData::Float32(data.clone()) })
             .unwrap();
         w.finalize().unwrap();
     }
@@ -231,7 +232,7 @@ fn update_header_stats_roundtrip() {
             .mode::<f32>()
             .finish()
             .unwrap();
-        w.write_block(&VoxelBlock::new([0, 0, 0], [nx, ny, nz], data.clone()).unwrap())
+        w.write_data_block(&DataBlock::Owned { offset: [0, 0, 0], shape: [nx, ny, nz], data: OwnedData::Float32(data.clone()) })
             .unwrap();
         w.update_header_stats().unwrap();
         w.finalize().unwrap();
@@ -362,7 +363,7 @@ fn roundtrip_complex_i16() {
             .mode::<Int16Complex>()
             .finish()
             .unwrap();
-        w.write_block(&VoxelBlock::new([0, 0, 0], [nx, ny, nz], src.clone()).unwrap())
+        w.write_data_block(&DataBlock::Owned { offset: [0, 0, 0], shape: [nx, ny, nz], data: OwnedData::Int16Complex(src.clone()) })
             .unwrap();
         w.finalize().unwrap();
     }
@@ -407,7 +408,7 @@ fn roundtrip_complex_f32() {
             .mode::<Float32Complex>()
             .finish()
             .unwrap();
-        w.write_block(&VoxelBlock::new([0, 0, 0], [nx, ny, nz], src.clone()).unwrap())
+        w.write_data_block(&DataBlock::Owned { offset: [0, 0, 0], shape: [nx, ny, nz], data: OwnedData::Float32Complex(src.clone()) })
             .unwrap();
         w.finalize().unwrap();
     }
@@ -442,7 +443,7 @@ fn mmap_roundtrip_f32() {
             .mode::<f32>()
             .finish()
             .unwrap();
-        w.write_block(&VoxelBlock::new([0, 0, 0], [nx, ny, nz], data.clone()).unwrap())
+        w.write_data_block(&DataBlock::Owned { offset: [0, 0, 0], shape: [nx, ny, nz], data: OwnedData::Float32(data.clone()) })
             .unwrap();
         w.finalize().unwrap();
     }
@@ -473,7 +474,7 @@ fn roundtrip_bzip2() {
             .mode::<f32>()
             .finish_bzip2()
             .unwrap();
-        w.write_block(&VoxelBlock::new([0, 0, 0], [nx, ny, nz], data.clone()).unwrap())
+        w.write_data_block(&DataBlock::Owned { offset: [0, 0, 0], shape: [nx, ny, nz], data: OwnedData::Float32(data.clone()) })
             .unwrap();
         w.finalize().unwrap();
     }
@@ -581,7 +582,7 @@ fn volume_stack_error_on_plain_volume() {
             .finish()
             .unwrap();
         let data = vec![0.0f32; 8 * 8 * 4];
-        w.write_block(&VoxelBlock::new([0, 0, 0], [8, 8, 4], data).unwrap())
+        w.write_data_block(&DataBlock::Owned { offset: [0, 0, 0], shape: [8, 8, 4], data: OwnedData::Float32(data) })
             .unwrap();
         w.finalize().unwrap();
     }
@@ -605,7 +606,7 @@ fn open_permissive_trailing_garbage() {
             .finish()
             .unwrap();
         let data = vec![1.0f32; 16];
-        w.write_block(&VoxelBlock::new([0, 0, 0], [4, 4, 1], data).unwrap())
+        w.write_data_block(&DataBlock::Owned { offset: [0, 0, 0], shape: [4, 4, 1], data: OwnedData::Float32(data) })
             .unwrap();
         w.finalize().unwrap();
     }
@@ -640,7 +641,7 @@ fn open_permissive_bad_map() {
             .finish()
             .unwrap();
         let data = vec![0.0f32; 16];
-        w.write_block(&VoxelBlock::new([0, 0, 0], [4, 4, 1], data).unwrap())
+        w.write_data_block(&DataBlock::Owned { offset: [0, 0, 0], shape: [4, 4, 1], data: OwnedData::Float32(data) })
             .unwrap();
         w.finalize().unwrap();
     }
@@ -688,7 +689,7 @@ fn roundtrip_f16() {
             .mode::<half::f16>()
             .finish()
             .unwrap();
-        w.write_block(&VoxelBlock::new([0, 0, 0], [nx, ny, nz], src_f16.clone()).unwrap())
+        w.write_data_block(&DataBlock::Owned { offset: [0, 0, 0], shape: [nx, ny, nz], data: OwnedData::Float16(src_f16.clone()) })
             .unwrap();
         w.finalize().unwrap();
     }
@@ -733,7 +734,7 @@ fn volumes_iterator() {
             .ispg(401) // volume stack space group
             .finish()
             .unwrap();
-        w.write_block(&VoxelBlock::new([0, 0, 0], [nx, ny, nz], all_data.clone()).unwrap())
+        w.write_data_block(&DataBlock::Owned { offset: [0, 0, 0], shape: [nx, ny, nz], data: OwnedData::Float32(all_data.clone()) })
             .unwrap();
         w.finalize().unwrap();
     }
