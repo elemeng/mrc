@@ -1203,11 +1203,11 @@ impl Writer {
                         let packed_base_offset = self.data_offset + (oz as u64) * (z_slice_bytes as u64);
                         let byte_len = (sz as u64) * (z_slice_bytes as u64);
                         let byte_len_usize = byte_len.try_into().map_err(|_| Error::bounds_err())?;
-                        if data.len() < byte_len_usize {
+                        if data.len() != byte_len_usize {
                             return Err(Error::bounds_err());
                         }
                         io.seek(SeekFrom::Start(packed_base_offset))?;
-                        io.write_all(&data[..byte_len_usize])?;
+                        io.write_all(data)?;
                         Ok(())
                     }
                 };
@@ -1726,6 +1726,8 @@ impl Writer {
                                             stats.push(f32::from(v) as f64);
                                         }
                                     }
+                                    #[cfg(not(feature = "f16"))]
+                                    Mode::Float16 => return Err(Error::UnsupportedMode),
                                     Mode::Packed4Bit => {
                                         let row_bytes = nx.div_ceil(2);
                                         let rows_in_chunk = to_read / row_bytes;

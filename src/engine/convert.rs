@@ -673,8 +673,9 @@ fn convert_block_inner(
         },
         Mode::Int16 => {
             if endian.is_native() {
-                // SAFETY: i16 and u8 have compatible alignment (2 vs 1),
-                // and the byte representation is identical for native endian.
+                // SAFETY: `bytes` comes from a `Vec<u8>` (heap, ≥8-byte aligned)
+                // or `Mmap` (page-aligned), so it is always 2-byte aligned for `i16`.
+                // The byte representation is identical for native endian.
                 let src = unsafe { std::slice::from_raw_parts(bytes.as_ptr() as *const i16, bytes.len() / 2) };
                 Ok(convert_i16_slice_to_f32(src))
             } else {
@@ -684,7 +685,8 @@ fn convert_block_inner(
         }
         Mode::Uint16 => {
             if endian.is_native() {
-                // SAFETY: same reasoning as Int16 above.
+                // SAFETY: `bytes` is always heap-or-mmap allocated (≥2-byte aligned),
+                // and the byte representation is identical for native endian.
                 let src = unsafe { std::slice::from_raw_parts(bytes.as_ptr() as *const u16, bytes.len() / 2) };
                 Ok(convert_u16_slice_to_f32(src))
             } else {
@@ -697,7 +699,7 @@ fn convert_block_inner(
             #[cfg(feature = "f16")]
             {
                 if endian.is_native() {
-                    // SAFETY: same reasoning as Int16 above.
+                    // SAFETY: `bytes` is always heap-or-mmap allocated (≥2-byte aligned for `f16`).
                     let src = unsafe { std::slice::from_raw_parts(bytes.as_ptr() as *const crate::f16, bytes.len() / 2) };
                     Ok(convert_f16_slice_to_f32(src))
                 } else {
