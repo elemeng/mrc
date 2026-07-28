@@ -92,6 +92,9 @@ impl_endian_codec!(i16, 2);
 impl_endian_codec!(u16, 2);
 impl_endian_codec!(i32, 4);
 impl_endian_codec!(f32, 4);
+impl_endian_codec!(u32, 4);
+impl_endian_codec!(i64, 8);
+impl_endian_codec!(f64, 8);
 
 impl EndianCodec for i8 {
     const BYTE_SIZE: usize = 1;
@@ -227,32 +230,44 @@ pub fn decode_into<T: EndianCodec + Copy>(
     }
 
     // Non-native endian: byte-swap raw bytes into the output slice.
-    #[cfg(feature = "simd")]
-    {
-        match T::BYTE_SIZE {
-            2 => crate::engine::simd::swap_2byte_simd(bytes, unsafe {
-                core::slice::from_raw_parts_mut(values.as_mut_ptr() as *mut u8, bytes.len())
-            }),
-            4 => crate::engine::simd::swap_4byte_simd(bytes, unsafe {
-                core::slice::from_raw_parts_mut(values.as_mut_ptr() as *mut u8, bytes.len())
-            }),
-            8 => crate::engine::simd::swap_8byte_simd(bytes, unsafe {
-                core::slice::from_raw_parts_mut(values.as_mut_ptr() as *mut u8, bytes.len())
-            }),
-            _ => {
-                for (i, val) in values.iter_mut().enumerate() {
-                    *val = T::from_bytes(bytes, i * T::BYTE_SIZE, endian);
-                }
+    let dst_bytes = unsafe { core::slice::from_raw_parts_mut(values.as_mut_ptr() as *mut u8, bytes.len()) };
+    swap_bytes_by_size::<T>(bytes, dst_bytes);
+    Ok(())
+}
+
+/// Swap bytes between src and dst for the given element size.
+/// For BYTE_SIZE=1, this is a simple memcpy (single byte = no endianness).
+/// For 2/4/8-byte elements, uses SIMD when available.
+fn swap_bytes_by_size<T: EndianCodec>(src: &[u8], dst: &mut [u8]) {
+    match T::BYTE_SIZE {
+        1 => dst.copy_from_slice(src),
+        2 => {
+            #[cfg(feature = "simd")]
+            crate::engine::simd::swap_2byte_simd(src, dst);
+            #[cfg(not(feature = "simd"))]
+            for (d, s) in dst.chunks_exact_mut(2).zip(src.chunks_exact(2)) {
+                d[0] = s[1]; d[1] = s[0];
             }
         }
-    }
-    #[cfg(not(feature = "simd"))]
-    {
-        for (i, val) in values.iter_mut().enumerate() {
-            *val = T::from_bytes(bytes, i * T::BYTE_SIZE, endian);
+        4 => {
+            #[cfg(feature = "simd")]
+            crate::engine::simd::swap_4byte_simd(src, dst);
+            #[cfg(not(feature = "simd"))]
+            for (d, s) in dst.chunks_exact_mut(4).zip(src.chunks_exact(4)) {
+                d[0] = s[3]; d[1] = s[2]; d[2] = s[1]; d[3] = s[0];
+            }
         }
+        8 => {
+            #[cfg(feature = "simd")]
+            crate::engine::simd::swap_8byte_simd(src, dst);
+            #[cfg(not(feature = "simd"))]
+            for (d, s) in dst.chunks_exact_mut(8).zip(src.chunks_exact(8)) {
+                d[0] = s[7]; d[1] = s[6]; d[2] = s[5]; d[3] = s[4];
+                d[4] = s[3]; d[5] = s[2]; d[6] = s[1]; d[7] = s[0];
+            }
+        }
+        _ => unreachable!(),
     }
-    Ok(())
 }
 
 /// Decode a slice of values from bytes with automatic parallel processing.
@@ -290,8 +305,7 @@ pub fn decode_slice<T: EndianCodec + Send + Copy>(
         return Ok(result);
     }
 
-    // Non-native endian: byte-swap raw bytes to native order, then memcpy.
-    #[cfg(feature = "simd")]
+    // Non-native endian: byte-swap raw bytes to native order.
     {
         let dst_bytes =
             unsafe { std::slice::from_raw_parts_mut(result.as_mut_ptr() as *mut u8, bytes.len()) };
@@ -304,40 +318,13 @@ pub fn decode_slice<T: EndianCodec + Send + Copy>(
             dst_bytes
                 .par_chunks_mut(chunk_bytes)
                 .zip(bytes.par_chunks(chunk_bytes))
-                .for_each(|(dst, src)| {
-                    match T::BYTE_SIZE {
-                        2 => crate::engine::simd::swap_2byte_simd(src, dst),
-                        4 => crate::engine::simd::swap_4byte_simd(src, dst),
-                        8 => crate::engine::simd::swap_8byte_simd(src, dst),
-                        _ => unreachable!(),
-                    }
-                });
+                .for_each(|(dst, src)| swap_bytes_by_size::<T>(src, dst));
         } else {
-            match T::BYTE_SIZE {
-                2 => crate::engine::simd::swap_2byte_simd(bytes, dst_bytes),
-                4 => crate::engine::simd::swap_4byte_simd(bytes, dst_bytes),
-                8 => crate::engine::simd::swap_8byte_simd(bytes, dst_bytes),
-                _ => {
-                    per_element_decode::<T>(&mut result, bytes, n, endian);
-                }
-            }
+            swap_bytes_by_size::<T>(bytes, dst_bytes);
         }
 
         #[cfg(not(feature = "parallel"))]
-        {
-            match T::BYTE_SIZE {
-                2 => crate::engine::simd::swap_2byte_simd(bytes, dst_bytes),
-                4 => crate::engine::simd::swap_4byte_simd(bytes, dst_bytes),
-                8 => crate::engine::simd::swap_8byte_simd(bytes, dst_bytes),
-                _ => {
-                    per_element_decode::<T>(&mut result, bytes, n, endian);
-                }
-            }
-        }
-    }
-    #[cfg(not(feature = "simd"))]
-    {
-        per_element_decode::<T>(&mut result, bytes, n, endian);
+        swap_bytes_by_size::<T>(bytes, dst_bytes);
     }
 
     // SAFETY: all n elements have been initialized above (either via SIMD swap + memcpy, or fallback).
@@ -385,55 +372,13 @@ pub fn encode_slice<T: EndianCodec + Sync>(
         return Ok(());
     }
 
-    // Non-native endian: memcpy native bytes, then byte-swap in-place.
-    // SAFETY: same invariants as the native path — sizes match, buffers
-    // are non-overlapping; the swap functions read and write within bounds.
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            values.as_ptr() as *const u8,
-            bytes.as_mut_ptr(),
-            bytes.len(),
-        );
-    }
-    #[cfg(feature = "simd")]
-    {
-        match T::BYTE_SIZE {
-            2 => {
-                let (src, dst) = (bytes.as_ptr(), bytes.as_mut_ptr());
-                let len = bytes.len();
-                crate::engine::simd::swap_2byte_simd(
-                    // SAFETY: `src`/`dst` point into `bytes`, which is a valid
-                    // mutable slice of known length. The SIMD function respects
-                    // bounds and writes every byte of the output.
-                    unsafe { std::slice::from_raw_parts(src, len) },
-                    unsafe { std::slice::from_raw_parts_mut(dst, len) },
-                );
-            }
-            4 => {
-                let (src, dst) = (bytes.as_ptr(), bytes.as_mut_ptr());
-                let len = bytes.len();
-                crate::engine::simd::swap_4byte_simd(
-                    unsafe { std::slice::from_raw_parts(src, len) },
-                    unsafe { std::slice::from_raw_parts_mut(dst, len) },
-                );
-            }
-            8 => {
-                let (src, dst) = (bytes.as_ptr(), bytes.as_mut_ptr());
-                let len = bytes.len();
-                crate::engine::simd::swap_8byte_simd(
-                    unsafe { std::slice::from_raw_parts(src, len) },
-                    unsafe { std::slice::from_raw_parts_mut(dst, len) },
-                );
-            }
-            _ => {
-                per_element_encode::<T>(values, bytes, endian);
-            }
-        }
-    }
-    #[cfg(not(feature = "simd"))]
-    {
-        per_element_encode::<T>(values, bytes, endian);
-    }
+    // Non-native endian: swap bytes directly from values into output buffer.
+    // SAFETY: values and bytes have the same byte count (checked above) and
+    // are non-overlapping (values is from the caller, bytes is a local buffer).
+    let src = unsafe {
+        core::slice::from_raw_parts(values.as_ptr() as *const u8, bytes.len())
+    };
+    swap_bytes_by_size::<T>(src, bytes);
     Ok(())
 }
 
@@ -447,75 +392,7 @@ pub fn encode_slice<T: EndianCodec + Sync>(
 /// overhead for small requests.
 pub(crate) const PAR_MIN_VOXELS: usize = 262_144;
 
-// ============================================================================
-// Per-element fallback helpers (used when simd feature is disabled)
-// ============================================================================
 
-/// Per-element decode fallback for non-native endian files.
-/// Used when the `simd` feature is not available.
-///
-/// Initializes the first `n` elements of `result` (which must have capacity ≥ n).
-/// Does NOT call `set_len` — the caller is responsible for that.
-fn per_element_decode<T: EndianCodec + Send>(
-    result: &mut Vec<T>,
-    bytes: &[u8],
-    n: usize,
-    endian: FileEndian,
-) {
-    #[cfg(feature = "parallel")]
-    {
-        use rayon::prelude::*;
-        const CHUNK_VOXELS: usize = 262_144;
-        // SAFETY: `result` was allocated with `Vec::with_capacity(n)`, so
-        // `as_mut_ptr()` points to at least `n` uninitialized slots and is
-        // properly aligned for `T`.  Every slot is written to below (through
-        // the mutable slice) before the caller calls `set_len(n)`.
-        let result_slice = unsafe { std::slice::from_raw_parts_mut(result.as_mut_ptr(), n) };
-        result_slice
-            .par_chunks_mut(CHUNK_VOXELS)
-            .zip(bytes.par_chunks(CHUNK_VOXELS * T::BYTE_SIZE))
-            .for_each(|(dst, src)| {
-                for (i, val) in dst.iter_mut().enumerate() {
-                    *val = T::from_bytes(src, i * T::BYTE_SIZE, endian);
-                }
-            });
-    }
-    #[cfg(not(feature = "parallel"))]
-    {
-        // SAFETY: `result` was allocated with `Vec::with_capacity(n)`, so
-        // `as_mut_ptr()` points to at least `n` uninitialized slots and is
-        // properly aligned for `T`.  Every slot is written to below before
-        // the caller calls `set_len(n)`.
-        let result_slice = unsafe { std::slice::from_raw_parts_mut(result.as_mut_ptr(), n) };
-        for (i, slot) in result_slice.iter_mut().enumerate() {
-            *slot = T::from_bytes(bytes, i * T::BYTE_SIZE, endian);
-        }
-    }
-}
-
-/// Per-element encode fallback for non-native endian files.
-/// Used when the `simd` feature is not available.
-fn per_element_encode<T: EndianCodec + Sync>(values: &[T], bytes: &mut [u8], endian: FileEndian) {
-    #[cfg(feature = "parallel")]
-    {
-        use rayon::prelude::*;
-        const CHUNK_VOXELS: usize = 262_144;
-        bytes
-            .par_chunks_mut(CHUNK_VOXELS * T::BYTE_SIZE)
-            .zip(values.par_chunks(CHUNK_VOXELS))
-            .for_each(|(dst, src)| {
-                for (i, val) in src.iter().enumerate() {
-                    val.to_bytes(dst, i * T::BYTE_SIZE, endian);
-                }
-            });
-    }
-    #[cfg(not(feature = "parallel"))]
-    {
-        for (i, val) in values.iter().enumerate() {
-            val.to_bytes(bytes, i * T::BYTE_SIZE, endian);
-        }
-    }
-}
 
 // ============================================================================
 // In-place byte-order swap (public API)

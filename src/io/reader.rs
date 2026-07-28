@@ -694,8 +694,11 @@ impl Reader {
         if !self.ext_header.is_empty() {
             return &self.ext_header;
         }
-        // For mmap readers, ext_header is empty because ext bytes are in the map.
-        // We parse them from the map on demand.
+        // For mmap readers, ext_header is always empty because ext bytes are
+        // read directly from the map on demand below. For buffered readers,
+        // ext_header is populated at open time. The two paths are mutually
+        // exclusive: if ext_header is non-empty we return it immediately,
+        // otherwise we fall through to the mmap path.
         let ext_size = self.header.nsymbt.max(0) as usize;
         if ext_size == 0 {
             return &[];
@@ -1107,112 +1110,22 @@ impl Reader {
         self.subregion([0, 0, 0], [self.shape.nx, self.shape.ny, self.shape.nz])
     }
 
-    /// Iterate over Z-slices as u8 (Uint16 narrowing or Packed4Bit unpack).
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// # fn main() -> Result<(), mrc::Error> {
-    /// # let mut h = mrc::Header::new();
-    /// # h.nx = 4; h.ny = 4; h.nz = 2;
-    /// # h.mx = 4; h.my = 4; h.mz = 2;
-    /// # h.mode = 6; // Uint16
-    /// # let mut raw = [0u8; 1024];
-    /// # h.encode_to_bytes(&mut raw);
-    /// # let buf: Vec<u8> = raw.into_iter().chain(vec![0u8; 64]).collect();
-    /// # let reader = mrc::Reader::from_bytes(buf)?;
-    /// for slice in reader.slices_u8() {
-    ///     let block = slice?;
-    ///     println!("u8 slice at z={}", block.offset[2]);
-    /// }
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub fn slices_u8(&self) -> crate::io::reader_common::VoxelIter<'_, u8> {
-        if self.mode() == Mode::Packed4Bit {
-            let shape = self.shape();
-            let nx = shape.nx;
-            let ny = shape.ny;
-            let nz = shape.nz;
-            return Box::new((0..nz).map(move |z| {
-                let bytes = self.read_block_bytes_cow([0, 0, z], [nx, ny, 1])?;
-                let data = crate::engine::convert::unpack_u4_bytes_to_u8(&bytes, nx, ny);
-                Ok(VoxelBlock {
-                    offset: [0, 0, z],
-                    shape: [nx, ny, 1],
-                    data,
-                })
-            }));
-        }
-        if self.mode() != Mode::Uint16 {
-            return Box::new(std::iter::once(Err(Error::ModeMismatch {
-                file_mode: self.mode(),
-                requested_mode: Mode::Uint16,
-                offset: None,
-            })));
-        }
-        // Uint16 → u8 narrowing: use direct block reads
-        let volume_shape = self.shape();
-        let nx = volume_shape.nx;
-        let ny = volume_shape.ny;
-        let nz = volume_shape.nz;
-        let mut z = 0usize;
-        Box::new(std::iter::from_fn(move || {
-            if z >= nz {
-                return None;
-            }
-            let start = z;
-            z += 1;
-            let bytes = match self.read_block_bytes_cow([0, 0, start], [nx, ny, 1]) {
-                Ok(b) => b,
-                Err(e) => return Some(Err(e)),
-            };
-            let data = match crate::engine::convert::decode_u16_to_u8(&bytes, self.endian()) {
-                Ok(v) => v,
-                Err(e) => return Some(Err(e)),
-            };
-            Some(Ok(VoxelBlock {
-                offset: [0, 0, start],
-                shape: [nx, ny, 1],
-                data,
-            }))
-        }))
-    }
-
-    /// Iterate over Z-slabs as u8.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// # fn main() -> Result<(), mrc::Error> {
-    /// # let mut h = mrc::Header::new();
-    /// # h.nx = 4; h.ny = 4; h.nz = 4;
-    /// # h.mx = 4; h.my = 4; h.mz = 4;
-    /// # h.mode = 6; // Uint16
-    /// # let mut raw = [0u8; 1024];
-    /// # h.encode_to_bytes(&mut raw);
-    /// # let buf: Vec<u8> = raw.into_iter().chain(vec![0u8; 128]).collect();
-    /// # let reader = mrc::Reader::from_bytes(buf)?;
-    /// for slab in reader.slabs_u8(2) {
-    ///     let block = slab?;
-    ///     println!("u8 slab depth: {}", block.shape[2]);
-    /// }
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub fn slabs_u8(&self, k: usize) -> crate::io::reader_common::VoxelIter<'_, u8> {
+    /// Shared u8 iteration logic for both slices and slabs.
+    /// `k=1` produces per-slice iteration; `k>1` produces k-slice slabs.
+    fn iter_u8_internal(&self, k: usize) -> crate::io::reader_common::VoxelIter<'_, u8> {
         if self.mode() == Mode::Packed4Bit {
             let volume_shape = self.shape();
             let nx = volume_shape.nx;
             let ny = volume_shape.ny;
+            let nz = volume_shape.nz;
             let k = k.max(1);
             let mut z = 0usize;
             return Box::new(std::iter::from_fn(move || {
-                if z >= volume_shape.nz {
+                if z >= nz {
                     return None;
                 }
                 let start = z;
-                let sz = k.min(volume_shape.nz - z);
+                let sz = k.min(nz - z);
                 z += sz;
                 let bytes = match self.read_block_bytes_cow([0, 0, start], [nx, ny, sz]) {
                     Ok(b) => b,
@@ -1262,6 +1175,56 @@ impl Reader {
         }))
     }
 
+    /// Iterate over Z-slices as u8 (Uint16 narrowing or Packed4Bit unpack).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # fn main() -> Result<(), mrc::Error> {
+    /// # let mut h = mrc::Header::new();
+    /// # h.nx = 4; h.ny = 4; h.nz = 2;
+    /// # h.mx = 4; h.my = 4; h.mz = 2;
+    /// # h.mode = 6; // Uint16
+    /// # let mut raw = [0u8; 1024];
+    /// # h.encode_to_bytes(&mut raw);
+    /// # let buf: Vec<u8> = raw.into_iter().chain(vec![0u8; 64]).collect();
+    /// # let reader = mrc::Reader::from_bytes(buf)?;
+    /// for slice in reader.slices_u8() {
+    ///     let block = slice?;
+    ///     println!("u8 slice at z={}", block.offset[2]);
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn slices_u8(&self) -> crate::io::reader_common::VoxelIter<'_, u8> {
+        self.iter_u8_internal(1)
+    }
+
+    /// Iterate over Z-slabs as u8.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # fn main() -> Result<(), mrc::Error> {
+    /// # let mut h = mrc::Header::new();
+    /// # h.nx = 4; h.ny = 4; h.nz = 4;
+    /// # h.mx = 4; h.my = 4; h.mz = 4;
+    /// # h.mode = 6; // Uint16
+    /// # let mut raw = [0u8; 1024];
+    /// # h.encode_to_bytes(&mut raw);
+    /// # let buf: Vec<u8> = raw.into_iter().chain(vec![0u8; 128]).collect();
+    /// # let reader = mrc::Reader::from_bytes(buf)?;
+    /// for slab in reader.slabs_u8(2) {
+    ///     let block = slab?;
+    ///     println!("u8 slab depth: {}", block.shape[2]);
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn slabs_u8(&self, k: usize) -> crate::io::reader_common::VoxelIter<'_, u8> {
+        self.iter_u8_internal(k)
+    }
+
     /// Iterate over Z-slices of a Mode 0 file with configurable signed/unsigned interpretation.
     ///
     /// # Examples
@@ -1287,24 +1250,7 @@ impl Reader {
         &self,
         interp: crate::M0Interpretation,
     ) -> crate::io::reader_common::VoxelIter<'_, f32> {
-        if self.mode() != Mode::Int8 {
-            return Box::new(std::iter::once(Err(Error::ModeMismatch {
-                file_mode: self.mode(),
-                requested_mode: Mode::Int8,
-                offset: None,
-            })));
-        }
-        let volume_shape = self.shape();
-        Box::new((0..volume_shape.nz).map(move |z| {
-            let bytes =
-                self.read_block_bytes_cow([0, 0, z], [volume_shape.nx, volume_shape.ny, 1])?;
-            let data = crate::engine::convert::reinterpret_m0(&bytes, interp);
-            Ok(VoxelBlock {
-                offset: [0, 0, z],
-                shape: [volume_shape.nx, volume_shape.ny, 1],
-                data,
-            })
-        }))
+        self.slabs_mode0(1, interp)
     }
 
     /// Iterate over Z-slabs of a Mode 0 file.

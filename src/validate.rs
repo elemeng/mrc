@@ -499,28 +499,33 @@ fn float_mode_issues(
 ) -> Result<Vec<String>, Error> {
     use crate::engine::codec::decode_slice;
     use crate::engine::codec::EndianCodec;
-    let data: Vec<f32> = match mode {
-        Mode::Float32 => decode_slice::<f32>(raw_bytes, endian)?,
+    match mode {
+        Mode::Float32 => {
+            let data = decode_slice::<f32>(raw_bytes, endian)?;
+            let counts = count_non_finite(data.iter().copied());
+            Ok(format_finite_issues(&counts, data.len(), ""))
+        }
         Mode::Float16 => {
             #[cfg(feature = "f16")]
             {
+                // Fused: scan f16 bytes without allocating Vec<f32>.
                 let n = raw_bytes.len() / 2;
-                let mut out = Vec::with_capacity(n);
+                let mut counts = NonFiniteCounts { nan: 0, pos_inf: 0, neg_inf: 0 };
                 for i in 0..n {
-                    let v = crate::f16::from_bytes(raw_bytes, i * 2, endian);
-                    out.push(f32::from(v));
+                    let v = f32::from(crate::f16::from_bytes(raw_bytes, i * 2, endian));
+                    if v.is_nan() { counts.nan += 1; }
+                    else if v.is_infinite() {
+                        if v.is_sign_negative() { counts.neg_inf += 1; }
+                        else { counts.pos_inf += 1; }
+                    }
                 }
-                out
+                Ok(format_finite_issues(&counts, n, ""))
             }
             #[cfg(not(feature = "f16"))]
-            return Ok(vec![
-                "Float16 scanning unavailable (requires `f16` feature)".into(),
-            ]);
+            Ok(vec!["Float16 scanning unavailable (requires `f16` feature)".into()])
         }
-        _ => return Ok(Vec::new()),
-    };
-    let counts = count_non_finite(data.iter().copied());
-    Ok(format_finite_issues(&counts, data.len(), ""))
+        _ => Ok(Vec::new()),
+    }
 }
 
 /// Scan Float32Complex data for NaN/Inf values in both real and imaginary parts.

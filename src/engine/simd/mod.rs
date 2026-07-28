@@ -31,68 +31,73 @@ mod aarch64;
 #[cfg(target_arch = "x86_64")]
 mod x86;
 
+/// Dispatch to SIMD-accelerated implementation using AVX2/NEON, or scalar fallback.
+macro_rules! simd_dispatch_avx2_neon {
+    ($x86_call:expr, $aarch64_call:expr, $fallback:expr) => {{
+        #[cfg(target_arch = "x86_64")]
+        {
+            if is_x86_feature_detected!("avx2") {
+                return unsafe { $x86_call };
+            }
+        }
+        #[cfg(target_arch = "aarch64")]
+        {
+            if is_aarch64_feature_detected!("neon") {
+                return unsafe { $aarch64_call };
+            }
+        }
+        $fallback
+    }};
+}
+
+/// Dispatch using F16C/FP16 features, or scalar fallback.
+macro_rules! simd_dispatch_f16 {
+    ($x86_call:expr, $aarch64_call:expr, $fallback:expr) => {{
+        #[cfg(target_arch = "x86_64")]
+        {
+            if is_x86_feature_detected!("f16c") {
+                return unsafe { $x86_call };
+            }
+        }
+        #[cfg(target_arch = "aarch64")]
+        {
+            if is_aarch64_feature_detected!("fp16") {
+                return unsafe { $aarch64_call };
+            }
+        }
+        $fallback
+    }};
+}
+
 /// Convert a slice of i8 values to f32 using SIMD acceleration.
 ///
 /// Uses 32-lane SIMD when available (AVX2 on x86_64, NEON on AArch64).
 pub(crate) fn convert_i8_to_f32_simd(src: &[i8]) -> Vec<f32> {
-    #[cfg(target_arch = "x86_64")]
-    {
-        if is_x86_feature_detected!("avx2") {
-            return unsafe { x86::convert_i8_to_f32_avx2(src) };
-        }
-    }
-
-    #[cfg(target_arch = "aarch64")]
-    {
-        if is_aarch64_feature_detected!("neon") {
-            return unsafe { aarch64::convert_i8_to_f32_neon(src) };
-        }
-    }
-
-    // Fallback to scalar
-    src.iter().map(|&x| x as f32).collect()
+    simd_dispatch_avx2_neon!(
+        x86::convert_i8_to_f32_avx2(src),
+        aarch64::convert_i8_to_f32_neon(src),
+        src.iter().map(|&x| x as f32).collect()
+    )
 }
 
 /// Convert a slice of i16 values to f32 using SIMD acceleration.
 ///
 /// Uses 16-lane SIMD when available.
 pub(crate) fn convert_i16_to_f32_simd(src: &[i16]) -> Vec<f32> {
-    #[cfg(target_arch = "x86_64")]
-    {
-        if is_x86_feature_detected!("avx2") {
-            return unsafe { x86::convert_i16_to_f32_avx2(src) };
-        }
-    }
-
-    #[cfg(target_arch = "aarch64")]
-    {
-        if is_aarch64_feature_detected!("neon") {
-            return unsafe { aarch64::convert_i16_to_f32_neon(src) };
-        }
-    }
-
-    // Fallback to scalar
-    src.iter().map(|&x| x as f32).collect()
+    simd_dispatch_avx2_neon!(
+        x86::convert_i16_to_f32_avx2(src),
+        aarch64::convert_i16_to_f32_neon(src),
+        src.iter().map(|&x| x as f32).collect()
+    )
 }
 
 /// Convert a slice of u16 values to f32 using SIMD acceleration.
 pub(crate) fn convert_u16_to_f32_simd(src: &[u16]) -> Vec<f32> {
-    #[cfg(target_arch = "x86_64")]
-    {
-        if is_x86_feature_detected!("avx2") {
-            return unsafe { x86::convert_u16_to_f32_avx2(src) };
-        }
-    }
-
-    #[cfg(target_arch = "aarch64")]
-    {
-        if is_aarch64_feature_detected!("neon") {
-            return unsafe { aarch64::convert_u16_to_f32_neon(src) };
-        }
-    }
-
-    // Fallback to scalar
-    src.iter().map(|&x| x as f32).collect()
+    simd_dispatch_avx2_neon!(
+        x86::convert_u16_to_f32_avx2(src),
+        aarch64::convert_u16_to_f32_neon(src),
+        src.iter().map(|&x| x as f32).collect()
+    )
 }
 
 /// Convert a slice of u8 values to f32 using SIMD acceleration.
@@ -100,22 +105,11 @@ pub(crate) fn convert_u16_to_f32_simd(src: &[u16]) -> Vec<f32> {
 /// Uses 32-lane SIMD when available (AVX2 on x86_64, NEON on AArch64).
 /// This supports unsigned Mode 0 interpretation.
 pub(crate) fn convert_u8_to_f32_simd(src: &[u8]) -> Vec<f32> {
-    #[cfg(target_arch = "x86_64")]
-    {
-        if is_x86_feature_detected!("avx2") {
-            return unsafe { x86::convert_u8_to_f32_avx2(src) };
-        }
-    }
-
-    #[cfg(target_arch = "aarch64")]
-    {
-        if is_aarch64_feature_detected!("neon") {
-            return unsafe { aarch64::convert_u8_to_f32_neon(src) };
-        }
-    }
-
-    // Fallback to scalar
-    src.iter().map(|&x| x as f32).collect()
+    simd_dispatch_avx2_neon!(
+        x86::convert_u8_to_f32_avx2(src),
+        aarch64::convert_u8_to_f32_neon(src),
+        src.iter().map(|&x| x as f32).collect()
+    )
 }
 
 /// Convert a slice of f16 values to f32 using SIMD acceleration.
@@ -123,22 +117,11 @@ pub(crate) fn convert_u8_to_f32_simd(src: &[u8]) -> Vec<f32> {
 /// Uses F16C on x86_64 or fp16 on AArch64 when available.
 #[cfg(feature = "f16")]
 pub(crate) fn convert_f16_to_f32_simd(src: &[crate::f16]) -> Vec<f32> {
-    #[cfg(target_arch = "x86_64")]
-    {
-        if is_x86_feature_detected!("f16c") {
-            return unsafe { x86::convert_f16_to_f32_avx2(src) };
-        }
-    }
-
-    #[cfg(target_arch = "aarch64")]
-    {
-        if is_aarch64_feature_detected!("fp16") {
-            return unsafe { aarch64::convert_f16_to_f32_neon(src) };
-        }
-    }
-
-    // Fallback to scalar
-    src.iter().map(|&v| f32::from(v)).collect()
+    simd_dispatch_f16!(
+        x86::convert_f16_to_f32_avx2(src),
+        aarch64::convert_f16_to_f32_neon(src),
+        src.iter().map(|&v| f32::from(v)).collect()
+    )
 }
 
 /// Convert a slice of f32 values to f16 using SIMD acceleration.
@@ -146,22 +129,11 @@ pub(crate) fn convert_f16_to_f32_simd(src: &[crate::f16]) -> Vec<f32> {
 /// Uses F16C on x86_64 or fp16 on AArch64 when available.
 #[cfg(feature = "f16")]
 pub(crate) fn convert_f32_to_f16_simd(src: &[f32]) -> Vec<crate::f16> {
-    #[cfg(target_arch = "x86_64")]
-    {
-        if is_x86_feature_detected!("f16c") {
-            return unsafe { x86::convert_f32_to_f16_avx2(src) };
-        }
-    }
-
-    #[cfg(target_arch = "aarch64")]
-    {
-        if is_aarch64_feature_detected!("fp16") {
-            return unsafe { aarch64::convert_f32_to_f16_neon(src) };
-        }
-    }
-
-    // Fallback to scalar
-    src.iter().map(|&v| crate::f16::from_f32(v)).collect()
+    simd_dispatch_f16!(
+        x86::convert_f32_to_f16_avx2(src),
+        aarch64::convert_f32_to_f16_neon(src),
+        src.iter().map(|&v| crate::f16::from_f32(v)).collect()
+    )
 }
 
 /// Compute (dmin, dmax, dmean, rms) for f32 data using SIMD acceleration.
@@ -174,22 +146,11 @@ pub(crate) fn stats_f32_simd(data: &[f32]) -> (f32, f32, f32, f32) {
         return (0.0, -1.0, -2.0, -1.0);
     }
 
-    #[cfg(target_arch = "x86_64")]
-    {
-        if is_x86_feature_detected!("avx2") {
-            return unsafe { x86::stats_f32_avx2(data) };
-        }
-    }
-
-    #[cfg(target_arch = "aarch64")]
-    {
-        if is_aarch64_feature_detected!("neon") {
-            return unsafe { aarch64::stats_f32_neon(data) };
-        }
-    }
-
-    // Scalar fallback: single-pass Welford
-    stats_f32_scalar(data)
+    simd_dispatch_avx2_neon!(
+        x86::stats_f32_avx2(data),
+        aarch64::stats_f32_neon(data),
+        stats_f32_scalar(data)
+    )
 }
 
 /// Scalar single-pass f32 statistics (Welford's online algorithm).
@@ -224,25 +185,16 @@ pub(crate) fn swap_2byte_simd(src: &[u8], dst: &mut [u8]) {
     debug_assert_eq!(src.len(), dst.len());
     debug_assert!(src.len() % 2 == 0);
 
-    #[cfg(target_arch = "x86_64")]
-    {
-        if is_x86_feature_detected!("avx2") {
-            return unsafe { x86::swap_2byte_avx2(src, dst) };
+    simd_dispatch_avx2_neon!(
+        x86::swap_2byte_avx2(src, dst),
+        aarch64::swap_2byte_neon(src, dst),
+        {
+            for (i, chunk) in src.chunks_exact(2).enumerate() {
+                dst[i * 2] = chunk[1];
+                dst[i * 2 + 1] = chunk[0];
+            }
         }
-    }
-
-    #[cfg(target_arch = "aarch64")]
-    {
-        if is_aarch64_feature_detected!("neon") {
-            return unsafe { aarch64::swap_2byte_neon(src, dst) };
-        }
-    }
-
-    // Fallback to scalar
-    for (i, chunk) in src.chunks_exact(2).enumerate() {
-        dst[i * 2] = chunk[1];
-        dst[i * 2 + 1] = chunk[0];
-    }
+    )
 }
 
 /// Swap byte order within 4-byte groups. Supports i32/f32/u32 endian conversion.
@@ -250,27 +202,18 @@ pub(crate) fn swap_4byte_simd(src: &[u8], dst: &mut [u8]) {
     debug_assert_eq!(src.len(), dst.len());
     debug_assert!(src.len() % 4 == 0);
 
-    #[cfg(target_arch = "x86_64")]
-    {
-        if is_x86_feature_detected!("avx2") {
-            return unsafe { x86::swap_4byte_avx2(src, dst) };
+    simd_dispatch_avx2_neon!(
+        x86::swap_4byte_avx2(src, dst),
+        aarch64::swap_4byte_neon(src, dst),
+        {
+            for (i, chunk) in src.chunks_exact(4).enumerate() {
+                dst[i * 4] = chunk[3];
+                dst[i * 4 + 1] = chunk[2];
+                dst[i * 4 + 2] = chunk[1];
+                dst[i * 4 + 3] = chunk[0];
+            }
         }
-    }
-
-    #[cfg(target_arch = "aarch64")]
-    {
-        if is_aarch64_feature_detected!("neon") {
-            return unsafe { aarch64::swap_4byte_neon(src, dst) };
-        }
-    }
-
-    // Fallback to scalar
-    for (i, chunk) in src.chunks_exact(4).enumerate() {
-        dst[i * 4] = chunk[3];
-        dst[i * 4 + 1] = chunk[2];
-        dst[i * 4 + 2] = chunk[1];
-        dst[i * 4 + 3] = chunk[0];
-    }
+    )
 }
 
 /// Swap byte order within 8-byte groups. Supports f64/i64/u64 endian conversion.
@@ -278,31 +221,22 @@ pub(crate) fn swap_8byte_simd(src: &[u8], dst: &mut [u8]) {
     debug_assert_eq!(src.len(), dst.len());
     debug_assert!(src.len() % 8 == 0);
 
-    #[cfg(target_arch = "x86_64")]
-    {
-        if is_x86_feature_detected!("avx2") {
-            return unsafe { x86::swap_8byte_avx2(src, dst) };
+    simd_dispatch_avx2_neon!(
+        x86::swap_8byte_avx2(src, dst),
+        aarch64::swap_8byte_neon(src, dst),
+        {
+            for (i, chunk) in src.chunks_exact(8).enumerate() {
+                dst[i * 8] = chunk[7];
+                dst[i * 8 + 1] = chunk[6];
+                dst[i * 8 + 2] = chunk[5];
+                dst[i * 8 + 3] = chunk[4];
+                dst[i * 8 + 4] = chunk[3];
+                dst[i * 8 + 5] = chunk[2];
+                dst[i * 8 + 6] = chunk[1];
+                dst[i * 8 + 7] = chunk[0];
+            }
         }
-    }
-
-    #[cfg(target_arch = "aarch64")]
-    {
-        if is_aarch64_feature_detected!("neon") {
-            return unsafe { aarch64::swap_8byte_neon(src, dst) };
-        }
-    }
-
-    // Fallback to scalar
-    for (i, chunk) in src.chunks_exact(8).enumerate() {
-        dst[i * 8] = chunk[7];
-        dst[i * 8 + 1] = chunk[6];
-        dst[i * 8 + 2] = chunk[5];
-        dst[i * 8 + 3] = chunk[4];
-        dst[i * 8 + 4] = chunk[3];
-        dst[i * 8 + 5] = chunk[2];
-        dst[i * 8 + 6] = chunk[1];
-        dst[i * 8 + 7] = chunk[0];
-    }
+    )
 }
 
 // =============================================================================
@@ -314,32 +248,21 @@ pub(crate) fn swap_8byte_simd(src: &[u8], dst: &mut [u8]) {
 /// Values are clamped to the representable range of i16 before conversion.
 #[cfg(feature = "simd")]
 pub(crate) fn convert_f32_to_i16_simd(src: &[f32]) -> Vec<i16> {
-    #[cfg(target_arch = "x86_64")]
-    {
-        if is_x86_feature_detected!("avx2") {
-            return unsafe { x86::convert_f32_to_i16_avx2(src) };
-        }
-    }
-
-    #[cfg(target_arch = "aarch64")]
-    {
-        if is_aarch64_feature_detected!("neon") {
-            return unsafe { aarch64::convert_f32_to_i16_neon(src) };
-        }
-    }
-
-    // Fallback to scalar
-    src.iter()
-        .map(|&v| {
-            if v >= i16::MAX as f32 {
-                i16::MAX
-            } else if v <= i16::MIN as f32 {
-                i16::MIN
-            } else {
-                v as i16
-            }
-        })
-        .collect()
+    simd_dispatch_avx2_neon!(
+        x86::convert_f32_to_i16_avx2(src),
+        aarch64::convert_f32_to_i16_neon(src),
+        src.iter()
+            .map(|&v| {
+                if v >= i16::MAX as f32 {
+                    i16::MAX
+                } else if v <= i16::MIN as f32 {
+                    i16::MIN
+                } else {
+                    v as i16
+                }
+            })
+            .collect()
+    )
 }
 
 /// Convert a slice of f32 values to u16 using SIMD acceleration.
@@ -347,32 +270,21 @@ pub(crate) fn convert_f32_to_i16_simd(src: &[f32]) -> Vec<i16> {
 /// Values are clamped to [0, u16::MAX] before conversion.
 #[cfg(feature = "simd")]
 pub(crate) fn convert_f32_to_u16_simd(src: &[f32]) -> Vec<u16> {
-    #[cfg(target_arch = "x86_64")]
-    {
-        if is_x86_feature_detected!("avx2") {
-            return unsafe { x86::convert_f32_to_u16_avx2(src) };
-        }
-    }
-
-    #[cfg(target_arch = "aarch64")]
-    {
-        if is_aarch64_feature_detected!("neon") {
-            return unsafe { aarch64::convert_f32_to_u16_neon(src) };
-        }
-    }
-
-    // Fallback to scalar
-    src.iter()
-        .map(|&v| {
-            if v >= u16::MAX as f32 {
-                u16::MAX
-            } else if v <= 0.0 {
-                0
-            } else {
-                v as u16
-            }
-        })
-        .collect()
+    simd_dispatch_avx2_neon!(
+        x86::convert_f32_to_u16_avx2(src),
+        aarch64::convert_f32_to_u16_neon(src),
+        src.iter()
+            .map(|&v| {
+                if v >= u16::MAX as f32 {
+                    u16::MAX
+                } else if v <= 0.0 {
+                    0
+                } else {
+                    v as u16
+                }
+            })
+            .collect()
+    )
 }
 
 /// Convert a slice of f32 values to i8 using SIMD acceleration.
@@ -380,32 +292,21 @@ pub(crate) fn convert_f32_to_u16_simd(src: &[f32]) -> Vec<u16> {
 /// Values are clamped to the representable range of i8 before conversion.
 #[cfg(feature = "simd")]
 pub(crate) fn convert_f32_to_i8_simd(src: &[f32]) -> Vec<i8> {
-    #[cfg(target_arch = "x86_64")]
-    {
-        if is_x86_feature_detected!("avx2") {
-            return unsafe { x86::convert_f32_to_i8_avx2(src) };
-        }
-    }
-
-    #[cfg(target_arch = "aarch64")]
-    {
-        if is_aarch64_feature_detected!("neon") {
-            return unsafe { aarch64::convert_f32_to_i8_neon(src) };
-        }
-    }
-
-    // Fallback to scalar
-    src.iter()
-        .map(|&v| {
-            if v >= i8::MAX as f32 {
-                i8::MAX
-            } else if v <= i8::MIN as f32 {
-                i8::MIN
-            } else {
-                v as i8
-            }
-        })
-        .collect()
+    simd_dispatch_avx2_neon!(
+        x86::convert_f32_to_i8_avx2(src),
+        aarch64::convert_f32_to_i8_neon(src),
+        src.iter()
+            .map(|&v| {
+                if v >= i8::MAX as f32 {
+                    i8::MAX
+                } else if v <= i8::MIN as f32 {
+                    i8::MIN
+                } else {
+                    v as i8
+                }
+            })
+            .collect()
+    )
 }
 
 // =============================================================================

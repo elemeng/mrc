@@ -489,19 +489,8 @@ impl Header {
     }
 
     #[inline]
-    /// Detailed header validation returning specific error information.
-    ///
-    /// ```
-    /// use mrc::Header;
-    /// let h = Header::new();
-    /// match h.validate_detailed() {
-    ///     Err(e) => assert!(e.to_string().contains("dimensions")),
-    ///     Ok(()) => unreachable!(),
-    /// }
-    /// ```
-    pub fn validate_detailed(&self) -> Result<(), crate::HeaderValidationError> {
+    fn check_dimensions(&self) -> Result<(), crate::HeaderValidationError> {
         use crate::HeaderValidationError;
-
         if self.nx <= 0 || self.ny <= 0 || self.nz <= 0 {
             return Err(HeaderValidationError::InvalidDimensions {
                 nx: self.nx,
@@ -509,22 +498,42 @@ impl Header {
                 nz: self.nz,
             });
         }
+        Ok(())
+    }
 
+    #[inline]
+    fn check_mode(&self) -> Result<(), crate::HeaderValidationError> {
+        use crate::HeaderValidationError;
         if Mode::from_i32(self.mode).is_none() {
             return Err(HeaderValidationError::UnsupportedMode(self.mode));
         }
+        Ok(())
+    }
 
+    #[inline]
+    fn check_map(&self) -> Result<(), crate::HeaderValidationError> {
+        use crate::HeaderValidationError;
         if !self.validate_map() {
             return Err(HeaderValidationError::InvalidMap(self.map));
         }
+        Ok(())
+    }
 
+    #[inline]
+    fn check_ispg(&self) -> Result<(), crate::HeaderValidationError> {
+        use crate::HeaderValidationError;
         if !(self.ispg == 0
             || (self.ispg >= 1 && self.ispg <= 230)
             || (self.ispg >= 400 && self.ispg <= 630))
         {
             return Err(HeaderValidationError::InvalidIspg(self.ispg));
         }
+        Ok(())
+    }
 
+    #[inline]
+    fn check_axes(&self) -> Result<(), crate::HeaderValidationError> {
+        use crate::HeaderValidationError;
         if !(matches!(self.mapc, 1..=3)
             && matches!(self.mapr, 1..=3)
             && matches!(self.maps, 1..=3)
@@ -538,17 +547,30 @@ impl Header {
                 maps: self.maps,
             });
         }
+        Ok(())
+    }
 
+    #[inline]
+    fn check_nsymbt(&self) -> Result<(), crate::HeaderValidationError> {
+        use crate::HeaderValidationError;
         if self.nsymbt < 0 {
             return Err(HeaderValidationError::InvalidNsymbt(self.nsymbt));
         }
+        Ok(())
+    }
 
+    #[inline]
+    fn check_nlabl(&self) -> Result<(), crate::HeaderValidationError> {
+        use crate::HeaderValidationError;
         if self.nlabl < 0 || self.nlabl > 10 {
             return Err(HeaderValidationError::InvalidNlabl(self.nlabl));
         }
+        Ok(())
+    }
 
-        // Label sequence validation: nlabl must match actual non-empty labels,
-        // and no empty labels may appear between filled ones.
+    #[inline]
+    fn check_label_sequence(&self) -> Result<(), crate::HeaderValidationError> {
+        use crate::HeaderValidationError;
         let actual_labels = self.count_non_empty_labels();
         if actual_labels != self.nlabl as usize {
             return Err(HeaderValidationError::LabelCountMismatch {
@@ -561,12 +583,22 @@ impl Header {
                 return Err(HeaderValidationError::EmptyLabelBeforeFilled { index: i as i32 });
             }
         }
+        Ok(())
+    }
 
+    #[inline]
+    fn check_nversion(&self) -> Result<(), crate::HeaderValidationError> {
+        use crate::HeaderValidationError;
         let nversion = self.nversion();
         if nversion != 0 && nversion != 20140 && nversion != 20141 {
             return Err(HeaderValidationError::InvalidNversion(nversion));
         }
+        Ok(())
+    }
 
+    #[inline]
+    fn check_sampling(&self) -> Result<(), crate::HeaderValidationError> {
+        use crate::HeaderValidationError;
         if self.mx <= 0 || self.my <= 0 || self.mz <= 0 {
             return Err(HeaderValidationError::InvalidSampling {
                 mx: self.mx,
@@ -574,7 +606,12 @@ impl Header {
                 mz: self.mz,
             });
         }
+        Ok(())
+    }
 
+    #[inline]
+    fn check_volume_stack(&self) -> Result<(), crate::HeaderValidationError> {
+        use crate::HeaderValidationError;
         if self.ispg >= 400 && self.ispg <= 630 && self.mz != 0 && self.nz % self.mz != 0 {
             return Err(HeaderValidationError::InvalidVolumeStack {
                 nz: self.nz,
@@ -582,7 +619,31 @@ impl Header {
                 ispg: self.ispg,
             });
         }
+        Ok(())
+    }
 
+    /// Detailed header validation returning specific error information.
+    ///
+    /// ```
+    /// use mrc::Header;
+    /// let h = Header::new();
+    /// match h.validate_detailed() {
+    ///     Err(e) => assert!(e.to_string().contains("dimensions")),
+    ///     Ok(()) => unreachable!(),
+    /// }
+    /// ```
+    pub fn validate_detailed(&self) -> Result<(), crate::HeaderValidationError> {
+        self.check_dimensions()?;
+        self.check_mode()?;
+        self.check_map()?;
+        self.check_ispg()?;
+        self.check_axes()?;
+        self.check_nsymbt()?;
+        self.check_nlabl()?;
+        self.check_label_sequence()?;
+        self.check_nversion()?;
+        self.check_sampling()?;
+        self.check_volume_stack()?;
         Ok(())
     }
 
@@ -604,48 +665,26 @@ impl Header {
     /// assert!(h.validate_permissive().is_ok());
     /// ```
     pub fn validate_permissive(&self) -> Result<Vec<String>, crate::HeaderValidationError> {
-        use crate::HeaderValidationError;
+        self.check_dimensions()?;
+        self.check_mode()?;
+
         let mut warnings = Vec::new();
 
-        if self.nx <= 0 || self.ny <= 0 || self.nz <= 0 {
-            return Err(HeaderValidationError::InvalidDimensions {
-                nx: self.nx,
-                ny: self.ny,
-                nz: self.nz,
-            });
-        }
-
-        if Mode::from_i32(self.mode).is_none() {
-            return Err(HeaderValidationError::UnsupportedMode(self.mode));
-        }
-
-        if !self.validate_map() {
+        if let Err(ref _e) = self.check_map() {
             warnings.push(format!(
                 "MAP field is non-standard: {:?}",
                 String::from_utf8_lossy(&self.map)
             ));
         }
 
-        if !(self.ispg == 0
-            || (self.ispg >= 1 && self.ispg <= 230)
-            || (self.ispg >= 400 && self.ispg <= 630))
-        {
+        if let Err(_e) = self.check_ispg() {
             warnings.push(format!(
                 "ISPG {} is outside the standard ranges (0, 1-230, 400-630)",
                 self.ispg
             ));
         }
 
-        if !(self.mapc != 0
-            && self.mapc.abs() <= 3
-            && self.mapr != 0
-            && self.mapr.abs() <= 3
-            && self.maps != 0
-            && self.maps.abs() <= 3
-            && self.mapc.abs() != self.mapr.abs()
-            && self.mapc.abs() != self.maps.abs()
-            && self.mapr.abs() != self.maps.abs())
-        {
+        if let Err(_e) = self.check_axes() {
             warnings.push(format!(
                 "Axis mapping ({}, {}, {}) is not a valid permutation of axis indices",
                 self.mapc, self.mapr, self.maps
@@ -654,27 +693,26 @@ impl Header {
             warnings.push("mapr = -2 indicates Y-inverted image data (IMOD convention)".into());
         }
 
-        if self.nsymbt < 0 {
+        if let Err(_e) = self.check_nsymbt() {
             warnings.push(format!("NSYMBT is negative ({})", self.nsymbt));
         }
 
-        if self.nlabl < 0 || self.nlabl > 10 {
+        if let Err(_e) = self.check_nlabl() {
             warnings.push(format!("NLABL {} is outside 0-10", self.nlabl));
         }
 
-        let nversion = self.nversion();
-        if nversion != 20140 && nversion != 20141 {
-            warnings.push(format!("NVERSION {} is not 20140 or 20141", nversion));
+        if let Err(_e) = self.check_nversion() {
+            warnings.push(format!("NVERSION {} is not 20140 or 20141", self.nversion()));
         }
 
-        if self.mx <= 0 || self.my <= 0 || self.mz <= 0 {
+        if let Err(_e) = self.check_sampling() {
             warnings.push(format!(
                 "Sampling (mx={}, my={}, mz={}) is not all positive",
                 self.mx, self.my, self.mz
             ));
         }
 
-        if self.ispg >= 400 && self.ispg <= 630 && self.mz != 0 && self.nz % self.mz != 0 {
+        if let Err(_e) = self.check_volume_stack() {
             warnings.push(format!(
                 "Volume stack: nz ({}) is not divisible by mz ({}) for ispg={}",
                 self.nz, self.mz, self.ispg

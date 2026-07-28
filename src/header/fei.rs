@@ -4,6 +4,9 @@
 //! This module provides typed access to the most commonly used fields.
 //! For fields not yet covered, use the raw byte slice directly.
 
+use crate::engine::codec::EndianCodec;
+use crate::engine::endian::FileEndian;
+
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
@@ -322,60 +325,27 @@ pub fn parse_fei2_records(bytes: &[u8]) -> Option<Vec<Fei2Metadata>> {
 
 #[inline]
 fn be_u32(bytes: &[u8], offset: usize) -> u32 {
-    u32::from_be_bytes([
-        bytes[offset],
-        bytes[offset + 1],
-        bytes[offset + 2],
-        bytes[offset + 3],
-    ])
+    u32::from_bytes(bytes, offset, FileEndian::BigEndian)
 }
 
 #[inline]
 fn le_u32(bytes: &[u8], offset: usize) -> u32 {
-    u32::from_le_bytes([
-        bytes[offset],
-        bytes[offset + 1],
-        bytes[offset + 2],
-        bytes[offset + 3],
-    ])
+    u32::from_bytes(bytes, offset, FileEndian::LittleEndian)
 }
 
 #[inline]
 fn be_i32(bytes: &[u8], offset: usize) -> i32 {
-    i32::from_be_bytes([
-        bytes[offset],
-        bytes[offset + 1],
-        bytes[offset + 2],
-        bytes[offset + 3],
-    ])
+    i32::from_bytes(bytes, offset, FileEndian::BigEndian)
 }
 
 #[inline]
 fn be_i64(bytes: &[u8], offset: usize) -> i64 {
-    i64::from_be_bytes([
-        bytes[offset],
-        bytes[offset + 1],
-        bytes[offset + 2],
-        bytes[offset + 3],
-        bytes[offset + 4],
-        bytes[offset + 5],
-        bytes[offset + 6],
-        bytes[offset + 7],
-    ])
+    i64::from_bytes(bytes, offset, FileEndian::BigEndian)
 }
 
 #[inline]
 fn be_f64(bytes: &[u8], offset: usize) -> f64 {
-    f64::from_be_bytes([
-        bytes[offset],
-        bytes[offset + 1],
-        bytes[offset + 2],
-        bytes[offset + 3],
-        bytes[offset + 4],
-        bytes[offset + 5],
-        bytes[offset + 6],
-        bytes[offset + 7],
-    ])
+    f64::from_bytes(bytes, offset, FileEndian::BigEndian)
 }
 
 #[inline]

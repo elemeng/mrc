@@ -30,7 +30,7 @@ use serde::{Deserialize, Serialize};
 /// }
 /// # Ok(()) }
 /// ```
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub enum DataView<'a> {
     /// Signed 8-bit integer (Mode 0).
     Int8(&'a [i8]),
@@ -160,17 +160,7 @@ impl<'a> DataBlock<'a> {
     #[inline]
     pub fn data(&self) -> DataView<'_> {
         match self {
-            DataBlock::Borrowed { data, .. } => match data {
-                DataView::Int8(v) => DataView::Int8(v),
-                DataView::Int16(v) => DataView::Int16(v),
-                DataView::Float32(v) => DataView::Float32(v),
-                DataView::Int16Complex(v) => DataView::Int16Complex(v),
-                DataView::Float32Complex(v) => DataView::Float32Complex(v),
-                DataView::Uint16(v) => DataView::Uint16(v),
-                #[cfg(feature = "f16")]
-                DataView::Float16(v) => DataView::Float16(v),
-                DataView::Packed4Bit(v) => DataView::Packed4Bit(v),
-            },
+            DataBlock::Borrowed { data, .. } => *data,
             DataBlock::Owned { data, .. } => data.into(),
         }
     }

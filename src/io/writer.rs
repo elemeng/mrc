@@ -821,6 +821,23 @@ impl Writer {
         Self::create_compressed(path, header, ext_header, compression, false)
     }
 
+    /// Common initialization shared by all constructors.
+    /// Sets endian, validates, and extracts derived metadata.
+    fn init_writer(
+        mut header: Header,
+    ) -> Result<(Header, u64, Mode, usize, VolumeShape), Error> {
+        header.set_file_endian(FileEndian::LittleEndian);
+        header.validate_detailed()?;
+        let data_offset = header.data_offset() as u64;
+        let mode = Mode::from_i32(header.mode).ok_or(Error::UnsupportedMode)?;
+        let bytes_per_voxel = mode.byte_size();
+        let shape = VolumeShape::new(header.nx as usize, header.ny as usize, header.nz as usize);
+        Ok((header, data_offset, mode, bytes_per_voxel, shape))
+    }
+
+    const MODE3_WARNING: &str =
+        "Mode 3 (Int16Complex) is obsolete and should not be used for writing new files.";
+
     pub(crate) fn create<P: AsRef<std::path::Path>>(
         path: P,
         header: Header,
@@ -837,13 +854,11 @@ impl Writer {
 
     fn _create(
         mut io: Box<dyn ReadWriteSeek + 'static>,
-        mut header: Header,
+        header: Header,
         ext_header: &[u8],
     ) -> Result<Self, Error> {
-        // New files are always little-endian per crate policy
-        header.set_file_endian(FileEndian::LittleEndian);
-
-        header.validate_detailed()?;
+        let (header, data_offset, mode, bytes_per_voxel, shape) =
+            Self::init_writer(header)?;
 
         let mut header_bytes = [0u8; 1024];
         header.encode_to_bytes(&mut header_bytes);
@@ -866,16 +881,9 @@ impl Writer {
             }
         }
 
-        let data_offset = header.data_offset() as u64;
-        let mode = Mode::from_i32(header.mode).ok_or(Error::UnsupportedMode)?;
         if mode == Mode::Int16Complex {
-            tracing::warn!(
-                "Mode 3 (Int16Complex) is obsolete and should not be used for writing new files."
-            );
+            tracing::warn!("{}", Self::MODE3_WARNING);
         }
-        let bytes_per_voxel = mode.byte_size();
-
-        let shape = VolumeShape::new(header.nx as usize, header.ny as usize, header.nz as usize);
 
         Ok(Self {
             header,
@@ -892,11 +900,12 @@ impl Writer {
     #[cfg(feature = "mmap")]
     pub(crate) fn create_mmap<P: AsRef<std::path::Path>>(
         path: P,
-        mut header: Header,
+        header: Header,
         ext_header: &[u8],
     ) -> Result<Self, Error> {
-        header.set_file_endian(FileEndian::LittleEndian);
-        header.validate_detailed()?;
+        let (header, data_offset, mode, bytes_per_voxel, shape) =
+            Self::init_writer(header)?;
+
         let total_size = header
             .data_offset()
             .checked_add(header.data_size().ok_or(Error::InvalidHeader)?)
@@ -936,15 +945,10 @@ impl Writer {
             }
         };
 
-        let data_offset = header.data_offset() as u64;
-        let mode = Mode::from_i32(header.mode).ok_or(Error::UnsupportedMode)?;
         if mode == Mode::Int16Complex {
-            tracing::warn!(
-                "Mode 3 (Int16Complex) is obsolete and should not be used for writing new files."
-            );
+            tracing::warn!("{}", Self::MODE3_WARNING);
         }
-        let bytes_per_voxel = mode.byte_size();
-        let shape = VolumeShape::new(header.nx as usize, header.ny as usize, header.nz as usize);
+
         Ok(Self {
             header,
             data_offset,
@@ -965,11 +969,12 @@ impl Writer {
         compression: CompressionLevel,
         is_gzip: bool,
     ) -> Result<Self, Error> {
-        header.set_file_endian(FileEndian::LittleEndian);
         if !ext_header.is_empty() {
             header.nsymbt = ext_header.len() as i32;
         }
-        header.validate_detailed()?;
+        let (header, data_offset, mode, bytes_per_voxel, shape) =
+            Self::init_writer(header)?;
+
         let ext_size = header.nsymbt as usize;
         let ext_stored = if ext_header.len() >= ext_size {
             ext_header[..ext_size].to_vec()
@@ -987,15 +992,11 @@ impl Writer {
         if ext_size > 0 {
             buf[1024..1024 + ext_size].copy_from_slice(&ext_stored);
         }
-        let data_offset = header.data_offset() as u64;
-        let mode = Mode::from_i32(header.mode).ok_or(Error::UnsupportedMode)?;
+
         if mode == Mode::Int16Complex {
-            tracing::warn!(
-                "Mode 3 (Int16Complex) is obsolete and should not be used for writing new files."
-            );
+            tracing::warn!("{}", Self::MODE3_WARNING);
         }
-        let bytes_per_voxel = mode.byte_size();
-        let shape = VolumeShape::new(header.nx as usize, header.ny as usize, header.nz as usize);
+
         Ok(Self {
             header,
             data_offset,
@@ -1430,79 +1431,72 @@ impl Writer {
         shape: [usize; 3],
     ) -> Result<(), Error> {
         let b = self.bytes_per_voxel;
-        match &mut self.sink {
-            DataSink::File(io) => {
-                let [nx, ny, _nz] = [self.shape.nx, self.shape.ny, self.shape.nz];
-                let [ox, oy, oz] = offset;
-                let [sx, sy, sz] = shape;
+        let [nx, ny, _nz] = [self.shape.nx, self.shape.ny, self.shape.nz];
+        let [ox, oy, oz] = offset;
+        let [sx, sy, sz] = shape;
+        let block_row_bytes = sx * b;
 
-                if ox == 0 && sx == nx && oy == 0 && sy == ny {
-                    let linear = (ox as u64)
-                        + (oy as u64) * (nx as u64)
-                        + (oz as u64) * (nx as u64) * (ny as u64);
-                    let start_offset = self.data_offset + linear * (b as u64);
+        if ox == 0 && sx == nx && oy == 0 && sy == ny {
+            let linear = (ox as u64)
+                + (oy as u64) * (nx as u64)
+                + (oz as u64) * (nx as u64) * (ny as u64);
+            let start_offset = self.data_offset + linear * (b as u64);
+            return match &mut self.sink {
+                DataSink::File(io) => {
                     io.seek(SeekFrom::Start(start_offset))?;
                     io.write_all(bytes)?;
-                    return Ok(());
+                    Ok(())
                 }
-
-                let block_row_bytes = sx * b;
-                for z in 0..sz {
-                    for y in 0..sy {
-                        let file_linear = ox + (oy + y) * nx + (oz + z) * nx * ny;
-                        let file_offset = self.data_offset + (file_linear as u64) * (b as u64);
-                        let block_start = (y * sx + z * sx * sy) * b;
-                        let block_end = block_start + block_row_bytes;
-                        if block_end > bytes.len() {
-                            return Err(Error::bounds_err());
-                        }
-                        io.seek(SeekFrom::Start(file_offset))?;
-                        io.write_all(&bytes[block_start..block_end])?;
+                DataSink::Mmap(mmap) => {
+                    let dst = start_offset as usize;
+                    if dst + bytes.len() > mmap.len() {
+                        return Err(Error::bounds_err());
                     }
+                    mmap[dst..dst + bytes.len()].copy_from_slice(bytes);
+                    Ok(())
                 }
-                Ok(())
-            }
-            DataSink::Mmap(mmap) => {
-                let block_row_bytes = shape[0] * b;
-                for z in 0..shape[2] {
-                    for y in 0..shape[1] {
-                        let src = (y * shape[0] + z * shape[0] * shape[1]) * b;
-                        let dst = offset[0]
-                            + (offset[1] + y) * self.shape.nx
-                            + (offset[2] + z) * self.shape.nx * self.shape.ny;
-                        let dst = self.data_offset as usize + dst * b;
-                        if dst + block_row_bytes > mmap.len()
-                            || src + block_row_bytes > bytes.len()
-                        {
+                DataSink::Compressed { buf, .. } => {
+                    let dst = start_offset as usize;
+                    if dst + bytes.len() > buf.len() {
+                        return Err(Error::bounds_err());
+                    }
+                    buf[dst..dst + bytes.len()].copy_from_slice(bytes);
+                    Ok(())
+                }
+            };
+        }
+
+        for z in 0..sz {
+            for y in 0..sy {
+                let lin = ox + (oy + y) * nx + (oz + z) * nx * ny;
+                let dst = self.data_offset as usize + lin * b;
+                let src = (y * sx + z * sx * sy) * b;
+                if src + block_row_bytes > bytes.len() {
+                    return Err(Error::bounds_err());
+                }
+                match &mut self.sink {
+                    DataSink::File(io) => {
+                        io.seek(SeekFrom::Start(dst as u64))?;
+                        io.write_all(&bytes[src..src + block_row_bytes])?;
+                    }
+                    DataSink::Mmap(mmap) => {
+                        if dst + block_row_bytes > mmap.len() {
                             return Err(Error::bounds_err());
                         }
                         mmap[dst..dst + block_row_bytes]
                             .copy_from_slice(&bytes[src..src + block_row_bytes]);
                     }
-                }
-                Ok(())
-            }
-            DataSink::Compressed { buf, .. } => {
-                let block_row_bytes = shape[0] * b;
-                for z in 0..shape[2] {
-                    for y in 0..shape[1] {
-                        let src = (y * shape[0] + z * shape[0] * shape[1]) * b;
-                        let dst = offset[0]
-                            + (offset[1] + y) * self.shape.nx
-                            + (offset[2] + z) * self.shape.nx * self.shape.ny;
-                        let dst = self.data_offset as usize + dst * b;
-                        if dst + block_row_bytes > buf.len()
-                            || src + block_row_bytes > bytes.len()
-                        {
+                    DataSink::Compressed { buf, .. } => {
+                        if dst + block_row_bytes > buf.len() {
                             return Err(Error::bounds_err());
                         }
                         buf[dst..dst + block_row_bytes]
                             .copy_from_slice(&bytes[src..src + block_row_bytes]);
                     }
                 }
-                Ok(())
             }
         }
+        Ok(())
     }
 
 
