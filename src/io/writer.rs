@@ -1168,6 +1168,18 @@ impl Writer {
                         + (oy as u64) * (nx as u64)
                         + (oz as u64) * (nx as u64) * (ny as u64);
                     let start_offset = self.data_offset + linear * (b as u64);
+                    if file_endian == FileEndian::native() {
+                        // SAFETY: T has no padding and any bit pattern is valid u8.
+                        let bytes = unsafe {
+                            core::slice::from_raw_parts(
+                                data.as_ptr() as *const u8,
+                                core::mem::size_of_val(data),
+                            )
+                        };
+                        io.seek(SeekFrom::Start(start_offset))?;
+                        io.write_all(bytes)?;
+                        return Ok(());
+                    }
                     let byte_len = (sx as u64) * (sy as u64) * (sz as u64) * (b as u64);
                     let byte_len_usize = byte_len.try_into().map_err(|_| Error::bounds_err())?;
                     let mut buffer = vec![0u8; byte_len_usize];
@@ -1343,19 +1355,13 @@ impl Writer {
             return self.write_block(block);
         };
 
-        let chunk_size = 1024 * 1024;
         let linear =
             (ox as u64) + (oy as u64) * (nx as u64) + (oz as u64) * (nx as u64) * (ny as u64);
         let base_offset = self.data_offset + linear * (self.bytes_per_voxel as u64);
         let file_endian = self.header.detect_endian();
-        let encoded_chunks = encode_block_parallel(&block.data, chunk_size, file_endian);
-
-        for (chunk_idx, encoded) in encoded_chunks {
-            let offset = base_offset
-                + (chunk_idx as u64) * (chunk_size as u64) * (self.bytes_per_voxel as u64);
-            io.seek(SeekFrom::Start(offset))?;
-            io.write_all(&encoded)?;
-        }
+        let encoded = encode_block_parallel(&block.data, file_endian);
+        io.seek(SeekFrom::Start(base_offset))?;
+        io.write_all(&encoded)?;
         Ok(())
     }
 

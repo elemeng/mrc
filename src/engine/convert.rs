@@ -6,7 +6,10 @@
 //! Specific conversions:
 //! - `i8`/`i16`/`u16`/`u8` → `f32` (for `convert::<f32>()` auto-conversion)
 //! - `f16` ↔ `f32` (for `convert::<f32>()` auto-conversion and `write_block_as`)
-//! - `u8` → `u16`, `u16` → `u8` (Mode 6 utilities)
+//! - Fused decode+convert: `i16→i8`, `i8→i16`, `u16→i8`, `i8→u16`,
+//!   `u16→i16`, `i16→u16`, `f32→i16`, `f32→u16` (single-pass, no intermediate)
+//! - `u16 → u8` narrowing (fused decode+narrow in one pass)
+//! - `u8 → u16` widening (Mode 6 convenience)
 //! - Mode 0 reinterpretation (signed vs unsigned `i8`)
 //! - 4-bit packed data unpacking/packing
 
@@ -361,60 +364,6 @@ pub(crate) fn convert_f32_slice_to_i8(src: &[f32]) -> Vec<i8> {
 }
 
 // ============================================================================
-// Integer↔integer direct conversions (avoid f32 intermediate)
-// ============================================================================
-
-/// Widen `i8` to `i16` (always exact, no clamping needed).
-pub(crate) fn convert_i8_slice_to_i16(src: &[i8]) -> Vec<i16> {
-    src.iter().map(|&v| v as i16).collect()
-}
-
-/// Narrow `i16` to `i8`, clamping to the representable range.
-pub(crate) fn convert_i16_slice_to_i8(src: &[i16]) -> Vec<i8> {
-    src.iter()
-        .map(|&v| {
-            if v > i8::MAX as i16 {
-                i8::MAX
-            } else if v < i8::MIN as i16 {
-                i8::MIN
-            } else {
-                v as i8
-            }
-        })
-        .collect()
-}
-
-/// Convert `i8` to `u16` (negative values become 0, positive widen exactly).
-pub(crate) fn convert_i8_slice_to_u16(src: &[i8]) -> Vec<u16> {
-    src.iter().map(|&v| v.max(0) as u16).collect()
-}
-
-/// Convert `u16` to `i8`, clamping to the representable range.
-pub(crate) fn convert_u16_slice_to_i8(src: &[u16]) -> Vec<i8> {
-    src.iter()
-        .map(|&v| if v > i8::MAX as u16 { i8::MAX } else { v as i8 })
-        .collect()
-}
-
-/// Convert `i16` to `u16` (negative values become 0).
-pub(crate) fn convert_i16_slice_to_u16(src: &[i16]) -> Vec<u16> {
-    src.iter().map(|&v| v.max(0) as u16).collect()
-}
-
-/// Convert `u16` to `i16`, clamping to the representable range.
-pub(crate) fn convert_u16_slice_to_i16(src: &[u16]) -> Vec<i16> {
-    src.iter()
-        .map(|&v| {
-            if v > i16::MAX as u16 {
-                i16::MAX
-            } else {
-                v as i16
-            }
-        })
-        .collect()
-}
-
-// ============================================================================
 // Generic conversion dispatcher — single match over all source modes
 // ============================================================================
 
@@ -430,7 +379,6 @@ pub(crate) fn decode_block_to_any(
     bytes: &[u8],
     mode: Mode,
     endian: FileEndian,
-    _block_shape: [usize; 3],
 ) -> Result<crate::mode::OwnedData, Error> {
     Ok(match mode {
         Mode::Int8 => {
@@ -485,14 +433,22 @@ pub(crate) fn decode_block_to_any(
 ///   this is used to compute the nibble-unpack row stride (`sx`) and total
 ///   row count (`sy × sz`).  For other modes it is unused.
 ///
-/// # Dispatch
-/// 1. **Direct integer shortcut** — when source and target are both narrow
-///    integers (`i8↔i16`, `i8↔u16`, `i16↔u16`), the conversion skips the
-///    f32 intermediate entirely, saving one allocation.
-/// 2. **f32 hub fallback** — every other source mode (Float16, Float32,
-///    complex, Packed4Bit) is decoded to `Vec<f32>` first, then converted
-///    to `T` via [`ConvertFrom<f32>`]. Complex modes use the given
+/// # Dispatch (in order)
+/// 1. **Fused integer shortcut** — when source and target are both narrow
+///    integers (`i8↔i16`, `i8↔u16`, `i16↔u16`), decodes and converts in a
+///    single pass, eliminating the intermediate `Vec<Src>` allocation.
+/// 2. **Fused Float32 shortcut** — `Float32→i16` and `Float32→u16` also
+///    fuse decode+clamp into one pass.
+/// 3. **f32 hub fallback** — every other source mode (Float16, Float32
+///    (identity), complex, Packed4Bit) is decoded to `Vec<f32>` first, then
+///    converted to `T` via [`ConvertFrom<f32>`]. Complex modes use the given
 ///    `complex_strategy` (default: [`Magnitude`](ComplexToRealStrategy::Magnitude)).
+///    When `T == f32` the intermediate is reused directly (no clone).
+///
+/// # Parallelism
+/// For large multi-plane blocks (≥`PAR_MIN_VOXELS` voxels, `sz > 1`), the
+/// block is split by Z and each chunk is processed independently via rayon
+/// (requires the `parallel` feature, enabled by default).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn convert_block<T>(
     bytes: &[u8],
@@ -559,8 +515,8 @@ fn convert_block_seq<T>(
     bytes: &[u8],
     mode: Mode,
     endian: FileEndian,
-    nx: usize,
-    ny: usize,
+    _nx: usize,
+    _ny: usize,
     block_shape: [usize; 3],
     complex_strategy: ComplexToRealStrategy,
     m0_interp: M0Interpretation,
@@ -574,45 +530,51 @@ where
     // (i8 is always treated as signed in the integer domain; unsigned Mode 0
     //  is a byte-interpretation issue that only matters in the f32 hub).
     {
-        // i16 → i8
+        // i16 → i8 (fused, eliminates Vec<i16> intermediate)
         if mode == Mode::Int16 && core::any::TypeId::of::<T>() == core::any::TypeId::of::<i8>() {
-            let src = decode_slice::<i16>(bytes, endian)?;
-            let r = convert_i16_slice_to_i8(&src);
+            let r = decode_i16_to_i8(bytes, endian)?;
             // SAFETY: TypeId checked above guarantees T == i8, so sizes match.
             return Ok(unsafe { reinterpret_vec::<i8, T>(r) });
         }
-        // i8 → i16
+        // i8 → i16 (fused, eliminates Vec<i8> intermediate)
         if mode == Mode::Int8 && core::any::TypeId::of::<T>() == core::any::TypeId::of::<i16>() {
-            let src = decode_slice::<i8>(bytes, endian)?;
-            let r = convert_i8_slice_to_i16(&src);
+            let r = decode_i8_to_i16(bytes, endian)?;
             // SAFETY: TypeId checked above guarantees T == i16, so sizes match.
             return Ok(unsafe { reinterpret_vec::<i16, T>(r) });
         }
-        // u16 → i8
+        // u16 → i8 (fused, eliminates Vec<u16> intermediate)
         if mode == Mode::Uint16 && core::any::TypeId::of::<T>() == core::any::TypeId::of::<i8>() {
-            let src = decode_slice::<u16>(bytes, endian)?;
-            let r = convert_u16_slice_to_i8(&src);
+            let r = decode_u16_to_i8(bytes, endian)?;
             // SAFETY: TypeId checked above guarantees T == i8, so sizes match.
             return Ok(unsafe { reinterpret_vec::<i8, T>(r) });
         }
-        // i8 → u16
+        // i8 → u16 (fused, eliminates Vec<i8> intermediate)
         if mode == Mode::Int8 && core::any::TypeId::of::<T>() == core::any::TypeId::of::<u16>() {
-            let src = decode_slice::<i8>(bytes, endian)?;
-            let r = convert_i8_slice_to_u16(&src);
+            let r = decode_i8_to_u16(bytes, endian)?;
             // SAFETY: TypeId checked above guarantees T == u16, so sizes match.
             return Ok(unsafe { reinterpret_vec::<u16, T>(r) });
         }
-        // u16 → i16
+        // u16 → i16 (fused, eliminates Vec<u16> intermediate)
         if mode == Mode::Uint16 && core::any::TypeId::of::<T>() == core::any::TypeId::of::<i16>() {
-            let src = decode_slice::<u16>(bytes, endian)?;
-            let r = convert_u16_slice_to_i16(&src);
+            let r = decode_u16_to_i16(bytes, endian)?;
             // SAFETY: TypeId checked above guarantees T == i16, so sizes match.
             return Ok(unsafe { reinterpret_vec::<i16, T>(r) });
         }
-        // i16 → u16
+        // i16 → u16 (fused, eliminates Vec<i16> intermediate)
         if mode == Mode::Int16 && core::any::TypeId::of::<T>() == core::any::TypeId::of::<u16>() {
-            let src = decode_slice::<i16>(bytes, endian)?;
-            let r = convert_i16_slice_to_u16(&src);
+            let r = decode_i16_to_u16(bytes, endian)?;
+            // SAFETY: TypeId checked above guarantees T == u16, so sizes match.
+            return Ok(unsafe { reinterpret_vec::<u16, T>(r) });
+        }
+        // Float32 → i16 shortcut (avoids f32 hub)
+        if mode == Mode::Float32 && core::any::TypeId::of::<T>() == core::any::TypeId::of::<i16>() {
+            let r = decode_f32_to_i16(bytes, endian)?;
+            // SAFETY: TypeId checked above guarantees T == i16, so sizes match.
+            return Ok(unsafe { reinterpret_vec::<i16, T>(r) });
+        }
+        // Float32 → u16 shortcut (avoids f32 hub)
+        if mode == Mode::Float32 && core::any::TypeId::of::<T>() == core::any::TypeId::of::<u16>() {
+            let r = decode_f32_to_u16(bytes, endian)?;
             // SAFETY: TypeId checked above guarantees T == u16, so sizes match.
             return Ok(unsafe { reinterpret_vec::<u16, T>(r) });
         }
@@ -632,7 +594,7 @@ where
             convert_u8_slice_to_f32(&unpacked)
         }
         Mode::Float16 => convert_block_float16(bytes, endian)?,
-        other => convert_block_inner(bytes, other, endian, nx, ny, complex_strategy, m0_interp)?,
+        other => convert_block_inner(bytes, other, endian, complex_strategy, m0_interp)?,
     };
     // Avoid the identity-clone when T == f32 by reusing the allocation.
     // SAFETY: The TypeId check guarantees T and f32 are the same type at the
@@ -657,19 +619,11 @@ fn convert_block_inner(
     bytes: &[u8],
     mode: Mode,
     endian: FileEndian,
-    _nx: usize,
-    _ny: usize,
     complex_strategy: ComplexToRealStrategy,
     m0_interp: M0Interpretation,
 ) -> Result<Vec<f32>, Error> {
     match mode {
-        Mode::Int8 => match m0_interp {
-            M0Interpretation::Signed => {
-                let src = decode_slice::<i8>(bytes, endian)?;
-                Ok(convert_i8_slice_to_f32(&src))
-            }
-            M0Interpretation::Unsigned => Ok(reinterpret_m0(bytes, M0Interpretation::Unsigned)),
-        },
+        Mode::Int8 => Ok(reinterpret_m0(bytes, m0_interp)),
         Mode::Int16 => {
             let src = decode_slice::<i16>(bytes, endian)?;
             Ok(convert_i16_slice_to_f32(&src))
@@ -902,6 +856,191 @@ mod tests {
         let phase = c.to_real(ComplexToRealStrategy::Phase);
         assert!((phase - 0.927_295_2).abs() < 1e-6);
     }
+}
+
+// ============================================================================
+// Fused decode+convert functions (eliminate intermediate Vec<Src> allocation)
+// ============================================================================
+
+/// Fused: decode bytes as i16, clamp to i8, produce Vec<i8> in one pass.
+pub(crate) fn decode_i16_to_i8(bytes: &[u8], endian: FileEndian) -> Result<Vec<i8>, Error> {
+    let n = bytes.len() / 2;
+    let mut result = vec![0i8; n];
+    if endian == FileEndian::native() {
+        for i in 0..n {
+            let val = i16::from_ne_bytes([bytes[i * 2], bytes[i * 2 + 1]]);
+            result[i] = val.clamp(i8::MIN as i16, i8::MAX as i16) as i8;
+        }
+    } else {
+        for i in 0..n {
+            let val = i16::from_be_bytes([bytes[i * 2], bytes[i * 2 + 1]]);
+            result[i] = val.clamp(i8::MIN as i16, i8::MAX as i16) as i8;
+        }
+    }
+    Ok(result)
+}
+
+/// Fused: sign-extend each byte to i16 in one pass (no endian dependency for 1-byte elements).
+pub(crate) fn decode_i8_to_i16(bytes: &[u8], _endian: FileEndian) -> Result<Vec<i16>, Error> {
+    let n = bytes.len();
+    let mut result = Vec::with_capacity(n);
+    // i8 has no byte-order concern, just sign-extend
+    for &b in bytes {
+        result.push(b as i8 as i16);
+    }
+    Ok(result)
+}
+
+/// Fused: decode bytes as u16, clamp to i8, produce Vec<i8> in one pass.
+pub(crate) fn decode_u16_to_i8(bytes: &[u8], endian: FileEndian) -> Result<Vec<i8>, Error> {
+    let n = bytes.len() / 2;
+    let mut result = vec![0i8; n];
+    if endian == FileEndian::native() {
+        for i in 0..n {
+            let val = u16::from_ne_bytes([bytes[i * 2], bytes[i * 2 + 1]]);
+            result[i] = val.min(i8::MAX as u16) as i8;
+        }
+    } else {
+        for i in 0..n {
+            let val = u16::from_be_bytes([bytes[i * 2], bytes[i * 2 + 1]]);
+            result[i] = val.min(i8::MAX as u16) as i8;
+        }
+    }
+    Ok(result)
+}
+
+/// Fused: widen each byte to u16 in one pass (negative → 0).
+pub(crate) fn decode_i8_to_u16(bytes: &[u8], _endian: FileEndian) -> Result<Vec<u16>, Error> {
+    let n = bytes.len();
+    let mut result = Vec::with_capacity(n);
+    for &b in bytes {
+        result.push((b as i8).max(0) as u16);
+    }
+    Ok(result)
+}
+
+/// Fused: decode bytes as u16, produce Vec<i16> in one pass (clamping at i16::MAX).
+pub(crate) fn decode_u16_to_i16(bytes: &[u8], endian: FileEndian) -> Result<Vec<i16>, Error> {
+    let n = bytes.len() / 2;
+    let mut result = vec![0i16; n];
+    if endian == FileEndian::native() {
+        for i in 0..n {
+            let val = u16::from_ne_bytes([bytes[i * 2], bytes[i * 2 + 1]]);
+            result[i] = val.min(i16::MAX as u16) as i16;
+        }
+    } else {
+        for i in 0..n {
+            let val = u16::from_be_bytes([bytes[i * 2], bytes[i * 2 + 1]]);
+            result[i] = val.min(i16::MAX as u16) as i16;
+        }
+    }
+    Ok(result)
+}
+
+/// Fused: decode bytes as i16, produce Vec<u16> in one pass (negative → 0).
+pub(crate) fn decode_i16_to_u16(bytes: &[u8], endian: FileEndian) -> Result<Vec<u16>, Error> {
+    let n = bytes.len() / 2;
+    let mut result = vec![0u16; n];
+    if endian == FileEndian::native() {
+        for i in 0..n {
+            let val = i16::from_ne_bytes([bytes[i * 2], bytes[i * 2 + 1]]);
+            result[i] = val.max(0) as u16;
+        }
+    } else {
+        for i in 0..n {
+            let val = i16::from_be_bytes([bytes[i * 2], bytes[i * 2 + 1]]);
+            result[i] = val.max(0) as u16;
+        }
+    }
+    Ok(result)
+}
+
+/// Fused: decode bytes as f32, clamp to i16, produce Vec<i16> in one pass.
+pub(crate) fn decode_f32_to_i16(bytes: &[u8], endian: FileEndian) -> Result<Vec<i16>, Error> {
+    let n = bytes.len() / 4;
+    let mut result = vec![0i16; n];
+    if endian == FileEndian::native() {
+        for i in 0..n {
+            let val = f32::from_ne_bytes([bytes[i * 4], bytes[i * 4 + 1], bytes[i * 4 + 2], bytes[i * 4 + 3]]);
+            result[i] = if val >= i16::MAX as f32 { i16::MAX }
+                       else if val <= i16::MIN as f32 { i16::MIN }
+                       else { val as i16 };
+        }
+    } else {
+        for i in 0..n {
+            let val = f32::from_be_bytes([bytes[i * 4], bytes[i * 4 + 1], bytes[i * 4 + 2], bytes[i * 4 + 3]]);
+            result[i] = if val >= i16::MAX as f32 { i16::MAX }
+                       else if val <= i16::MIN as f32 { i16::MIN }
+                       else { val as i16 };
+        }
+    }
+    Ok(result)
+}
+
+/// Fused: decode bytes as f32, clamp to u16, produce Vec<u16> in one pass.
+pub(crate) fn decode_f32_to_u16(bytes: &[u8], endian: FileEndian) -> Result<Vec<u16>, Error> {
+    let n = bytes.len() / 4;
+    let mut result = vec![0u16; n];
+    if endian == FileEndian::native() {
+        for i in 0..n {
+            let val = f32::from_ne_bytes([bytes[i * 4], bytes[i * 4 + 1], bytes[i * 4 + 2], bytes[i * 4 + 3]]);
+            result[i] = if val >= u16::MAX as f32 { u16::MAX }
+                       else if val <= 0.0 { 0 }
+                       else { val as u16 };
+        }
+    } else {
+        for i in 0..n {
+            let val = f32::from_be_bytes([bytes[i * 4], bytes[i * 4 + 1], bytes[i * 4 + 2], bytes[i * 4 + 3]]);
+            result[i] = if val >= u16::MAX as f32 { u16::MAX }
+                       else if val <= 0.0 { 0 }
+                       else { val as u16 };
+        }
+    }
+    Ok(result)
+}
+
+// ============================================================================
+// u16 → u8 fused decode (fuses endian handling with narrowing)
+// ============================================================================
+
+/// Decode raw u16 bytes directly to `Vec<u8>`, fusing endian handling with
+/// narrowing validation in a single pass.
+///
+/// This avoids the intermediate `Vec<u16>` allocation that
+/// `decode_slice::<u16>` + `convert_u16_slice_to_u8` would require.
+///
+/// # Errors
+/// Returns [`Error::ValueOutOfRange`] if any u16 value exceeds 255.
+pub(crate) fn decode_u16_to_u8(bytes: &[u8], endian: FileEndian) -> Result<Vec<u8>, Error> {
+    let n = bytes.len() / 2;
+    let mut out = Vec::with_capacity(n);
+    match endian {
+        FileEndian::LittleEndian => {
+            // Little-endian: u16 word = [lo, hi]; for values ≤ 255, hi byte = 0.
+            for chunk in bytes.chunks_exact(2) {
+                if chunk[1] != 0 {
+                    return Err(crate::Error::ValueOutOfRange {
+                        value: chunk[1] as u64,
+                        max: 255,
+                    });
+                }
+                out.push(chunk[0]);
+            }
+        }
+        FileEndian::BigEndian => {
+            // Big-endian: u16 word = [hi, lo]; for values ≤ 255, hi byte = 0.
+            for chunk in bytes.chunks_exact(2) {
+                if chunk[0] != 0 {
+                    return Err(crate::Error::ValueOutOfRange {
+                        value: chunk[0] as u64,
+                        max: 255,
+                    });
+                }
+                out.push(chunk[1]);
+            }
+        }
+    }
+    Ok(out)
 }
 
 // ============================================================================
