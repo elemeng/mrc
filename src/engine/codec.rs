@@ -390,6 +390,7 @@ pub fn encode_slice<T: EndianCodec + Sync>(
 ///
 /// Blocks smaller than this are processed sequentially, avoiding rayon
 /// overhead for small requests.
+#[cfg(feature = "parallel")]
 pub(crate) const PAR_MIN_VOXELS: usize = 262_144;
 
 

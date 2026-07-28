@@ -499,6 +499,7 @@ pub(crate) fn convert_block<T>(
 where
     T: Voxel + ConvertFrom<f32>,
 {
+    #[cfg(feature = "parallel")]
     let [sx, sy, sz] = block_shape;
 
     // Parallel path for large multi-plane blocks (Packed4Bit excluded — its

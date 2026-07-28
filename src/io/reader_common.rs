@@ -10,6 +10,7 @@ use crate::mode::Voxel;
 use crate::{Error, Mode};
 use crate::{VolumeShape, VoxelBlock};
 use std::borrow::Cow;
+#[cfg(any(feature = "gzip", feature = "bzip2"))]
 use std::io::Read;
 
 /// Internal helper: type-erased voxel block iterator.
@@ -483,6 +484,7 @@ pub(crate) fn parse_header(
 pub const DEFAULT_MAX_DECOMPRESSED_BYTES: u64 = 256 * 1024 * 1024 * 1024;
 
 /// Components of a decompressed MRC file.
+#[cfg(any(feature = "gzip", feature = "bzip2"))]
 pub(crate) struct DecompressedMrc {
     pub header: crate::Header,
     pub ext_header: Vec<u8>,
@@ -491,6 +493,7 @@ pub(crate) struct DecompressedMrc {
 }
 
 /// Open a compressed MRC file from a decoder.
+#[cfg(any(feature = "gzip", feature = "bzip2"))]
 pub(crate) fn open_compressed<D: std::io::Read>(
     mut decoder: D,
     permissive: bool,

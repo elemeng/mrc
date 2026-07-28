@@ -12,6 +12,7 @@
 
 use crate::Error;
 use crate::engine::codec::decode_slice;
+#[cfg(feature = "f16")]
 use crate::engine::codec::EndianCodec;
 use crate::engine::endian::FileEndian;
 use crate::mode::{Float32Complex, Int16Complex, Mode};
@@ -98,6 +99,7 @@ impl RunningStats {
     }
 
     /// Merge another `RunningStats` instance (for parallel chunks).
+    #[cfg(any(feature = "simd", test))]
     pub fn merge(&mut self, other: &Self) {
         if other.n == 0 {
             return;

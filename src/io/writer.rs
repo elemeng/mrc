@@ -141,6 +141,7 @@ use crate::engine::block::{VolumeShape, VoxelBlock};
 #[cfg(feature = "parallel")]
 use crate::engine::codec::encode_block_parallel;
 use crate::engine::codec::encode_slice;
+#[cfg(feature = "f16")]
 use crate::engine::codec::EndianCodec;
 use crate::engine::endian::FileEndian;
 use crate::mode::Voxel;
@@ -158,6 +159,7 @@ enum DataSink {
     #[cfg(feature = "mmap")]
     Mmap(memmap2::MmapMut),
     /// Buffered in memory; compressed and written to disk on finalize.
+    #[allow(dead_code)]
     Compressed {
         buf: Vec<u8>,
         path: std::path::PathBuf,
@@ -1447,6 +1449,7 @@ impl Writer {
                     io.write_all(bytes)?;
                     Ok(())
                 }
+                #[cfg(feature = "mmap")]
                 DataSink::Mmap(mmap) => {
                     let dst = start_offset as usize;
                     if dst + bytes.len() > mmap.len() {
@@ -1479,6 +1482,7 @@ impl Writer {
                         io.seek(SeekFrom::Start(dst as u64))?;
                         io.write_all(&bytes[src..src + block_row_bytes])?;
                     }
+                    #[cfg(feature = "mmap")]
                     DataSink::Mmap(mmap) => {
                         if dst + block_row_bytes > mmap.len() {
                             return Err(Error::bounds_err());
@@ -1622,16 +1626,17 @@ impl Writer {
                 mmap.flush()?;
                 Ok(())
             }
-            DataSink::Compressed {
-                buf,
-                path,
-                compression,
-                is_gzip,
-            } => {
+            #[allow(unused_variables)]
+            DataSink::Compressed { buf, path, compression, is_gzip } => {
                 buf[..1024].copy_from_slice(&header_bytes);
-                let compressed = compress_data(buf, *compression, *is_gzip)?;
-                std::fs::write(path, compressed)?;
-                Ok(())
+                #[cfg(any(feature = "gzip", feature = "bzip2"))]
+                {
+                    let compressed = compress_data(buf, *compression, *is_gzip)?;
+                    std::fs::write(path, compressed)?;
+                    Ok(())
+                }
+                #[cfg(not(any(feature = "gzip", feature = "bzip2")))]
+                Err(Error::UnsupportedMode)
             }
         };
         if result.is_ok() {

@@ -39,13 +39,13 @@ pub fn detect_compression_from_bytes(bytes: &[u8]) -> CompressionType {
     if bytes.len() < 2 {
         return CompressionType::Plain;
     }
-    let magic = [bytes[0], bytes[1]];
+    let _magic = [bytes[0], bytes[1]];
     #[cfg(feature = "gzip")]
-    if magic == [0x1f, 0x8b] {
+    if _magic == [0x1f, 0x8b] {
         return CompressionType::Gzip;
     }
     #[cfg(feature = "bzip2")]
-    if magic == *b"BZ" {
+    if _magic == *b"BZ" {
         return CompressionType::Bzip2;
     }
     CompressionType::Plain
@@ -289,7 +289,10 @@ impl Reader {
         path: &std::path::Path,
         permissive: bool,
     ) -> Result<(Self, Vec<String>), Error> {
-        use std::io::{Read, Seek};
+        use std::io::Read;
+        // Seek is needed for gzip/bzip2 seek-back and non-mmap fallback.
+        #[allow(unused_imports)]
+        use std::io::Seek;
 
         let mut file = std::fs::File::open(path)?;
         let mut magic = [0u8; 2];
@@ -526,6 +529,7 @@ impl Reader {
     }
 
     /// Construct a Reader from a decompressed MRC (used by gzip/bzip2 readers).
+    #[cfg(any(feature = "gzip", feature = "bzip2"))]
     pub(crate) fn _from_decompressed(
         d: crate::io::reader_common::DecompressedMrc,
     ) -> Result<(Self, Vec<String>), Error> {

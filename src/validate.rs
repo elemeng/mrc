@@ -22,6 +22,8 @@
 //! ```
 
 use crate::engine::endian::FileEndian;
+#[cfg(feature = "f16")]
+use crate::engine::codec::EndianCodec;
 use crate::engine::stats::validate_header_stats;
 use crate::{Error, Mode, Reader};
 use std::path::Path;
@@ -498,7 +500,6 @@ fn float_mode_issues(
     endian: FileEndian,
 ) -> Result<Vec<String>, Error> {
     use crate::engine::codec::decode_slice;
-    use crate::engine::codec::EndianCodec;
     match mode {
         Mode::Float32 => {
             let data = decode_slice::<f32>(raw_bytes, endian)?;
