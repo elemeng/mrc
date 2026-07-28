@@ -105,13 +105,10 @@ where
         block_shape: [usize; 3],
     ) -> Result<VoxelBlock<T>, Error> {
         let bytes = self.reader.read_block_bytes_cow(offset, block_shape)?;
-        let s = self.reader.shape();
         let data = crate::engine::convert::convert_block::<T>(
             &bytes,
             self.reader.mode(),
             self.reader.endian(),
-            s.nx,
-            s.ny,
             block_shape,
             self.complex_strategy,
             self.m0_interp,
@@ -164,16 +161,12 @@ where
 {
     let mode = reader.mode();
     let endian = reader.endian();
-    let nx = volume_shape.nx;
-    let ny = volume_shape.ny;
     RawConvertIter::new(reader, volume_shape, stepper).map(move |result| {
         let (bytes, offset, shape) = result?;
         let data = crate::engine::convert::convert_block::<T>(
             &bytes,
             mode,
             endian,
-            nx,
-            ny,
             shape,
             complex_strategy,
             m0_interp,
@@ -442,7 +435,17 @@ pub(crate) fn write_block_bytes(
             if packed_end > packed.len() {
                 return Err(cold_bounds_error());
             }
+            // Preserve high nibble of the last byte when sx is odd:
+            // the high nibble encodes a pixel outside the block.
+            let saved_high = if sx % 2 != 0 {
+                Some(buf[file_end - 1] & 0xF0)
+            } else {
+                None
+            };
             buf[file_start..file_end].copy_from_slice(&packed[packed_start..packed_end]);
+            if let Some(high) = saved_high {
+                buf[file_end - 1] = high | (buf[file_end - 1] & 0x0F);
+            }
         }
     }
     Ok(())

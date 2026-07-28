@@ -1368,7 +1368,7 @@ impl Writer {
     /// | [`Int8`](Mode::Int8) | `f32` → `i8` (clamped, SIMD) |
     /// | [`Int16`](Mode::Int16) | `f32` → `i16` (clamped, SIMD) |
     /// | [`Uint16`](Mode::Uint16) | `f32` → `u16` (clamped, SIMD) |
-    /// | [`Float32`](Mode::Float32) | `f32` → `f32` (pass-through) |
+    /// | [`Float32`](Mode::Float32) | `f32` → `f32` (identity encode) |
     /// | [`Float16`](Mode::Float16) | `f32` → `f16` (SIMD, requires `f16` feature) |
     ///
     /// Complex modes and Packed4Bit are not convertible from real f32 data.
@@ -1567,6 +1567,16 @@ impl Writer {
                         }
                         io.seek(SeekFrom::Start(file_offset as u64))?;
                         io.write_all(&packed[packed_start..packed_end])?;
+                        // Preserve high nibble of last byte when sx is odd.
+                        if sx % 2 != 0 {
+                            let pos = file_offset as u64 + block_row_bytes as u64 - 1;
+                            io.seek(SeekFrom::Start(pos))?;
+                            let mut last = [0u8];
+                            io.read_exact(&mut last)?;
+                            last[0] = (last[0] & 0xF0) | (packed[packed_end - 1] & 0x0F);
+                            io.seek(SeekFrom::Start(pos))?;
+                            io.write_all(&last)?;
+                        }
                     }
                 }
                 Ok(())

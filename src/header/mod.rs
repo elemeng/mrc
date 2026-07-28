@@ -1043,7 +1043,7 @@ impl Header {
     /// assert!(h.is_volume_stack());
     /// ```
     pub fn is_volume_stack(&self) -> bool {
-        (400..=630).contains(&self.ispg)
+        (401..=630).contains(&self.ispg)
     }
 
     /// Configure the header as an image stack.

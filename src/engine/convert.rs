@@ -490,8 +490,6 @@ pub(crate) fn convert_block<T>(
     bytes: &[u8],
     mode: Mode,
     endian: FileEndian,
-    nx: usize,
-    ny: usize,
     block_shape: [usize; 3],
     complex_strategy: ComplexToRealStrategy,
     m0_interp: M0Interpretation,
@@ -527,7 +525,7 @@ where
                 let chunk_bytes = &bytes[byte_off..byte_off + nplanes * plane_bytes];
                 let chunk_shape = [sx, sy, nplanes];
                 convert_block_seq(
-                    chunk_bytes, mode, endian, nx, ny, chunk_shape,
+                    chunk_bytes, mode, endian, chunk_shape,
                     complex_strategy, m0_interp,
                 )
             })
@@ -540,7 +538,7 @@ where
         return Ok(output);
     }
 
-    convert_block_seq(bytes, mode, endian, nx, ny, block_shape, complex_strategy, m0_interp)
+    convert_block_seq(bytes, mode, endian, block_shape, complex_strategy, m0_interp)
 }
 
 /// Sequential implementation of [`convert_block`] (no parallelism).
@@ -552,8 +550,6 @@ fn convert_block_seq<T>(
     bytes: &[u8],
     mode: Mode,
     endian: FileEndian,
-    _nx: usize,
-    _ny: usize,
     block_shape: [usize; 3],
     complex_strategy: ComplexToRealStrategy,
     m0_interp: M0Interpretation,

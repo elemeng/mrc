@@ -51,6 +51,7 @@ macro_rules! simd_dispatch_avx2_neon {
 }
 
 /// Dispatch using F16C/FP16 features, or scalar fallback.
+#[cfg(feature = "f16")]
 macro_rules! simd_dispatch_f16 {
     ($x86_call:expr, $aarch64_call:expr, $fallback:expr) => {{
         #[cfg(target_arch = "x86_64")]
