@@ -50,33 +50,32 @@ macro_rules! write_block_as_body {
         if !$self.shape().contains_block($block.offset, $block.shape) {
             return Err(Error::bounds_err());
         }
-        let _endian = $self.header().detect_endian();
+        let endian = $self.header().detect_endian();
         match $self.mode() {
             Mode::Int8 => {
-                let bytes = crate::engine::convert::convert_f32_to_i8_bytes(&$block.data, _endian);
+                let bytes = crate::engine::convert::convert_f32_to_i8_bytes(&$block.data, endian);
                 $self.write_encoded_data(&bytes, $block.offset, $block.shape)
             }
             Mode::Int16 => {
-                let bytes = crate::engine::convert::convert_f32_to_i16_bytes(&$block.data, _endian);
+                let bytes = crate::engine::convert::convert_f32_to_i16_bytes(&$block.data, endian);
                 $self.write_encoded_data(&bytes, $block.offset, $block.shape)
             }
             Mode::Uint16 => {
-                let bytes = crate::engine::convert::convert_f32_to_u16_bytes(&$block.data, _endian);
+                let bytes = crate::engine::convert::convert_f32_to_u16_bytes(&$block.data, endian);
                 $self.write_encoded_data(&bytes, $block.offset, $block.shape)
             }
             #[cfg(feature = "f16")]
             Mode::Float16 => {
-                let bytes = crate::engine::convert::convert_f32_to_f16_bytes(&$block.data, _endian);
+                let bytes = crate::engine::convert::convert_f32_to_f16_bytes(&$block.data, endian);
                 $self.write_encoded_data(&bytes, $block.offset, $block.shape)
             }
             Mode::Float32 => {
-                // f32 → Float32: same as encode_slice, one alloc + memcpy
                 let b = $self.bytes_per_voxel as u64;
                 let [sx, sy, sz] = $block.shape;
                 let byte_len = (sx as u64) * (sy as u64) * (sz as u64) * b;
                 let byte_len_usize = byte_len.try_into().map_err(|_| Error::bounds_err())?;
                 let mut buffer = vec![0u8; byte_len_usize];
-                crate::engine::codec::encode_slice(&$block.data, &mut buffer, _endian)?;
+                crate::engine::codec::encode_slice(&$block.data, &mut buffer, endian)?;
                 $self.write_encoded_data(&buffer, $block.offset, $block.shape)
             }
             _ => Err(Error::UnsupportedMode),
@@ -1178,50 +1177,23 @@ impl Writer {
                     + (oy as u64) * (nx as u64)
                     + (oz as u64) * (nx as u64) * (ny as u64);
                 let base_offset = self.data_offset + linear * (self.bytes_per_voxel as u64);
+                macro_rules! encode_and_write {
+                    ($ty:ty, $data:expr) => {{
+                        let encoded = encode_block_parallel::<$ty>($data, file_endian)?;
+                        io.seek(SeekFrom::Start(base_offset))?;
+                        io.write_all(&encoded)?;
+                        Ok(())
+                    }};
+                }
                 return match block.data() {
-                    DataView::Int8(data) => {
-                        let encoded = encode_block_parallel(data, file_endian);
-                        io.seek(SeekFrom::Start(base_offset))?;
-                        io.write_all(&encoded)?;
-                        Ok(())
-                    }
-                    DataView::Int16(data) => {
-                        let encoded = encode_block_parallel(data, file_endian);
-                        io.seek(SeekFrom::Start(base_offset))?;
-                        io.write_all(&encoded)?;
-                        Ok(())
-                    }
-                    DataView::Float32(data) => {
-                        let encoded = encode_block_parallel(data, file_endian);
-                        io.seek(SeekFrom::Start(base_offset))?;
-                        io.write_all(&encoded)?;
-                        Ok(())
-                    }
-                    DataView::Uint16(data) => {
-                        let encoded = encode_block_parallel(data, file_endian);
-                        io.seek(SeekFrom::Start(base_offset))?;
-                        io.write_all(&encoded)?;
-                        Ok(())
-                    }
-                    DataView::Int16Complex(data) => {
-                        let encoded = encode_block_parallel(data, file_endian);
-                        io.seek(SeekFrom::Start(base_offset))?;
-                        io.write_all(&encoded)?;
-                        Ok(())
-                    }
-                    DataView::Float32Complex(data) => {
-                        let encoded = encode_block_parallel(data, file_endian);
-                        io.seek(SeekFrom::Start(base_offset))?;
-                        io.write_all(&encoded)?;
-                        Ok(())
-                    }
+                    DataView::Int8(data) => encode_and_write!(i8, data),
+                    DataView::Int16(data) => encode_and_write!(i16, data),
+                    DataView::Float32(data) => encode_and_write!(f32, data),
+                    DataView::Uint16(data) => encode_and_write!(u16, data),
+                    DataView::Int16Complex(data) => encode_and_write!(Int16Complex, data),
+                    DataView::Float32Complex(data) => encode_and_write!(Float32Complex, data),
                     #[cfg(feature = "f16")]
-                    DataView::Float16(data) => {
-                        let encoded = encode_block_parallel(data, file_endian);
-                        io.seek(SeekFrom::Start(base_offset))?;
-                        io.write_all(&encoded)?;
-                        Ok(())
-                    }
+                    DataView::Float16(data) => encode_and_write!(crate::f16, data),
                     DataView::Packed4Bit(data) => {
                         let file_row_bytes = nx.div_ceil(2);
                         let z_slice_bytes = ny * file_row_bytes;

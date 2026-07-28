@@ -14,7 +14,6 @@ use crate::{Error, Header, Mode};
 
 use std::borrow::Cow;
 use std::path::Path;
-use std::vec::Vec;
 
 // ============================================================================
 // Compression detection (used internally by Reader::open)
@@ -937,38 +936,44 @@ impl Reader {
         self._source_data()
     }
 
+    /// Compute (offset, byte_len) for a contiguous full-row XY slab.
+    fn contiguous_slab_range(&self, offset: [usize; 3], shape: [usize; 3]) -> (usize, usize) {
+        let [nx, ny, _nz] = [self.shape.nx, self.shape.ny, self.shape.nz];
+        let [_ox, _oy, oz] = offset;
+        let [sx, sy, sz] = shape;
+        if self.mode == Mode::Packed4Bit {
+            let row_bytes = nx.div_ceil(2);
+            (oz * ny * row_bytes, row_bytes * ny * sz)
+        } else {
+            let linear = oz * nx * ny;
+            let b = self.mode.byte_size();
+            (linear * b, sx * sy * sz * b)
+        }
+    }
+
     pub(crate) fn read_block_bytes_cow<'a>(
         &'a self,
         offset: [usize; 3],
         shape: [usize; 3],
     ) -> Result<Cow<'a, [u8]>, Error> {
+        let [nx, ny, _nz] = [self.shape.nx, self.shape.ny, self.shape.nz];
+        let [ox, oy, _oz] = offset;
+        let [sx, sy, _sz] = shape;
+        let is_contiguous = ox == 0 && sx == nx && oy == 0 && sy == ny;
+
         match &self.source {
             DataSource::Buffered { data, .. } => {
-                let data_len = data.len();
                 crate::io::reader_common::validate_block_bounds(
                     self.shape,
                     self.mode(),
-                    data_len,
+                    data.len(),
                     offset,
                     shape,
                 )?;
-
-                let [nx, ny, ..] = [self.shape.nx, self.shape.ny, self.shape.nz];
-                let [ox, oy, oz] = offset;
-                let [sx, sy, sz] = shape;
-
-                if ox == 0 && sx == nx && oy == 0 && sy == ny {
-                    let (start, byte_len) = if self.mode == Mode::Packed4Bit {
-                        let row_bytes = nx.div_ceil(2);
-                        (oz * ny * row_bytes, row_bytes * ny * sz)
-                    } else {
-                        let linear = oz * nx * ny;
-                        let b = self.mode.byte_size();
-                        (linear * b, sx * sy * sz * b)
-                    };
+                if is_contiguous {
+                    let (start, byte_len) = self.contiguous_slab_range(offset, shape);
                     return Ok(Cow::Borrowed(&data[start..start + byte_len]));
                 }
-
                 Ok(Cow::Owned(crate::io::reader_common::gather_block_bytes(
                     data,
                     self.shape,
@@ -981,9 +986,6 @@ impl Reader {
             DataSource::Mmap {
                 map, data_offset, ..
             } => {
-                let [nx, ny, ..] = [self.shape.nx, self.shape.ny, self.shape.nz];
-                let [ox, oy, oz] = offset;
-                let [sx, sy, sz] = shape;
                 let data_len = map.len().saturating_sub(*data_offset);
                 crate::io::reader_common::validate_block_bounds(
                     self.shape,
@@ -992,19 +994,10 @@ impl Reader {
                     offset,
                     shape,
                 )?;
-
-                if ox == 0 && sx == nx && oy == 0 && sy == ny {
-                    let (start_offset, byte_len) = if self.mode == Mode::Packed4Bit {
-                        let row_bytes = nx.div_ceil(2);
-                        (data_offset + oz * ny * row_bytes, row_bytes * ny * sz)
-                    } else {
-                        let linear = oz * nx * ny;
-                        let b = self.mode.byte_size();
-                        (data_offset + linear * b, sx * sy * sz * b)
-                    };
-                    return Ok(Cow::Borrowed(&map[start_offset..start_offset + byte_len]));
+                if is_contiguous {
+                    let (start, byte_len) = self.contiguous_slab_range(offset, shape);
+                    return Ok(Cow::Borrowed(&map[data_offset + start..data_offset + start + byte_len]));
                 }
-
                 Ok(Cow::Owned(crate::io::reader_common::gather_block_bytes(
                     &map[*data_offset..],
                     self.shape,
@@ -1034,11 +1027,7 @@ impl Reader {
     /// The returned [`crate::DataBlock`] borrows from the reader's internal buffer
     /// (zero-copy for native-endian contiguous blocks).
     pub fn slices(&self) -> impl Iterator<Item = Result<crate::mode::DataBlock<'_>, Error>> + '_ {
-        crate::iter::RegionIter::with_stepper(
-            self,
-            self.shape(),
-            crate::iter::SliceStepper::default(),
-        )
+        crate::iter::RegionIter::with_stepper(self, crate::iter::SliceStepper::default())
     }
 
     /// Return a region iterator over Z-slabs of `k` slices.
@@ -1046,7 +1035,7 @@ impl Reader {
         &self,
         k: usize,
     ) -> impl Iterator<Item = Result<crate::mode::DataBlock<'_>, Error>> + '_ {
-        crate::iter::RegionIter::with_stepper(self, self.shape(), crate::iter::SlabStepper::new(k))
+        crate::iter::RegionIter::with_stepper(self, crate::iter::SlabStepper::new(k))
     }
 
     /// Return a region iterator over 3D tiles of the given shape.
@@ -1054,11 +1043,7 @@ impl Reader {
         &self,
         tile_shape: [usize; 3],
     ) -> Result<impl Iterator<Item = Result<crate::mode::DataBlock<'_>, Error>> + '_, Error> {
-        Ok(crate::iter::RegionIter::with_stepper(
-            self,
-            self.shape(),
-            crate::iter::TileStepper::new(tile_shape)?,
-        ))
+        Ok(crate::iter::RegionIter::with_stepper(self, crate::iter::TileStepper::new(tile_shape)?))
     }
 
     /// Iterate over sub-volumes in a volume stack.

@@ -193,7 +193,6 @@ impl EndianCodec for crate::f16 {
 /// decode_into(&bytes, &mut vals, FileEndian::LittleEndian).unwrap();
 /// assert_eq!(vals, [0x1234, 0x5678]);
 /// ```
-#[allow(dead_code)]
 pub fn decode_into<T: EndianCodec + Copy>(
     bytes: &[u8],
     values: &mut [T],
@@ -541,7 +540,6 @@ fn per_element_encode<T: EndianCodec + Sync>(values: &[T], bytes: &mut [u8], end
 /// swap_bytes_in_place(&mut data, FileEndian::BigEndian);
 /// assert_eq!(data, [0x1234, 0x5678]);
 /// ```
-#[allow(dead_code)]
 pub fn swap_bytes_in_place<T: crate::Voxel>(data: &mut [T], from: FileEndian) {
     if from == FileEndian::native() || data.is_empty() {
         return;
@@ -567,11 +565,14 @@ pub fn swap_bytes_in_place<T: crate::Voxel>(data: &mut [T], from: FileEndian) {
 ///
 /// Pre-allocates a single contiguous output buffer and processes it with
 /// parallel chunks using `encode_slice` for SIMD-accelerated encoding.
+///
+/// # Errors
+/// Returns `Error::TypeMismatch` if the chunk sizes don't match the buffer.
 #[cfg(feature = "parallel")]
 pub fn encode_block_parallel<T: EndianCodec + Sync>(
     values: &[T],
     endian: FileEndian,
-) -> Vec<u8> {
+) -> Result<Vec<u8>, crate::Error> {
     use rayon::prelude::*;
     let byte_len = values.len() * T::BYTE_SIZE;
     let mut buffer = vec![0u8; byte_len];
@@ -580,9 +581,9 @@ pub fn encode_block_parallel<T: EndianCodec + Sync>(
     buffer
         .par_chunks_mut(chunk_voxels * T::BYTE_SIZE)
         .zip(values.par_chunks(chunk_voxels))
-        .for_each(|(dst, chunk)| {
-            encode_slice(chunk, dst, endian).ok();
-        });
+        .try_for_each(|(dst, chunk)| {
+            encode_slice(chunk, dst, endian)
+        })?;
 
-    buffer
+    Ok(buffer)
 }

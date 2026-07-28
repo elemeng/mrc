@@ -98,7 +98,6 @@ impl RunningStats {
     }
 
     /// Merge another `RunningStats` instance (for parallel chunks).
-    #[allow(dead_code)]
     pub fn merge(&mut self, other: &Self) {
         if other.n == 0 {
             return;

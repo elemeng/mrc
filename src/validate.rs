@@ -21,6 +21,7 @@
 //! }
 //! ```
 
+use crate::engine::block::VolumeShape;
 use crate::engine::endian::FileEndian;
 use crate::engine::stats::compute_stats;
 use crate::{Error, HeaderValidationError, Mode, Reader};
@@ -315,98 +316,12 @@ pub fn validate_reader(
 
     // ── 4. Data statistics ──
     let raw_bytes = reader.raw_bytes();
-    match compute_stats(
-        raw_bytes,
-        reader.mode(),
-        endian,
-        reader.shape().nx,
-        reader.shape().ny * reader.shape().nz,
-    ) {
-        Ok((actual_dmin, actual_dmax, actual_dmean, actual_rms)) => {
-            let complex = matches!(reader.mode(), Mode::Float32Complex | Mode::Int16Complex);
-
-            let stats_unset = header.dmin > header.dmax;
-            let rms_unset = header.rms < 0.0;
-
-            let rtol = 0.01f32;
-
-            let min_ok = complex
-                || stats_unset
-                || crate::engine::stats::is_close(header.dmin, actual_dmin, rtol);
-            let max_ok = complex
-                || stats_unset
-                || crate::engine::stats::is_close(header.dmax, actual_dmax, rtol);
-            let mean_ok = complex
-                || stats_unset
-                || crate::engine::stats::is_close(header.dmean, actual_dmean, rtol);
-            let rms_ok = rms_unset || crate::engine::stats::is_close(header.rms, actual_rms, rtol);
-
-            if !stats_unset || !rms_unset {
-                let mut mismatch_parts = Vec::with_capacity(4);
-                if !min_ok {
-                    mismatch_parts.push("dmin".to_string());
-                }
-                if !max_ok {
-                    mismatch_parts.push("dmax".to_string());
-                }
-                if !mean_ok {
-                    mismatch_parts.push("dmean".to_string());
-                }
-                if !rms_ok {
-                    mismatch_parts.push("rms".to_string());
-                }
-
-                if mismatch_parts.is_empty() {
-                    if stats_unset {
-                        issues.push(ValidationIssue::info(
-                            "Statistics",
-                            "Statistics not written in header (sentinel values)".into(),
-                        ));
-                    } else {
-                        issues.push(ValidationIssue::info(
-                            "Statistics",
-                            "All statistics match actual data (within 1% tolerance)".into(),
-                        ));
-                    }
-                } else {
-                    let mut detail = String::new();
-                    if !min_ok {
-                        detail.push_str(&format!(
-                            " dmin claimed={} actual={}",
-                            header.dmin, actual_dmin
-                        ));
-                    }
-                    if !max_ok {
-                        detail.push_str(&format!(
-                            " dmax claimed={} actual={}",
-                            header.dmax, actual_dmax
-                        ));
-                    }
-                    if !mean_ok {
-                        detail.push_str(&format!(
-                            " dmean claimed={} actual={}",
-                            header.dmean, actual_dmean
-                        ));
-                    }
-                    if !rms_ok {
-                        detail.push_str(&format!(
-                            " rms claimed={} actual={}",
-                            header.rms, actual_rms
-                        ));
-                    }
-                    issues.push(ValidationIssue::error(
-                        "Statistics",
-                        format!("Mismatch:{}", detail),
-                    ));
-                }
-            }
-        }
-        Err(e) => {
-            issues.push(ValidationIssue::error(
-                "Statistics",
-                format!("Cannot compute statistics: {e}"),
-            ));
-        }
+    match check_statistics(header, reader.mode(), endian, reader.shape(), raw_bytes) {
+        Some(issue) => issues.push(issue),
+        None => issues.push(ValidationIssue::info(
+            "Statistics",
+            "All statistics match actual data (within 1% tolerance)".into(),
+        )),
     }
 
     // ── 5. Data integrity (scan for NaN / Inf in float modes) ──
@@ -537,7 +452,107 @@ pub fn validate_full<P: AsRef<Path>>(path: P, permissive: bool) -> Result<Valida
     validate_reader(&reader, &path_str, &compression, &warnings)
 }
 
-// ── Float-mode data integrity helper ──
+/// Compare header statistics against computed values from data bytes.
+/// Returns `Some(ValidationIssue)` if there is a problem, `None` if all match.
+fn check_statistics(
+    header: &crate::Header,
+    mode: Mode,
+    endian: FileEndian,
+    shape: VolumeShape,
+    raw_bytes: &[u8],
+) -> Option<ValidationIssue> {
+    let (actual_dmin, actual_dmax, actual_dmean, actual_rms) =
+        match compute_stats(raw_bytes, mode, endian, shape.nx, shape.ny * shape.nz) {
+            Ok(s) => s,
+            Err(e) => {
+                return Some(ValidationIssue::error(
+                    "Statistics",
+                    format!("Cannot compute statistics: {e}"),
+                ))
+            }
+        };
+
+    let complex = matches!(mode, Mode::Float32Complex | Mode::Int16Complex);
+    let stats_unset = header.dmin > header.dmax;
+    let rms_unset = header.rms < 0.0;
+    let rtol = 0.01f32;
+
+    let min_ok = complex || stats_unset
+        || crate::engine::stats::is_close(header.dmin, actual_dmin, rtol);
+    let max_ok = complex || stats_unset
+        || crate::engine::stats::is_close(header.dmax, actual_dmax, rtol);
+    let mean_ok = complex || stats_unset
+        || crate::engine::stats::is_close(header.dmean, actual_dmean, rtol);
+    let rms_ok = rms_unset || crate::engine::stats::is_close(header.rms, actual_rms, rtol);
+
+    if stats_unset && rms_unset {
+        return None; // sentinel values, nothing to check
+    }
+
+    let mut mismatch_parts = Vec::with_capacity(4);
+    if !min_ok { mismatch_parts.push("dmin"); }
+    if !max_ok { mismatch_parts.push("dmax"); }
+    if !mean_ok { mismatch_parts.push("dmean"); }
+    if !rms_ok { mismatch_parts.push("rms"); }
+
+    if mismatch_parts.is_empty() {
+        return None; // all match
+    }
+
+    let mut detail = String::new();
+    if !min_ok { detail.push_str(&format!(" dmin claimed={} actual={}", header.dmin, actual_dmin)); }
+    if !max_ok { detail.push_str(&format!(" dmax claimed={} actual={}", header.dmax, actual_dmax)); }
+    if !mean_ok { detail.push_str(&format!(" dmean claimed={} actual={}", header.dmean, actual_dmean)); }
+    if !rms_ok { detail.push_str(&format!(" rms claimed={} actual={}", header.rms, actual_rms)); }
+    Some(ValidationIssue::error("Statistics", format!("Mismatch:{detail}")))
+}
+
+// ── Float-mode data integrity helpers ──
+
+struct NonFiniteCounts {
+    nan: usize,
+    pos_inf: usize,
+    neg_inf: usize,
+}
+
+fn count_non_finite(values: impl Iterator<Item = f32>) -> NonFiniteCounts {
+    let mut counts = NonFiniteCounts { nan: 0, pos_inf: 0, neg_inf: 0 };
+    for v in values {
+        if v.is_nan() {
+            counts.nan += 1;
+        } else if v.is_infinite() {
+            if v.is_sign_negative() {
+                counts.neg_inf += 1;
+            } else {
+                counts.pos_inf += 1;
+            }
+        }
+    }
+    counts
+}
+
+fn format_finite_issues(counts: &NonFiniteCounts, total: usize, prefix: &str) -> Vec<String> {
+    let mut issues = Vec::with_capacity(3);
+    if counts.nan > 0 {
+        issues.push(format!(
+            "{} NaN values found{} ({:.2}%)",
+            counts.nan, prefix, counts.nan as f64 / total as f64 * 100.0
+        ));
+    }
+    if counts.pos_inf > 0 {
+        issues.push(format!(
+            "{} +Inf values found{} ({:.2}%)",
+            counts.pos_inf, prefix, counts.pos_inf as f64 / total as f64 * 100.0
+        ));
+    }
+    if counts.neg_inf > 0 {
+        issues.push(format!(
+            "{} -Inf values found{} ({:.2}%)",
+            counts.neg_inf, prefix, counts.neg_inf as f64 / total as f64 * 100.0
+        ));
+    }
+    issues
+}
 
 fn float_mode_issues(
     raw_bytes: &[u8],
@@ -551,7 +566,6 @@ fn float_mode_issues(
         Mode::Float16 => {
             #[cfg(feature = "f16")]
             {
-                // Fused: decode f16 bytes directly to f32, skipping Vec<f16>.
                 let n = raw_bytes.len() / 2;
                 let mut out = Vec::with_capacity(n);
                 for i in 0..n {
@@ -567,43 +581,8 @@ fn float_mode_issues(
         }
         _ => return Ok(Vec::new()),
     };
-
-    let mut issues = Vec::with_capacity(3);
-    let mut nan_count = 0usize;
-    let mut inf_count = 0usize;
-    let mut neg_inf_count = 0usize;
-
-    for &v in &data {
-        if v.is_nan() {
-            nan_count += 1;
-        } else if v.is_infinite() {
-            if v.is_sign_negative() {
-                neg_inf_count += 1;
-            } else {
-                inf_count += 1;
-            }
-        }
-    }
-
-    if nan_count > 0 {
-        issues.push(format!(
-            "{nan_count} NaN values found ({:.2}%)",
-            nan_count as f64 / data.len() as f64 * 100.0
-        ));
-    }
-    if inf_count > 0 {
-        issues.push(format!(
-            "{inf_count} +Inf values found ({:.2}%)",
-            inf_count as f64 / data.len() as f64 * 100.0
-        ));
-    }
-    if neg_inf_count > 0 {
-        issues.push(format!(
-            "{neg_inf_count} -Inf values found ({:.2}%)",
-            neg_inf_count as f64 / data.len() as f64 * 100.0
-        ));
-    }
-    Ok(issues)
+    let counts = count_non_finite(data.iter().copied());
+    Ok(format_finite_issues(&counts, data.len(), ""))
 }
 
 /// Scan Float32Complex data for NaN/Inf values in both real and imaginary parts.
@@ -612,43 +591,6 @@ fn complex_float_mode_issues(raw_bytes: &[u8], endian: FileEndian) -> Result<Vec
     let data: Vec<crate::mode::Float32Complex> =
         decode_slice::<crate::mode::Float32Complex>(raw_bytes, endian)?;
 
-    let mut issues = Vec::with_capacity(3);
-    let mut nan_count = 0usize;
-    let mut inf_count = 0usize;
-    let mut neg_inf_count = 0usize;
-
-    for c in &data {
-        for &v in &[c.real, c.imag] {
-            if v.is_nan() {
-                nan_count += 1;
-            } else if v.is_infinite() {
-                if v.is_sign_negative() {
-                    neg_inf_count += 1;
-                } else {
-                    inf_count += 1;
-                }
-            }
-        }
-    }
-
-    let total_components = data.len() * 2;
-    if nan_count > 0 {
-        issues.push(format!(
-            "{nan_count} NaN values found in complex components ({:.2}%)",
-            nan_count as f64 / total_components as f64 * 100.0
-        ));
-    }
-    if inf_count > 0 {
-        issues.push(format!(
-            "{inf_count} +Inf values found in complex components ({:.2}%)",
-            inf_count as f64 / total_components as f64 * 100.0
-        ));
-    }
-    if neg_inf_count > 0 {
-        issues.push(format!(
-            "{neg_inf_count} -Inf values found in complex components ({:.2}%)",
-            neg_inf_count as f64 / total_components as f64 * 100.0
-        ));
-    }
-    Ok(issues)
+    let counts = count_non_finite(data.iter().flat_map(|c| [c.real, c.imag]));
+    Ok(format_finite_issues(&counts, data.len() * 2, " in complex components"))
 }

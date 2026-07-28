@@ -129,17 +129,16 @@ impl Stepper for TileStepper {
 #[derive(Debug)]
 pub(crate) struct RegionIter<'a, S> {
     reader: &'a Reader,
-    volume_shape: VolumeShape,
     stepper: S,
 }
 
 impl<'a, S> RegionIter<'a, S> {
-    pub(crate) fn with_stepper(reader: &'a Reader, volume_shape: VolumeShape, stepper: S) -> Self {
-        Self {
-            reader,
-            volume_shape,
-            stepper,
-        }
+    pub(crate) fn with_stepper(reader: &'a Reader, stepper: S) -> Self {
+        Self { reader, stepper }
+    }
+
+    fn shape(&self) -> VolumeShape {
+        self.reader.shape()
     }
 
     /// Try zero-copy reinterpretation for a native-endian contiguous slab.
@@ -206,7 +205,7 @@ impl<'a, S: Stepper> Iterator for RegionIter<'a, S> {
     type Item = Result<DataBlock<'a>, Error>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let (offset, shape) = self.stepper.next(self.volume_shape)?;
+        let (offset, shape) = self.stepper.next(self.shape())?;
         let bytes = match self.reader.read_block_bytes_cow(offset, shape) {
             Ok(b) => b,
             Err(e) => return Some(Err(e)),
