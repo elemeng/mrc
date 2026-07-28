@@ -8,8 +8,8 @@
 //! # Typical write lifecycle
 //!
 //! 1. Build a writer with [`create`](crate::create) or [`WriterBuilder::new`].
-//! 2. Write [`VoxelBlock`](crate::VoxelBlock)s with [`write_block`](Writer::write_block)
-//!    or [`write_block_as`](Writer::write_block_as) for automatic type conversion.
+//! 2. Write [`DataBlock`](crate::DataBlock)s with [`write_data_block`](Writer::write_data_block)
+//!    or [`write_block_as`](Writer::write_block_as) for automatic f32 conversion.
 //! 3. Optionally call [`update_header_stats`](Writer::update_header_stats) to
 //!    fill header density statistics.
 //! 4. Call [`finalize`](Writer::finalize) to rewrite the header with final metadata.
@@ -73,7 +73,7 @@ macro_rules! write_block_as_body {
                 $self.write_block_data::<f32>($block.offset, $block.shape, &$block.data)
             }
             // Complex modes and Packed4Bit are not convertible from real f32 data.
-            // Use write_block::<T>() with the matching complex type directly.
+            // Use write_data_block with a matching complex data block instead.
             _ => Err(Error::UnsupportedMode),
         }
     }};
@@ -139,7 +139,7 @@ use crate::engine::codec::encode_block_parallel;
 use crate::engine::codec::encode_slice;
 use crate::engine::endian::FileEndian;
 use crate::mode::Voxel;
-use crate::{Error, Header, Mode};
+use crate::{DataBlock, DataView, Error, Float32Complex, Header, Int16Complex, Mode};
 
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::PathBuf;
@@ -437,7 +437,7 @@ macro_rules! builder_setters {
 /// # Example
 ///
 /// ```no_run
-/// use mrc::{create, VoxelBlock};
+/// use mrc::{create, DataBlock, OwnedData};
 ///
 /// fn main() -> Result<(), Box<dyn std::error::Error>> {
 ///     let mut writer = create("output.mrc")
@@ -445,10 +445,12 @@ macro_rules! builder_setters {
 ///         .mode::<f32>()
 ///         .finish()?;
 ///
-///     writer.write_block(&VoxelBlock::new(
-///         [0, 0, 0], [512, 512, 1],
-///         vec![0.0f32; 512 * 512],
-///     )?)?;
+///     let block = DataBlock::Owned {
+///         offset: [0, 0, 0],
+///         shape: [512, 512, 1],
+///         data: OwnedData::Float32(vec![0.0f32; 512 * 512]),
+///     };
+///     writer.write_data_block(&block)?;
 ///     writer.finalize()?;
 ///     Ok(())
 /// }
@@ -536,7 +538,7 @@ impl WriterBuilder {
     ///
     /// The file is created (or truncated) and the header + extended header
     /// are written immediately. Voxel data can then be written with
-    /// [`write_block`](Writer::write_block).
+    /// [`write_data_block`](Writer::write_data_block).
     ///
     /// # Errors
     /// Returns [`Error::InvalidHeaderDetailed`] if the header fails validation.
@@ -638,15 +640,19 @@ impl WriterBuilder {
     ///
     /// # Examples
     /// ```
-    /// use mrc::WriterBuilder;
+    /// use mrc::{WriterBuilder, DataBlock, OwnedData};
     ///
     /// let mut writer = WriterBuilder::new("ignored")
     ///     .shape([4, 4, 1])
     ///     .mode::<f32>()
     ///     .finish_buffer()
     ///     .unwrap();
-    /// let data = vec![0.0f32; 16];
-    /// writer.write_block(&mrc::VoxelBlock::new([0, 0, 0], [4, 4, 1], data).unwrap()).unwrap();
+    /// let block = DataBlock::Owned {
+    ///     offset: [0, 0, 0],
+    ///     shape: [4, 4, 1],
+    ///     data: OwnedData::Float32(vec![0.0f32; 16]),
+    /// };
+    /// writer.write_data_block(&block).unwrap();
     /// writer.finalize().unwrap();
     /// ```
     pub fn finish_buffer(self) -> Result<Writer, Error> {
@@ -1068,14 +1074,14 @@ impl Writer {
 
     /// Write an entire volume's worth of data and compute density statistics.
     ///
-    /// This is a convenience over manual [`write_block`](Self::write_block) +
+    /// This is a convenience over manual [`write_data_block`](Self::write_data_block) +
     /// [`update_header_stats`](Self::update_header_stats) calls — it writes the
     /// data then immediately scans and updates header statistics.
     ///
     /// The data must cover the full volume (its length must match
     /// `nx × ny × nz`).
     ///
-    /// For partial writes, use [`write_block`](Self::write_block) directly.
+    /// For partial writes, use [`write_data_block`](Self::write_data_block) directly.
     ///
     /// # Examples
     ///
@@ -1108,41 +1114,113 @@ impl Writer {
                 actual: data.len(),
             });
         }
-        let block = VoxelBlock::new([0, 0, 0], [nx, ny, nz], data.to_vec())?;
-        self.write_block(&block)?;
+        self.write_block_data::<T>([0, 0, 0], [nx, ny, nz], data)?;
         self.update_header_stats()?;
         Ok(())
     }
 
-    /// Write a block of voxels to the file.
+    /// Write a block of voxels to the file using runtime mode dispatch.
     ///
-    /// The type `T` must match the file's voxel mode exactly.
+    /// Accepts a [`DataBlock`](crate::DataBlock) of any mode (matching the file's
+    /// mode). For full XY slabs with a file-backed writer and the `parallel` feature,
+    /// encoding is performed in parallel automatically.
+    ///
     /// Supports arbitrary sub-blocks by scattering row-by-row when necessary.
     ///
     /// # Examples
     /// ```no_run
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// use mrc::{create, VoxelBlock};
+    /// use mrc::{create, DataBlock, OwnedData};
     /// let mut writer = create("output.mrc")
     ///     .shape([64, 64, 1])
     ///     .mode::<f32>()
     ///     .finish()?;
-    /// let block = VoxelBlock::new([0, 0, 0], [64, 64, 1], vec![0.0f32; 64 * 64])?;
-    /// writer.write_block(&block)?;
+    /// let block = DataBlock::Owned {
+    ///     offset: [0, 0, 0],
+    ///     shape: [64, 64, 1],
+    ///     data: OwnedData::Float32(vec![0.0f32; 64 * 64]),
+    /// };
+    /// writer.write_data_block(&block)?;
     /// # Ok(()) }
     /// ```
-    pub fn write_block<T: Voxel>(&mut self, block: &VoxelBlock<T>) -> Result<(), Error> {
-        if T::MODE != self.mode() {
-            return Err(Error::ModeMismatch {
-                file_mode: self.mode(),
-                requested_mode: T::MODE,
-                offset: None,
-            });
-        }
-        if !self.shape.contains_block(block.offset, block.shape) {
+    pub fn write_data_block(&mut self, block: &DataBlock<'_>) -> Result<(), Error> {
+        let offset = block.offset();
+        let shape = block.shape();
+        if !self.shape.contains_block(offset, shape) {
             return Err(Error::bounds_err());
         }
-        self.write_block_data::<T>(block.offset, block.shape, &block.data)
+
+        #[cfg(feature = "parallel")]
+        if let DataSink::File(io) = &mut self.sink {
+            let [nx, ny, _nz] = [self.shape.nx, self.shape.ny, self.shape.nz];
+            let [ox, oy, oz] = offset;
+            let [sx, sy, sz] = shape;
+            if ox == 0 && sx == nx && oy == 0 && sy == ny {
+                let file_endian = self.header.detect_endian();
+                let chunk_size = 1024 * 1024;
+                let linear = (ox as u64)
+                    + (oy as u64) * (nx as u64)
+                    + (oz as u64) * (nx as u64) * (ny as u64);
+                let base_offset = self.data_offset + linear * (self.bytes_per_voxel as u64);
+                let b = self.bytes_per_voxel;
+                return match block.data() {
+                    DataView::Int8(data) => {
+                        let chunks = encode_block_parallel(data, chunk_size, file_endian);
+                        write_encoded_chunks(io, base_offset, chunk_size, b, chunks)
+                    }
+                    DataView::Int16(data) => {
+                        let chunks = encode_block_parallel(data, chunk_size, file_endian);
+                        write_encoded_chunks(io, base_offset, chunk_size, b, chunks)
+                    }
+                    DataView::Float32(data) => {
+                        let chunks = encode_block_parallel(data, chunk_size, file_endian);
+                        write_encoded_chunks(io, base_offset, chunk_size, b, chunks)
+                    }
+                    DataView::Uint16(data) => {
+                        let chunks = encode_block_parallel(data, chunk_size, file_endian);
+                        write_encoded_chunks(io, base_offset, chunk_size, b, chunks)
+                    }
+                    DataView::Int16Complex(data) => {
+                        let chunks = encode_block_parallel(data, chunk_size, file_endian);
+                        write_encoded_chunks(io, base_offset, chunk_size, b, chunks)
+                    }
+                    DataView::Float32Complex(data) => {
+                        let chunks = encode_block_parallel(data, chunk_size, file_endian);
+                        write_encoded_chunks(io, base_offset, chunk_size, b, chunks)
+                    }
+                    #[cfg(feature = "f16")]
+                    DataView::Float16(data) => {
+                        let chunks = encode_block_parallel(data, chunk_size, file_endian);
+                        write_encoded_chunks(io, base_offset, chunk_size, b, chunks)
+                    }
+                    DataView::Packed4Bit(data) => {
+                        let file_row_bytes = nx.div_ceil(2);
+                        let z_slice_bytes = ny * file_row_bytes;
+                        let packed_base_offset = self.data_offset + (oz as u64) * (z_slice_bytes as u64);
+                        let byte_len = (sz as u64) * (z_slice_bytes as u64);
+                        let byte_len_usize = byte_len.try_into().map_err(|_| Error::bounds_err())?;
+                        if data.len() < byte_len_usize {
+                            return Err(Error::bounds_err());
+                        }
+                        io.seek(SeekFrom::Start(packed_base_offset))?;
+                        io.write_all(&data[..byte_len_usize])?;
+                        Ok(())
+                    }
+                };
+            }
+        }
+
+        match block.data() {
+            DataView::Int8(data) => self.write_block_data::<i8>(offset, shape, data),
+            DataView::Int16(data) => self.write_block_data::<i16>(offset, shape, data),
+            DataView::Float32(data) => self.write_block_data::<f32>(offset, shape, data),
+            DataView::Uint16(data) => self.write_block_data::<u16>(offset, shape, data),
+            DataView::Int16Complex(data) => self.write_block_data::<Int16Complex>(offset, shape, data),
+            DataView::Float32Complex(data) => self.write_block_data::<Float32Complex>(offset, shape, data),
+            #[cfg(feature = "f16")]
+            DataView::Float16(data) => self.write_block_data::<crate::f16>(offset, shape, data),
+            DataView::Packed4Bit(data) => self.write_block_bytes(data, offset, shape),
+        }
     }
 
     /// Core write implementation: encode and persist typed voxel data.
@@ -1278,7 +1356,7 @@ impl Writer {
     /// | [`Float16`](Mode::Float16) | `f32` → `f16` (SIMD, requires `f16` feature) |
     ///
     /// Complex modes and Packed4Bit are not convertible from real f32 data.
-    /// Use [`write_block`](Writer::write_block) with the matching complex type instead.
+    /// Use [`write_data_block`](Writer::write_data_block) with a matching complex data block instead.
     ///
     /// # Examples
     /// ```no_run
@@ -1294,69 +1372,6 @@ impl Writer {
     /// ```
     pub fn write_block_as(&mut self, block: &VoxelBlock<f32>) -> Result<(), Error> {
         write_block_as_body!(self, block)
-    }
-
-    /// Write a block with parallel encoding and sequential file I/O.
-    ///
-    /// Encoding is performed in parallel using all available cores.
-    /// File writes are performed sequentially to ensure cross-platform compatibility.
-    ///
-    /// For non-contiguous blocks (sub-XY slabs), this falls back to the serial
-    /// [`write_block`](Self::write_block) implementation.
-    ///
-    /// # Examples
-    /// ```no_run
-    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// use mrc::{create, VoxelBlock};
-    /// let mut writer = create("output.mrc")
-    ///     .shape([64, 64, 1])
-    ///     .mode::<f32>()
-    ///     .finish()?;
-    /// let block = VoxelBlock::new([0, 0, 0], [64, 64, 1], vec![0.0f32; 64 * 64])?;
-    /// writer.write_block_parallel(&block)?;
-    /// # Ok(()) }
-    /// ```
-    #[cfg(feature = "parallel")]
-    pub fn write_block_parallel<T: Voxel>(&mut self, block: &VoxelBlock<T>) -> Result<(), Error> {
-        if T::MODE != self.mode() {
-            return Err(Error::ModeMismatch {
-                file_mode: self.mode(),
-                requested_mode: T::MODE,
-                offset: None,
-            });
-        }
-        if !self.shape.contains_block(block.offset, block.shape) {
-            return Err(Error::bounds_err());
-        }
-
-        let [nx, ny, _nz] = [self.shape.nx, self.shape.ny, self.shape.nz];
-        let [ox, oy, oz] = block.offset;
-        let [sx, sy, _sz] = block.shape;
-
-        // Parallel fast path only works for full XY slabs (contiguous in file).
-        if ox != 0 || sx != nx || oy != 0 || sy != ny {
-            return self.write_block(block);
-        }
-
-        // Only file-backed writers support parallel seeks.
-        let DataSink::File(io) = &mut self.sink else {
-            return self.write_block(block);
-        };
-
-        let chunk_size = 1024 * 1024;
-        let linear =
-            (ox as u64) + (oy as u64) * (nx as u64) + (oz as u64) * (nx as u64) * (ny as u64);
-        let base_offset = self.data_offset + linear * (self.bytes_per_voxel as u64);
-        let file_endian = self.header.detect_endian();
-        let encoded_chunks = encode_block_parallel(&block.data, chunk_size, file_endian);
-
-        for (chunk_idx, encoded) in encoded_chunks {
-            let offset = base_offset
-                + (chunk_idx as u64) * (chunk_size as u64) * (self.bytes_per_voxel as u64);
-            io.seek(SeekFrom::Start(offset))?;
-            io.write_all(&encoded)?;
-        }
-        Ok(())
     }
 
     /// Write a block of `u8` data (0–15 per voxel) by packing to 4-bit (Mode 101).
@@ -1451,13 +1466,17 @@ impl Writer {
     /// # Examples
     /// ```no_run
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// use mrc::{create, VoxelBlock};
+    /// use mrc::{create, DataBlock, OwnedData};
     /// let mut writer = create("output.mrc")
     ///     .shape([64, 64, 1])
     ///     .mode::<f32>()
     ///     .finish()?;
-    /// let block = VoxelBlock::new([0, 0, 0], [64, 64, 1], vec![0.0f32; 64 * 64])?;
-    /// writer.write_block(&block)?;
+    /// let block = DataBlock::Owned {
+    ///     offset: [0, 0, 0],
+    ///     shape: [64, 64, 1],
+    ///     data: OwnedData::Float32(vec![0.0f32; 64 * 64]),
+    /// };
+    /// writer.write_data_block(&block)?;
     /// writer.finalize()?;
     /// # Ok(()) }
     /// ```
@@ -1500,13 +1519,17 @@ impl Writer {
     /// # Examples
     /// ```no_run
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// use mrc::{create, VoxelBlock};
+    /// use mrc::{create, DataBlock, OwnedData};
     /// let mut writer = create("output.mrc")
     ///     .shape([64, 64, 1])
     ///     .mode::<f32>()
     ///     .finish()?;
-    /// let block = VoxelBlock::new([0, 0, 0], [64, 64, 1], vec![0.0f32; 64 * 64])?;
-    /// writer.write_block(&block)?;
+    /// let block = DataBlock::Owned {
+    ///     offset: [0, 0, 0],
+    ///     shape: [64, 64, 1],
+    ///     data: OwnedData::Float32(vec![0.0f32; 64 * 64]),
+    /// };
+    /// writer.write_data_block(&block)?;
     /// writer.update_header_stats()?;
     /// writer.finalize()?;
     /// # Ok(()) }
@@ -1543,6 +1566,29 @@ impl Writer {
             }
         }
     }
+}
+
+// ============================================================================
+// Parallel encoding helper
+// ============================================================================
+
+/// Write parallel-encoded chunks to a file-backed sink.
+#[cfg(feature = "parallel")]
+fn write_encoded_chunks(
+    io: &mut Box<dyn ReadWriteSeek + 'static>,
+    base_offset: u64,
+    chunk_size: usize,
+    bytes_per_voxel: usize,
+    chunks: Vec<(usize, Vec<u8>)>,
+) -> Result<(), Error> {
+    use std::io::SeekFrom;
+    for (chunk_idx, encoded) in chunks {
+        let offset = base_offset
+            + (chunk_idx as u64) * (chunk_size as u64) * (bytes_per_voxel as u64);
+        io.seek(SeekFrom::Start(offset))?;
+        io.write_all(&encoded)?;
+    }
+    Ok(())
 }
 
 // ============================================================================

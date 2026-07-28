@@ -176,6 +176,8 @@ impl<'a> DataBlock<'a> {
     }
 }
 
+
+
 /// Strategy for converting complex numbers to real values.
 ///
 /// # Example

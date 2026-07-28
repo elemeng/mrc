@@ -172,17 +172,19 @@
 //!
 //! ```no_run
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! use mrc::{create, VoxelBlock};
+//! use mrc::{create, DataBlock, OwnedData};
 //! let mut writer = create("output.mrc")
 //!     .shape([256, 256, 128])
 //!     .mode::<f32>()
 //!     .finish()?;
 //!
 //! // Write some data
-//! writer.write_block(&VoxelBlock::new(
-//!     [0, 0, 0], [256, 256, 1],
-//!     vec![0.0f32; 256 * 256],
-//! )?)?;
+//! let block = DataBlock::Owned {
+//!     offset: [0, 0, 0],
+//!     shape: [256, 256, 1],
+//!     data: OwnedData::Float32(vec![0.0f32; 256 * 256]),
+//! };
+//! writer.write_data_block(&block)?;
 //!
 //! // Optionally compute and store density statistics
 //! writer.update_header_stats()?;
@@ -194,10 +196,9 @@
 //!
 //! The lifecycle:
 //!
-//! 1. **Write** blocks with [`write_block`](Writer::write_block). The type
-//!    `T` matches the file's mode — a compile-time check that prevents
-//!    accidentally treating bytes as the wrong kind of number.
-//!    Use [`write_block_as`](Writer::write_block_as) for automatic conversion
+//! 1. **Write** blocks with [`write_data_block`](Writer::write_data_block).
+//!    The block's runtime `DataView` variant dispatches to the correct encoding.
+//!    Use [`write_block_as`](Writer::write_block_as) for automatic f32 conversion
 //!    (e.g. write `f32` data to an Int16 or Float16 file)
 //!
 //!    For Uint16 files, [`write_u8_block`](Writer::write_u8_block) auto-widens
@@ -627,7 +628,7 @@
 //!
 //! ```no_run
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! use mrc::create;
+//! use mrc::{create, DataBlock, OwnedData};
 //!
 //! let mut writer = create("reconstructed.mrc")
 //!     .shape([512, 512, 256])
@@ -635,10 +636,12 @@
 //!     .finish()?;
 //!
 //! for z in 0..256 {
-//!     let slice = vec![0.0f32; 512 * 512];
-//!     writer.write_block(&mrc::VoxelBlock::new(
-//!         [0, 0, z], [512, 512, 1], slice,
-//!     )?)?;
+//!     let block = DataBlock::Owned {
+//!         offset: [0, 0, z],
+//!         shape: [512, 512, 1],
+//!         data: OwnedData::Float32(vec![0.0f32; 512 * 512]),
+//!     };
+//!     writer.write_data_block(&block)?;
 //! }
 //!
 //! writer.update_header_stats()?;
@@ -668,7 +671,7 @@
 //! |---|---|---|
 //! | [`InvalidHeader`](Error::InvalidHeader) | Not an MRC file, or header corruption | Run `mrc validate file.mrc`; try [`open_permissive`](Reader::open_permissive) |
 //! | [`FileSizeMismatch`](Error::FileSizeMismatch) | File truncated or has trailing garbage | Re-download or check `mrc validate` output |
-//! | [`ModeMismatch`](Error::ModeMismatch) | Writing a `VoxelBlock<i16>` to an Float32 file | Use [`write_block_as`](Writer::write_block_as) — auto-converts any mode |
+//! | [`ModeMismatch`](Error::ModeMismatch) | Mismatch between block data and file mode | Use [`write_block_as`](Writer::write_block_as) for auto-conversion, or match the file's mode |
 //! | [`NotAVolumeStack`](Error::NotAVolumeStack) | Calling `volumes()` on a non-stack file | Check `reader.is_volume_stack()` first |
 //! | [`BoundsError`](Error::BoundsError) | Block outside volume | Check offset + shape against dimensions |
 //! | [`BlockShapeMismatch`](Error::BlockShapeMismatch) | Data length doesn't match block shape | Verify `sx * sy * sz * sizeof(T)` matches data length |
