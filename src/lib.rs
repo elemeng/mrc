@@ -198,7 +198,7 @@
 //!
 //! 1. **Write** blocks with [`write_data_block`](Writer::write_data_block).
 //!    The block's runtime `DataView` variant dispatches to the correct encoding.
-//!    Use [`write_block_as`](Writer::write_block_as) for automatic f32 conversion
+//!    Use [`write_block_as`](Writer::write_block_as) for automatic conversion
 //!    (e.g. write `f32` data to an Int16 or Float16 file)
 //!
 //!    For Uint16 files, [`write_u8_block`](Writer::write_u8_block) auto-widens
@@ -508,8 +508,8 @@
 //!
 //! * [`Io`](Error::Io) — the file could not be read or written
 //! * [`InvalidHeader`](Error::InvalidHeader) — not a valid MRC file
-//! * [`ModeMismatch`](Error::ModeMismatch) — writing a `VoxelBlock<i16>` to
-//!   a Float32 file; use [`write_block_as`](Writer::write_block_as) instead
+//! * [`ModeMismatch`](Error::ModeMismatch) — block data type doesn't match the
+//!   file's mode; use [`write_block_as`](Writer::write_block_as) for auto-conversion
 //! * [`BoundsError`](Error::BoundsError) — read or write outside the volume
 //! * [`NotAVolumeStack`](Error::NotAVolumeStack) — calling [`volumes()`](Reader::volumes)
 //!   on a file that is not a volume stack
@@ -671,7 +671,7 @@
 //! |---|---|---|
 //! | [`InvalidHeader`](Error::InvalidHeader) | Not an MRC file, or header corruption | Run `mrc validate file.mrc`; try [`open_permissive`](Reader::open_permissive) |
 //! | [`FileSizeMismatch`](Error::FileSizeMismatch) | File truncated or has trailing garbage | Re-download or check `mrc validate` output |
-//! | [`ModeMismatch`](Error::ModeMismatch) | Mismatch between block data and file mode | Use [`write_block_as`](Writer::write_block_as) for auto-conversion, or match the file's mode |
+//! | [`ModeMismatch`](Error::ModeMismatch) | Block data type doesn't match file mode | Use [`write_block_as`](Writer::write_block_as) for auto-conversion from any supported type |
 //! | [`NotAVolumeStack`](Error::NotAVolumeStack) | Calling `volumes()` on a non-stack file | Check `reader.is_volume_stack()` first |
 //! | [`BoundsError`](Error::BoundsError) | Block outside volume | Check offset + shape against dimensions |
 //! | [`BlockShapeMismatch`](Error::BlockShapeMismatch) | Data length doesn't match block shape | Verify `sx * sy * sz * sizeof(T)` matches data length |

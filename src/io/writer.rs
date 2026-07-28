@@ -9,7 +9,7 @@
 //!
 //! 1. Build a writer with [`create`](crate::create) or [`WriterBuilder::new`].
 //! 2. Write [`DataBlock`](crate::DataBlock)s with [`write_data_block`](Writer::write_data_block)
-//!    or [`write_block_as`](Writer::write_block_as) for automatic f32 conversion.
+//!    or [`write_block_as`](Writer::write_block_as) for automatic type conversion.
 //! 3. Optionally call [`update_header_stats`](Writer::update_header_stats) to
 //!    fill header density statistics.
 //! 4. Call [`finalize`](Writer::finalize) to rewrite the header with final metadata.
@@ -50,30 +50,35 @@ macro_rules! write_block_as_body {
         if !$self.shape().contains_block($block.offset, $block.shape) {
             return Err(Error::bounds_err());
         }
+        let _endian = $self.header().detect_endian();
         match $self.mode() {
             Mode::Int8 => {
-                let data = crate::engine::convert::convert_f32_slice_to_i8(&$block.data);
-                $self.write_block_data::<i8>($block.offset, $block.shape, &data)
+                let bytes = crate::engine::convert::convert_f32_to_i8_bytes(&$block.data, _endian);
+                $self.write_encoded_data(&bytes, $block.offset, $block.shape)
             }
             Mode::Int16 => {
-                let data = crate::engine::convert::convert_f32_slice_to_i16(&$block.data);
-                $self.write_block_data::<i16>($block.offset, $block.shape, &data)
+                let bytes = crate::engine::convert::convert_f32_to_i16_bytes(&$block.data, _endian);
+                $self.write_encoded_data(&bytes, $block.offset, $block.shape)
             }
             Mode::Uint16 => {
-                let data = crate::engine::convert::convert_f32_slice_to_u16(&$block.data);
-                $self.write_block_data::<u16>($block.offset, $block.shape, &data)
+                let bytes = crate::engine::convert::convert_f32_to_u16_bytes(&$block.data, _endian);
+                $self.write_encoded_data(&bytes, $block.offset, $block.shape)
             }
             #[cfg(feature = "f16")]
             Mode::Float16 => {
-                let data = crate::engine::convert::convert_f32_slice_to_f16(&$block.data);
-                $self.write_block_data::<crate::f16>($block.offset, $block.shape, &data)
+                let bytes = crate::engine::convert::convert_f32_to_f16_bytes(&$block.data, _endian);
+                $self.write_encoded_data(&bytes, $block.offset, $block.shape)
             }
             Mode::Float32 => {
-                // f32 → Float32: pass through directly, no clone needed
-                $self.write_block_data::<f32>($block.offset, $block.shape, &$block.data)
+                // f32 → Float32: same as encode_slice, one alloc + memcpy
+                let b = $self.bytes_per_voxel as u64;
+                let [sx, sy, sz] = $block.shape;
+                let byte_len = (sx as u64) * (sy as u64) * (sz as u64) * b;
+                let byte_len_usize = byte_len.try_into().map_err(|_| Error::bounds_err())?;
+                let mut buffer = vec![0u8; byte_len_usize];
+                crate::engine::codec::encode_slice(&$block.data, &mut buffer, _endian)?;
+                $self.write_encoded_data(&buffer, $block.offset, $block.shape)
             }
-            // Complex modes and Packed4Bit are not convertible from real f32 data.
-            // Use write_data_block with a matching complex data block instead.
             _ => Err(Error::UnsupportedMode),
         }
     }};
@@ -140,6 +145,7 @@ use crate::engine::codec::encode_slice;
 use crate::engine::endian::FileEndian;
 use crate::mode::Voxel;
 use crate::{DataBlock, DataView, Error, Float32Complex, Header, Int16Complex, Mode};
+use std::any::TypeId;
 
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::PathBuf;
@@ -1338,14 +1344,16 @@ impl Writer {
         if !self.shape.contains_block(block.offset, block.shape) {
             return Err(Error::bounds_err());
         }
-        let widened = crate::engine::convert::convert_u8_slice_to_u16(&block.data);
-        self.write_block_data::<u16>(block.offset, block.shape, &widened)
+        let file_endian = self.header.detect_endian();
+        let bytes = crate::engine::convert::convert_u8_to_u16_bytes(&block.data, file_endian);
+        self.write_encoded_data(&bytes, block.offset, block.shape)
     }
 
     /// Write a block with automatic type conversion to the file's mode.
     ///
-    /// **Note:** input data must be `f32` (`VoxelBlock<f32>`). The value is
-    /// converted to the file's on-disk mode. Supported conversions:
+    /// The input data is converted to `f32` first, then encoded to the file's
+    /// on-disk mode. Supported input types: `i8`, `i16`, `u16`, `f32`, `f16`.
+    /// Supported target modes:
     ///
     /// | File mode | Conversion |
     /// |-----------|------------|
@@ -1366,12 +1374,125 @@ impl Writer {
     ///     .shape([64, 64, 1])
     ///     .mode::<u16>()
     ///     .finish()?;
+    /// // write_block_as accepts f32, i16, i8, u16, or f16 — any type that
+    /// // can be converted to f32. Conversion is automatic.
     /// let block = VoxelBlock::new([0, 0, 0], [64, 64, 1], vec![0.0f32; 64 * 64])?;
     /// writer.write_block_as(&block)?;
     /// # Ok(()) }
     /// ```
-    pub fn write_block_as(&mut self, block: &VoxelBlock<f32>) -> Result<(), Error> {
-        write_block_as_body!(self, block)
+    pub fn write_block_as<T>(&mut self, block: &VoxelBlock<T>) -> Result<(), Error>
+    where
+        T: Voxel,
+        f32: crate::engine::convert::ConvertFrom<T>,
+    {
+        if !self.shape().contains_block(block.offset, block.shape) {
+            return Err(Error::bounds_err());
+        }
+
+        // Fast path: T = f32 — zero-copy, avoids the identity ConvertFrom copy.
+        if TypeId::of::<T>() == TypeId::of::<f32>() {
+            // SAFETY: TypeId confirms T == f32. VoxelBlock<T> has identical
+            // field layout for all T (offset, shape, data). The macro only
+            // borrows, never moves, so reinterpreting the reference is sound.
+            let f32_block: &VoxelBlock<f32> = unsafe {
+                &*(block as *const VoxelBlock<T> as *const VoxelBlock<f32>)
+            };
+            return write_block_as_body!(self, f32_block);
+        }
+
+        let f32_data = <f32 as crate::engine::convert::ConvertFrom<T>>::convert_from(&block.data);
+        let f32_block = VoxelBlock {
+            offset: block.offset,
+            shape: block.shape,
+            data: f32_data,
+        };
+        write_block_as_body!(self, f32_block)
+    }
+
+    /// Write pre-encoded bytes at the given offset and shape.
+    ///
+    /// Handles row-by-row scatter for sub-XY blocks. Used by fused
+    /// writer paths that produce `Vec<u8>` directly.
+    fn write_encoded_data(
+        &mut self,
+        bytes: &[u8],
+        offset: [usize; 3],
+        shape: [usize; 3],
+    ) -> Result<(), Error> {
+        let b = self.bytes_per_voxel;
+        match &mut self.sink {
+            DataSink::File(io) => {
+                let [nx, ny, _nz] = [self.shape.nx, self.shape.ny, self.shape.nz];
+                let [ox, oy, oz] = offset;
+                let [sx, sy, sz] = shape;
+
+                if ox == 0 && sx == nx && oy == 0 && sy == ny {
+                    let linear = (ox as u64)
+                        + (oy as u64) * (nx as u64)
+                        + (oz as u64) * (nx as u64) * (ny as u64);
+                    let start_offset = self.data_offset + linear * (b as u64);
+                    io.seek(SeekFrom::Start(start_offset))?;
+                    io.write_all(bytes)?;
+                    return Ok(());
+                }
+
+                let block_row_bytes = sx * b;
+                for z in 0..sz {
+                    for y in 0..sy {
+                        let file_linear = ox + (oy + y) * nx + (oz + z) * nx * ny;
+                        let file_offset = self.data_offset + (file_linear as u64) * (b as u64);
+                        let block_start = (y * sx + z * sx * sy) * b;
+                        let block_end = block_start + block_row_bytes;
+                        if block_end > bytes.len() {
+                            return Err(Error::bounds_err());
+                        }
+                        io.seek(SeekFrom::Start(file_offset))?;
+                        io.write_all(&bytes[block_start..block_end])?;
+                    }
+                }
+                Ok(())
+            }
+            DataSink::Mmap(mmap) => {
+                let block_row_bytes = shape[0] * b;
+                for z in 0..shape[2] {
+                    for y in 0..shape[1] {
+                        let src = (y * shape[0] + z * shape[0] * shape[1]) * b;
+                        let dst = offset[0]
+                            + (offset[1] + y) * self.shape.nx
+                            + (offset[2] + z) * self.shape.nx * self.shape.ny;
+                        let dst = self.data_offset as usize + dst * b;
+                        if dst + block_row_bytes > mmap.len()
+                            || src + block_row_bytes > bytes.len()
+                        {
+                            return Err(Error::bounds_err());
+                        }
+                        mmap[dst..dst + block_row_bytes]
+                            .copy_from_slice(&bytes[src..src + block_row_bytes]);
+                    }
+                }
+                Ok(())
+            }
+            DataSink::Compressed { buf, .. } => {
+                let block_row_bytes = shape[0] * b;
+                for z in 0..shape[2] {
+                    for y in 0..shape[1] {
+                        let src = (y * shape[0] + z * shape[0] * shape[1]) * b;
+                        let dst = offset[0]
+                            + (offset[1] + y) * self.shape.nx
+                            + (offset[2] + z) * self.shape.nx * self.shape.ny;
+                        let dst = self.data_offset as usize + dst * b;
+                        if dst + block_row_bytes > buf.len()
+                            || src + block_row_bytes > bytes.len()
+                        {
+                            return Err(Error::bounds_err());
+                        }
+                        buf[dst..dst + block_row_bytes]
+                            .copy_from_slice(&bytes[src..src + block_row_bytes]);
+                    }
+                }
+                Ok(())
+            }
+        }
     }
 
     /// Write a block of `u8` data (0–15 per voxel) by packing to 4-bit (Mode 101).

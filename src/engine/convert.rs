@@ -5,7 +5,7 @@
 //!
 //! Specific conversions:
 //! - `i8`/`i16`/`u16`/`u8` → `f32` (for `convert::<f32>()` auto-conversion)
-//! - `f16` ↔ `f32` (for `convert::<f32>()` auto-conversion and `write_block_as`)
+//! - `f16` ↔ `f32` (for `convert::<f32>()` auto-conversion and the generic `write_block_as`)
 //! - `u8` → `u16`, `u16` → `u8` (Mode 6 utilities)
 //! - Mode 0 reinterpretation (signed vs unsigned `i8`)
 //! - 4-bit packed data unpacking/packing
@@ -361,6 +361,92 @@ pub(crate) fn convert_f32_slice_to_i8(src: &[f32]) -> Vec<i8> {
 }
 
 // ============================================================================
+// Writer-side fused convert+encode — skip intermediate typed Vec, produce
+// encoded bytes directly.
+// ============================================================================
+
+/// Fused: convert f32→i16 and produce encoded bytes, skipping `Vec<i16>`.
+/// For native endian the typed Vec's allocation is reinterpreted as byte
+/// storage without an extra copy.
+pub(crate) fn convert_f32_to_i16_bytes(src: &[f32], endian: FileEndian) -> Vec<u8> {
+    let data = convert_f32_slice_to_i16(src);
+    let n = data.len();
+    if endian.is_native() {
+        unsafe {
+            let ptr = data.as_ptr() as *mut u8;
+            let len = n * 2;
+            let cap = data.capacity() * 2;
+            core::mem::forget(data);
+            Vec::from_raw_parts(ptr, len, cap)
+        }
+    } else {
+        let mut buf = vec![0u8; n * 2];
+        for (i, &v) in data.iter().enumerate() {
+            buf[i * 2..(i + 1) * 2].copy_from_slice(&v.to_be_bytes());
+        }
+        buf
+    }
+}
+
+/// Fused: convert f32→u16 and produce encoded bytes, skipping `Vec<u16>`.
+pub(crate) fn convert_f32_to_u16_bytes(src: &[f32], endian: FileEndian) -> Vec<u8> {
+    let data = convert_f32_slice_to_u16(src);
+    let n = data.len();
+    if endian.is_native() {
+        unsafe {
+            let ptr = data.as_ptr() as *mut u8;
+            let len = n * 2;
+            let cap = data.capacity() * 2;
+            core::mem::forget(data);
+            Vec::from_raw_parts(ptr, len, cap)
+        }
+    } else {
+        let mut buf = vec![0u8; n * 2];
+        for (i, &v) in data.iter().enumerate() {
+            buf[i * 2..(i + 1) * 2].copy_from_slice(&v.to_be_bytes());
+        }
+        buf
+    }
+}
+
+/// Fused: convert f32→i8 and produce encoded bytes, skipping `Vec<i8>`.
+/// i8 has no endianness — this is a direct reinterpret for all endian modes.
+pub(crate) fn convert_f32_to_i8_bytes(src: &[f32], endian: FileEndian) -> Vec<u8> {
+    let data = convert_f32_slice_to_i8(src);
+    let n = data.len();
+    let _ = endian;
+    unsafe {
+        let ptr = data.as_ptr() as *mut u8;
+        let len = n;
+        let cap = data.capacity();
+        core::mem::forget(data);
+        Vec::from_raw_parts(ptr, len, cap)
+    }
+}
+
+/// Fused: convert f32→f16 and produce encoded bytes, skipping `Vec<half::f16>`.
+#[cfg(feature = "f16")]
+pub(crate) fn convert_f32_to_f16_bytes(src: &[f32], endian: FileEndian) -> Vec<u8> {
+    let data = convert_f32_slice_to_f16(src);
+    let n = data.len();
+    if endian.is_native() {
+        unsafe {
+            let ptr = data.as_ptr() as *mut u8;
+            let len = n * 2;
+            let cap = data.capacity() * 2;
+            core::mem::forget(data);
+            Vec::from_raw_parts(ptr, len, cap)
+        }
+    } else {
+        let mut buf = vec![0u8; n * 2];
+        for (i, &v) in data.iter().enumerate() {
+            buf[i * 2..(i + 1) * 2].copy_from_slice(&v.to_be_bytes());
+        }
+        buf
+    }
+}
+
+// ============================================================================
 // Integer↔integer direct conversions (avoid f32 intermediate)
 // ============================================================================
 
@@ -509,50 +595,64 @@ where
 {
     // Direct integer↔integer shortcuts — avoids the f32 intermediate
     // (which would add 4N bytes of intermediate storage for narrow types).
-    // i16 → i8 shortcut also handles the m0_interp distinction for i8 target
-    // (i8 is always treated as signed in the integer domain; unsigned Mode 0
-    //  is a byte-interpretation issue that only matters in the f32 hub).
+    // For native endian, source bytes are pointer-cast directly to &[Src],
+    // eliminating the decode_slice<Src> allocation.
     {
         // i16 → i8
         if mode == Mode::Int16 && core::any::TypeId::of::<T>() == core::any::TypeId::of::<i8>() {
-            let src = decode_slice::<i16>(bytes, endian)?;
-            let r = convert_i16_slice_to_i8(&src);
-            // SAFETY: TypeId checked above guarantees T == i8, so sizes match.
+            let r = if endian.is_native() {
+                let src = unsafe { std::slice::from_raw_parts(bytes.as_ptr() as *const i16, bytes.len() / 2) };
+                convert_i16_slice_to_i8(src)
+            } else {
+                let src = decode_slice::<i16>(bytes, endian)?;
+                convert_i16_slice_to_i8(&src)
+            };
             return Ok(unsafe { reinterpret_vec::<i8, T>(r) });
         }
         // i8 → i16
         if mode == Mode::Int8 && core::any::TypeId::of::<T>() == core::any::TypeId::of::<i16>() {
-            let src = decode_slice::<i8>(bytes, endian)?;
-            let r = convert_i8_slice_to_i16(&src);
-            // SAFETY: TypeId checked above guarantees T == i16, so sizes match.
+            // i8 is 1 byte, endian irrelevant
+            let src = unsafe { std::slice::from_raw_parts(bytes.as_ptr() as *const i8, bytes.len() / 2) };
+            let r = convert_i8_slice_to_i16(src);
             return Ok(unsafe { reinterpret_vec::<i16, T>(r) });
         }
         // u16 → i8
         if mode == Mode::Uint16 && core::any::TypeId::of::<T>() == core::any::TypeId::of::<i8>() {
-            let src = decode_slice::<u16>(bytes, endian)?;
-            let r = convert_u16_slice_to_i8(&src);
-            // SAFETY: TypeId checked above guarantees T == i8, so sizes match.
+            let r = if endian.is_native() {
+                let src = unsafe { std::slice::from_raw_parts(bytes.as_ptr() as *const u16, bytes.len() / 2) };
+                convert_u16_slice_to_i8(src)
+            } else {
+                let src = decode_slice::<u16>(bytes, endian)?;
+                convert_u16_slice_to_i8(&src)
+            };
             return Ok(unsafe { reinterpret_vec::<i8, T>(r) });
         }
         // i8 → u16
         if mode == Mode::Int8 && core::any::TypeId::of::<T>() == core::any::TypeId::of::<u16>() {
-            let src = decode_slice::<i8>(bytes, endian)?;
-            let r = convert_i8_slice_to_u16(&src);
-            // SAFETY: TypeId checked above guarantees T == u16, so sizes match.
+            let src = unsafe { std::slice::from_raw_parts(bytes.as_ptr() as *const i8, bytes.len() / 2) };
+            let r = convert_i8_slice_to_u16(src);
             return Ok(unsafe { reinterpret_vec::<u16, T>(r) });
         }
         // u16 → i16
         if mode == Mode::Uint16 && core::any::TypeId::of::<T>() == core::any::TypeId::of::<i16>() {
-            let src = decode_slice::<u16>(bytes, endian)?;
-            let r = convert_u16_slice_to_i16(&src);
-            // SAFETY: TypeId checked above guarantees T == i16, so sizes match.
+            let r = if endian.is_native() {
+                let src = unsafe { std::slice::from_raw_parts(bytes.as_ptr() as *const u16, bytes.len() / 2) };
+                convert_u16_slice_to_i16(src)
+            } else {
+                let src = decode_slice::<u16>(bytes, endian)?;
+                convert_u16_slice_to_i16(&src)
+            };
             return Ok(unsafe { reinterpret_vec::<i16, T>(r) });
         }
         // i16 → u16
         if mode == Mode::Int16 && core::any::TypeId::of::<T>() == core::any::TypeId::of::<u16>() {
-            let src = decode_slice::<i16>(bytes, endian)?;
-            let r = convert_i16_slice_to_u16(&src);
-            // SAFETY: TypeId checked above guarantees T == u16, so sizes match.
+            let r = if endian.is_native() {
+                let src = unsafe { std::slice::from_raw_parts(bytes.as_ptr() as *const i16, bytes.len() / 2) };
+                convert_i16_slice_to_u16(src)
+            } else {
+                let src = decode_slice::<i16>(bytes, endian)?;
+                convert_i16_slice_to_u16(&src)
+            };
             return Ok(unsafe { reinterpret_vec::<u16, T>(r) });
         }
     }
@@ -570,7 +670,6 @@ where
             let unpacked = unpack_u4_bytes_to_u8(bytes, sx, total_rows);
             convert_u8_slice_to_f32(&unpacked)
         }
-        Mode::Float16 => convert_block_float16(bytes, endian)?,
         other => convert_block_inner(bytes, other, endian, nx, ny, complex_strategy, m0_interp)?,
     };
     // Avoid the identity-clone when T == f32 by reusing the allocation.
@@ -587,11 +686,12 @@ where
     }
 }
 
-/// Shared handler for the 6 modes that do not depend on the `f16` feature.
-/// Always produces `Vec<f32>` as the intermediate representation.
+/// Fused: decode raw bytes directly to `Vec<f32>` without allocating
+/// an intermediate typed Vec for the source mode.
 ///
-/// Packed4Bit is handled in [`convert_block`] instead, because its nibble
-/// unpack needs the block's actual dimensions, not the volume's.
+/// For native-endian (the common case), source bytes are pointer-cast
+/// and passed directly to the SIMD conversion kernel — zero intermediate
+/// allocation. For non-native endian, falls back to decode_slice + convert.
 fn convert_block_inner(
     bytes: &[u8],
     mode: Mode,
@@ -604,20 +704,53 @@ fn convert_block_inner(
     match mode {
         Mode::Int8 => match m0_interp {
             M0Interpretation::Signed => {
-                let src = decode_slice::<i8>(bytes, endian)?;
-                Ok(convert_i8_slice_to_f32(&src))
+                // i8 is 1 byte, endian is irrelevant
+                // SAFETY: Type is the same size, pointer is valid for the slice length
+                let src = unsafe { std::slice::from_raw_parts(bytes.as_ptr() as *const i8, bytes.len() / 2) };
+                Ok(convert_i8_slice_to_f32(src))
             }
-            M0Interpretation::Unsigned => Ok(reinterpret_m0(bytes, M0Interpretation::Unsigned)),
+            M0Interpretation::Unsigned => Ok(convert_u8_slice_to_f32(bytes)),
         },
         Mode::Int16 => {
-            let src = decode_slice::<i16>(bytes, endian)?;
-            Ok(convert_i16_slice_to_f32(&src))
+            if endian.is_native() {
+                // SAFETY: i16 and u8 have compatible alignment (2 vs 1),
+                // and the byte representation is identical for native endian.
+                let src = unsafe { std::slice::from_raw_parts(bytes.as_ptr() as *const i16, bytes.len() / 2) };
+                Ok(convert_i16_slice_to_f32(src))
+            } else {
+                let src = decode_slice::<i16>(bytes, endian)?;
+                Ok(convert_i16_slice_to_f32(&src))
+            }
         }
         Mode::Uint16 => {
-            let src = decode_slice::<u16>(bytes, endian)?;
-            Ok(convert_u16_slice_to_f32(&src))
+            if endian.is_native() {
+                // SAFETY: same reasoning as Int16 above.
+                let src = unsafe { std::slice::from_raw_parts(bytes.as_ptr() as *const u16, bytes.len() / 2) };
+                Ok(convert_u16_slice_to_f32(src))
+            } else {
+                let src = decode_slice::<u16>(bytes, endian)?;
+                Ok(convert_u16_slice_to_f32(&src))
+            }
         }
         Mode::Float32 => decode_slice::<f32>(bytes, endian),
+        Mode::Float16 => {
+            #[cfg(feature = "f16")]
+            {
+                if endian.is_native() {
+                    // SAFETY: same reasoning as Int16 above.
+                    let src = unsafe { std::slice::from_raw_parts(bytes.as_ptr() as *const crate::f16, bytes.len() / 2) };
+                    Ok(convert_f16_slice_to_f32(src))
+                } else {
+                    let src = decode_slice::<crate::f16>(bytes, endian)?;
+                    Ok(convert_f16_slice_to_f32(&src))
+                }
+            }
+            #[cfg(not(feature = "f16"))]
+            {
+                let _ = endian;
+                Err(Error::UnsupportedMode)
+            }
+        }
         Mode::Float32Complex => {
             let src = decode_slice::<Float32Complex>(bytes, endian)?;
             let mag: Vec<f32> = src.iter().map(|c| c.to_real(complex_strategy)).collect();
@@ -629,35 +762,9 @@ fn convert_block_inner(
             Ok(mag)
         }
         Mode::Packed4Bit => {
-            // SAFETY: `convert_block` handles Packed4Bit before falling through to
-            // `convert_block_inner`, so this arm is truly unreachable. If you refactor
-            // the dispatch in `convert_block`, ensure Packed4Bit is still intercepted
-            // first or update this arm accordingly.
             unreachable!("Packed4Bit is dispatched via convert_block before convert_block_inner")
         }
-        Mode::Float16 => {
-            // SAFETY: `convert_block` handles Float16 via `convert_block_float16` before
-            // falling through to `convert_block_inner`, so this arm is truly unreachable.
-            unreachable!(
-                "Float16 is dispatched via convert_block_float16 before convert_block_inner"
-            )
-        }
     }
-}
-
-/// Handle Float16 mode conversion, which depends on the `f16` feature.
-/// Always returns `Vec<f32>` — the final conversion to `T` happens in
-/// [`convert_block`].
-#[cfg(feature = "f16")]
-fn convert_block_float16(bytes: &[u8], endian: FileEndian) -> Result<Vec<f32>, Error> {
-    let src = decode_slice::<crate::f16>(bytes, endian)?;
-    Ok(convert_f16_slice_to_f32(&src))
-}
-
-/// Float16 conversion unavailable — requires the `f16` feature.
-#[cfg(not(feature = "f16"))]
-fn convert_block_float16(_bytes: &[u8], _endian: FileEndian) -> Result<Vec<f32>, Error> {
-    Err(Error::UnsupportedMode)
 }
 
 // =============================================================================
@@ -854,6 +961,25 @@ mod tests {
 /// does not define a native unsigned 8-bit mode.
 pub fn convert_u8_slice_to_u16(src: &[u8]) -> Vec<u16> {
     src.iter().map(|&v| v as u16).collect()
+}
+
+/// Fused: widen u8→u16 and produce encoded bytes, skipping `Vec<u16>`.
+/// Saves one allocation per `write_u8_block` call.
+pub(crate) fn convert_u8_to_u16_bytes(src: &[u8], endian: FileEndian) -> Vec<u8> {
+    let n = src.len();
+    let mut buf = vec![0u8; n * 2];
+    if endian.is_native() {
+        for (i, &v) in src.iter().enumerate() {
+            buf[i * 2] = v;
+            buf[i * 2 + 1] = 0;
+        }
+    } else {
+        for (i, &v) in src.iter().enumerate() {
+            buf[i * 2] = 0;
+            buf[i * 2 + 1] = v;
+        }
+    }
+    buf
 }
 
 /// Narrow a `u16` slice to `u8`, returning `Err` if any value exceeds 255.

@@ -55,9 +55,12 @@ let mut writer = create("output.mrc")
     .shape([512, 512, 256])
     .mode::<f32>()
     .finish()?;
-writer.write_block(&VoxelBlock::new(
-    [0, 0, 0], [512, 512, 1], vec![0.0f32; 512 * 512],
-)?)?;
+let block = DataBlock::Owned {
+    offset: [0, 0, 0],
+    shape: [512, 512, 1],
+    data: OwnedData::Float32(vec![0.0f32; 512 * 512]),
+};
+writer.write_data_block(&block)?;
 writer.finalize()?;
 ```
 
@@ -227,11 +230,10 @@ Additional builder methods behind feature flags:
 | `writer.mode()` | Voxel mode |
 | `writer.header()` | Read-only reference to header |
 | `writer.header_mut()` | Mutable reference to header (modify before `finalize`) |
-| `writer.write_block::<T>(&block)` | Write a typed voxel block. `T` must match file mode |
+| `writer.write_data_block(&DataBlock)` | Write a block with runtime mode dispatch; parallel encoding auto-selected for full XY slabs |
 | `writer.write_u8_block(&block)` | Convenience: write `VoxelBlock<u8>` to a Uint16 file (auto-widens) |
 | `writer.write_u4_block(&block)` | Convenience: write `VoxelBlock<u8>` to a Packed4Bit file (auto-packs, values must be 0–15) |
-| `writer.write_block_as(&block)` | Write with auto-conversion to file's mode: `f32` → `i8`/`i16`/`u16`/`f16` (clamped) |
-| `writer.write_block_parallel::<T>(&block)` | Parallel-encoded write (feature `parallel`; contiguous XY slabs only) |
+| `writer.write_block_as(&VoxelBlock<T>)` | Write with auto-conversion to file's mode: any `T` → `f32` → `i8`/`i16`/`u16`/`f16` (clamped) |
 | `writer.set_data(&data)` | Write the full volume (must match `nx × ny × nz`) and compute statistics — single call |
 | `writer.update_header_stats()` | Scan written data and update `dmin`/`dmax`/`dmean`/`rms` in the header |
 | `writer.finalize()` | **Required.** Rewrites the header with final metadata (updated stats, labels). The header is written optimistically at file creation and rewritten here — without it the header is stale and tools may display wrong contrast. |
@@ -242,8 +244,8 @@ Additional builder methods behind feature flags:
 Memory-mapped writer. Created via `WriterBuilder::finish_mmap()`.
 Requires `mmap` feature.
 
-Same API as the file-backed `Writer` (`write_block`, `write_block_as`, `write_u8_block`,
-`write_u4_block`, `write_block_parallel`, `finalize`, `update_header_stats`).
+Same API as the file-backed `Writer` (`write_data_block`, `write_block_as`, `write_u8_block`,
+`write_u4_block`, `finalize`, `update_header_stats`).
 
 **`finalize()` is required** — flushes the mmap to disk. Without it the header
 is stale (density statistics missing, tools display wrong contrast).
@@ -256,7 +258,7 @@ Created via `WriterBuilder::finish_gzip()` / `finish_bzip2()`.
 only on `finalize`. **`finalize()` is required** — without it nothing is written
 to disk. Not suitable for large volumes that exceed RAM.
 
-Full API: `shape()`, `mode()`, `header()`, `header_mut()`, `write_block()`, `write_block_as()`, `write_u8_block()`, `write_u4_block()`,
+Full API: `shape()`, `mode()`, `header()`, `header_mut()`, `write_data_block()`, `write_block_as()`, `write_u8_block()`, `write_u4_block()`,
 `update_header_stats()` (reads from in-memory buffer),
 `finalize()` (writes compressed data to disk).
 
@@ -798,9 +800,9 @@ automatically converts any MRC mode to the target type via `.slices()`, `.slabs(
 | Feature | Default | What it enables |
 |---|---|---|
 | `mmap` | ✅ | Memory-mapped I/O (auto-selected by `Reader::open`, `WriterBuilder::finish_mmap()`) |
-| `f16` | ✅ | `half::f16` type, `Mode::Float16`, `write_block_as()` for f32→f16 |
+| `f16` | ✅ | `half::f16` type, `Mode::Float16`, `write_block_as()` generic f16↔f32 |
 | `simd` | ✅ | AVX2/NEON accelerated integer↔f32, f16↔f32, byte-swap, f32 statistics, and f32→integer clamping |
-| `parallel` | ✅ | `write_block_parallel()` using `rayon` |
+| `parallel` | ✅ | Parallel encoding auto-selected in `write_data_block()` for full XY slabs on file-backed writers |
 | `gzip` | ✅ | Gzip auto-detection, `Reader::open_gzip()`, compressed writer |
 | `bzip2` | ❌ | Bzip2 auto-detection, `Reader::open_bzip2()`, compressed writer |
 | `ndarray` | ❌ | Return volumes as `ndarray::Array3<T>` via `to_ndarray()` |

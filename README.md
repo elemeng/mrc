@@ -179,22 +179,21 @@ let mut writer = create("output.mrc")
 
 // Write one slice at a time
 for z in 0..256 {
-    let slice = vec![0.0f32; 512 * 512];
-    writer.write_block(&mrc::VoxelBlock::new(
-        [0, 0, z], [512, 512, 1], slice,
-    )?)?;
+    let block = mrc::DataBlock::Owned {
+        offset: [0, 0, z],
+        shape: [512, 512, 1],
+        data: mrc::OwnedData::Float32(vec![0.0f32; 512 * 512]),
+    };
+    writer.write_data_block(&block)?;
 }
 
-// Or write with auto-conversion: f32 data → i16 file
+// Or write with auto-conversion from any supported type
 writer.write_block_as(&mrc::VoxelBlock::new(
     [0, 0, 0], [512, 512, 1],
     vec![0.0f32; 512 * 512],
 )?)?;
 
-// Write in parallel (requires `parallel` feature)
-writer.write_block_parallel(&mrc::VoxelBlock::new(
-    [0, 0, 0], [512, 512, 256], vec![0.0f32; 512 * 512 * 256],
-)?)?;
+// Parallel encoding is auto-selected for full XY slabs on file-backed writers
 
 writer.update_header_stats()?;    // fills dmin/dmax/dmean/rms
 writer.finalize()?;               // **required** — rewrites header
@@ -211,9 +210,12 @@ let mut writer = create("output.mrc.gz")
     .mode::<f32>()
     .compression(CompressionLevel::Best)
     .finish_gzip()?;
-writer.write_block(&mrc::VoxelBlock::new(
-    [0, 0, 0], [256, 256, 128], vec![0.0f32; 256 * 256 * 128],
-)?)?;
+let block = mrc::DataBlock::Owned {
+    offset: [0, 0, 0],
+    shape: [256, 256, 128],
+    data: mrc::OwnedData::Float32(vec![0.0f32; 256 * 256 * 128]),
+};
+writer.write_data_block(&block)?;
 writer.finalize()?;  // compresses & writes to disk
 ```
 
@@ -336,9 +338,12 @@ let mut writer = create("reconstructed.mrc")
     .shape([512, 512, 256])
     .mode::<f32>()
     .finish()?;
-writer.write_block(&VoxelBlock::new(
-    [0, 0, 0], [512, 512, 256], processed_data,
-)?)?;
+let block = mrc::DataBlock::Owned {
+    offset: [0, 0, 0],
+    shape: [512, 512, 256],
+    data: mrc::OwnedData::Float32(processed_data),
+};
+writer.write_data_block(&block)?;
 writer.update_header_stats()?;
 writer.finalize()?;
 ```
