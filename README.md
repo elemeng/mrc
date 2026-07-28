@@ -76,7 +76,7 @@ cargo install mrc-cli
 | `mmap` | ✅ | Memory-mapped I/O (auto-selected for large files) |
 | `f16` | ✅ | Half-precision float (`half::f16`) support |
 | `simd` | ✅ | AVX2/NEON acceleration |
-| `parallel` | ✅ | Parallel encoding via `rayon` |
+| `parallel` | ✅ | Parallel decode/convert/encode via `rayon` — transparent for any block ≥512³ |
 | `gzip` | ✅ | Gzip auto-detection and compressed writer |
 | `bzip2` | ❌ | Bzip2 auto-detection and compressed writer |
 | `ndarray` | ❌ | Return volumes as `ndarray::Array3<T>` via `to_ndarray()` |

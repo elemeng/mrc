@@ -317,16 +317,11 @@ pub(crate) fn gather_block_bytes(
         let byte_len = block_row_bytes * sy * sz;
         let mut dst = vec![0u8; byte_len];
 
-        if ox == 0 && sx == nx && oy == 0 && sy == ny {
-            let slice_bytes = ny * vol_row_bytes;
-            let start = oz * slice_bytes;
-            let len = sz * slice_bytes;
-            return data[start..start + len].to_vec();
-        }
-
+        let base_row = oz * ny + oy;
         for z in 0..sz {
+            let z_row_off = z * ny;
             for y in 0..sy {
-                let vol_row = (oz + z) * ny + (oy + y);
+                let vol_row = base_row + z_row_off + y;
                 let src_start = vol_row * vol_row_bytes + ox / 2;
                 let dst_start = (y + z * sy) * block_row_bytes;
                 dst[dst_start..dst_start + block_row_bytes]
@@ -341,18 +336,14 @@ pub(crate) fn gather_block_bytes(
     let byte_len = voxel_count * b;
     let mut dst = vec![0u8; byte_len];
 
-    if ox == 0 && sx == nx && oy == 0 && sy == ny {
-        let linear = oz * nx * ny;
-        let start = linear * b;
-        return data[start..start + byte_len].to_vec();
-    }
-
+    let z_stride = nx * ny;
+    let row_stride = nx;
+    let base_linear = ox + oy * nx + oz * nx * ny;
     for z in 0..sz {
+        let z_off = z * z_stride;
         for y in 0..sy {
-            let src_linear = ox + (oy + y) * nx + (oz + z) * nx * ny;
-            let src_start = src_linear * b;
-            let dst_linear = y * sx + z * sx * sy;
-            let dst_start = dst_linear * b;
+            let src_start = (base_linear + z_off + y * row_stride) * b;
+            let dst_start = (y * sx + z * sx * sy) * b;
             dst[dst_start..dst_start + sx * b]
                 .copy_from_slice(&data[src_start..src_start + sx * b]);
         }

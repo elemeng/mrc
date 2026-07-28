@@ -1163,41 +1163,53 @@ impl Writer {
             let [sx, sy, sz] = shape;
             if ox == 0 && sx == nx && oy == 0 && sy == ny {
                 let file_endian = self.header.detect_endian();
-                let chunk_size = 1024 * 1024;
                 let linear = (ox as u64)
                     + (oy as u64) * (nx as u64)
                     + (oz as u64) * (nx as u64) * (ny as u64);
                 let base_offset = self.data_offset + linear * (self.bytes_per_voxel as u64);
-                let b = self.bytes_per_voxel;
                 return match block.data() {
                     DataView::Int8(data) => {
-                        let chunks = encode_block_parallel(data, chunk_size, file_endian);
-                        write_encoded_chunks(io, base_offset, chunk_size, b, chunks)
+                        let encoded = encode_block_parallel(data, file_endian);
+                        io.seek(SeekFrom::Start(base_offset))?;
+                        io.write_all(&encoded)?;
+                        Ok(())
                     }
                     DataView::Int16(data) => {
-                        let chunks = encode_block_parallel(data, chunk_size, file_endian);
-                        write_encoded_chunks(io, base_offset, chunk_size, b, chunks)
+                        let encoded = encode_block_parallel(data, file_endian);
+                        io.seek(SeekFrom::Start(base_offset))?;
+                        io.write_all(&encoded)?;
+                        Ok(())
                     }
                     DataView::Float32(data) => {
-                        let chunks = encode_block_parallel(data, chunk_size, file_endian);
-                        write_encoded_chunks(io, base_offset, chunk_size, b, chunks)
+                        let encoded = encode_block_parallel(data, file_endian);
+                        io.seek(SeekFrom::Start(base_offset))?;
+                        io.write_all(&encoded)?;
+                        Ok(())
                     }
                     DataView::Uint16(data) => {
-                        let chunks = encode_block_parallel(data, chunk_size, file_endian);
-                        write_encoded_chunks(io, base_offset, chunk_size, b, chunks)
+                        let encoded = encode_block_parallel(data, file_endian);
+                        io.seek(SeekFrom::Start(base_offset))?;
+                        io.write_all(&encoded)?;
+                        Ok(())
                     }
                     DataView::Int16Complex(data) => {
-                        let chunks = encode_block_parallel(data, chunk_size, file_endian);
-                        write_encoded_chunks(io, base_offset, chunk_size, b, chunks)
+                        let encoded = encode_block_parallel(data, file_endian);
+                        io.seek(SeekFrom::Start(base_offset))?;
+                        io.write_all(&encoded)?;
+                        Ok(())
                     }
                     DataView::Float32Complex(data) => {
-                        let chunks = encode_block_parallel(data, chunk_size, file_endian);
-                        write_encoded_chunks(io, base_offset, chunk_size, b, chunks)
+                        let encoded = encode_block_parallel(data, file_endian);
+                        io.seek(SeekFrom::Start(base_offset))?;
+                        io.write_all(&encoded)?;
+                        Ok(())
                     }
                     #[cfg(feature = "f16")]
                     DataView::Float16(data) => {
-                        let chunks = encode_block_parallel(data, chunk_size, file_endian);
-                        write_encoded_chunks(io, base_offset, chunk_size, b, chunks)
+                        let encoded = encode_block_parallel(data, file_endian);
+                        io.seek(SeekFrom::Start(base_offset))?;
+                        io.write_all(&encoded)?;
+                        Ok(())
                     }
                     DataView::Packed4Bit(data) => {
                         let file_row_bytes = nx.div_ceil(2);
@@ -1252,6 +1264,18 @@ impl Writer {
                         + (oy as u64) * (nx as u64)
                         + (oz as u64) * (nx as u64) * (ny as u64);
                     let start_offset = self.data_offset + linear * (b as u64);
+                    if file_endian == FileEndian::native() {
+                        // SAFETY: T has no padding and any bit pattern is valid u8.
+                        let bytes = unsafe {
+                            core::slice::from_raw_parts(
+                                data.as_ptr() as *const u8,
+                                core::mem::size_of_val(data),
+                            )
+                        };
+                        io.seek(SeekFrom::Start(start_offset))?;
+                        io.write_all(bytes)?;
+                        return Ok(());
+                    }
                     let byte_len = (sx as u64) * (sy as u64) * (sz as u64) * (b as u64);
                     let byte_len_usize = byte_len.try_into().map_err(|_| Error::bounds_err())?;
                     let mut buffer = vec![0u8; byte_len_usize];
@@ -1495,6 +1519,7 @@ impl Writer {
         }
     }
 
+
     /// Write a block of `u8` data (0–15 per voxel) by packing to 4-bit (Mode 101).
     ///
     /// The file must have been created with [`Mode::Packed4Bit`]. Each `u8` value
@@ -1687,29 +1712,6 @@ impl Writer {
             }
         }
     }
-}
-
-// ============================================================================
-// Parallel encoding helper
-// ============================================================================
-
-/// Write parallel-encoded chunks to a file-backed sink.
-#[cfg(feature = "parallel")]
-fn write_encoded_chunks(
-    io: &mut Box<dyn ReadWriteSeek + 'static>,
-    base_offset: u64,
-    chunk_size: usize,
-    bytes_per_voxel: usize,
-    chunks: Vec<(usize, Vec<u8>)>,
-) -> Result<(), Error> {
-    use std::io::SeekFrom;
-    for (chunk_idx, encoded) in chunks {
-        let offset = base_offset
-            + (chunk_idx as u64) * (chunk_size as u64) * (bytes_per_voxel as u64);
-        io.seek(SeekFrom::Start(offset))?;
-        io.write_all(&encoded)?;
-    }
-    Ok(())
 }
 
 // ============================================================================

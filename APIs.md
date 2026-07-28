@@ -118,6 +118,9 @@ as **inherent methods** — no trait imports needed for normal use.
 | `Reader::from_reader_permissive(r)` | `Result<(Reader, Vec<String>)>` | Permissive read from any `Read` source |
 | `Reader::from_bytes(data)` | `Result<Reader>` | Parse from in-memory `Vec<u8>` |
 | `Reader::from_bytes_permissive(data)` | `Result<(Reader, Vec<String>)>` | Permissive parse from `Vec<u8>` |
+
+**Methods**
+
 | `reader.shape()` | `VolumeShape` | Volume dimensions `(nx, ny, nz)` |
 | `reader.mode()` | `Mode` | Voxel data mode |
 | `reader.header()` | `&Header` | Reference to parsed header |
@@ -180,6 +183,21 @@ when available (requires the `mmap` feature). The default reader methods return
 [`DataBlock::Borrowed`](crate::DataBlock) views that borrow directly from the mapped
 memory — no allocation. The same zero-copy access works for buffered readers when
 the requested block is a native-endian contiguous full-row slab.
+
+### Performance note: transparent parallel decode
+
+When the `parallel` feature is enabled (default on), large blocks (≥262K voxels ≈ a
+512³ slab) are automatically processed across all CPU cores:
+
+* **Non-native-endian SIMD byte-swap** in `decode_slice` — e.g. a 4096² f32 volume
+  from a big-endian file is swapped in parallel chunks
+* **Type conversion** in `convert_block` — e.g. `reader.convert::<f32>().read_volume()`
+  splits large multi-plane blocks into Z-chunks, processes each independently, and
+  concatenates results
+
+Small blocks and single-slice reads fall through to the sequential path — no rayon
+overhead for small requests. The zero-copy [`DataBlock::Borrowed`](crate::DataBlock)
+path is also untouched (nothing to parallelize when there is no computation).
 
 | Method | Returns | Description |
 |---|---|---|
@@ -802,7 +820,7 @@ automatically converts any MRC mode to the target type via `.slices()`, `.slabs(
 | `mmap` | ✅ | Memory-mapped I/O (auto-selected by `Reader::open`, `WriterBuilder::finish_mmap()`) |
 | `f16` | ✅ | `half::f16` type, `Mode::Float16`, `write_block_as()` generic f16↔f32 |
 | `simd` | ✅ | AVX2/NEON accelerated integer↔f32, f16↔f32, byte-swap, f32 statistics, and f32→integer clamping |
-| `parallel` | ✅ | Parallel encoding auto-selected in `write_data_block()` for full XY slabs on file-backed writers |
+| `parallel` | ✅ | Parallel decode/convert/encode via `rayon` — transparent for any block ≥512³ |
 | `gzip` | ✅ | Gzip auto-detection, `Reader::open_gzip()`, compressed writer |
 | `bzip2` | ❌ | Bzip2 auto-detection, `Reader::open_bzip2()`, compressed writer |
 | `ndarray` | ❌ | Return volumes as `ndarray::Array3<T>` via `to_ndarray()` |

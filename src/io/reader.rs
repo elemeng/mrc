@@ -929,22 +929,7 @@ impl Reader {
         offset: [usize; 3],
         shape: [usize; 3],
     ) -> Result<Vec<u8>, Error> {
-        let data = self._source_data();
-        let data_len = data.len();
-        crate::io::reader_common::validate_block_bounds(
-            self.shape,
-            self.mode(),
-            data_len,
-            offset,
-            shape,
-        )?;
-        Ok(crate::io::reader_common::gather_block_bytes(
-            data,
-            self.shape,
-            self.mode(),
-            offset,
-            shape,
-        ))
+        self.read_block_bytes_cow(offset, shape).map(Cow::into_owned)
     }
 
     /// Return a `&[u8]` to the full data region regardless of backend (mmap
@@ -1142,7 +1127,6 @@ impl Reader {
             &bytes,
             self.mode(),
             self.endian(),
-            block_shape,
         )?;
         Ok(crate::mode::DataBlock::Owned {
             offset,
@@ -1216,11 +1200,7 @@ impl Reader {
                 Ok(b) => b,
                 Err(e) => return Some(Err(e)),
             };
-            let src: Vec<u16> = match crate::engine::codec::decode_slice(&bytes, self.endian()) {
-                Ok(v) => v,
-                Err(e) => return Some(Err(e)),
-            };
-            let data = match crate::engine::convert::convert_u16_slice_to_u8(&src) {
+            let data = match crate::engine::convert::decode_u16_to_u8(&bytes, self.endian()) {
                 Ok(v) => v,
                 Err(e) => return Some(Err(e)),
             };
@@ -1303,11 +1283,7 @@ impl Reader {
                 Ok(b) => b,
                 Err(e) => return Some(Err(e)),
             };
-            let src: Vec<u16> = match crate::engine::codec::decode_slice(&bytes, self.endian()) {
-                Ok(v) => v,
-                Err(e) => return Some(Err(e)),
-            };
-            let data = match crate::engine::convert::convert_u16_slice_to_u8(&src) {
+            let data = match crate::engine::convert::decode_u16_to_u8(&bytes, self.endian()) {
                 Ok(v) => v,
                 Err(e) => return Some(Err(e)),
             };

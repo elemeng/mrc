@@ -1,5 +1,38 @@
 # Update Log
 
+## 2026-07-27 — v0.7.0 → v0.7.1: Transparent parallel decode/convert
+
+Internal performance optimization: `decode_slice` and `convert_block` now
+automatically use rayon for large blocks (≥262K voxels ≈ 512³) — no new
+public API, no behavior change for callers.
+
+### Performance
+
+- **Parallel SIMD byte-swap** (`decode_slice`): Non-native-endian files with
+  SIMD enabled now split large blocks into chunks and swap in parallel via
+  `rayon::par_chunks_mut`. Previously only the no-SIMD fallback path was
+  parallelized.
+- **Parallel type conversion** (`convert_block`): Multi-plane blocks (sz > 1)
+  with ≥262K total voxels are split by Z and processed independently in
+  rayon threads, then concatenated. The zero-copy `DataBlock::Borrowed` path
+  and single-slice reads are unaffected.
+- **`PAR_MIN_VOXELS`** constant (262_144) added to `engine::codec` as the
+  threshold for activating parallelism — small blocks stay sequential.
+
+### Impact
+
+All existing reader methods (`slices`, `slabs`, `tiles`, `volumes`,
+`subregion`, `read_volume`, `slices_u8`, `slabs_u8`, `read_volume_u8` on
+both `Reader` and `ConvertReader<T>`) benefit transparently. No API changes,
+no new methods, no breaking changes.
+
+### Testing
+
+- 402 tests (98 unit + 67 api_comprehensive + 23 integration + 214 doc-tests)
+- All pass with `--all-features`, 0 clippy warnings
+  
+---
+
 ## 2026-07-16 — v0.6.0 → v0.7.0: Runtime DataView dispatch, removed generic Reader API
 
 ~12 files changed, +832/−706. This release replaces the generic reader methods with

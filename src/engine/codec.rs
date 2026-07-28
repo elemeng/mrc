@@ -296,12 +296,43 @@ pub fn decode_slice<T: EndianCodec + Send + Copy>(
     {
         let dst_bytes =
             unsafe { std::slice::from_raw_parts_mut(result.as_mut_ptr() as *mut u8, bytes.len()) };
-        match T::BYTE_SIZE {
-            2 => crate::engine::simd::swap_2byte_simd(bytes, dst_bytes),
-            4 => crate::engine::simd::swap_4byte_simd(bytes, dst_bytes),
-            8 => crate::engine::simd::swap_8byte_simd(bytes, dst_bytes),
-            _ => {
-                per_element_decode::<T>(&mut result, bytes, n, endian);
+
+        #[cfg(feature = "parallel")]
+        if n >= PAR_MIN_VOXELS {
+            use rayon::prelude::*;
+            let chunk_voxels = PAR_MIN_VOXELS;
+            let chunk_bytes = chunk_voxels * T::BYTE_SIZE;
+            dst_bytes
+                .par_chunks_mut(chunk_bytes)
+                .zip(bytes.par_chunks(chunk_bytes))
+                .for_each(|(dst, src)| {
+                    match T::BYTE_SIZE {
+                        2 => crate::engine::simd::swap_2byte_simd(src, dst),
+                        4 => crate::engine::simd::swap_4byte_simd(src, dst),
+                        8 => crate::engine::simd::swap_8byte_simd(src, dst),
+                        _ => unreachable!(),
+                    }
+                });
+        } else {
+            match T::BYTE_SIZE {
+                2 => crate::engine::simd::swap_2byte_simd(bytes, dst_bytes),
+                4 => crate::engine::simd::swap_4byte_simd(bytes, dst_bytes),
+                8 => crate::engine::simd::swap_8byte_simd(bytes, dst_bytes),
+                _ => {
+                    per_element_decode::<T>(&mut result, bytes, n, endian);
+                }
+            }
+        }
+
+        #[cfg(not(feature = "parallel"))]
+        {
+            match T::BYTE_SIZE {
+                2 => crate::engine::simd::swap_2byte_simd(bytes, dst_bytes),
+                4 => crate::engine::simd::swap_4byte_simd(bytes, dst_bytes),
+                8 => crate::engine::simd::swap_8byte_simd(bytes, dst_bytes),
+                _ => {
+                    per_element_decode::<T>(&mut result, bytes, n, endian);
+                }
             }
         }
     }
@@ -406,6 +437,16 @@ pub fn encode_slice<T: EndianCodec + Sync>(
     }
     Ok(())
 }
+
+// ============================================================================
+// Parallel minimum threshold
+// ============================================================================
+
+/// Minimum number of voxels required to trigger parallel processing.
+///
+/// Blocks smaller than this are processed sequentially, avoiding rayon
+/// overhead for small requests.
+pub(crate) const PAR_MIN_VOXELS: usize = 262_144;
 
 // ============================================================================
 // Per-element fallback helpers (used when simd feature is disabled)
@@ -524,34 +565,24 @@ pub fn swap_bytes_in_place<T: crate::Voxel>(data: &mut [T], from: FileEndian) {
 
 /// Encode a block with parallel processing.
 ///
-/// Each chunk allocates a fresh buffer to avoid contention on thread-local
-/// state and the extra clone that a shared buffer would require.  The
-/// allocator reuses the same-sized memory across chunks, so the cost is
-/// negligible compared to the encode work itself.
+/// Pre-allocates a single contiguous output buffer and processes it with
+/// parallel chunks using `encode_slice` for SIMD-accelerated encoding.
 #[cfg(feature = "parallel")]
 pub fn encode_block_parallel<T: EndianCodec + Sync>(
     values: &[T],
-    chunk_size: usize,
     endian: FileEndian,
-) -> Vec<(usize, Vec<u8>)> {
+) -> Vec<u8> {
     use rayon::prelude::*;
+    let byte_len = values.len() * T::BYTE_SIZE;
+    let mut buffer = vec![0u8; byte_len];
 
-    let chunk_count = values.len().div_ceil(chunk_size);
+    let chunk_voxels = 262_144;
+    buffer
+        .par_chunks_mut(chunk_voxels * T::BYTE_SIZE)
+        .zip(values.par_chunks(chunk_voxels))
+        .for_each(|(dst, chunk)| {
+            encode_slice(chunk, dst, endian).ok();
+        });
 
-    (0..chunk_count)
-        .into_par_iter()
-        .map(|chunk_idx| {
-            let start = chunk_idx * chunk_size;
-            let end = (start + chunk_size).min(values.len());
-            let chunk = &values[start..end];
-
-            let mut buffer = vec![0u8; chunk.len() * T::BYTE_SIZE];
-
-            for (i, val) in chunk.iter().enumerate() {
-                val.to_bytes(&mut buffer, i * T::BYTE_SIZE, endian);
-            }
-
-            (chunk_idx, buffer)
-        })
-        .collect()
+    buffer
 }
