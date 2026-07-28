@@ -365,37 +365,38 @@ pub(crate) fn convert_f32_slice_to_i8(src: &[f32]) -> Vec<i8> {
 // Fused f32 → encoded bytes (used by write_block_as_body! macro)
 // ============================================================================
 
-/// Convert f32 slice to encoded i16 bytes in the target endianness.
-pub(crate) fn convert_f32_to_i16_bytes(src: &[f32], endian: FileEndian) -> Vec<u8> {
-    let values = convert_f32_slice_to_i16(src);
-    let mut buf = vec![0u8; values.len() * 2];
+/// Convert f32 data to a target voxel type, then encode into bytes.
+fn convert_f32_to_bytes<T: crate::Voxel + EndianCodec + Sync>(
+    src: &[f32],
+    endian: FileEndian,
+    convert: fn(&[f32]) -> Vec<T>,
+) -> Vec<u8> {
+    let values = convert(src);
+    let mut buf = vec![0u8; values.len() * T::BYTE_SIZE];
+    // SAFETY: buf size matches values length times element size, guaranteed by construction.
     let _ = crate::engine::codec::encode_slice(&values, &mut buf, endian);
     buf
+}
+
+/// Convert f32 slice to encoded i16 bytes in the target endianness.
+pub(crate) fn convert_f32_to_i16_bytes(src: &[f32], endian: FileEndian) -> Vec<u8> {
+    convert_f32_to_bytes::<i16>(src, endian, convert_f32_slice_to_i16)
 }
 
 /// Convert f32 slice to encoded u16 bytes in the target endianness.
 pub(crate) fn convert_f32_to_u16_bytes(src: &[f32], endian: FileEndian) -> Vec<u8> {
-    let values = convert_f32_slice_to_u16(src);
-    let mut buf = vec![0u8; values.len() * 2];
-    let _ = crate::engine::codec::encode_slice(&values, &mut buf, endian);
-    buf
+    convert_f32_to_bytes::<u16>(src, endian, convert_f32_slice_to_u16)
 }
 
 /// Convert f32 slice to encoded i8 bytes in the target endianness.
 pub(crate) fn convert_f32_to_i8_bytes(src: &[f32], endian: FileEndian) -> Vec<u8> {
-    let values = convert_f32_slice_to_i8(src);
-    let mut buf = vec![0u8; values.len()];
-    let _ = crate::engine::codec::encode_slice(&values, &mut buf, endian);
-    buf
+    convert_f32_to_bytes::<i8>(src, endian, convert_f32_slice_to_i8)
 }
 
 /// Convert f32 slice to encoded f16 bytes in the target endianness.
 #[cfg(feature = "f16")]
 pub(crate) fn convert_f32_to_f16_bytes(src: &[f32], endian: FileEndian) -> Vec<u8> {
-    let values = convert_f32_slice_to_f16(src);
-    let mut buf = vec![0u8; values.len() * 2];
-    let _ = crate::engine::codec::encode_slice(&values, &mut buf, endian);
-    buf
+    convert_f32_to_bytes::<crate::f16>(src, endian, convert_f32_slice_to_f16)
 }
 
 // ============================================================================

@@ -7,7 +7,7 @@
 //! # Quick check
 //!
 //! ```no_run
-//! use mrc::validate::{validate_full, Severity};
+//! use mrc::{validate_full, Severity};
 //!
 //! let report = validate_full("protein.mrc", false).unwrap();
 //! if report.is_valid() {
@@ -21,10 +21,9 @@
 //! }
 //! ```
 
-use crate::engine::block::VolumeShape;
 use crate::engine::endian::FileEndian;
-use crate::engine::stats::compute_stats;
-use crate::{Error, HeaderValidationError, Mode, Reader};
+use crate::engine::stats::validate_header_stats;
+use crate::{Error, Mode, Reader};
 use std::path::Path;
 
 #[cfg(feature = "serde")]
@@ -39,7 +38,7 @@ use serde::{Deserialize, Serialize};
 /// # Example
 ///
 /// ```rust
-/// use mrc::validate::Severity;
+/// use mrc::Severity;
 ///
 /// let s = Severity::Error;
 /// assert!(matches!(s, Severity::Error));
@@ -60,7 +59,7 @@ pub enum Severity {
 /// # Example
 ///
 /// ```rust
-/// use mrc::validate::{Severity, ValidationIssue};
+/// use mrc::{Severity, ValidationIssue};
 ///
 /// let issue = ValidationIssue {
 ///     severity: Severity::Warning,
@@ -117,7 +116,7 @@ impl ValidationIssue {
 /// # Example
 ///
 /// ```rust
-/// use mrc::validate::{ValidationReport, Severity, ValidationIssue};
+/// use mrc::{ValidationReport, Severity, ValidationIssue};
 ///
 /// let report = ValidationReport {
 ///     path: "test.mrc".into(),
@@ -153,7 +152,7 @@ impl ValidationReport {
     /// # Example
     ///
     /// ```rust
-    /// use mrc::validate::{ValidationReport, Severity, ValidationIssue};
+    /// use mrc::{ValidationReport, Severity, ValidationIssue};
     ///
     /// let report = ValidationReport {
     ///     path: "test.mrc".into(),
@@ -176,7 +175,7 @@ impl ValidationReport {
     /// # Example
     ///
     /// ```rust
-    /// use mrc::validate::{ValidationReport, Severity, ValidationIssue};
+    /// use mrc::{ValidationReport, Severity, ValidationIssue};
     ///
     /// let report = ValidationReport {
     ///     path: "test.mrc".into(),
@@ -216,7 +215,7 @@ impl ValidationReport {
 ///
 /// ```no_run
 /// use mrc::Reader;
-/// use mrc::validate::validate_reader;
+/// use mrc::validate_reader;
 ///
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// let reader = Reader::open("protein.mrc")?;
@@ -246,42 +245,7 @@ pub fn validate_reader(
         Ok(()) => {
             issues.push(ValidationIssue::info("Header", "Structure is valid".into()));
         }
-        Err(e) => {
-            let desc = match &e {
-                HeaderValidationError::InvalidDimensions { nx, ny, nz } => {
-                    format!("Dimensions ({nx}×{ny}×{nz}) must all be positive")
-                }
-                HeaderValidationError::UnsupportedMode(m) => format!("Unsupported mode value: {m}"),
-                HeaderValidationError::InvalidMap(m) => format!(
-                    "MAP field is {:?}, expected b\"MAP \"",
-                    std::str::from_utf8(m).unwrap_or("?")
-                ),
-                HeaderValidationError::InvalidIspg(s) => {
-                    format!("ISPG {s} is outside valid ranges (0, 1–230, 400–630)")
-                }
-                HeaderValidationError::InvalidAxisMapping { mapc, mapr, maps } => {
-                    format!("Axis mapping ({mapc}, {mapr}, {maps}) is not a permutation of 1,2,3")
-                }
-                HeaderValidationError::InvalidNsymbt(s) => format!("NSYMBT is negative ({s})"),
-                HeaderValidationError::InvalidNlabl(n) => format!("NLABL is {n}, must be 0–10"),
-                HeaderValidationError::InvalidNversion(n) => {
-                    format!("NVERSION is {n}, expected 0, 20140, or 20141")
-                }
-                HeaderValidationError::InvalidSampling { mx, my, mz } => {
-                    format!("Sampling ({mx}×{my}×{mz}) must all be positive")
-                }
-                HeaderValidationError::InvalidVolumeStack { nz, mz, ispg } => {
-                    format!("Volume stack: nz={nz} not divisible by mz={mz} for ispg={ispg}")
-                }
-                HeaderValidationError::LabelCountMismatch { nlabl, actual } => {
-                    format!("nlabl={nlabl} but {actual} non-empty labels found")
-                }
-                HeaderValidationError::EmptyLabelBeforeFilled { index } => {
-                    format!("Empty label at index {index} before all filled labels")
-                }
-            };
-            issues.push(ValidationIssue::error("Header", desc));
-        }
+        Err(e) => issues.push(ValidationIssue::error("Header", e.to_string())),
     }
 
     // ── 2. File size ──
@@ -316,7 +280,7 @@ pub fn validate_reader(
 
     // ── 4. Data statistics ──
     let raw_bytes = reader.raw_bytes();
-    match check_statistics(header, reader.mode(), endian, reader.shape(), raw_bytes) {
+    match check_statistics(header, raw_bytes) {
         Some(issue) => issues.push(issue),
         None => issues.push(ValidationIssue::info(
             "Statistics",
@@ -422,7 +386,7 @@ pub fn validate_reader(
 /// # Example
 ///
 /// ```no_run
-/// use mrc::validate::validate_full;
+/// use mrc::validate_full;
 ///
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// let report = validate_full("protein.mrc", false)?;
@@ -452,59 +416,33 @@ pub fn validate_full<P: AsRef<Path>>(path: P, permissive: bool) -> Result<Valida
     validate_reader(&reader, &path_str, &compression, &warnings)
 }
 
-/// Compare header statistics against computed values from data bytes.
-/// Returns `Some(ValidationIssue)` if there is a problem, `None` if all match.
+/// Compare header statistics against computed values using
+/// [`validate_header_stats`]. Returns `Some(ValidationIssue)` on mismatch or
+/// error, `None` if all statistics match within 1% tolerance.
 fn check_statistics(
     header: &crate::Header,
-    mode: Mode,
-    endian: FileEndian,
-    shape: VolumeShape,
     raw_bytes: &[u8],
 ) -> Option<ValidationIssue> {
-    let (actual_dmin, actual_dmax, actual_dmean, actual_rms) =
-        match compute_stats(raw_bytes, mode, endian, shape.nx, shape.ny * shape.nz) {
-            Ok(s) => s,
-            Err(e) => {
-                return Some(ValidationIssue::error(
-                    "Statistics",
-                    format!("Cannot compute statistics: {e}"),
-                ))
+    match validate_header_stats(header, raw_bytes) {
+        Ok(()) => None,
+        Err(crate::Error::StatsMismatch { claimed_dmin, claimed_dmax, claimed_dmean, claimed_rms, actual_dmin, actual_dmax, actual_dmean, actual_rms }) => {
+            let mut detail = String::new();
+            if (claimed_dmin - actual_dmin).abs() > 0.01 * actual_dmin.abs().max(claimed_dmin.abs()) {
+                detail.push_str(&format!(" dmin claimed={claimed_dmin} actual={actual_dmin}"));
             }
-        };
-
-    let complex = matches!(mode, Mode::Float32Complex | Mode::Int16Complex);
-    let stats_unset = header.dmin > header.dmax;
-    let rms_unset = header.rms < 0.0;
-    let rtol = 0.01f32;
-
-    let min_ok = complex || stats_unset
-        || crate::engine::stats::is_close(header.dmin, actual_dmin, rtol);
-    let max_ok = complex || stats_unset
-        || crate::engine::stats::is_close(header.dmax, actual_dmax, rtol);
-    let mean_ok = complex || stats_unset
-        || crate::engine::stats::is_close(header.dmean, actual_dmean, rtol);
-    let rms_ok = rms_unset || crate::engine::stats::is_close(header.rms, actual_rms, rtol);
-
-    if stats_unset && rms_unset {
-        return None; // sentinel values, nothing to check
+            if (claimed_dmax - actual_dmax).abs() > 0.01 * actual_dmax.abs().max(claimed_dmax.abs()) {
+                detail.push_str(&format!(" dmax claimed={claimed_dmax} actual={actual_dmax}"));
+            }
+            if (claimed_dmean - actual_dmean).abs() > 0.01 * actual_dmean.abs().max(claimed_dmean.abs()) {
+                detail.push_str(&format!(" dmean claimed={claimed_dmean} actual={actual_dmean}"));
+            }
+            if (claimed_rms - actual_rms).abs() > 0.01 * actual_rms.abs().max(claimed_rms.abs()) {
+                detail.push_str(&format!(" rms claimed={claimed_rms} actual={actual_rms}"));
+            }
+            Some(ValidationIssue::error("Statistics", format!("Mismatch:{detail}")))
+        }
+        Err(e) => Some(ValidationIssue::error("Statistics", format!("Cannot compute statistics: {e}"))),
     }
-
-    let mut mismatch_parts = Vec::with_capacity(4);
-    if !min_ok { mismatch_parts.push("dmin"); }
-    if !max_ok { mismatch_parts.push("dmax"); }
-    if !mean_ok { mismatch_parts.push("dmean"); }
-    if !rms_ok { mismatch_parts.push("rms"); }
-
-    if mismatch_parts.is_empty() {
-        return None; // all match
-    }
-
-    let mut detail = String::new();
-    if !min_ok { detail.push_str(&format!(" dmin claimed={} actual={}", header.dmin, actual_dmin)); }
-    if !max_ok { detail.push_str(&format!(" dmax claimed={} actual={}", header.dmax, actual_dmax)); }
-    if !mean_ok { detail.push_str(&format!(" dmean claimed={} actual={}", header.dmean, actual_dmean)); }
-    if !rms_ok { detail.push_str(&format!(" rms claimed={} actual={}", header.rms, actual_rms)); }
-    Some(ValidationIssue::error("Statistics", format!("Mismatch:{detail}")))
 }
 
 // ── Float-mode data integrity helpers ──

@@ -562,15 +562,15 @@
 //!
 //! # File validation
 //!
-//! [`validate_full`](validate::validate_full) runs comprehensive checks
+//! [`validate_full`] runs comprehensive checks
 //! on a file — header, size, endianness, data statistics (1% tolerance),
 //! and NaN / Inf scanning. Returns a
-//! [`ValidationReport`](validate::ValidationReport) with categorized issues:
+//! [`ValidationReport`] with categorized issues:
 //!
 //! ```no_run
-//! use mrc::validate::{validate_full, Severity};
+//! use mrc::{validate_full, Severity};
 //!
-//! let report = validate_full("protein.mrc", false)?;
+//! let report = mrc::validate_full("protein.mrc", false)?;
 //! if !report.is_valid() {
 //!     for issue in &report.issues {
 //!         if issue.severity == Severity::Error {
@@ -582,7 +582,7 @@
 //! ```
 //!
 //! If you already have an open [`Reader`], use
-//! [`validate_reader`](validate::validate_reader) to avoid re-opening
+//! [`validate_reader`] to avoid re-opening
 //! the file.
 //!
 //! # Real-world workflows
@@ -618,7 +618,7 @@
 //! ```
 //!
 //! If a file fails to open, try [`open_permissive`](Reader::open_permissive)
-//! for lenient header handling, or [`validate_full`](validate::validate_full)
+//! for lenient header handling, or [`validate_full`]
 //! to diagnose the issue.
 //!
 //! ## 2. Write a processed map
@@ -698,7 +698,7 @@ mod header;
 mod io;
 mod iter;
 mod mode;
-pub mod validate;
+mod validate;
 
 #[cfg(feature = "serde")]
 mod serde_byte_array;
@@ -755,12 +755,8 @@ pub use engine::codec::{decode_into, swap_bytes_in_place};
 #[doc(hidden)]
 pub use io::reader::{CompressionType, detect_compression};
 
-/// Internal helper trait for [`read_as`] — users do not need to interact with it directly.
-///
-/// All standard voxel types (`f32`, `i16`, `u16`, `i8`, etc.) implement this trait.
-#[doc(hidden)]
-pub trait ReadAsTarget: Voxel + crate::engine::convert::ConvertFrom<f32> {}
-impl<T: Voxel + crate::engine::convert::ConvertFrom<f32>> ReadAsTarget for T {}
+/// Validation report types and comprehensive file checker.
+pub use validate::{Severity, ValidationIssue, ValidationReport, validate_full, validate_reader};
 
 /// Open an MRC file for reading, auto-detecting gzip or bzip2 compression.
 ///
@@ -818,7 +814,7 @@ pub fn create<P: AsRef<std::path::Path>>(path: P) -> WriterBuilder {
 ///     header.nx, header.ny, header.nz, data.len());
 /// # Ok(()) }
 /// ```
-pub fn read_as<T: ReadAsTarget, P: AsRef<std::path::Path>>(
+pub fn read_as<T: Voxel + crate::engine::convert::ConvertFrom<f32>, P: AsRef<std::path::Path>>(
     path: P,
 ) -> Result<(Header, Vec<T>), Error> {
     let reader = Reader::open(path)?;

@@ -144,58 +144,23 @@ impl<'a, S> RegionIter<'a, S> {
     /// Try zero-copy reinterpretation for a native-endian contiguous slab.
     /// Returns `Some(DataView)` on success, `None` if the block cannot be
     /// zero-copied (non-contiguous, endian mismatch, or alignment issue).
+    /// Try to reinterpret bytes as a typed slice via `align_to`.
+    /// Returns `None` if `bytes` is not correctly aligned for `T`.
+    fn try_align<T>(bytes: &[u8]) -> Option<&[T]> {
+        let (prefix, data, suffix) = unsafe { bytes.align_to::<T>() };
+        if prefix.is_empty() && suffix.is_empty() { Some(data) } else { None }
+    }
+
     pub(crate) fn try_zero_copy<'b>(bytes: &'b [u8], mode: Mode) -> Option<DataView<'b>> {
         Some(match mode {
-            Mode::Int8 => {
-                let (prefix, data, suffix) = unsafe { bytes.align_to::<i8>() };
-                if !prefix.is_empty() || !suffix.is_empty() {
-                    return None;
-                }
-                DataView::Int8(data)
-            }
-            Mode::Int16 => {
-                let (prefix, data, suffix) = unsafe { bytes.align_to::<i16>() };
-                if !prefix.is_empty() || !suffix.is_empty() {
-                    return None;
-                }
-                DataView::Int16(data)
-            }
-            Mode::Float32 => {
-                let (prefix, data, suffix) = unsafe { bytes.align_to::<f32>() };
-                if !prefix.is_empty() || !suffix.is_empty() {
-                    return None;
-                }
-                DataView::Float32(data)
-            }
-            Mode::Int16Complex => {
-                let (prefix, data, suffix) = unsafe { bytes.align_to::<crate::Int16Complex>() };
-                if !prefix.is_empty() || !suffix.is_empty() {
-                    return None;
-                }
-                DataView::Int16Complex(data)
-            }
-            Mode::Float32Complex => {
-                let (prefix, data, suffix) = unsafe { bytes.align_to::<crate::Float32Complex>() };
-                if !prefix.is_empty() || !suffix.is_empty() {
-                    return None;
-                }
-                DataView::Float32Complex(data)
-            }
-            Mode::Uint16 => {
-                let (prefix, data, suffix) = unsafe { bytes.align_to::<u16>() };
-                if !prefix.is_empty() || !suffix.is_empty() {
-                    return None;
-                }
-                DataView::Uint16(data)
-            }
+            Mode::Int8 => DataView::Int8(Self::try_align(bytes)?),
+            Mode::Int16 => DataView::Int16(Self::try_align(bytes)?),
+            Mode::Float32 => DataView::Float32(Self::try_align(bytes)?),
+            Mode::Uint16 => DataView::Uint16(Self::try_align(bytes)?),
+            Mode::Int16Complex => DataView::Int16Complex(Self::try_align(bytes)?),
+            Mode::Float32Complex => DataView::Float32Complex(Self::try_align(bytes)?),
             #[cfg(feature = "f16")]
-            Mode::Float16 => {
-                let (prefix, data, suffix) = unsafe { bytes.align_to::<crate::f16>() };
-                if !prefix.is_empty() || !suffix.is_empty() {
-                    return None;
-                }
-                DataView::Float16(data)
-            }
+            Mode::Float16 => DataView::Float16(Self::try_align(bytes)?),
             Mode::Packed4Bit => DataView::Packed4Bit(bytes),
         })
     }

@@ -507,11 +507,7 @@ impl Reader {
         if mode == Mode::Int8 {
             if let Some(imod) = header.detect_imod() {
                 if !imod.bytes_are_signed {
-                    warnings.push(
-                        "IMOD file with unsigned Mode 0 detected: use slices_mode0() \
-                         or convert::<f32>() for correct values"
-                            .into(),
-                    );
+                    warnings.push(crate::io::reader_common::IMOD_UNSIGNED_M0_WARNING.into());
                 }
             }
         }

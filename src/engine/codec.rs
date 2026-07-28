@@ -544,14 +544,13 @@ pub fn swap_bytes_in_place<T: crate::Voxel>(data: &mut [T], from: FileEndian) {
     if from == FileEndian::native() || data.is_empty() {
         return;
     }
-    // Reinterpret as raw bytes and reverse each element's bytes in-place.
-    // Using slice::reverse on each element avoids the SIMD src≠dst constraint.
     let byte_len = data.len() * T::BYTE_SIZE;
     // SAFETY: the byte_len calculation is exact; the pointer casts produce
     // a valid mutable byte slice of the same length.
     let bytes = unsafe { core::slice::from_raw_parts_mut(data.as_mut_ptr() as *mut u8, byte_len) };
-    // Reverse bytes within each element: for BYTE_SIZE=2, [a,b]→[b,a];
-    // for BYTE_SIZE=4, [a,b,c,d]→[d,c,b,a].
+    // Reverse bytes within each element using in-place chunk reversal.
+    // This is safe for in-place operation because `chunks_exact_mut` produces
+    // non-overlapping sub-slices, and `reverse()` swaps bytes within each chunk.
     for chunk in bytes.chunks_exact_mut(T::BYTE_SIZE) {
         chunk.reverse();
     }

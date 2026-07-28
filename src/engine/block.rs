@@ -176,26 +176,7 @@ impl<T> VoxelBlock<T> {
     /// let block = VoxelBlock::new([1, 2, 3], [4, 4, 4], vec![0i16; 64]).unwrap();
     /// assert_eq!(block.offset, [1, 2, 3]);
     /// ```
-    pub fn new(offset: [usize; 3], shape: [usize; 3], data: Vec<T>) -> Result<Self, crate::Error> {
-        Self::try_new(offset, shape, data)
-    }
-
-    /// Create a new VoxelBlock, returning an error if the data length does not
-    /// match the shape.
-    ///
-    /// # Errors
-    /// Returns [`crate::Error::BoundsError`] if `shape` dimensions overflow `usize`.
-    /// Returns [`crate::Error::BlockShapeMismatch`] if `data.len()` does not match `shape`.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use mrc::VoxelBlock;
-    /// let block = VoxelBlock::try_new([0, 0, 0], [2, 2, 2], vec![1.0f32; 8]).unwrap();
-    /// assert_eq!(block.len(), 8);
-    /// assert!(VoxelBlock::<f32>::try_new([0, 0, 0], [2, 2, 2], vec![1.0f32; 7]).is_err());
-    /// ```
-    pub fn try_new(
+    pub fn new(
         offset: [usize; 3],
         shape: [usize; 3],
         data: Vec<T>,

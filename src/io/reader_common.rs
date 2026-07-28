@@ -447,6 +447,11 @@ pub(crate) fn write_block_bytes(
     Ok(())
 }
 
+/// Warning message for IMOD files with unsigned Mode 0 data.
+pub(crate) const IMOD_UNSIGNED_M0_WARNING: &str =
+    "IMOD file with unsigned Mode 0 detected: use slices_mode0() \
+     or convert::<f32>() for correct values";
+
 /// Parse and validate an MRC header from raw bytes.
 pub(crate) fn parse_header(
     header_bytes: &[u8],
@@ -533,11 +538,7 @@ pub(crate) fn open_compressed<D: std::io::Read>(
         if mode == Mode::Int8 {
             if let Some(imod) = header.detect_imod() {
                 if !imod.bytes_are_signed {
-                    warnings.push(
-                        "IMOD file with unsigned Mode 0 detected: use slices_mode0() \
-                         or convert::<f32>() for correct values"
-                            .into(),
-                    );
+                    warnings.push(IMOD_UNSIGNED_M0_WARNING.into());
                 }
             }
         }

@@ -1062,7 +1062,7 @@ fn error_file_size_mismatch() {
 fn validate_full_valid_file() {
     let f = TempMrc::new("validate_ok");
     write_f32_volume(&f, 8, 8, 4);
-    let report = mrc::validate::validate_full(f.path(), false).unwrap();
+    let report = mrc::validate_full(f.path(), false).unwrap();
     assert!(report.is_valid());
     assert_eq!(report.nx, 8);
     assert_eq!(report.ny, 8);
@@ -1092,10 +1092,10 @@ fn validate_full_invalid_file() {
     file.write_all(&bytes).unwrap();
     file.write_all(&[0u8; 64]).unwrap(); // data
     drop(file);
-    let report = mrc::validate::validate_full(f.path(), true).unwrap();
+    let report = mrc::validate_full(f.path(), true).unwrap();
     // Should have warnings (negative NSYMBT) but no hard errors
     let warnings: Vec<_> = report
-        .by_severity(mrc::validate::Severity::Warning)
+        .by_severity(mrc::Severity::Warning)
         .collect();
     assert!(!warnings.is_empty(), "expected at least one warning");
 }
@@ -1105,7 +1105,7 @@ fn validate_reader() {
     let f = TempMrc::new("validate_reader");
     write_f32_volume(&f, 4, 4, 1);
     let r = Reader::open(f.path()).unwrap();
-    let report = mrc::validate::validate_reader(&r, "test", "plain", &[]).unwrap();
+    let report = mrc::validate_reader(&r, "test", "plain", &[]).unwrap();
     assert!(report.is_valid());
 }
 
