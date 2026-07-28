@@ -925,15 +925,18 @@ mod tests {
 pub(crate) fn decode_i16_to_i8(bytes: &[u8], endian: FileEndian) -> Result<Vec<i8>, Error> {
     let n = bytes.len() / 2;
     let mut result = vec![0i8; n];
-    if endian == FileEndian::native() {
-        for i in 0..n {
-            let val = i16::from_ne_bytes([bytes[i * 2], bytes[i * 2 + 1]]);
-            result[i] = val.clamp(i8::MIN as i16, i8::MAX as i16) as i8;
+    match endian {
+        FileEndian::LittleEndian => {
+            for i in 0..n {
+                let val = i16::from_le_bytes([bytes[i * 2], bytes[i * 2 + 1]]);
+                result[i] = val.clamp(i8::MIN as i16, i8::MAX as i16) as i8;
+            }
         }
-    } else {
-        for i in 0..n {
-            let val = i16::from_be_bytes([bytes[i * 2], bytes[i * 2 + 1]]);
-            result[i] = val.clamp(i8::MIN as i16, i8::MAX as i16) as i8;
+        FileEndian::BigEndian => {
+            for i in 0..n {
+                let val = i16::from_be_bytes([bytes[i * 2], bytes[i * 2 + 1]]);
+                result[i] = val.clamp(i8::MIN as i16, i8::MAX as i16) as i8;
+            }
         }
     }
     Ok(result)
@@ -954,15 +957,18 @@ pub(crate) fn decode_i8_to_i16(bytes: &[u8], _endian: FileEndian) -> Result<Vec<
 pub(crate) fn decode_u16_to_i8(bytes: &[u8], endian: FileEndian) -> Result<Vec<i8>, Error> {
     let n = bytes.len() / 2;
     let mut result = vec![0i8; n];
-    if endian == FileEndian::native() {
-        for i in 0..n {
-            let val = u16::from_ne_bytes([bytes[i * 2], bytes[i * 2 + 1]]);
-            result[i] = val.min(i8::MAX as u16) as i8;
+    match endian {
+        FileEndian::LittleEndian => {
+            for i in 0..n {
+                let val = u16::from_le_bytes([bytes[i * 2], bytes[i * 2 + 1]]);
+                result[i] = val.min(i8::MAX as u16) as i8;
+            }
         }
-    } else {
-        for i in 0..n {
-            let val = u16::from_be_bytes([bytes[i * 2], bytes[i * 2 + 1]]);
-            result[i] = val.min(i8::MAX as u16) as i8;
+        FileEndian::BigEndian => {
+            for i in 0..n {
+                let val = u16::from_be_bytes([bytes[i * 2], bytes[i * 2 + 1]]);
+                result[i] = val.min(i8::MAX as u16) as i8;
+            }
         }
     }
     Ok(result)
@@ -982,15 +988,18 @@ pub(crate) fn decode_i8_to_u16(bytes: &[u8], _endian: FileEndian) -> Result<Vec<
 pub(crate) fn decode_u16_to_i16(bytes: &[u8], endian: FileEndian) -> Result<Vec<i16>, Error> {
     let n = bytes.len() / 2;
     let mut result = vec![0i16; n];
-    if endian == FileEndian::native() {
-        for i in 0..n {
-            let val = u16::from_ne_bytes([bytes[i * 2], bytes[i * 2 + 1]]);
-            result[i] = val.min(i16::MAX as u16) as i16;
+    match endian {
+        FileEndian::LittleEndian => {
+            for i in 0..n {
+                let val = u16::from_le_bytes([bytes[i * 2], bytes[i * 2 + 1]]);
+                result[i] = val.min(i16::MAX as u16) as i16;
+            }
         }
-    } else {
-        for i in 0..n {
-            let val = u16::from_be_bytes([bytes[i * 2], bytes[i * 2 + 1]]);
-            result[i] = val.min(i16::MAX as u16) as i16;
+        FileEndian::BigEndian => {
+            for i in 0..n {
+                let val = u16::from_be_bytes([bytes[i * 2], bytes[i * 2 + 1]]);
+                result[i] = val.min(i16::MAX as u16) as i16;
+            }
         }
     }
     Ok(result)
@@ -1000,15 +1009,18 @@ pub(crate) fn decode_u16_to_i16(bytes: &[u8], endian: FileEndian) -> Result<Vec<
 pub(crate) fn decode_i16_to_u16(bytes: &[u8], endian: FileEndian) -> Result<Vec<u16>, Error> {
     let n = bytes.len() / 2;
     let mut result = vec![0u16; n];
-    if endian == FileEndian::native() {
-        for i in 0..n {
-            let val = i16::from_ne_bytes([bytes[i * 2], bytes[i * 2 + 1]]);
-            result[i] = val.max(0) as u16;
+    match endian {
+        FileEndian::LittleEndian => {
+            for i in 0..n {
+                let val = i16::from_le_bytes([bytes[i * 2], bytes[i * 2 + 1]]);
+                result[i] = val.max(0) as u16;
+            }
         }
-    } else {
-        for i in 0..n {
-            let val = i16::from_be_bytes([bytes[i * 2], bytes[i * 2 + 1]]);
-            result[i] = val.max(0) as u16;
+        FileEndian::BigEndian => {
+            for i in 0..n {
+                let val = i16::from_be_bytes([bytes[i * 2], bytes[i * 2 + 1]]);
+                result[i] = val.max(0) as u16;
+            }
         }
     }
     Ok(result)

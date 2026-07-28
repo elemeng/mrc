@@ -161,6 +161,8 @@ impl<'a, S> RegionIter<'a, S> {
             Mode::Float32Complex => DataView::Float32Complex(Self::try_align(bytes)?),
             #[cfg(feature = "f16")]
             Mode::Float16 => DataView::Float16(Self::try_align(bytes)?),
+            #[cfg(not(feature = "f16"))]
+            Mode::Float16 => return None,
             Mode::Packed4Bit => DataView::Packed4Bit(bytes),
         })
     }
