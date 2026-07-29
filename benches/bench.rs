@@ -8,6 +8,7 @@
 use criterion::{Criterion, criterion_group, criterion_main};
 use mrc::{DataBlock, OwnedData, create};
 use std::hint::black_box;
+use std::path::Path;
 
 // ============================================================================
 // Helpers — generate temp MRC files for benchmarking
@@ -235,7 +236,30 @@ const REAL_BOX320: &str = "real_data/box320_bin2_mask.mrc";
 const REAL_EMMAP: &str = "real_data/em-map.mrc";
 const REAL_TOMOGRAM: &str = "real_data/tomogram.mrc";
 
+/// Check all required real data files exist, panicking once with a summary.
+/// Called once per process from any real-data benchmark function.
+fn ensure_real_data_available() {
+    use std::sync::Once;
+    static CHECK: Once = Once::new();
+    CHECK.call_once(|| {
+        let missing: Vec<&str> = [REAL_SEARCH, REAL_BOX320, REAL_EMMAP, REAL_TOMOGRAM]
+            .into_iter()
+            .filter(|p| !Path::new(p).exists())
+            .collect();
+        if !missing.is_empty() {
+            panic!(
+                "real data files not found ({} missing):\n  {}\n\
+                 Clone the full repository or download the files separately.\n\
+                 The real_data/ directory is gitignored because files are large.",
+                missing.len(),
+                missing.join("\n  "),
+            );
+        }
+    });
+}
+
 fn bench_real_read_volume_search(c: &mut Criterion) {
+    ensure_real_data_available();
     c.bench_function("real/read_volume/search", |b| {
         b.iter(|| {
             let reader = mrc::Reader::open(black_box(REAL_SEARCH)).unwrap();
@@ -432,6 +456,7 @@ const TOMO_NY: usize = 1440;
 // ── Level 0: minimal overhead — file open ─────────────────────────────
 
 fn bench_tomo_open(c: &mut Criterion) {
+    ensure_real_data_available();
     c.bench_function("tomogram/open", |b| {
         b.iter(|| {
             let reader = mrc::Reader::open(black_box(REAL_TOMOGRAM)).unwrap();

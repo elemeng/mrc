@@ -24,13 +24,26 @@ const BOX320: &str = "box320_bin2_mask.mrc";
 const EMMAP: &str = "em-map.mrc";
 const TOMO: &str = "tomogram.mrc";
 
-fn all_files() -> Vec<&'static str> {
-    vec![SEARCH, ATLAS, PREVIEW, BOX320, EMMAP, TOMO]
+/// Return all real data files that exist on disk (the directory is gitignored).
+fn available_files() -> Vec<&'static str> {
+    [SEARCH, ATLAS, PREVIEW, BOX320, EMMAP, TOMO]
+        .into_iter()
+        .filter(|name| path(name).exists())
+        .collect()
 }
 
 #[track_caller]
 fn assert_open_ok(name: &str) -> Reader {
-    match Reader::open(path(name)) {
+    let p = path(name);
+    if !p.exists() {
+        panic!(
+            "real data file not found: {}\n\
+             Clone the full repository or download the file separately.\n\
+             The real_data/ directory is gitignored because files are large.",
+            p.display()
+        );
+    }
+    match Reader::open(p) {
         Ok(r) => r,
         Err(e) => panic!("failed to open {name}: {e}"),
     }
@@ -42,7 +55,7 @@ fn assert_open_ok(name: &str) -> Reader {
 
 #[test]
 fn header_validate_detailed_all() {
-    for name in all_files() {
+    for name in available_files() {
         let r = assert_open_ok(name);
         assert!(
             r.header().validate_detailed().is_ok(),
@@ -53,7 +66,7 @@ fn header_validate_detailed_all() {
 
 #[test]
 fn header_validate_bool_all() {
-    for name in all_files() {
+    for name in available_files() {
         let r = assert_open_ok(name);
         assert!(r.header().validate(), "{name}: validate() returned false");
     }
@@ -61,7 +74,7 @@ fn header_validate_bool_all() {
 
 #[test]
 fn header_validate_permissive_all() {
-    for name in all_files() {
+    for name in available_files() {
         let r = assert_open_ok(name);
         let result = r.header().validate_permissive();
         assert!(
@@ -78,7 +91,7 @@ fn header_validate_permissive_all() {
 
 #[test]
 fn header_dimensions_consistent() {
-    for name in all_files() {
+    for name in available_files() {
         let r = assert_open_ok(name);
         let h = r.header();
         assert!(h.nx > 0, "{name}: nx={}", h.nx);
@@ -93,7 +106,7 @@ fn header_dimensions_consistent() {
 
 #[test]
 fn header_mode_consistent() {
-    for name in all_files() {
+    for name in available_files() {
         let r = assert_open_ok(name);
         let m = r.mode();
         assert_eq!(m.as_i32(), r.header().mode, "{name}: mode mismatch");
@@ -106,7 +119,7 @@ fn header_mode_consistent() {
 
 #[test]
 fn header_detect_endian() {
-    for name in all_files() {
+    for name in available_files() {
         let r = assert_open_ok(name);
         let h = r.header();
         let f = FileEndian::from_machst(&h.machst);
@@ -121,7 +134,7 @@ fn header_detect_endian() {
 
 #[test]
 fn header_cell_properties() {
-    for name in all_files() {
+    for name in available_files() {
         let r = assert_open_ok(name);
         let h = r.header();
         let [xl, yl, zl] = h.cell_lengths();
@@ -139,7 +152,7 @@ fn header_cell_properties() {
 
 #[test]
 fn header_voxel_size_and_sampling() {
-    for name in all_files() {
+    for name in available_files() {
         let r = assert_open_ok(name);
         let h = r.header();
         let vs = h.voxel_size();
@@ -154,7 +167,7 @@ fn header_voxel_size_and_sampling() {
 
 #[test]
 fn header_density_stats() {
-    for name in all_files() {
+    for name in available_files() {
         let r = assert_open_ok(name);
         let h = r.header();
         let (dmin, dmax, _dmean, _rms) = h.density_stats();
@@ -165,7 +178,7 @@ fn header_density_stats() {
 
 #[test]
 fn header_labels_and_properties() {
-    for name in all_files() {
+    for name in available_files() {
         let r = assert_open_ok(name);
         let h = r.header();
         // exttyp
@@ -202,7 +215,7 @@ fn header_labels_and_properties() {
 
 #[test]
 fn header_volume_type_methods() {
-    for name in all_files() {
+    for name in available_files() {
         let r = assert_open_ok(name);
         let h = r.header();
         // Should be one of: image, image_stack, volume, volume_stack
@@ -225,7 +238,7 @@ fn header_volume_type_methods() {
 
 #[test]
 fn header_decode_encode_roundtrip() {
-    for name in all_files() {
+    for name in available_files() {
         let r = assert_open_ok(name);
         let h = r.header();
         let mut buf = [0u8; 1024];
@@ -239,7 +252,7 @@ fn header_decode_encode_roundtrip() {
 
 #[test]
 fn header_decode_from_bytes_with_info() {
-    for name in all_files() {
+    for name in available_files() {
         let r = assert_open_ok(name);
         let h = r.header();
         let mut buf = [0u8; 1024];
@@ -371,7 +384,7 @@ fn reader_raw_bytes() {
 
 #[test]
 fn reader_ext_header_bytes() {
-    for name in all_files() {
+    for name in available_files() {
         let r = assert_open_ok(name);
         let ext = r.ext_header_bytes();
         let h = r.header();
@@ -946,8 +959,8 @@ fn volume_shape_operations() {
 // ============================================================================
 
 #[test]
-fn extended_header_on_all_files() {
-    for name in all_files() {
+fn extended_header_on_available_files() {
+    for name in available_files() {
         let r = assert_open_ok(name);
         // parse_extended_header
         let parsed = r.parse_extended_header();
