@@ -1196,6 +1196,51 @@ impl Writer {
                     + (oy as u64) * (nx as u64)
                     + (oz as u64) * (nx as u64) * (ny as u64);
                 let base_offset = self.data_offset + linear * (self.bytes_per_voxel as u64);
+
+                // Native endian: write data bytes directly, zero-copy.
+                if file_endian == FileEndian::native() {
+                    macro_rules! write_direct {
+                        ($data:expr) => {{
+                            // SAFETY: T has no padding; any bit pattern is valid u8.
+                            let bytes = unsafe {
+                                core::slice::from_raw_parts(
+                                    $data.as_ptr().cast::<u8>(),
+                                    core::mem::size_of_val($data),
+                                )
+                            };
+                            io.seek(SeekFrom::Start(base_offset))?;
+                            io.write_all(bytes)?;
+                            Ok(())
+                        }};
+                    }
+                    return match block.data() {
+                        DataView::Int8(d) => write_direct!(d),
+                        DataView::Int16(d) => write_direct!(d),
+                        DataView::Float32(d) => write_direct!(d),
+                        DataView::Uint16(d) => write_direct!(d),
+                        DataView::Int16Complex(d) => write_direct!(d),
+                        DataView::Float32Complex(d) => write_direct!(d),
+                        #[cfg(feature = "f16")]
+                        DataView::Float16(d) => write_direct!(d),
+                        DataView::Packed4Bit(d) => {
+                            let file_row_bytes = nx.div_ceil(2);
+                            let z_slice_bytes = ny * file_row_bytes;
+                            let packed_base_offset =
+                                self.data_offset + (oz as u64) * (z_slice_bytes as u64);
+                            let byte_len = (sz as u64) * (z_slice_bytes as u64);
+                            let byte_len_usize =
+                                byte_len.try_into().map_err(|_| Error::bounds_err())?;
+                            if d.len() != byte_len_usize {
+                                return Err(Error::bounds_err());
+                            }
+                            io.seek(SeekFrom::Start(packed_base_offset))?;
+                            io.write_all(d)?;
+                            Ok(())
+                        }
+                    };
+                }
+
+                // Non-native endian: parallel byte-swap then write.
                 macro_rules! encode_and_write {
                     ($ty:ty, $data:expr) => {{
                         let encoded = encode_block_parallel::<$ty>($data, file_endian)?;
