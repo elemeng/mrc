@@ -413,8 +413,7 @@ impl Reader {
         if ext_size > 0 && ext_end < ext_size {
             warnings.push(format!(
                 "Extended header truncated: expected {} bytes, got {}",
-                ext_size,
-                ext_end
+                ext_size, ext_end
             ));
         }
 
@@ -445,6 +444,12 @@ impl Reader {
         use std::fs::File;
 
         let file = File::open(path)?;
+        // SAFETY: The file is opened read-only and the mapping lives as long
+        // as the returned `Mmap` (stored in `Reader.source`). Closing the
+        // `file` handle after `map` does not invalidate the mapping on any
+        // supported platform (the kernel maintains a reference count on the
+        // underlying inode). The mapping is immutable — no writes occur
+        // through it, so there is no risk of aliased mutation.
         let mmap = unsafe {
             memmap2::MmapOptions::new()
                 .map(&file)
@@ -635,7 +640,15 @@ impl Reader {
         self.endian
     }
 
-    /// Raw voxel data bytes.
+    /// Raw voxel data bytes — **on-disk format**.
+    ///
+    /// Returns a `&[u8]` view of the entire voxel data region.  The bytes are
+    /// exactly as they appear in the file: **no endian correction, no type
+    /// conversion**.  You must handle byte order (via [`reader.endian()`](Self::endian))
+    /// and type interpretation (via [`reader.mode()`](Self::mode)) yourself.
+    ///
+    /// For typed zero-copy access, use [`subregion`](Self::subregion),
+    /// [`slices`](Self::slices), or [`convert::<f32>()`](Self::convert) instead.
     ///
     /// For memory-mapped readers this returns a zero-copy `&[u8]` view.
     /// For buffered readers this borrows from the internal `Vec<u8>`.
@@ -887,11 +900,23 @@ impl Reader {
 }
 
 // ============================================================================
-// Read block methods
+// Raw byte access — for advanced use cases
 // ============================================================================
 
 impl Reader {
-    /// Read a block of raw voxel bytes.
+    /// Read a block of raw voxel bytes as an owned `Vec<u8>`.
+    ///
+    /// ⚠️ **The returned bytes are raw on-disk bytes** — file byte order,
+    /// no endian correction, no type conversion.  Use [`reader.endian()`](Self::endian)
+    /// and [`reader.mode()`](Self::mode) to interpret them correctly.
+    ///
+    /// For typed zero-copy access, use [`subregion`](Self::subregion) or
+    /// [`slices`](Self::slices) instead.
+    ///
+    /// ⚠️ **Performance**: contiguous blocks (origin-aligned, full XY) are
+    /// always copied into a new allocation.  For large volumes this is
+    /// expensive.  Use [`read_block_bytes_cow`](Self::read_block_bytes_cow)
+    /// to avoid the copy.
     ///
     /// # Examples
     ///
@@ -905,8 +930,8 @@ impl Reader {
     /// # let data = vec![0u8; 64];
     /// # let buf: Vec<u8> = raw.into_iter().chain(data).collect();
     /// # let reader = mrc::Reader::from_bytes(buf)?;
-    /// let block = reader.read_block_bytes([0, 0, 0], [4, 4, 1])?;
-    /// assert_eq!(block.len(), 64);
+    /// let bytes = reader.read_block_bytes([0, 0, 0], [4, 4, 1])?;
+    /// assert_eq!(bytes.len(), 64);
     /// # Ok(())
     /// # }
     /// ```
@@ -915,44 +940,48 @@ impl Reader {
         offset: [usize; 3],
         shape: [usize; 3],
     ) -> Result<Vec<u8>, Error> {
-        self.read_block_bytes_cow(offset, shape).map(Cow::into_owned)
+        self.read_block_bytes_cow(offset, shape)
+            .map(Cow::into_owned)
     }
 
-    /// Return a `&[u8]` to the full data region regardless of backend (mmap
-    /// or buffered). This is a low-level method — most callers should use
-    /// [`read_block_bytes`](Self::read_block_bytes) instead.
+    /// Read a block of raw voxel bytes, returning [`Cow<[u8]>`].
+    ///
+    /// ⚠️ **The returned bytes are raw on-disk bytes** — file byte order,
+    /// no endian correction, no type conversion.  Use [`reader.endian()`](Self::endian)
+    /// and [`reader.mode()`](Self::mode) to interpret them correctly.
+    ///
+    /// For typed zero-copy access, use [`subregion`](Self::subregion) or
+    /// [`slices`](Self::slices) instead.
+    ///
+    /// Returns [`Cow::Borrowed`] for contiguous blocks (origin-aligned, full
+    /// XY extent) — zero-copy, no allocation.  Returns [`Cow::Owned`] for
+    /// non-contiguous blocks — data is gathered row-by-row.
+    ///
+    /// **Contiguous** = offset `[0, y, z]`, shape `[nx, ny, sz]`.
+    /// Any sub-XY offset or shape forces a gather (copies each row).
     ///
     /// # Examples
     ///
-    /// ```no_run
+    /// ```
     /// # fn main() -> Result<(), mrc::Error> {
-    /// let reader = mrc::Reader::open("density.mrc")?;
-    /// let bytes = reader.raw_bytes();
-    /// println!("File has {} raw data bytes", bytes.len());
+    /// # let mut h = mrc::Header::new();
+    /// # h.nx = 4; h.ny = 4; h.nz = 1;
+    /// # h.mx = 4; h.my = 4; h.mz = 1;
+    /// # let mut raw = [0u8; 1024];
+    /// # h.encode_to_bytes(&mut raw);
+    /// # let data = vec![0u8; 64];
+    /// # let buf: Vec<u8> = raw.into_iter().chain(data).collect();
+    /// # let reader = mrc::Reader::from_bytes(buf)?;
+    /// use std::borrow::Cow;
+    /// let cow = reader.read_block_bytes_cow([0, 0, 0], [4, 4, 1])?;
+    /// match cow {
+    ///     Cow::Borrowed(slice) => println!("zero-copy: {} bytes", slice.len()),
+    ///     Cow::Owned(vec) => println!("allocated: {} bytes", vec.len()),
+    /// }
     /// # Ok(())
     /// # }
     /// ```
-    #[doc(hidden)]
-    pub fn raw_data(&self) -> &[u8] {
-        self._source_data()
-    }
-
-    /// Compute (offset, byte_len) for a contiguous full-row XY slab.
-    fn contiguous_slab_range(&self, offset: [usize; 3], shape: [usize; 3]) -> (usize, usize) {
-        let [nx, ny, _nz] = [self.shape.nx, self.shape.ny, self.shape.nz];
-        let [_ox, _oy, oz] = offset;
-        let [sx, sy, sz] = shape;
-        if self.mode == Mode::Packed4Bit {
-            let row_bytes = nx.div_ceil(2);
-            (oz * ny * row_bytes, row_bytes * ny * sz)
-        } else {
-            let linear = oz * nx * ny;
-            let b = self.mode.byte_size();
-            (linear * b, sx * sy * sz * b)
-        }
-    }
-
-    pub(crate) fn read_block_bytes_cow<'a>(
+    pub fn read_block_bytes_cow<'a>(
         &'a self,
         offset: [usize; 3],
         shape: [usize; 3],
@@ -997,7 +1026,9 @@ impl Reader {
                 )?;
                 if is_contiguous {
                     let (start, byte_len) = self.contiguous_slab_range(offset, shape);
-                    return Ok(Cow::Borrowed(&map[data_offset + start..data_offset + start + byte_len]));
+                    return Ok(Cow::Borrowed(
+                        &map[data_offset + start..data_offset + start + byte_len],
+                    ));
                 }
                 Ok(Cow::Owned(crate::io::reader_common::gather_block_bytes(
                     &map[*data_offset..],
@@ -1007,6 +1038,30 @@ impl Reader {
                     shape,
                 )))
             }
+        }
+    }
+
+    /// Return a `&[u8]` to the full data region regardless of backend.
+    ///
+    /// This is a low-level method — most callers should use the typed
+    /// [`subregion`](Self::subregion) or [`slices`](Self::slices) API instead.
+    #[doc(hidden)]
+    pub fn raw_data(&self) -> &[u8] {
+        self._source_data()
+    }
+
+    /// Compute (offset, byte_len) for a contiguous full-row XY slab.
+    fn contiguous_slab_range(&self, offset: [usize; 3], shape: [usize; 3]) -> (usize, usize) {
+        let [nx, ny, _nz] = [self.shape.nx, self.shape.ny, self.shape.nz];
+        let [_ox, _oy, oz] = offset;
+        let [sx, sy, sz] = shape;
+        if self.mode == Mode::Packed4Bit {
+            let row_bytes = nx.div_ceil(2);
+            (oz * ny * row_bytes, row_bytes * ny * sz)
+        } else {
+            let linear = oz * nx * ny;
+            let b = self.mode.byte_size();
+            (linear * b, sx * sy * sz * b)
         }
     }
 
@@ -1044,7 +1099,10 @@ impl Reader {
         &self,
         tile_shape: [usize; 3],
     ) -> Result<impl Iterator<Item = Result<crate::mode::DataBlock<'_>, Error>> + '_, Error> {
-        Ok(crate::iter::RegionIter::with_stepper(self, crate::iter::TileStepper::new(tile_shape)?))
+        Ok(crate::iter::RegionIter::with_stepper(
+            self,
+            crate::iter::TileStepper::new(tile_shape)?,
+        ))
     }
 
     /// Iterate over sub-volumes in a volume stack.
@@ -1095,11 +1153,7 @@ impl Reader {
         }
 
         // One-copy path
-        let data = crate::engine::convert::decode_block_to_any(
-            &bytes,
-            self.mode(),
-            self.endian(),
-        )?;
+        let data = crate::engine::convert::decode_block_to_any(&bytes, self.mode(), self.endian())?;
         Ok(crate::mode::DataBlock::Owned {
             offset,
             shape: block_shape,

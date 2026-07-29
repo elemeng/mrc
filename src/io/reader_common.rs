@@ -452,8 +452,7 @@ pub(crate) fn write_block_bytes(
 }
 
 /// Warning message for IMOD files with unsigned Mode 0 data.
-pub(crate) const IMOD_UNSIGNED_M0_WARNING: &str =
-    "IMOD file with unsigned Mode 0 detected: use slices_mode0() \
+pub(crate) const IMOD_UNSIGNED_M0_WARNING: &str = "IMOD file with unsigned Mode 0 detected: use slices_mode0() \
      or convert::<f32>() for correct values";
 
 /// Parse and validate an MRC header from raw bytes.

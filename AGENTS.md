@@ -4,7 +4,7 @@ This file contains project-specific context for AI coding agents working on the 
 
 - **Repository**: https://github.com/elemeng/mrc
 - **Crate**: https://crates.io/crates/mrc
-- **Version**: 0.7.1 (check `Cargo.toml`)
+- **Version**: 0.8.0 (check `Cargo.toml`)
 - **Language**: Rust, Edition 2024, MSRV 1.85
 - **Hard deps**: `thiserror` 2.x, `tracing` 0.1
 - **Spec reference**: `mrcfile-official.md` (local copy)
@@ -32,11 +32,16 @@ cargo test --all-features      # unit + integration + doc-tests
 cargo clippy --all-features
 cargo fmt --check
 cargo doc --all-features       # verify no broken intra-doc links
+cargo bench --all-features     # run all benchmarks (requires [[bench]] harness=false in Cargo.toml)
 ```
 
-Unit tests: inline `#[cfg(test)]` modules. Integration tests: `tests/integration.rs` (~23 roundtrip tests). Comprehensive API tests: `tests/api_comprehensive.rs` (~80 tests covering every public API). Benchmarks: `benches/bench.rs` (criterion).
+Unit tests: inline `#[cfg(test)]` modules. Integration tests: `tests/integration.rs` (~23 roundtrip tests). Comprehensive API tests: `tests/api_comprehensive.rs` (~80 tests covering every public API). Real-data tests: `tests/real_data_tests.rs` (~70 tests on 6 real MRC files from `real_data/`). Benchmarks: `benches/bench.rs` (criterion, ~49 benchmarks including 25 tomogram benchmarks).
 
 All commands should be prefixed with `rtk` when available (e.g. `rtk cargo test`).
+
+## Cargo.toml Notes
+
+- `[[bench]] name = "bench" harness = false` is required for criterion benchmarks. Without this, `cargo bench` runs 0 benchmarks.
 
 ## Code Organization
 
@@ -78,15 +83,39 @@ tests/
 - `io/` — user-facing I/O strategies: buffered, mmap, compressed
 - `iter/` — lazy iterators parameterized by a Stepper strategy
 
-### API Surface Discipline
+### API Discipline
 
-The only public entry point is `lib.rs`. Internal modules are `mod` (private) or `pub mod` with `#[doc(hidden)]`:
+The main public entry point is `lib.rs`. Internal modules are `mod` (private) or `pub mod` with `#[doc(hidden)]`:
 
 | Visibility | Items |
 |------------|-------|
-| **Public** | `open`, `create`, `Reader`, `ConvertReader`, `WriterBuilder`, `Writer`, `Header`, `HeaderBuilder`, `Mode`, `Voxel`, `VoxelBlock`, `VolumeShape`, `DataView`, `DataBlock`, `OwnedData`, `FileEndian`, `Error`, `HeaderValidationError`, `CompressionLevel`, validate types, FEI/CCP4/MRCO/SERI/AGAR/IMOD types, ExtHeaderType/Data, conversion utilities, `DEFAULT_MAX_DECOMPRESSED_BYTES` |
+| **Public** | `open`, `create`, `Reader`, `ConvertReader`, `WriterBuilder`, `Writer`, `Header`, `HeaderBuilder`, `Mode`, `Voxel`, `VoxelBlock`, `VolumeShape`, `DataView`, `DataBlock`, `OwnedData`, `FileEndian`, `Error`, `HeaderValidationError`, `CompressionLevel`, validate types, FEI/CCP4/MRCO/SERI/AGAR/IMOD types, ExtHeaderType/Data, conversion utilities, `DEFAULT_MAX_DECOMPRESSED_BYTES`, `raw_bytes`, `read_block_bytes`, `read_block_bytes_cow` |
 | **`#[doc(hidden)]`** | `EndianCodec`, `MachstInfo`, `CompressionType`, `detect_compression`, `EndianFallbackWarning`, `serde_byte_array` |
 | **`pub(crate)` only** | `RegionIter`, `SliceStepper`, `SlabStepper`, `TileStepper`, `validate_block_bounds`, `gather_block_bytes`, `encode_block_to_buf`, `decode_block`, `decode_slice`, `encode_slice`, `convert_block`, `decode_block_to_any`, `parse_header`, `open_compressed`, `compute_stats`, `validate_header_stats`, SIMD wrapper functions, converter functions |
+
+- `read_block_bytes_cow` is publicly exposed for advanced users needing zero-copy raw byte access (contiguous XY slabs return `Cow::Borrowed`). Its doc comment warns that bytes are raw on-disk bytes — no endian correction, no type conversion.
+- `read_block_bytes` always copies — includes a performance warning in its doc comment.
+
+## Real Data Files
+
+6 real MRC files in `real_data/`:
+
+| File | Mode | Dims | Size |
+|------|------|------|------|
+| `search.mrc` | Int16 | 1440×1022×14 | 39 MB |
+| `Atlas.mrc` | Int16 | 1440×1022×47 | 133 MB |
+| `preview.mrc` | Int16 | 1440×1022×77 | 216 MB |
+| `box320_bin2_mask.mrc` | Float32 | 320×320×320 | 125 MB |
+| `em-map.mrc` | Float32 | 320×320×320 | 125 MB |
+| `tomogram.mrc` | Float32 | 1022×1440×750 | 4.2 GB |
+
+## Benchmark Structure
+
+`benches/bench.rs` has two criterion groups:
+- `benches` — synthetic benchmarks + non-tomogram real data (sample_size=50)
+- `tomo_benches` — all tomogram benchmarks (sample_size=10, measurement_time=30s)
+
+Filter with: `cargo bench -- "tomo"` or `cargo bench -- "tomogram/validate"`.
 
 Key enums (`Error`, `Mode`, `CompressionLevel`, `CompressionType`, `ComplexToRealStrategy`, `M0Interpretation`, `ExtHeaderType`, `ExtHeaderData`) are `#[non_exhaustive]`.
 

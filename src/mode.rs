@@ -137,13 +137,12 @@ pub enum DataBlock<'a> {
     },
 }
 
-impl<'a> DataBlock<'a> {
+impl DataBlock<'_> {
     /// Return the 3D offset of this block within the volume.
     #[inline]
     pub fn offset(&self) -> [usize; 3] {
         match self {
-            DataBlock::Borrowed { offset, .. } => *offset,
-            DataBlock::Owned { offset, .. } => *offset,
+            DataBlock::Borrowed { offset, .. } | DataBlock::Owned { offset, .. } => *offset,
         }
     }
 
@@ -151,8 +150,7 @@ impl<'a> DataBlock<'a> {
     #[inline]
     pub fn shape(&self) -> [usize; 3] {
         match self {
-            DataBlock::Borrowed { shape, .. } => *shape,
-            DataBlock::Owned { shape, .. } => *shape,
+            DataBlock::Borrowed { shape, .. } | DataBlock::Owned { shape, .. } => *shape,
         }
     }
 
@@ -322,14 +320,10 @@ impl Mode {
     #[inline]
     pub fn byte_size(&self) -> usize {
         match self {
-            Self::Int8 => 1,
-            Self::Int16 => 2,
-            Self::Float32 => 4,
-            Self::Int16Complex => 4,   // 2 bytes real + 2 bytes imaginary
-            Self::Float32Complex => 8, // 4 bytes real + 4 bytes imaginary
-            Self::Uint16 => 2,
-            Self::Float16 => 2,
-            Self::Packed4Bit => 1, // 4 bits per value, 2 values per byte
+            Self::Int8 | Self::Packed4Bit => 1,
+            Self::Int16 | Self::Uint16 | Self::Float16 => 2,
+            Self::Float32 | Self::Int16Complex => 4,
+            Self::Float32Complex => 8,
         }
     }
 

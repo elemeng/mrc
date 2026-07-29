@@ -68,7 +68,8 @@ fn mode_0_int8_roundtrip() {
             offset: [0, 0, 0],
             shape: [4, 4, 2],
             data: OwnedData::Int8(src.clone()),
-        }).unwrap();
+        })
+        .unwrap();
         w.finalize().unwrap();
     }
     let r = Reader::open(f.path()).unwrap();
@@ -100,7 +101,8 @@ fn mode_1_int16_roundtrip() {
             offset: [0, 0, 0],
             shape: [4, 4, 2],
             data: OwnedData::Int16(src.clone()),
-        }).unwrap();
+        })
+        .unwrap();
         w.finalize().unwrap();
     }
     let r = Reader::open(f.path()).unwrap();
@@ -148,7 +150,8 @@ fn mode_6_uint16_roundtrip() {
             offset: [0, 0, 0],
             shape: [4, 4, 2],
             data: OwnedData::Uint16(src.clone()),
-        }).unwrap();
+        })
+        .unwrap();
         w.finalize().unwrap();
     }
     let r = Reader::open(f.path()).unwrap();
@@ -183,7 +186,8 @@ fn mode_12_float16_roundtrip() {
             offset: [0, 0, 0],
             shape: [4, 4, 2],
             data: OwnedData::Float16(src.clone()),
-        }).unwrap();
+        })
+        .unwrap();
         w.finalize().unwrap();
     }
     let r = Reader::open(f.path()).unwrap();
@@ -292,7 +296,8 @@ fn reader_buffered_slab() {
             offset: [0, 0, 0],
             shape: [nx, ny, nz],
             data: OwnedData::Float32(data.clone()),
-        }).unwrap();
+        })
+        .unwrap();
         w.finalize().unwrap();
     }
     let bytes = std::fs::read(f.path()).unwrap();
@@ -326,7 +331,8 @@ fn reader_gzip_open_detect() {
             offset: [0, 0, 0],
             shape: [2, 2, 1],
             data: OwnedData::Float32(data.clone()),
-        }).unwrap();
+        })
+        .unwrap();
         w.finalize().unwrap();
     }
     // auto-detect
@@ -435,7 +441,8 @@ fn reader_volume_stack_queries_and_iter() {
             offset: [0, 0, 0],
             shape: [nx, ny, nz],
             data: OwnedData::Float32(data.clone()),
-        }).unwrap();
+        })
+        .unwrap();
         w.finalize().unwrap();
     }
 
@@ -539,7 +546,8 @@ fn reader_slabs_u8() {
             offset: [0, 0, 0],
             shape: [4, 4, 2],
             data: OwnedData::Uint16(src.clone()),
-        }).unwrap();
+        })
+        .unwrap();
         w.finalize().unwrap();
     }
     let r = Reader::open(f.path()).unwrap();
@@ -564,7 +572,8 @@ fn reader_slices_mode0_unsigned() {
             offset: [0, 0, 0],
             shape: [5, 1, 1],
             data: OwnedData::Int8(src),
-        }).unwrap();
+        })
+        .unwrap();
         w.finalize().unwrap();
     }
     let r = Reader::open(f.path()).unwrap();
@@ -592,7 +601,8 @@ fn reader_convert_variants() {
             offset: [0, 0, 0],
             shape: [4, 4, 2],
             data: OwnedData::Int16(src.clone()),
-        }).unwrap();
+        })
+        .unwrap();
         w.finalize().unwrap();
     }
     let r = Reader::open(f.path()).unwrap();
@@ -643,7 +653,8 @@ fn writer_from_writer() {
         offset: [0, 0, 0],
         shape: [4, 4, 1],
         data: OwnedData::Float32(data),
-    }).unwrap();
+    })
+    .unwrap();
     w.finalize().unwrap();
 }
 
@@ -671,7 +682,8 @@ fn writer_all_builder_setters() {
         offset: [0, 0, 0],
         shape: [4, 4, 2],
         data: OwnedData::Float32(data),
-    }).unwrap();
+    })
+    .unwrap();
     w.finalize().unwrap();
 }
 
@@ -690,7 +702,8 @@ fn writer_header_mut() {
         offset: [0, 0, 0],
         shape: [4, 4, 1],
         data: OwnedData::Float32(data),
-    }).unwrap();
+    })
+    .unwrap();
     w.finalize().unwrap();
     let r = Reader::open(f.path()).unwrap();
     let labels = r.header().get_labels();
@@ -758,7 +771,8 @@ fn writer_write_block_parallel() {
                 offset: [0, 0, 0],
                 shape: [4, 4, 4],
                 data: OwnedData::Float32(src.clone()),
-            }).unwrap();
+            })
+            .unwrap();
             w.finalize().unwrap();
         }
         let r = Reader::open(f.path()).unwrap();
@@ -785,7 +799,8 @@ fn writer_update_header_stats_and_validate() {
             offset: [0, 0, 0],
             shape: [4, 4, 1],
             data: OwnedData::Float32(src.clone()),
-        }).unwrap();
+        })
+        .unwrap();
         w.update_header_stats().unwrap();
         w.finalize().unwrap();
     }
@@ -1094,9 +1109,7 @@ fn validate_full_invalid_file() {
     drop(file);
     let report = mrc::validate_full(f.path(), true).unwrap();
     // Should have warnings (negative NSYMBT) but no hard errors
-    let warnings: Vec<_> = report
-        .by_severity(mrc::Severity::Warning)
-        .collect();
+    let warnings: Vec<_> = report.by_severity(mrc::Severity::Warning).collect();
     assert!(!warnings.is_empty(), "expected at least one warning");
 }
 
@@ -1225,7 +1238,8 @@ fn writer_set_volume_stack() {
             offset: [0, 0, 0],
             shape: [nx, ny, nz],
             data: OwnedData::Float32(data.clone()),
-        }).unwrap();
+        })
+        .unwrap();
         w.finalize().unwrap();
     }
     let r = Reader::open(f.path()).unwrap();
@@ -1254,7 +1268,8 @@ fn writer_builder_image_stack_and_volume() {
             offset: [0, 0, 0],
             shape: [8, 8, 10],
             data: OwnedData::Float32(data),
-        }).unwrap();
+        })
+        .unwrap();
         w.finalize().unwrap();
     }
     let r = Reader::open(f_img.path()).unwrap();
@@ -1275,7 +1290,8 @@ fn writer_builder_image_stack_and_volume() {
             offset: [0, 0, 0],
             shape: [8, 8, 10],
             data: OwnedData::Float32(data),
-        }).unwrap();
+        })
+        .unwrap();
         w.finalize().unwrap();
     }
     let r2 = Reader::open(f_vol.path()).unwrap();
@@ -1306,7 +1322,8 @@ fn writer_from_writer_mmap() {
             offset: [0, 0, 0],
             shape: [4, 4, 1],
             data: OwnedData::Float32(data.clone()),
-        }).unwrap();
+        })
+        .unwrap();
         w.finalize().unwrap();
         let r = Reader::open(f.path()).unwrap();
         let block = r.read_volume().unwrap();
@@ -1337,7 +1354,8 @@ fn writer_from_writer_gzip() {
             offset: [0, 0, 0],
             shape: [4, 4, 1],
             data: OwnedData::Float32(data.clone()),
-        }).unwrap();
+        })
+        .unwrap();
         w.finalize().unwrap();
         let r = Reader::open(f.path()).unwrap();
         let block = r.read_volume().unwrap();
@@ -1368,7 +1386,8 @@ fn writer_from_writer_bzip2() {
             offset: [0, 0, 0],
             shape: [4, 4, 1],
             data: OwnedData::Float32(data.clone()),
-        }).unwrap();
+        })
+        .unwrap();
         w.finalize().unwrap();
         let r = Reader::open(f.path()).unwrap();
         let block = r.read_volume().unwrap();

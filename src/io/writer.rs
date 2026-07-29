@@ -76,9 +76,12 @@ macro_rules! write_block_as_body {
                 // The f32 bytes are already in file-native byte order.
                 if endian == FileEndian::native() && ox == 0 && oy == 0 && sx == nx && sy == ny {
                     let data_slice = $block.data.as_slice();
+                    // SAFETY: f32 has no interior padding and every bit pattern
+                    // is a valid u8. The pointer and length are derived from a
+                    // valid slice, so `from_raw_parts` is sound.
                     let bytes = unsafe {
                         core::slice::from_raw_parts(
-                            data_slice.as_ptr() as *const u8,
+                            data_slice.as_ptr().cast::<u8>(),
                             core::mem::size_of_val(data_slice),
                         )
                     };
@@ -151,11 +154,11 @@ impl CompressionLevel {
 }
 
 use crate::engine::block::{VolumeShape, VoxelBlock};
+#[cfg(feature = "f16")]
+use crate::engine::codec::EndianCodec;
 #[cfg(feature = "parallel")]
 use crate::engine::codec::encode_block_parallel;
 use crate::engine::codec::encode_slice;
-#[cfg(feature = "f16")]
-use crate::engine::codec::EndianCodec;
 use crate::engine::endian::FileEndian;
 use crate::mode::Voxel;
 use crate::{DataBlock, DataView, Error, Float32Complex, Header, Int16Complex, Mode};
@@ -838,9 +841,7 @@ impl Writer {
 
     /// Common initialization shared by all constructors.
     /// Sets endian, validates, and extracts derived metadata.
-    fn init_writer(
-        mut header: Header,
-    ) -> Result<(Header, u64, Mode, usize, VolumeShape), Error> {
+    fn init_writer(mut header: Header) -> Result<(Header, u64, Mode, usize, VolumeShape), Error> {
         header.set_file_endian(FileEndian::LittleEndian);
         header.validate_detailed()?;
         let data_offset = header.data_offset() as u64;
@@ -872,8 +873,7 @@ impl Writer {
         header: Header,
         ext_header: &[u8],
     ) -> Result<Self, Error> {
-        let (header, data_offset, mode, bytes_per_voxel, shape) =
-            Self::init_writer(header)?;
+        let (header, data_offset, mode, bytes_per_voxel, shape) = Self::init_writer(header)?;
 
         let mut header_bytes = [0u8; 1024];
         header.encode_to_bytes(&mut header_bytes);
@@ -918,8 +918,7 @@ impl Writer {
         header: Header,
         ext_header: &[u8],
     ) -> Result<Self, Error> {
-        let (header, data_offset, mode, bytes_per_voxel, shape) =
-            Self::init_writer(header)?;
+        let (header, data_offset, mode, bytes_per_voxel, shape) = Self::init_writer(header)?;
 
         let total_size = header
             .data_offset()
@@ -953,6 +952,11 @@ impl Writer {
                     }
                 }
             }
+            // SAFETY: The file has been pre-sized via `set_len` and the
+            // header + ext bytes have been written. The mapping is backed by
+            // a real file on a local filesystem, and the file handle (`file`)
+            // is kept alive in the returned Writer via `DataSink::Mmap`, so
+            // the mapping cannot outlive the underlying storage.
             unsafe {
                 memmap2::MmapOptions::new()
                     .map_mut(&file)
@@ -987,8 +991,7 @@ impl Writer {
         if !ext_header.is_empty() {
             header.nsymbt = ext_header.len() as i32;
         }
-        let (header, data_offset, mode, bytes_per_voxel, shape) =
-            Self::init_writer(header)?;
+        let (header, data_offset, mode, bytes_per_voxel, shape) = Self::init_writer(header)?;
 
         let ext_size = header.nsymbt as usize;
         let ext_stored = if ext_header.len() >= ext_size {
@@ -1213,9 +1216,11 @@ impl Writer {
                     DataView::Packed4Bit(data) => {
                         let file_row_bytes = nx.div_ceil(2);
                         let z_slice_bytes = ny * file_row_bytes;
-                        let packed_base_offset = self.data_offset + (oz as u64) * (z_slice_bytes as u64);
+                        let packed_base_offset =
+                            self.data_offset + (oz as u64) * (z_slice_bytes as u64);
                         let byte_len = (sz as u64) * (z_slice_bytes as u64);
-                        let byte_len_usize = byte_len.try_into().map_err(|_| Error::bounds_err())?;
+                        let byte_len_usize =
+                            byte_len.try_into().map_err(|_| Error::bounds_err())?;
                         if data.len() != byte_len_usize {
                             return Err(Error::bounds_err());
                         }
@@ -1232,8 +1237,12 @@ impl Writer {
             DataView::Int16(data) => self.write_block_data::<i16>(offset, shape, data),
             DataView::Float32(data) => self.write_block_data::<f32>(offset, shape, data),
             DataView::Uint16(data) => self.write_block_data::<u16>(offset, shape, data),
-            DataView::Int16Complex(data) => self.write_block_data::<Int16Complex>(offset, shape, data),
-            DataView::Float32Complex(data) => self.write_block_data::<Float32Complex>(offset, shape, data),
+            DataView::Int16Complex(data) => {
+                self.write_block_data::<Int16Complex>(offset, shape, data)
+            }
+            DataView::Float32Complex(data) => {
+                self.write_block_data::<Float32Complex>(offset, shape, data)
+            }
             #[cfg(feature = "f16")]
             DataView::Float16(data) => self.write_block_data::<crate::f16>(offset, shape, data),
             DataView::Packed4Bit(data) => self.write_block_bytes(data, offset, shape),
@@ -1267,7 +1276,7 @@ impl Writer {
                         // SAFETY: T has no padding and any bit pattern is valid u8.
                         let bytes = unsafe {
                             core::slice::from_raw_parts(
-                                data.as_ptr() as *const u8,
+                                data.as_ptr().cast::<u8>(),
                                 core::mem::size_of_val(data),
                             )
                         };
@@ -1317,30 +1326,26 @@ impl Writer {
                 Ok(())
             }
             #[cfg(feature = "mmap")]
-            DataSink::Mmap(mmap) => {
-                crate::io::reader_common::encode_block_to_buf(
-                    data,
-                    offset,
-                    shape,
-                    self.shape,
-                    self.bytes_per_voxel,
-                    file_endian,
-                    self.data_offset as usize,
-                    mmap,
-                )
-            }
-            DataSink::Compressed { buf, .. } => {
-                crate::io::reader_common::encode_block_to_buf(
-                    data,
-                    offset,
-                    shape,
-                    self.shape,
-                    self.bytes_per_voxel,
-                    file_endian,
-                    self.data_offset as usize,
-                    buf,
-                )
-            }
+            DataSink::Mmap(mmap) => crate::io::reader_common::encode_block_to_buf(
+                data,
+                offset,
+                shape,
+                self.shape,
+                self.bytes_per_voxel,
+                file_endian,
+                self.data_offset as usize,
+                mmap,
+            ),
+            DataSink::Compressed { buf, .. } => crate::io::reader_common::encode_block_to_buf(
+                data,
+                offset,
+                shape,
+                self.shape,
+                self.bytes_per_voxel,
+                file_endian,
+                self.data_offset as usize,
+                buf,
+            ),
         }
     }
 
@@ -1395,7 +1400,7 @@ impl Writer {
     /// | [`Float32`](Mode::Float32) | `f32` → `f32` (identity encode) |
     /// | [`Float16`](Mode::Float16) | `f32` → `f16` (SIMD, requires `f16` feature) |
     ///
-    /// Complex modes and Packed4Bit are not convertible from real f32 data.
+    /// Complex modes and `Packed4Bit` are not convertible from real f32 data.
     /// Use [`write_data_block`](Writer::write_data_block) with a matching complex data block instead.
     ///
     /// # Examples
@@ -1431,9 +1436,8 @@ impl Writer {
             // SAFETY: TypeId confirms T == f32. VoxelBlock<T> has identical
             // field layout for all T (offset, shape, data). The macro only
             // borrows, never moves, so reinterpreting the reference is sound.
-            let f32_block: &VoxelBlock<f32> = unsafe {
-                &*(block as *const VoxelBlock<T> as *const VoxelBlock<f32>)
-            };
+            let f32_block: &VoxelBlock<f32> =
+                unsafe { &*(block as *const VoxelBlock<T> as *const VoxelBlock<f32>) };
             return write_block_as_body!(self, f32_block);
         }
 
@@ -1463,9 +1467,8 @@ impl Writer {
         let block_row_bytes = sx * b;
 
         if ox == 0 && sx == nx && oy == 0 && sy == ny {
-            let linear = (ox as u64)
-                + (oy as u64) * (nx as u64)
-                + (oz as u64) * (nx as u64) * (ny as u64);
+            let linear =
+                (ox as u64) + (oy as u64) * (nx as u64) + (oz as u64) * (nx as u64) * (ny as u64);
             let start_offset = self.data_offset + linear * (b as u64);
             return match &mut self.sink {
                 DataSink::File(io) => {
@@ -1526,7 +1529,6 @@ impl Writer {
         }
         Ok(())
     }
-
 
     /// Write a block of `u8` data (0–15 per voxel) by packing to 4-bit (Mode 101).
     ///
@@ -1661,7 +1663,12 @@ impl Writer {
                 Ok(())
             }
             #[allow(unused_variables)]
-            DataSink::Compressed { buf, path, compression, is_gzip } => {
+            DataSink::Compressed {
+                buf,
+                path,
+                compression,
+                is_gzip,
+            } => {
                 buf[..1024].copy_from_slice(&header_bytes);
                 #[cfg(any(feature = "gzip", feature = "bzip2"))]
                 {
@@ -1718,7 +1725,10 @@ impl Writer {
                     // Chunked path: avoids full-volume buffer for real-valued modes.
                     // Complex modes fall back to the full read.
                     match mode {
-                        Mode::Float32 | Mode::Int16 | Mode::Uint16 | Mode::Int8
+                        Mode::Float32
+                        | Mode::Int16
+                        | Mode::Uint16
+                        | Mode::Int8
                         | Mode::Packed4Bit
                         | Mode::Float16 => {
                             let chunk_bytes = if mode == Mode::Packed4Bit {
@@ -1737,19 +1747,23 @@ impl Writer {
                                 io.read_exact(buf)?;
                                 match mode {
                                     Mode::Float32 => {
-                                        let d = crate::engine::codec::decode_slice::<f32>(buf, endian)?;
+                                        let d =
+                                            crate::engine::codec::decode_slice::<f32>(buf, endian)?;
                                         stats.update(&d);
                                     }
                                     Mode::Int16 => {
-                                        let d = crate::engine::codec::decode_slice::<i16>(buf, endian)?;
+                                        let d =
+                                            crate::engine::codec::decode_slice::<i16>(buf, endian)?;
                                         stats.update(&d);
                                     }
                                     Mode::Uint16 => {
-                                        let d = crate::engine::codec::decode_slice::<u16>(buf, endian)?;
+                                        let d =
+                                            crate::engine::codec::decode_slice::<u16>(buf, endian)?;
                                         stats.update(&d);
                                     }
                                     Mode::Int8 => {
-                                        let d = crate::engine::codec::decode_slice::<i8>(buf, endian)?;
+                                        let d =
+                                            crate::engine::codec::decode_slice::<i8>(buf, endian)?;
                                         stats.update(&d);
                                     }
                                     #[cfg(feature = "f16")]
@@ -1765,9 +1779,12 @@ impl Writer {
                                     Mode::Packed4Bit => {
                                         let row_bytes = nx.div_ceil(2);
                                         let rows_in_chunk = to_read / row_bytes;
-                                        let unpacked = crate::engine::convert::unpack_u4_bytes_to_u8(
-                                            buf, nx, rows_in_chunk,
-                                        );
+                                        let unpacked =
+                                            crate::engine::convert::unpack_u4_bytes_to_u8(
+                                                buf,
+                                                nx,
+                                                rows_in_chunk,
+                                            );
                                         stats.update(&unpacked);
                                     }
                                     _ => unreachable!(),
@@ -1781,7 +1798,9 @@ impl Writer {
                             let mut buf = vec![0u8; data_size];
                             io.read_exact(&mut buf)?;
                             crate::engine::stats::compute_stats(
-                                &buf, mode, endian,
+                                &buf,
+                                mode,
+                                endian,
                                 self.header.nx.max(0) as usize,
                                 self.header.ny.max(0) as usize * self.header.nz.max(0) as usize,
                             )?

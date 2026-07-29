@@ -194,10 +194,14 @@ impl<'a, S> RegionIter<'a, S> {
     /// Returns `None` if `bytes` is not correctly aligned for `T`.
     fn try_align<T>(bytes: &[u8]) -> Option<&[T]> {
         let (prefix, data, suffix) = unsafe { bytes.align_to::<T>() };
-        if prefix.is_empty() && suffix.is_empty() { Some(data) } else { None }
+        if prefix.is_empty() && suffix.is_empty() {
+            Some(data)
+        } else {
+            None
+        }
     }
 
-    pub(crate) fn try_zero_copy<'b>(bytes: &'b [u8], mode: Mode) -> Option<DataView<'b>> {
+    pub(crate) fn try_zero_copy(bytes: &[u8], mode: Mode) -> Option<DataView<'_>> {
         Some(match mode {
             Mode::Int8 => DataView::Int8(Self::try_align(bytes)?),
             Mode::Int16 => DataView::Int16(Self::try_align(bytes)?),
@@ -244,11 +248,10 @@ impl<'a, S: Stepper> Iterator for RegionIter<'a, S> {
         }
 
         // One-copy path: decode to owned data
-        let data =
-            match decode_block_to_any(&bytes, self.reader.mode(), self.reader.endian()) {
-                Ok(d) => d,
-                Err(e) => return Some(Err(e)),
-            };
+        let data = match decode_block_to_any(&bytes, self.reader.mode(), self.reader.endian()) {
+            Ok(d) => d,
+            Err(e) => return Some(Err(e)),
+        };
         Some(Ok(DataBlock::Owned {
             offset,
             shape,

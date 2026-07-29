@@ -32,7 +32,7 @@ where
         type Value = [u8; M];
 
         fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-            write!(formatter, "an array of {} bytes", M)
+            write!(formatter, "an array of {M} bytes")
         }
 
         fn visit_seq<A>(self, mut seq: A) -> Result<[u8; M], A::Error>

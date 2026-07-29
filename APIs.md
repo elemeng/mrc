@@ -7,28 +7,37 @@
 
 ## Table of Contents
 
-1. [Quick Start](#quick-start)
-2. [Top-Level Functions](#top-level-functions)
-3. [Readers](#readers)
-   - [`Reader`](#reader) — auto-selects mmap or buffered
-4. [Writers](#writers)
-   - [`WriterBuilder` / `Writer`](#writerbuilder--writer) — standard file I/O
-5. [Types](#types)
-   - [`Header` / `HeaderBuilder`](#header--headerbuilder)
-   - [`VolumeShape` / `VoxelBlock`](#volumeshape--voxelblock)
-   - [`Mode`, `Voxel`, `FileEndian`](#mode-voxel-fileendian)
-   - [Complex and Special Types](#complex-and-special-types)
-6. [Iterators](#iterators)
-   - [`DataBlock` and `VoxelBlock` iterators](#datablock-and-voxelblock-iterators)
-7. [Validation](#validation)
-8. [FEI Extended Headers](#fei-extended-headers)
-9. [Error Types](#error-types)
-10. [Conversion Utilities](#conversion-utilities)
-11. [Feature Flags](#feature-flags)
+### Basic API
+1. [Quick Start](#basic-quick-start)
+2. [Top-Level Functions](#basic-top-level-functions)
+3. [Reading Data](#basic-reading-data)
+4. [Writing Data](#basic-writing-data)
+5. [Data Modes](#basic-data-modes)
+6. [Compression Auto-Detection](#basic-compression)
+7. [Reading from Memory / Streams](#basic-memory-streams)
+8. [Troubleshooting](#basic-troubleshooting)
+
+### Advanced API
+9. [Raw Byte Access](#advanced-raw-bytes)
+10. [Permissive Mode](#advanced-permissive)
+11. [Special-Mode Reads](#advanced-special-modes)
+12. [Headers](#advanced-headers)
+13. [Extended Headers](#advanced-extended-headers)
+14. [Validation](#advanced-validation)
+15. [Error Types](#advanced-errors)
+16. [Conversion Utilities](#advanced-conversion)
+17. [Feature Flags](#advanced-features)
+18. [Types](#advanced-types)
+19. [Design Notes](#advanced-design)
 
 ---
 
-## Quick Start
+## Basic API
+
+These are the APIs you'll use every day.  They return typed data (zero-copy borrowed
+views) and auto-detect compression, endianness, and the file's voxel mode.
+
+### <a name="basic-quick-start"></a>Quick Start
 
 ```rust
 use mrc::{read_as, write_as, open, create, VoxelBlock};
@@ -66,7 +75,7 @@ writer.finalize()?;
 
 ---
 
-## Top-Level Functions
+### <a name="basic-top-level-functions"></a>Top-Level Functions
 
 ```rust
 // Open a file for reading — auto-detects gzip/bzip2 from magic bytes.
@@ -82,7 +91,7 @@ pub fn read_as<T: Voxel, P: AsRef<Path>>(path: P) -> Result<(Header, Vec<T>), Er
 pub fn write_as<T: Voxel, P: AsRef<Path>>(path: P, data: &[T], shape: [usize; 3]) -> Result<()>
 ```
 
-`open` wraps `Reader::open`. `create` wraps `WriterBuilder::new`. These are the idiomatic entry points for most use cases.
+`open` wraps `Reader::open`. `create` wraps `WriterBuilder::new`.
 
 ```rust
 // Decompression safety limit for gzip/bzip2 files (256 GiB).
@@ -91,326 +100,425 @@ pub const DEFAULT_MAX_DECOMPRESSED_BYTES: u64 = 274_877_906_944;
 
 ---
 
-## Readers
+### <a name="basic-reading-data"></a>Reading Data
 
-### `Reader`
+Open any MRC file with `Reader::open` — compression, byte order, and voxel type
+are detected automatically.
 
-The auto-selecting reader. For files, it prefers memory-mapped I/O (zero-copy)
-and falls back to buffered I/O. Also accepts in-memory buffers and generic
-`Read` streams via `from_reader`/`from_bytes`.
-
-All iterator and conversion methods (`slices`, `slabs`, `tiles`,
-`subregion`, `read_volume`, `convert`, `slices_u8`, etc.) are available
-as **inherent methods** — no trait imports needed for normal use.
-
-| Method | Returns | Description |
+| Constructor | Returns | Description |
 |---|---|---|
 | `Reader::open(path)` | `Result<Reader>` | Auto-detect compression, open file |
 | `Reader::open_plain(path)` | `Result<Reader>` | Force plain (uncompressed) |
-| `Reader::open_gzip(path)` | `Result<Reader>` | Force gzip (requires `gzip`); 256 GiB decompression limit |
-| `Reader::open_gzip_with_limit(path, max)` | `Result<Reader>` | Force gzip with custom `max_bytes` limit |
-| `Reader::open_bzip2(path)` | `Result<Reader>` | Force bzip2 (requires `bzip2`); 256 GiB decompression limit |
-| `Reader::open_bzip2_with_limit(path, max)` | `Result<Reader>` | Force bzip2 with custom `max_bytes` limit |
-| `Reader::open_permissive(path)` | `Result<(Reader, Vec<String>)>` | Open with lenient header validation; warnings returned separately |
-| `Reader::open_gzip_permissive(path)` | `Result<(Reader, Vec<String>)>` | Permissive gzip |
-| `Reader::open_bzip2_permissive(path)` | `Result<(Reader, Vec<String>)>` | Permissive bzip2 |
-| `Reader::from_reader(r)` | `Result<Reader>` | Read from any `Read` source (memory, network, etc.) |
-| `Reader::from_reader_permissive(r)` | `Result<(Reader, Vec<String>)>` | Permissive read from any `Read` source |
-| `Reader::from_bytes(data)` | `Result<Reader>` | Parse from in-memory `Vec<u8>` |
-| `Reader::from_bytes_permissive(data)` | `Result<(Reader, Vec<String>)>` | Permissive parse from `Vec<u8>` |
 
-**Methods**
-
-| `reader.shape()` | `VolumeShape` | Volume dimensions `(nx, ny, nz)` |
-| `reader.mode()` | `Mode` | Voxel data mode |
-| `reader.header()` | `&Header` | Reference to parsed header |
-| `reader.endian()` | `FileEndian` | Detected byte order |
-| `reader.raw_bytes()` | `&[u8]` | Raw voxel data bytes |
-| `reader.ext_header_bytes()` | `&[u8]` | Extended header bytes (empty if none) |
-| `reader.read_block_bytes(offset, shape)` | `Result<Vec<u8>>` | Read raw bytes for any sub-block |
-| `reader.validate_header_stats()` | `Result<()>` | Cross-check header stats vs actual data (1% tolerance) |
-| `reader.parse_extended_header()` | `ExtHeaderData` | Auto-detect EXTTYP and parse extended header bytes |
-| `reader.fei1_metadata()` | `Option<Vec<Fei1Metadata>>` | Parse FEI1 records from extended header |
-| `reader.fei2_metadata()` | `Option<Vec<Fei2Metadata>>` | Parse FEI2 records from extended header |
-| `reader.ccp4_records()` | `Option<Vec<Ccp4Record>>` | Parse CCP4 symmetry records |
-| `reader.mrco_records()` | `Option<Vec<MrcoRecord>>` | Parse MRCO legacy records |
-| `reader.seri_records()` | `Option<Vec<SeriRecord>>` | Parse SerialEM records |
-| `reader.agar_records()` | `Option<Vec<AgarRecord>>` | Parse Agard records |
-| `reader.imod_metadata()` | `Option<ImodMetadata>` | Parse IMOD metadata from header `extra` bytes |
-
-**All methods (inherent — no trait import needed):**
+**Iteration methods** — each returns `DataBlock<'_>` whose `DataView` variant
+is determined by the file's mode at runtime:
 
 | Method | Returns | Description |
 |---|---|---|
-| `reader.subregion(offset, shape)` | `Result<DataBlock<'_>>` | Read and decode sub-block at any offset (returns `DataBlock` with runtime `DataView` variant) |
-| `reader.read_volume()` | `Result<DataBlock<'_>>` | Read the entire volume as a single block |
-| `reader.read_volume_u8()` | `Result<VoxelBlock<u8>>` | Read Packed4Bit volume as `u8` (nibble unpack) |
+| `reader.subregion(offset, shape)` | `Result<DataBlock<'_>>` | Single block by coordinate |
+| `reader.read_volume()` | `Result<DataBlock<'_>>` | Entire volume |
 | `reader.slices()` | `impl Iterator<Item = Result<DataBlock<'_>>>` | One Z-plane at a time |
 | `reader.slabs(k)` | `impl Iterator<Item = Result<DataBlock<'_>>>` | `k` contiguous Z-planes |
 | `reader.tiles(shape)` | `impl Iterator<Item = Result<DataBlock<'_>>>` | Arbitrary 3D tiles |
-| `reader.volumes()` | `Result<impl Iterator<Item = Result<DataBlock<'_>>>>` | One sub-volume per step (volume stacks only) |
-| `reader.slices_u8()` | iterator yielding `VoxelBlock<u8>` | Mode 6 (Uint16) or Mode 101 (Packed4Bit); narrows/nibble-unpacks to `u8` |
+| `reader.volumes()` | `Result<impl Iterator<...>>` | Sub-volumes (stacks only) |
 
-> **Tip:** Check the runtime `DataView` variant from `block.data()` to handle each mode, or use `reader.convert::<f32>()` to always get f32.
+Use `reader.convert::<T>()` to auto-convert any mode to `f32` (or `i16`, `u16`, etc.):
 
-| `reader.slabs_u8(k)` | iterator yielding `VoxelBlock<u8>` | Same as `slices_u8` but `k` planes at a time |
-| `reader.slices_mode0(interp)` | iterator yielding `VoxelBlock<f32>` | Mode 0 (Int8) only; signed or unsigned |
-| `reader.slabs_mode0(k, interp)` | iterator yielding `VoxelBlock<f32>` | Same as `slices_mode0` but `k` planes at a time |
+```rust
+for slice in reader.convert::<f32>().slices() {
+    let block = slice?;
+    // block.data: Vec<f32>
+}
+```
+
+`ConvertReader` methods: `slices()`, `slabs(k)`, `tiles(shape)`, `volumes()`,
+`subregion(offset, shape)`, `read_volume()`, `to_ndarray()` (feature `ndarray`).
+Configure complex reduction with `.with_complex_strategy(s)` and M0
+interpretation with `.with_m0_interpretation(i)`.
+
+**Reader metadata:**
+
+| Method | Returns | Description |
+|---|---|---|
+| `reader.shape()` | `VolumeShape` | Dimensions `(nx, ny, nz)` |
+| `reader.mode()` | `Mode` | Voxel data mode |
+| `reader.header()` | `&Header` | Reference to parsed header |
+| `reader.endian()` | `FileEndian` | Detected byte order |
 | `reader.is_single_image()` | `bool` | `nz == 1` |
 | `reader.is_image_stack()` | `bool` | `ispg == 0` |
-| `reader.is_volume()` | `bool` | Not a stack and not an image stack |
+| `reader.is_volume()` | `bool` | Not a stack nor image stack |
 | `reader.is_volume_stack()` | `bool` | `ispg` in 401–630 |
 | `reader.logical_shape()` | `[usize; 4]` | `[nvolumes, mz, ny, nx]` |
-| `reader.convert::<T>()` | [`ConvertReader`] | Returns a wrapper; all reads auto-convert to type `T` |
-
-Then use the wrapper's inherent methods:
-
-| Method | Returns | Description |
-|---|---|---|
-| `reader.convert::<T>().slices()` | iterator yielding `VoxelBlock<T>` | Auto-convert any mode to target type `T` |
-| `reader.convert::<T>().slabs(k)` | iterator yielding `VoxelBlock<T>` | Same as `slices` but `k` planes at a time |
-| `reader.convert::<T>().tiles(shape)` | iterator yielding `VoxelBlock<T>` | Same as `slices` but arbitrary 3D tiles |
-| `reader.convert::<T>().volumes()` | `Result<...>` | One sub-volume per step (volume stacks only) |
-| `reader.convert::<T>().subregion(offset, shape)` | `Result<VoxelBlock<T>>` | Single block at given offset/shape, auto-converted |
-| `reader.convert::<T>().read_volume()` | `Result<VoxelBlock<T>>` | Full volume as one block, auto-converted |
-| `reader.convert::<T>().with_complex_strategy(s)` | `Self` (builder) | Configure complex‑mode reduction (RealPart, Magnitude, etc.) |
-| `reader.convert::<T>().with_m0_interpretation(i)` | `Self` (builder) | Configure Mode 0 as Signed or Unsigned |
-| `reader.convert::<T>().to_ndarray()` | `Result<Array3<T>>` (feature `ndarray`) | Full volume as an `ndarray::Array3` |
-
-### Performance note: zero-copy access
-
-[`Reader::open`] automatically uses memory-mapped I/O (zero-copy, demand-paged)
-when available (requires the `mmap` feature). The default reader methods return
-[`DataBlock::Borrowed`](crate::DataBlock) views that borrow directly from the mapped
-memory — no allocation. The same zero-copy access works for buffered readers when
-the requested block is a native-endian contiguous full-row slab.
-
-### Performance note: transparent parallel decode
-
-When the `parallel` feature is enabled (default on), large blocks (≥262K voxels ≈ a
-512³ slab) are automatically processed across all CPU cores:
-
-* **Non-native-endian SIMD byte-swap** in `decode_slice` — e.g. a 4096² f32 volume
-  from a big-endian file is swapped in parallel chunks
-* **Type conversion** in `convert_block` — e.g. `reader.convert::<f32>().read_volume()`
-  splits large multi-plane blocks into Z-chunks, processes each independently, and
-  concatenates results
-
-Small blocks and single-slice reads fall through to the sequential path — no rayon
-overhead for small requests. The zero-copy [`DataBlock::Borrowed`](crate::DataBlock)
-path is also untouched (nothing to parallelize when there is no computation).
-
-| Method | Returns | Description |
-|---|---|---|
-| `reader.is_truncated()` | `bool` | `true` if permissive-mode file is shorter than header claims |
+| `reader.is_truncated()` | `bool` | True if permissive file is short |
 
 ---
 
-## Writers
+### <a name="basic-writing-data"></a>Writing Data
 
-### `WriterBuilder` / `Writer`
-
-The standard writer. Created via `create(path)` or `WriterBuilder::new(path)`.
+Created via `create(path)` or `WriterBuilder::new(path)`.
 
 **Builder methods:**
 
 ```rust
 let writer = create("out.mrc")
-    .shape([nx, ny, nz])          // volume dimensions (also sets mx,my,mz)
-    .mode::<f32>()                // voxel type (i8, i16, u16, f32, etc.)
-    .mode_raw(101)                // set raw mode (e.g. Packed4Bit, no Voxel impl)
+    .shape([nx, ny, nz])            // volume dimensions
+    .mode::<f32>()                  // voxel type
+    .mode_raw(101)                  // or set raw mode (no Voxel impl)
     .cell_lengths(xlen, ylen, zlen) // unit cell in Å
-    .ispg(1)                      // space group
-    .exttyp(*b"CCP4")             // 4-byte extended header type
-    .nsymbt(1024)                 // extended header size in bytes
-    .volume_stack(30)        // configure as volume stack (ispg=401, mz=30)
-    .image_stack()           // configure as image stack (ispg=0, mz=1)
-    .volume()                // configure as single volume (ispg=1, mz=nz)
-    .origin([0.0, 0.0, 0.0])     // origin coordinates
-    .extended_header(vec![])     // raw extended header bytes (sets nsymbt)
-    .compression(CompressionLevel::Best) // compression level for gzip/bzip2
-    .finish()?;                   // → Result<Writer>
+    .ispg(1)                        // space group
+    .origin([0.0, 0.0, 0.0])       // origin coordinates
+    .volume_stack(30)              // volume stack (ispg=401, mz=30)
+    .image_stack()                 // image stack (ispg=0, mz=1)
+    .volume()                      // single volume (ispg=1, mz=nz)
+    .finish()?;                    // open the file
 ```
 
-Additional builder methods:
-- `.finish_buffer()?` → `Writer` backed by in-memory `Cursor<Vec<u8>>` (useful for testing)
-- `.finish_mmap()?` → `Writer` backed by mmap (feature `mmap`)
-- `.finish_gzip()?` → `Writer` backed by in-memory buffer, gzip-compressed on finalize (feature `gzip`)
-- `.finish_bzip2()?` → `Writer` backed by in-memory buffer, bzip2-compressed on finalize (feature `bzip2`)
+Additional backends: `.finish_buffer()?` (in-memory), `.finish_mmap()?`,
+`.finish_gzip()?`, `.finish_bzip2()?`.
 
 **Writer methods:**
 
 | Method | Description |
 |---|---|
-| `Writer::from_writer(writer, header, ext)` | Create from any `Read + Write + Seek` target (e.g. `Cursor<Vec<u8>>`) |
-| `Writer::from_writer_mmap(path, header, ext)` | Create mmap writer from raw `Header` (feature `mmap`) |
-| `Writer::from_writer_gzip(path, header, ext, comp)` | Create gzip writer from raw `Header` (feature `gzip`) |
-| `Writer::from_writer_bzip2(path, header, ext, comp)` | Create bzip2 writer from raw `Header` (feature `bzip2`) |
-| `writer.shape()` | Volume dimensions |
-| `writer.mode()` | Voxel mode |
-| `writer.header()` | Read-only reference to header |
-| `writer.header_mut()` | Mutable reference to header (modify before `finalize`) |
-| `writer.write_data_block(&DataBlock)` | Write a block with runtime mode dispatch; parallel encoding auto-selected for full XY slabs |
-| `writer.write_u8_block(&block)` | Convenience: write `VoxelBlock<u8>` to a Uint16 file (auto-widens) |
-| `writer.write_u4_block(&block)` | Convenience: write `VoxelBlock<u8>` to a Packed4Bit file (auto-packs, values must be 0–15) |
-| `writer.write_block_as(&VoxelBlock<T>)` | Write with auto-conversion to file's mode: any `T` → `f32` → `i8`/`i16`/`u16`/`f16` (clamped) |
-| `writer.set_data(&data)` | Write the full volume (must match `nx × ny × nz`) and compute statistics — single call |
-| `writer.update_header_stats()` | Scan written data and update `dmin`/`dmax`/`dmean`/`rms` in the header |
-| `writer.finalize()` | **Required.** Rewrites the header with final metadata (updated stats, labels). The header is written optimistically at file creation and rewritten here — without it the header is stale and tools may display wrong contrast. |
-
-### Memory-mapped Writer (`Writer` with mmap)
-
-Memory-mapped writer. Created via `WriterBuilder::finish_mmap()`.
-Requires `mmap` feature.
-
-Same API as the file-backed `Writer` (`write_data_block`, `write_block_as`, `write_u8_block`,
-`write_u4_block`, `finalize`, `update_header_stats`).
-
-**`finalize()` is required** — flushes the mmap to disk. Without it the header
-is stale (density statistics missing, tools display wrong contrast).
-
-### Compressed Writers (`Writer` with gzip/bzip2)
-
-Created via `WriterBuilder::finish_gzip()` / `finish_bzip2()`.
-
-**Important:** Compressed writers buffer the **entire file** in memory and compress
-only on `finalize`. **`finalize()` is required** — without it nothing is written
-to disk. Not suitable for large volumes that exceed RAM.
-
-Full API: `shape()`, `mode()`, `header()`, `header_mut()`, `write_data_block()`, `write_block_as()`, `write_u8_block()`, `write_u4_block()`,
-`update_header_stats()` (reads from in-memory buffer),
-`finalize()` (writes compressed data to disk).
+| `writer.write_data_block(&DataBlock)` | Write a block with runtime mode dispatch; each call encodes and writes immediately (streaming, no buffer) |
+| `writer.write_block_as(&VoxelBlock<T>)` | Write with auto-conversion to file's mode |
+| `writer.write_u8_block(&block)` | Write `u8` data to Uint16 file (auto-widens) |
+| `writer.write_u4_block(&block)` | Write `u8` data to Packed4Bit file (auto-packs) |
+| `writer.set_data(&data)` | Write full volume + compute stats |
+| `writer.update_header_stats()` | Scan data, update dmin/dmax/dmean/rms |
+| `writer.header()` | Read-only header reference |
+| `writer.header_mut()` | Mutable header reference |
+| `writer.finalize()` | **Required** — rewrites header with final metadata |
 
 ---
 
-## Types
+### <a name="basic-data-modes"></a>Data Modes
 
-### `Header` / `HeaderBuilder`
+| Mode | Rust type | Typical use |
+|---|---|---|
+| `Int8` (0) | `i8` | Binary masks |
+| `Int16` (1) | `i16` | Raw cryo-EM density |
+| `Float32` (2) | `f32` | Processed / reconstructed density |
+| `Int16Complex` (3) | `Int16Complex` | Complex (i16 real + i16 imag) |
+| `Float32Complex` (4) | `Float32Complex` | Complex (f32 real + f32 imag) |
+| `Uint16` (6) | `u16` | Segmentation labels |
+| `Float16` (12) | `f16` | Half-precision (feature `f16`) |
+| `Packed4Bit` (101) | `u8` via `slices_u8` | 4-bit packed data |
 
-The 1024-byte MRC-2014 header. Every field is a public `struct` member.
+Use `reader.convert::<f32>()` to read any mode as `f32`.
+
+---
+
+### <a name="basic-compression"></a>Compression Auto-Detection
+
+| Magic bytes | Format |
+|---|---|
+| `\x1f\x8b` | Gzip |
+| `BZ` | Bzip2 |
+| anything else | Plain |
+
+Plain files use mmap (zero-copy) or buffered I/O.  Compressed files decompress
+into memory (capped at 256 GiB).
+
+| Constructor | Description |
+|---|---|
+| `Reader::open_gzip(path)` | Force gzip |
+| `Reader::open_gzip_with_limit(path, max)` | Gzip with custom limit |
+| `Reader::open_bzip2(path)` | Force bzip2 (feature `bzip2`) |
+| `Reader::open_bzip2_with_limit(path, max)` | Bzip2 with custom limit |
+
+---
+
+### <a name="basic-memory-streams"></a>Reading from Memory / Streams
+
+When data is already in memory (e.g. from a camera readout or network
+stream), use `Reader::from_reader` or `Reader::from_bytes`:
+
+```rust
+use mrc::Reader;
+use std::io::Cursor;
+
+let bytes = std::fs::read("density.mrc")?;
+let reader = Reader::from_reader(Cursor::new(bytes))?;
+```
+
+| Method | Returns | Description |
+|---|---|---|
+| `Reader::from_reader(r)` | `Result<Reader>` | Read from any `Read` source |
+| `Reader::from_bytes(data)` | `Result<Reader>` | Parse from `Vec<u8>` |
+| `Reader::from_reader_permissive(r)` | `Result<(Reader, Vec<String>)>` | Permissive |
+| `Reader::from_bytes_permissive(data)` | `Result<(Reader, Vec<String>)>` | Permissive |
+
+---
+
+### <a name="basic-troubleshooting"></a>Troubleshooting
+
+| Error | Likely cause | What to try |
+|---|---|---|
+| `InvalidHeader` | Not an MRC file | `mrc validate file.mrc` or try `open_permissive` |
+| `FileSizeMismatch` | Truncated or trailing garbage | Re-download or run `mrc validate` |
+| `ModeMismatch` | Block type != file mode | Use `write_block_as` for auto-conversion |
+| `BoundsError` | Block outside volume | Check offset + shape ≤ dimensions |
+| `UnsupportedMode` | Mode needs `f16` feature | Enable `f16` or convert with another tool |
+
+---
+
+## Advanced API
+
+These APIs give you lower-level access to raw bytes, headers, extended metadata,
+and validation.  They are intended for tools, pipelines, and developers who need
+more control than the basic iterators provide.
+
+### <a name="advanced-raw-bytes"></a>Raw Byte Access
+
+Three methods expose on-disk bytes directly:
+
+⚠️ **The returned bytes are raw on-disk bytes** — file byte order,
+no endian correction, no type conversion.  Use `reader.endian()` and
+`reader.mode()` to interpret them correctly.  For typed zero-copy
+access, use `subregion`/`slices` or `convert::<f32>()`.
+
+| Method | Returns | Copy cost |
+|---|---|---|
+| `reader.raw_bytes()` | `&[u8]` — whole data region | zero-copy |
+| `reader.read_block_bytes_cow(offset, shape)` | `Cow<[u8]>` — sub-block | zero-copy for contiguous XY slabs |
+| `reader.read_block_bytes(offset, shape)` | `Vec<u8>` — sub-block | **always copies** |
+
+**Contiguous** = offset `[0, y, z]`, shape `[nx, ny, sz]`.  Any sub-XY offset
+or shape forces a row-by-row gather into owned memory.
+
+⚠️ `read_block_bytes` always returns an owned `Vec`, even for contiguous blocks.
+For large volumes this causes a full copy.  Use `read_block_bytes_cow` to avoid
+the allocation, or use `subregion`/`slices` for typed zero-copy access.
+
+```rust
+use std::borrow::Cow;
+
+// Zero-copy: borrows from mmap for contiguous blocks
+let cow: Cow<[u8]> = reader.read_block_bytes_cow([0, 0, 0], [256, 256, 64])?;
+
+// Always owned: allocates + copies
+let bytes: Vec<u8> = reader.read_block_bytes([0, 0, 0], [256, 256, 64])?;
+```
+
+Other raw access:
+
+| Method | Returns | Description |
+|---|---|---|
+| `reader.raw_bytes()` | `&[u8]` | All voxel data as on-disk bytes |
+| `reader.ext_header_bytes()` | `&[u8]` | Extended header bytes |
+| `reader.validate_header_stats()` | `Result<()>` | Cross-check header stats vs data |
+
+---
+
+### <a name="advanced-permissive"></a>Permissive Mode
+
+Turns non-critical header issues into warnings instead of errors.
+
+| Method | Description |
+|---|---|
+| `Reader::open_permissive(path)` | Open with lenient header validation |
+| `Reader::open_gzip_permissive(path)` | Permissive gzip |
+| `Reader::open_bzip2_permissive(path)` | Permissive bzip2 |
+
+---
+
+### <a name="advanced-special-modes"></a>Special-Mode Reads (Mode 0, Packed4Bit)
+
+| Method | Returns | Description |
+|---|---|---|
+| `reader.slices_u8()` | iterator | Unpack Packed4Bit / narrow Uint16 to `u8` |
+| `reader.slabs_u8(k)` | iterator | Same but `k` planes at a time |
+| `reader.read_volume_u8()` | `VoxelBlock<u8>` | Full Packed4Bit volume as `u8` |
+| `reader.slices_mode0(interp)` | iterator | Mode 0 as `f32` (signed/unsigned) |
+| `reader.slabs_mode0(k, interp)` | iterator | Same but `k` planes at a time |
+
+---
+
+### <a name="advanced-headers"></a>Headers
+
+The 1024-byte MRC-2014 header.  Every field is a public `struct` member.
 
 **Fields:**
 
 | Field | Type | Description |
 |---|---|---|
-| `nx, ny, nz` | `i32` | Volume dimensions (columns, rows, sections) |
-| `mode` | `i32` | Data mode (0=Int8, 1=Int16, 2=Float32, etc.) |
+| `nx, ny, nz` | `i32` | Volume dimensions |
+| `mode` | `i32` | Data mode |
 | `nxstart, nystart, nzstart` | `i32` | Sub-volume origin in pixels |
-| `mx, my, mz` | `i32` | Sampling along X/Y/Z in unit cell |
+| `mx, my, mz` | `i32` | Cell sampling |
 | `xlen, ylen, zlen` | `f32` | Cell dimensions in Å |
-| `alpha, beta, gamma` | `f32` | Cell angles in degrees |
-| `mapc, mapr, maps` | `i32` | Column/row/section axis indices (permutation of 1,2,3) |
+| `alpha, beta, gamma` | `f32` | Cell angles |
+| `mapc, mapr, maps` | `i32` | Axis mapping |
 | `dmin, dmax, dmean` | `f32` | Density statistics |
-| `ispg` | `i32` | Space group (0=image, 1-230=crystallographic, 401-630=volume stack) |
-| `nsymbt` | `i32` | Extended header size in bytes |
-| `extra` | `[u8; 100]` | Extra bytes (bytes 8-11 = EXTTYP, 12-15 = NVERSION) |
+| `ispg` | `i32` | Space group |
+| `nsymbt` | `i32` | Extended header size |
+| `extra` | `[u8; 100]` | Extra bytes (EXTTYP, NVERSION) |
 | `origin` | `[f32; 3]` | Volume/phase origin |
-| `map` | `[u8; 4]` | Must be `b"MAP "`; `b"MAP\0"`, `b"MAPI"`, and all-zero also accepted for compatibility |
-| `machst` | `[u8; 4]` | Machine stamp (LE = `0x44 0x44`, BE = `0x11 0x11`) |
+| `map` | `[u8; 4]` | Must be `b"MAP "` |
+| `machst` | `[u8; 4]` | Machine stamp |
 | `rms` | `f32` | RMS deviation |
-| `nlabl` | `i32` | Number of labels (0-10) |
-| `label` | `[u8; 800]` | Ten 80-byte text labels |
+| `nlabl` | `i32` | Number of labels |
+| `label` | `[u8; 800]` | Ten 80-byte labels |
 
-**Key methods on `Header`:**
+**Key methods:**
 
 | Method | Returns | Description |
 |---|---|---|
-| `Header::new()` | `Header` | Default header (Float32, little-endian, NVERSION=20141) |
-| `header.data_offset()` | `usize` | Byte offset from file start to voxel data (= 1024 + nsymbt) |
-| `header.data_size()` | `Option<usize>` | Size of voxel data block in bytes (respects Packed4Bit) |
-| `header.validate()` | `bool` | Quick validity check |
-| `header.validate_detailed()` | `Result<(), HeaderValidationError>` | Full structural validation |
-| `header.validate_permissive()` | `Result<Vec<String>>` | Lenient validation with warnings |
-| `header.decode_from_bytes(bytes)` | `Header` | Parse from raw 1024 bytes (auto endian) |
-| `header.decode_from_bytes_with_info(bytes)` | `(Header, Option<EndianFallbackWarning>)` | Parse with endian fallback diagnostics |
-| `header.encode_to_bytes(&mut [u8; 1024])` | `()` | Encode to raw bytes |
-| `header.exttyp()` | `[u8; 4]` | Extended header type from `extra[8..12]` |
-| `header.set_exttyp(value)` | `()` | Set extended header type |
-| `header.exttyp_str()` | `Result<&str>` | Extended header type as string (`exttyp` decoded as UTF-8) |
-| `header.set_exttyp_str(value)` | `Result<()>` | Set extended header type from a string |
-| `header.nversion()` | `i32` | NVERSION from `extra[12..16]` |
-| `header.set_nversion(value)` | `()` | Set NVERSION |
-| `header.get_labels()` | `Vec<String>` | Read up to `nlabl` non-empty labels |
-| `header.add_label(text)` | `()` | Add a label (FIFO when full) |
-| `header.detect_endian()` | `FileEndian` | Detect byte order from MACHST |
-| `header.set_file_endian(endian)` | `()` | Set MACHST and re-encode NVERSION |
-| `header.is_single_image()` | `bool` | `nz == 1` |
-| `header.is_image_stack()` | `bool` | `ispg == 0` |
-| `header.is_volume()` | `bool` | Not a stack and not an image stack |
-| `header.is_volume_stack()` | `bool` | `ispg` in 401-630 |
-| `header.set_image_stack()` | `()` | Set as image stack |
-| `header.set_volume()` | `()` | Set as single volume |
-| `header.set_volume_stack(mz)` | `()` | Set as volume stack with sub-volume size `mz` |
-| `header.voxel_size()` | `[f32; 3]` | Å/pixel = `cella / mxyz` |
-| `header.sampling()` | `[i32; 3]` | `[mx, my, mz]` |
+| `Header::new()` | `Header` | Default header |
+| `header.data_offset()` / `.data_size()` | `usize` / `Option<usize>` | Data region location |
+| `header.validate()` / `.validate_detailed()` / `.validate_permissive()` | varies | Validation |
+| `header.decode_from_bytes(bytes)` | `Header` | Parse raw 1024 bytes |
+| `header.encode_to_bytes(&mut [u8; 1024])` | `()` | Encode to bytes |
+| `header.exttyp()` / `.exttyp_str()` / `.set_exttyp(v)` | varies | Extended header type |
+| `header.nversion()` / `.set_nversion(v)` | `i32` / `()` | Version |
+| `header.get_labels()` / `.add_label(t)` / `.label_at(i)` | varies | Text labels |
+| `header.detect_endian()` / `.set_file_endian(e)` | `FileEndian` / `()` | Byte order |
+| `header.voxel_size()` / `.sampling()` | `[f32; 3]` / `[i32; 3]` | Spatial resolution |
 | `header.density_stats()` | `(f32, f32, f32, f32)` | `(dmin, dmax, dmean, rms)` |
-| `header.is_standard_map()` | `bool` | `true` when MAP field is exactly `"MAP "` |
-| `header.label_at(i)` | `Option<&str>` | Trimmed label at index `i`, or `None` if empty |
-| `header.cell_volume()` | `f64` | Unit cell volume in Å³ (triclinic formula) |
+| `header.cell_lengths()` / `.cell_angles()` / `.cell_volume()` | varies | Unit cell |
+| `header.logical_shape()` | `[usize; 4]` | `[nvolumes, mz, ny, nx]` |
+| `header.is_single_image()` / `.is_image_stack()` / `.is_volume()` / `.is_volume_stack()` | `bool` | Volume type |
+| `header.set_volume_stack(mz)` / `.set_image_stack()` / `.set_volume()` | `()` | Configure type |
+| `header.detect_imod()` / `.is_y_inverted()` | `Option<ImodInfo>` / `bool` | IMOD metadata |
+| `header.is_standard_map()` | `bool` | MAP is exactly `"MAP "` |
 | `header.nstart()` | `[i32; 3]` | `[nxstart, nystart, nzstart]` |
-| `header.cell_lengths()` | `[f32; 3]` | `[xlen, ylen, zlen]` |
-| `header.cell_angles()` | `[f32; 3]` | `[alpha, beta, gamma]` |
-| `header.logical_shape()` | `[usize; 4]` | Python-style `(nvolumes, mz, ny, nx)` |
-| `header.detect_imod()` | `Option<ImodInfo>` | Detect IMOD stamp in `extra` bytes |
-| `header.is_y_inverted()` | `bool` | `true` when `mapr == -2` (IMOD convention) |
 
 **`HeaderBuilder` methods:**
 
 ```rust
 HeaderBuilder::new()
-    .shape([nx, ny, nz])         // set dimensions + mx,my,mz
-    .mode::<f32>()               // set voxel type → mode
-    .mode_raw(101)               // set raw mode (e.g. Packed4Bit, no Voxel impl)
-    .cell_lengths(x, y, z)       // cell dimensions in Å
-    .cell_angles(a, b, g)        // cell angles in degrees
+    .shape([nx, ny, nz])         // dimensions + mx,my,mz
+    .mode::<f32>()               // voxel type → mode
+    .mode_raw(101)               // raw mode (no Voxel impl)
+    .cell_lengths(x, y, z)       // cell in Å
+    .cell_angles(a, b, g)        // cell angles
     .ispg(n)                     // space group
     .exttyp(*b"CCP4")            // extended header type
     .nsymbt(n)                   // extended header size
     .origin([x, y, z])           // origin
-    .nstart([x, y, z])           // sub-volume origin in pixels (nxstart..)
-    .sampling([mx, my, mz])      // cell sampling rates (independent of shape)
-    .axis_mapping([1, 2, 3])     // column/row/section axis mapping (mapc/r/s)
-    .add_label("my volume")      // append a text label
-    .set_volume_stack(30)        // configure as volume stack (ispg=401, mz=30)
+    .nstart([x, y, z])           // sub-volume origin
+    .sampling([mx, my, mz])      // cell sampling
+    .axis_mapping([1, 2, 3])     // column/row/section mapping
+    .add_label("my volume")      // text label
+    .set_volume_stack(30)        // volume stack
     .build()?                    // → Result<Header>
 ```
 
-### `VolumeShape` / `VoxelBlock` / `DataBlock` / `DataView`
+---
+
+### <a name="advanced-extended-headers"></a>Extended Headers
+
+| Format | Record size | Typical use |
+|---|---|---|
+| CCP4 | 80 bytes | CCP4 symmetry records |
+| MRCO | 80 bytes | Legacy MRC format |
+| SERI | 256 bytes | SerialEM tilt-series |
+| AGAR | 1024 bytes | Agard metadata |
+| FEI1 | 768 bytes | FEI microscope metadata |
+| FEI2 | 888 bytes | FEI extended metadata |
+
+Use `reader.parse_extended_header()` for auto-detection.
+
+Convenience methods: `reader.fei1_metadata()`, `reader.fei2_metadata()`,
+`reader.ccp4_records()`, `reader.mrco_records()`, `reader.seri_records()`,
+`reader.agar_records()`, `reader.imod_metadata()`.
+
+---
+
+### <a name="advanced-validation"></a>Validation
+
+| Function | Returns | Description |
+|---|---|---|
+| `validate_full(path, permissive)` | `Result<ValidationReport>` | Open + validate |
+| `validate_reader(reader, path, compression, warnings)` | `Result<ValidationReport>` | Validate open reader |
 
 ```rust
-pub struct VolumeShape {
-    pub nx: usize,
-    pub ny: usize,
-    pub nz: usize,
+pub struct ValidationReport {
+    pub path: String,
+    pub compression: String,
+    pub nx: i32, pub ny: i32, pub nz: i32, pub mode: i32,
+    pub issues: Vec<ValidationIssue>,
+}
+
+impl ValidationReport {
+    pub fn is_valid(&self) -> bool;
+    pub fn by_severity(&self, s: Severity) -> impl Iterator;
 }
 ```
 
-| Method | Returns | Description |
+Checks: header structure, file size, endianness, statistics (1% tolerance),
+NaN/Inf scan, volume type.
+
+---
+
+### <a name="advanced-errors"></a>Error Types
+
+**`Error`** — top-level enum.  Variants:
+
+`Io`, `InvalidHeader`, `UnsupportedMode`, `BoundsError`,
+`TypeMismatch`, `ValueOutOfRange`, `BlockShapeMismatch`, `ModeMismatch`,
+`InvalidHeaderDetailed(HeaderValidationError)`, `StatsMismatch`, `Mmap`
+(feature `mmap`), `FileSizeMismatch`, `NotAVolumeStack`.
+
+**`HeaderValidationError`** — fine-grained header diagnostics:
+
+`InvalidDimensions`, `UnsupportedMode(i32)`, `InvalidMap([u8;4])`,
+`InvalidIspg(i32)`, `InvalidAxisMapping`, `InvalidNsymbt(i32)`,
+`InvalidNlabl(i32)`, `InvalidNversion(i32)`, `InvalidVolumeStack`,
+`InvalidSampling`, `LabelCountMismatch`, `EmptyLabelBeforeFilled`.
+
+---
+
+### <a name="advanced-conversion"></a>Conversion Utilities
+
+```rust
+pub fn reinterpret_m0(data: &[u8], interp: M0Interpretation) -> Vec<f32>;
+pub fn convert_u8_slice_to_u16(src: &[u8]) -> Vec<u16>;
+pub fn convert_u16_slice_to_u8(src: &[u16]) -> Result<Vec<u8>, Error>;
+```
+
+---
+
+### <a name="advanced-features"></a>Feature Flags
+
+| Feature | Default | What it enables |
 |---|---|---|
-| `VolumeShape::new(nx, ny, nz)` | `VolumeShape` | New shape |
-| `VolumeShape::from_header(&Header)` | `Result<VolumeShape>` | From parsed header (negative dims → `Err`) |
-| `shape.total_voxels()` | `Option<usize>` | `nx * ny * nz` (checked) |
-| `shape.is_empty()` | `bool` | Any dimension is zero |
-| `shape.contains_block(offset, shape)` | `bool` | Check sub-block fits |
-| `shape.checked_linear_index(offset)` | `Option<usize>` | Linear index for a position |
+| `mmap` | ✅ | Memory-mapped I/O |
+| `f16` | ✅ | `half::f16`, Mode 12 |
+| `simd` | ✅ | AVX2/NEON acceleration |
+| `parallel` | ✅ | Parallel decode/convert/encode via rayon |
+| `gzip` | ✅ | Gzip auto-detection + compressed writer |
+| `bzip2` | ❌ | Bzip2 auto-detection + compressed writer |
+| `ndarray` | ❌ | Return volumes as `Array3<T>` |
+| `serde` | ❌ | Serialize/Deserialize support |
+
+---
+
+### <a name="advanced-types"></a>Types
+
+**`VolumeShape`:**
+
+```rust
+pub struct VolumeShape { pub nx: usize, pub ny: usize, pub nz: usize }
+```
+
+Methods: `new`, `from_header`, `total_voxels`, `is_empty`, `contains_block`,
+`checked_linear_index`.
+
+**`VoxelBlock<T>`:**
 
 ```rust
 pub struct VoxelBlock<T> {
-    pub offset: [usize; 3],   // [x, y, z] start position
-    pub shape: [usize; 3],    // [sx, sy, sz] dimensions
-    pub data: Vec<T>,         // contiguously stored voxels
+    pub offset: [usize; 3],
+    pub shape: [usize; 3],
+    pub data: Vec<T>,
 }
 ```
 
-| Method | Returns | Description |
-|---|---|---|
-| `VoxelBlock::new(offset, shape, data)` | `Result<Self>` | Validates data length matches shape |
+Methods: `new`, `len`, `is_empty`, `is_full_volume`.
 
-| `block.len()` | `usize` | Number of voxels |
-| `block.is_empty()` | `bool` | Zero voxels |
-| `block.is_full_volume(&VolumeShape)` | `bool` | Covers entire volume from origin |
-
-**`DataBlock`** — returned by the default (non-convert) reader methods. Holds data as a runtime `DataView` variant determined by the file's mode.
+**`DataBlock<'a>`** — returned by default reader methods:
 
 ```rust
 pub enum DataBlock<'a> {
@@ -419,66 +527,29 @@ pub enum DataBlock<'a> {
 }
 ```
 
-| Method | Returns | Description |
-|---|---|---|
-| `block.offset()` | `[usize; 3]` | Block origin `[x, y, z]` |
-| `block.shape()` | `[usize; 3]` | Block dimensions `[sx, sy, sz]` |
-| `block.data()` | `DataView<'_>` | Typed view into the block's data |
+Methods: `offset()`, `shape()`, `data()` → `DataView<'_>`.
 
-**`DataView`** — a typed reference slice whose variant is determined at runtime:
+**`DataView<'a>`:**
 
 ```rust
 pub enum DataView<'a> {
-    Int8(&'a [i8]),
-    Int16(&'a [i16]),
-    Float32(&'a [f32]),
-    Int16Complex(&'a [Int16Complex]),
-    Float32Complex(&'a [Float32Complex]),
-    Uint16(&'a [u16]),
-    Float16(&'a [half::f16]),       // requires `f16` feature
-    Packed4Bit(&'a [u8]),
+    Int8(&'a [i8]), Int16(&'a [i16]), Float32(&'a [f32]),
+    Int16Complex(&'a [Int16Complex]), Float32Complex(&'a [Float32Complex]),
+    Uint16(&'a [u16]), Float16(&'a [half::f16]), Packed4Bit(&'a [u8]),
 }
 ```
 
-Usage pattern:
-
-```rust
-for slice in reader.slices() {
-    let block = slice?;
-    match block.data() {
-        mrc::DataView::Float32(data) => { /* process &[f32] */ }
-        mrc::DataView::Int16(data)   => { /* process &[i16] */ }
-        _ => {}
-    }
-}
-```
-
-### `Mode`, `Voxel`, `FileEndian`
-
-```rust
-pub enum Mode {
-    Int8 = 0,            // signed 8-bit integer
-    Int16 = 1,           // signed 16-bit integer
-    Float32 = 2,         // 32-bit float
-    Int16Complex = 3,    // 2× i16 (real + imaginary)
-    Float32Complex = 4,  // 2× f32 (real + imaginary)
-    Uint16 = 6,          // unsigned 16-bit integer
-    Float16 = 12,        // 16-bit float (requires `f16` feature)
-    Packed4Bit = 101,    // 4-bit packed (read/write via nibble unpack/pack)
-}
-```
+**`Mode`:**
 
 | Method | Returns | Description |
 |---|---|---|
-| `mode.as_i32()` | `i32` | Raw mode constant |
+| `mode.as_i32()` | `i32` | Raw constant |
 | `Mode::from_i32(n)` | `Option<Mode>` | Parse from integer |
-| `mode.byte_size()` | `usize` | Bytes per voxel (1, 2, 4, or 8) |
-| `mode.byte_size_for_count(n)` | `usize` | Bytes for n voxels (accounts for Packed4Bit packing) |
-| `mode.is_complex()` | `bool` | True for Int16Complex / Float32Complex |
-| `mode.is_integer()` | `bool` | True for integer-based modes |
-| `mode.is_float()` | `bool` | True for float-based modes |
+| `mode.byte_size()` | `usize` | Bytes per voxel |
+| `mode.byte_size_for_count(n)` | `usize` | Bytes for n voxels |
+| `mode.is_complex()` / `.is_integer()` / `.is_float()` | `bool` | Type category |
 
-**`Voxel` trait** — connects Rust types to their MRC mode at compile time.
+**`Voxel` trait:**
 
 ```rust
 pub trait Voxel: EndianCodec + Copy + Send + Sync + Default + 'static {
@@ -496,358 +567,46 @@ pub trait Voxel: EndianCodec + Copy + Send + Sync + Default + 'static {
 | `Float32Complex` | `Mode::Float32Complex` |
 | `half::f16` (feature `f16`) | `Mode::Float16` |
 
-```rust
-pub enum FileEndian {
-    LittleEndian,
-    BigEndian,
-}
-```
+**`FileEndian`:**
 
-| Method | Returns | Description |
-|---|---|---|
-| `FileEndian::from_machst(machst)` | `FileEndian` | Detect from 4-byte MACHST |
-| `FileEndian::from_machst_with_info(machst)` | `MachstInfo` | Detect with metadata |
-| `endian.to_machst()` | `[u8; 4]` | Standard MACHST bytes |
-| `endian.opposite()` | `FileEndian` | The other endianness |
-| `FileEndian::native()` | `FileEndian` | Host platform endianness |
-| `endian.is_native()` | `bool` | Matches host? |
+| Method | Returns |
+|---|---|
+| `FileEndian::from_machst(machst)` | `FileEndian` |
+| `FileEndian::from_machst_with_info(machst)` | `MachstInfo` |
+| `endian.to_machst()` | `[u8; 4]` |
+| `endian.opposite()` | `FileEndian` |
+| `FileEndian::native()` | `FileEndian` |
+| `endian.is_native()` | `bool` |
 
-### Complex and Special Types
+**Complex types:**
 
 ```rust
-pub struct Int16Complex {
-    pub real: i16,
-    pub imag: i16,
-}
-
-pub struct Float32Complex {
-    pub real: f32,
-    pub imag: f32,
-}
+pub struct Int16Complex { pub real: i16, pub imag: i16 }
+pub struct Float32Complex { pub real: f32, pub imag: f32 }
 ```
 
 Both have `to_real(strategy: ComplexToRealStrategy) -> f32`:
-- `RealPart` / `ImaginaryPart` — return the component as `f32`
-- `Magnitude` — `sqrt(real² + imag²)`
-- `Phase` — `atan2(imag, real)`
-
-Packed4Bit does **not** implement `Voxel` — instead it is handled transparently
-by the unified API:
-- Reading: [`slices_u8`](Reader::slices_u8) / [`slabs_u8`](Reader::slabs_u8) /
-  [`read_volume_u8`](Reader::read_volume_u8) unpack nibbles to `u8` (0–15);
-  [`convert::<f32>()`](Reader::convert) / [`convert::<T>()`](Reader::convert)
-  convert directly to `f32` or any target type via `.slices()` / `.read_volume()` /
-  `.subregion()` — correctly handles multi-slice volumes and sub-block shapes.
-- Writing: [`write_u4_block`](Writer::write_u4_block) packs `u8` values
-  two-per-byte.
+`RealPart`, `ImaginaryPart`, `Magnitude`, `Phase`.
 
 ```rust
 pub enum ComplexToRealStrategy { RealPart, ImaginaryPart, Magnitude, Phase }
 pub enum M0Interpretation { Signed, Unsigned }
 ```
 
-`M0Interpretation` controls how Mode 0 (8-bit) data is read: `Signed` treats raw bytes as `i8`, `Unsigned` as `u8`.
-
-### Extended Header Types
-
-```rust
-pub enum ExtHeaderType { Ccp4, Mrco, Seri, Agar, Fei1, Fei2, Hdf5, Unknown([u8; 4]) }
-
-impl ExtHeaderType {
-    pub fn from_exttyp(exttyp: [u8; 4]) -> Self;
-    pub fn from_header(header: &Header) -> Self;
-}
-```
-
-Maps the 4-byte EXTTYP identifier from `extra[8..12]` to a Rust enum for generic dispatch.
-`Unknown` captures any unrecognized identifier.
-
-```rust
-pub enum ExtHeaderData {
-    Ccp4(Vec<Ccp4Record>),
-    Mrco(Vec<MrcoRecord>),
-    Seri(Vec<SeriRecord>),
-    Agar(Vec<AgarRecord>),
-    Fei1(Vec<Fei1Metadata>),
-    Fei2(Vec<Fei2Metadata>),
-    None,
-}
-
-impl ExtHeaderData {
-    pub fn parse(ext_type: ExtHeaderType, bytes: &[u8]) -> Self;
-    pub fn from_header(header: &Header, bytes: &[u8]) -> Self;
-}
-```
-
-Returned by `reader.parse_extended_header()`. Auto-routes to the correct parser based
-on the `exttyp` detected from the header.
-
-### IMOD Metadata
-
-```rust
-pub struct ImodInfo { pub bytes_are_signed: bool }
-
-pub enum ImodImageType { Mono, Tilt, Tilts, Lina, Lins }
-
-pub struct ImodMetadata {
-    pub bytes_are_signed: bool,
-    pub imod_flags: u16,
-    pub image_type: ImodImageType,
-    pub tilt_axis: u8,
-    pub tilt_increment: f32,
-    pub start_angle: f32,
-    pub original_angles: [f32; 3],
-    pub current_angles: [f32; 3],
-    pub x_origin: f32,
-    pub y_origin: f32,
-    pub z_origin: f32,
-    pub x_cell_size: f32,
-    pub y_cell_size: f32,
-    pub z_cell_size: f32,
-}
-
-pub fn parse_imod_metadata(header: &Header) -> Option<ImodMetadata>;
-```
-
-Parsed from the MRC header `extra` bytes when the IMOD stamp is present.
-Accessible via `reader.imod_metadata()` on any reader.
-
 ---
 
-## Iterators
+### <a name="advanced-design"></a>Design Notes
 
-### `DataBlock` and `VoxelBlock` iterators
+**New files are always little-endian.**  The crate defaults to LE with
+NVERSION=20141.  Reading handles both endiannesses transparently.
 
-The default reader methods (`slices()`, `slabs()`, `tiles()`, `volumes()`) return
-`impl Iterator<Item = Result<DataBlock<'_>>>` — each call yields a `DataBlock`
-whose `DataView` variant is determined at runtime by the file's mode.
+**Permissive mode** enables lenient header parsing for legacy / non-standard
+files.  Non-critical issues become warnings instead of errors.
 
-The `ConvertReader` methods return `impl Iterator<Item = Result<VoxelBlock<T>>>`
-— each call yields a typed `VoxelBlock<T>` with auto-converted data.
-
-```rust
-// Default reader: returns DataBlock — match on DataView
-for slice in reader.slices() {
-    let block = slice?;
-    match block.data() {
-        DataView::Float32(data) => println!("f32 slice: {} voxels", data.len()),
-        _ => {}
-    }
-}
-
-// ConvertReader: returns VoxelBlock<T> — typed fields
-for slab in reader.convert::<f32>().slabs(4) {
-    let block = slab?;
-    println!("f32 slab: {} voxels", block.data.len());
-}
-```
-
----
-
-## Validation
-
-```rust
-use mrc::{validate_full, ValidationReport, ValidationIssue, Severity};
-```
-
-| Function | Returns | Description |
-|---|---|---|
-| `validate_full(path, permissive)` | `Result<ValidationReport>` | Open file and validate (full I/O) |
-| `validate_reader(reader, path, compression, warnings)` | `Result<ValidationReport>` | Validate an already-open reader (no re-open) |
-
-```rust
-pub struct ValidationReport {
-    pub path: String,
-    pub compression: String,  // "plain", "gzip", "bzip2"
-    pub nx, ny, nz: i32,
-    pub mode: i32,
-    pub issues: Vec<ValidationIssue>,
-}
-
-impl ValidationReport {
-    pub fn is_valid(&self) -> bool;                         // no Error-severity issues
-    pub fn by_severity(&self, s: Severity) -> impl Iterator; // filter by severity
-}
-
-pub struct ValidationIssue {
-    pub severity: Severity,   // Error / Warning / Info
-    pub category: &'static str, // "Header", "Statistics", etc.
-    pub message: String,
-}
-```
-
-Validation checks:
-1. **Header structure** — dimensions, mode, MAP, ISPG, axis mapping, NVERSION, etc.
-2. **File size** — expected vs actual
-3. **Endianness** — MACHST stamp, native vs non-native
-4. **Statistics** — dmin/dmax/dmean/rms vs actual data (1% tolerance)
-5. **Data integrity** — NaN / Inf scan in float modes
-6. **Volume info** — type (image, stack, volume, volume stack) and dimensions
-
----
-
-## FEI Extended Headers
-
-```rust
-use mrc::{
-    Fei1Metadata, Fei2Metadata,
-    FEI1_RECORD_SIZE, FEI2_RECORD_SIZE,
-    parse_fei1_records, parse_fei2_records,
-};
-```
-
-```rust
-pub const FEI1_RECORD_SIZE: usize = 768;
-pub const FEI2_RECORD_SIZE: usize = 888;
-
-// Parse extended header bytes into typed records
-pub fn parse_fei1_records(bytes: &[u8]) -> Option<Vec<Fei1Metadata>>;
-pub fn parse_fei2_records(bytes: &[u8]) -> Option<Vec<Fei2Metadata>>;
-
-impl Fei1Metadata {
-    pub fn from_bytes(bytes: &[u8]) -> Option<Self>;
-}
-
-impl Fei2Metadata {
-    pub fn from_bytes(bytes: &[u8]) -> Option<Self>;
-}
-```
-
-`Fei1Metadata` fields include: `metadata_size`, `metadata_version`, `timestamp`,
-`microscope_type`, `ht` (high tension), `dose`, `alpha_tilt`, `beta_tilt`,
-`x/y/z_stage`, `tilt_axis_angle`, `pixel_size_x/y`, `defocus`, `magnification`,
-`camera_length`, `spot_index`, `camera_name`, `integration_time`, `binning`,
-`gain`, `offset`, `dwell_time`, `frame_time`, `start_frame`, `end_frame`, etc.
-
-`Fei2Metadata` extends `Fei1Metadata` with: `scan_rotation`, `diffraction_pattern_rotation`,
-`image_rotation`, `scan_mode_enumeration`, `acquisition_time_stamp`,
-`detector_commercial_name`, `start/end_tilt_angle`, `tilt_per_image`, `tilt_speed`,
-`beam_center_x/y_pixel`, `cfeg_flash_timestamp`, `phase_plate_position_index`,
-`objective_aperture_name`.
-
-### Other Extended Header Formats
-
-```rust
-use mrc::{
-    Ccp4Record, MrcoRecord, SeriRecord, AgarRecord,
-    CCP4_RECORD_SIZE, MRCO_RECORD_SIZE, SERI_RECORD_SIZE, AGAR_RECORD_SIZE,
-    parse_ccp4_records, parse_mrco_records, parse_seri_records, parse_agar_records,
-};
-```
-
-```rust
-pub const CCP4_RECORD_SIZE: usize = 80;
-pub const MRCO_RECORD_SIZE: usize = 80;
-pub const SERI_RECORD_SIZE: usize = 256;
-pub const AGAR_RECORD_SIZE: usize = 1024;
-
-// Parse extended header bytes into typed records
-pub fn parse_ccp4_records(bytes: &[u8]) -> Option<Vec<Ccp4Record>>;
-pub fn parse_mrco_records(bytes: &[u8]) -> Option<Vec<MrcoRecord>>;
-pub fn parse_seri_records(bytes: &[u8]) -> Option<Vec<SeriRecord>>;
-pub fn parse_agar_records(bytes: &[u8]) -> Option<Vec<AgarRecord>>;
-```
-
-| Format | Record size | Typical use |
-|--------|-------------|-------------|
-| CCP4 | 80 bytes | CCP4 suite symmetry records |
-| MRCO | 80 bytes | Legacy MRC format records |
-| SERI | 256 bytes | SerialEM tilt-series metadata |
-| AGAR | 1024 bytes | Agard-style microscope metadata |
-
-Access via `reader.ccp4_records()`, `reader.mrco_records()`, etc. on any open
-reader, or directly via `parse_*_records()` for raw byte slices.
-
-`Ccp4Record` has an `as_str()` method returning trimmed symmetry text.
-`SeriRecord` exposes the `alpha_tilt` field directly; all other record types
-store raw bytes for caller interpretation.
-
----
-
-## Error Types
-
-### `Error` — top-level error enum
-
-| Variant | When it occurs |
-|---|---|
-| `Io(std::io::Error)` | Underlying I/O failure |
-| `InvalidHeader` | Malformed header |
-| `UnsupportedMode` | Mode not recognized |
-| `BoundsError { offset?, shape?, volume? }` | Block outside volume bounds (optional context) |
-| `TypeMismatch { expected, actual }` | Byte size mismatch |
-| `ValueOutOfRange { value, max }` | Voxel value exceeds target type range |
-| `BlockShapeMismatch { expected, actual }` | Data length ≠ block volume |
-| `ModeMismatch { file_mode, requested_mode, offset? }` | Requested type ≠ file mode (optional offset) |
-| `InvalidHeaderDetailed(HeaderValidationError)` | Specific validation failure |
-| `StatsMismatch { claimed_*, actual_* }` | Header stats don't match data |
-| `Mmap` (feature `mmap`) | Memory mapping failed |
-| `FileSizeMismatch { expected, actual }` | Wrong file size |
-| `NotAVolumeStack { ispg, mz }` | `volumes()` on non-stack file |
-
-### `HeaderValidationError` — detailed header issues
-
-`InvalidDimensions`, `UnsupportedMode(i32)`, `InvalidMap([u8;4])`, `InvalidIspg(i32)`,
-`InvalidAxisMapping { mapc, mapr, maps }`, `InvalidNsymbt(i32)`, `InvalidNlabl(i32)`,
-`InvalidNversion(i32)`, `InvalidVolumeStack { nz, mz, ispg }`,
-`InvalidSampling { mx, my, mz }`, `LabelCountMismatch { nlabl, actual }`,
-`EmptyLabelBeforeFilled { index }`.
-
----
-
-## Conversion Utilities
-
-```rust
-// Reinterpret Mode 0 (8-bit) as signed or unsigned f32
-pub fn reinterpret_m0(data: &[u8], interp: M0Interpretation) -> Vec<f32>;
-
-// Widen u8 → u16 for writing as Mode 6
-pub fn convert_u8_slice_to_u16(src: &[u8]) -> Vec<u16>;
-
-// Narrow u16 → u8 (returns Err if any value > 255)
-pub fn convert_u16_slice_to_u8(src: &[u16]) -> Result<Vec<u8>, Error>;
-```
-
-These are convenience functions exposed from the crate root. The more comprehensive
-conversion infrastructure is used internally by `reader.convert::<T>()` which
-automatically converts any MRC mode to the target type via `.slices()`, `.slabs()`,
-`.tiles()`, `.subregion()`, and `.read_volume()`.
-
----
-
-## Feature Flags
-
-| Feature | Default | What it enables |
-|---|---|---|
-| `mmap` | ✅ | Memory-mapped I/O (auto-selected by `Reader::open`, `WriterBuilder::finish_mmap()`) |
-| `f16` | ✅ | `half::f16` type, `Mode::Float16`, `write_block_as()` generic f16↔f32 |
-| `simd` | ✅ | AVX2/NEON accelerated integer↔f32, f16↔f32, byte-swap, f32 statistics, and f32→integer clamping |
-| `parallel` | ✅ | Parallel decode/convert/encode via `rayon` — transparent for any block ≥512³ |
-| `gzip` | ✅ | Gzip auto-detection, `Reader::open_gzip()`, compressed writer |
-| `bzip2` | ❌ | Bzip2 auto-detection, `Reader::open_bzip2()`, compressed writer |
-| `ndarray` | ❌ | Return volumes as `ndarray::Array3<T>` via `to_ndarray()` |
-| `serde` | ❌ | Serialize/Deserialize for `Header`, `Mode`, `VolumeShape`, `ValidationReport`, and other public types |
-
----
-
-## Design Notes
-
-**New files are always little-endian.** The crate defaults to LE with NVERSION=20141.
-Reading handles both endiannesses transparently.
-
-**Permissive mode** enables lenient header parsing for legacy / non-standard files.
-Non-critical issues become warnings instead of errors.
-
-**CompressionLevel is transparent on read** — `open()` auto-detects gzip/bzip2 from
-magic bytes and decompresses the whole file into memory. A hard cap of
-[`DEFAULT_MAX_DECOMPRESSED_BYTES`] (256 GiB) prevents decompression bombs.
-Use `open_gzip_with_limit()` / `open_bzip2_with_limit()` for a custom limit.
-
-> **Large compressed files:** If the uncompressed data exceeds available RAM,
-> decompress with `gunzip` or `bunzip2` first, then use `Reader::open` for
-> zero-copy access — the OS pages data on demand.
-
-[`DEFAULT_MAX_DECOMPRESSED_BYTES`]: #top-level-functions
+**Compression is transparent on read** — `open()` auto-detects gzip/bzip2 from
+magic bytes and decompresses the whole file into memory.  Hard cap of
+`DEFAULT_MAX_DECOMPRESSED_BYTES` (256 GiB) prevents bombs.
 
 **`finalize()` rewrites the header** — the header is written optimistically at
-file creation and rewritten at the end to capture any modifications (e.g. updated
-stats, labels). Every MRC file should call `finalize()`.
+file creation and rewritten at the end to capture any modifications (updated
+stats, labels).  Every MRC file should call `finalize()`.

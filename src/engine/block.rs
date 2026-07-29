@@ -177,11 +177,7 @@ impl<T> VoxelBlock<T> {
     /// let block = VoxelBlock::new([1, 2, 3], [4, 4, 4], vec![0i16; 64]).unwrap();
     /// assert_eq!(block.offset, [1, 2, 3]);
     /// ```
-    pub fn new(
-        offset: [usize; 3],
-        shape: [usize; 3],
-        data: Vec<T>,
-    ) -> Result<Self, crate::Error> {
+    pub fn new(offset: [usize; 3], shape: [usize; 3], data: Vec<T>) -> Result<Self, crate::Error> {
         let expected = shape[0]
             .checked_mul(shape[1])
             .and_then(|v| v.checked_mul(shape[2]))

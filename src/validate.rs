@@ -21,10 +21,11 @@
 //! }
 //! ```
 
-use crate::engine::endian::FileEndian;
 use crate::engine::codec::EndianCodec;
+use crate::engine::endian::FileEndian;
 use crate::engine::stats::validate_header_stats;
 use crate::{Error, Mode, Reader};
+use std::fmt::Write;
 use std::path::Path;
 
 #[cfg(feature = "serde")]
@@ -256,15 +257,13 @@ pub fn validate_reader(
         if actual_total == expected_total {
             issues.push(ValidationIssue::info(
                 "File size",
-                format!("{} bytes as expected (header + ext + data)", actual_total),
+                format!("{actual_total} bytes as expected (header + ext + data)"),
             ));
         } else {
             issues.push(ValidationIssue::error(
                 "File size",
                 format!(
-                    "Size mismatch: expected {} bytes, got {} (difference: {})",
-                    expected_total,
-                    actual_total,
+                    "Size mismatch: expected {expected_total} bytes, got {actual_total} (difference: {})",
                     (expected_total as i64 - actual_total as i64).abs()
                 ),
             ));
@@ -280,15 +279,15 @@ pub fn validate_reader(
         ));
     }
     let host = FileEndian::native();
-    if endian != host {
+    if endian == host {
         issues.push(ValidationIssue::info(
             "Endianness",
-            format!("Non-native byte order ({:?}), host is {:?}", endian, host),
+            "Native byte order, fast-path available".into(),
         ));
     } else {
         issues.push(ValidationIssue::info(
             "Endianness",
-            "Native byte order, fast-path available".into(),
+            format!("Non-native byte order ({endian:?}), host is {host:?}"),
         ));
     }
 
@@ -304,45 +303,27 @@ pub fn validate_reader(
 
     // ── 5. Data integrity (scan for NaN / Inf in float modes) ──
     if reader.mode().is_float() && !reader.mode().is_complex() {
-        match float_mode_issues(raw_bytes, reader.mode(), endian) {
-            Ok(has_issues) => {
-                if has_issues.is_empty() {
-                    issues.push(ValidationIssue::info(
-                        "Data integrity",
-                        "All voxel values are finite numbers".into(),
-                    ));
-                } else {
-                    for issue in has_issues {
-                        issues.push(ValidationIssue::warning("Data integrity", issue));
-                    }
-                }
-            }
-            Err(e) => {
-                issues.push(ValidationIssue::warning(
-                    "Data integrity",
-                    format!("Could not scan data: {e}"),
-                ));
+        let has_issues = float_mode_issues(raw_bytes, reader.mode(), endian);
+        if has_issues.is_empty() {
+            issues.push(ValidationIssue::info(
+                "Data integrity",
+                "All voxel values are finite numbers".into(),
+            ));
+        } else {
+            for issue in has_issues {
+                issues.push(ValidationIssue::warning("Data integrity", issue));
             }
         }
     } else if reader.mode() == Mode::Float32Complex {
-        match complex_float_mode_issues(raw_bytes, endian) {
-            Ok(has_issues) => {
-                if has_issues.is_empty() {
-                    issues.push(ValidationIssue::info(
-                        "Data integrity",
-                        "All complex values are finite numbers".into(),
-                    ));
-                } else {
-                    for issue in has_issues {
-                        issues.push(ValidationIssue::warning("Data integrity", issue));
-                    }
-                }
-            }
-            Err(e) => {
-                issues.push(ValidationIssue::warning(
-                    "Data integrity",
-                    format!("Could not scan complex data: {e}"),
-                ));
+        let has_issues = complex_float_mode_issues(raw_bytes, endian);
+        if has_issues.is_empty() {
+            issues.push(ValidationIssue::info(
+                "Data integrity",
+                "All complex values are finite numbers".into(),
+            ));
+        } else {
+            for issue in has_issues {
+                issues.push(ValidationIssue::warning("Data integrity", issue));
             }
         }
     }
@@ -433,29 +414,48 @@ pub fn validate_full<P: AsRef<Path>>(path: P, permissive: bool) -> Result<Valida
 /// Compare header statistics against computed values using
 /// [`validate_header_stats`]. Returns `Some(ValidationIssue)` on mismatch or
 /// error, `None` if all statistics match within 1% tolerance.
-fn check_statistics(
-    header: &crate::Header,
-    raw_bytes: &[u8],
-) -> Option<ValidationIssue> {
+fn check_statistics(header: &crate::Header, raw_bytes: &[u8]) -> Option<ValidationIssue> {
     match validate_header_stats(header, raw_bytes) {
         Ok(()) => None,
-        Err(crate::Error::StatsMismatch { claimed_dmin, claimed_dmax, claimed_dmean, claimed_rms, actual_dmin, actual_dmax, actual_dmean, actual_rms }) => {
+        Err(crate::Error::StatsMismatch {
+            claimed_dmin,
+            claimed_dmax,
+            claimed_dmean,
+            claimed_rms,
+            actual_dmin,
+            actual_dmax,
+            actual_dmean,
+            actual_rms,
+        }) => {
             let mut detail = String::new();
-            if (claimed_dmin - actual_dmin).abs() > 0.01 * actual_dmin.abs().max(claimed_dmin.abs()) {
-                detail.push_str(&format!(" dmin claimed={claimed_dmin} actual={actual_dmin}"));
+            if (claimed_dmin - actual_dmin).abs() > 0.01 * actual_dmin.abs().max(claimed_dmin.abs())
+            {
+                let _ = write!(detail, " dmin claimed={claimed_dmin} actual={actual_dmin}");
             }
-            if (claimed_dmax - actual_dmax).abs() > 0.01 * actual_dmax.abs().max(claimed_dmax.abs()) {
-                detail.push_str(&format!(" dmax claimed={claimed_dmax} actual={actual_dmax}"));
+            if (claimed_dmax - actual_dmax).abs() > 0.01 * actual_dmax.abs().max(claimed_dmax.abs())
+            {
+                let _ = write!(detail, " dmax claimed={claimed_dmax} actual={actual_dmax}");
             }
-            if (claimed_dmean - actual_dmean).abs() > 0.01 * actual_dmean.abs().max(claimed_dmean.abs()) {
-                detail.push_str(&format!(" dmean claimed={claimed_dmean} actual={actual_dmean}"));
+            if (claimed_dmean - actual_dmean).abs()
+                > 0.01 * actual_dmean.abs().max(claimed_dmean.abs())
+            {
+                let _ = write!(
+                    detail,
+                    " dmean claimed={claimed_dmean} actual={actual_dmean}"
+                );
             }
             if (claimed_rms - actual_rms).abs() > 0.01 * actual_rms.abs().max(claimed_rms.abs()) {
-                detail.push_str(&format!(" rms claimed={claimed_rms} actual={actual_rms}"));
+                let _ = write!(detail, " rms claimed={claimed_rms} actual={actual_rms}");
             }
-            Some(ValidationIssue::error("Statistics", format!("Mismatch:{detail}")))
+            Some(ValidationIssue::error(
+                "Statistics",
+                format!("Mismatch:{detail}"),
+            ))
         }
-        Err(e) => Some(ValidationIssue::error("Statistics", format!("Cannot compute statistics: {e}"))),
+        Err(e) => Some(ValidationIssue::error(
+            "Statistics",
+            format!("Cannot compute statistics: {e}"),
+        )),
     }
 }
 
@@ -472,83 +472,109 @@ fn format_finite_issues(counts: &NonFiniteCounts, total: usize, prefix: &str) ->
     if counts.nan > 0 {
         issues.push(format!(
             "{} NaN values found{} ({:.2}%)",
-            counts.nan, prefix, counts.nan as f64 / total as f64 * 100.0
+            counts.nan,
+            prefix,
+            counts.nan as f64 / total as f64 * 100.0
         ));
     }
     if counts.pos_inf > 0 {
         issues.push(format!(
             "{} +Inf values found{} ({:.2}%)",
-            counts.pos_inf, prefix, counts.pos_inf as f64 / total as f64 * 100.0
+            counts.pos_inf,
+            prefix,
+            counts.pos_inf as f64 / total as f64 * 100.0
         ));
     }
     if counts.neg_inf > 0 {
         issues.push(format!(
             "{} -Inf values found{} ({:.2}%)",
-            counts.neg_inf, prefix, counts.neg_inf as f64 / total as f64 * 100.0
+            counts.neg_inf,
+            prefix,
+            counts.neg_inf as f64 / total as f64 * 100.0
         ));
     }
     issues
 }
 
-fn float_mode_issues(
-    raw_bytes: &[u8],
-    mode: Mode,
-    endian: FileEndian,
-) -> Result<Vec<String>, Error> {
+fn float_mode_issues(raw_bytes: &[u8], mode: Mode, endian: FileEndian) -> Vec<String> {
     match mode {
         Mode::Float32 => {
             // Fused: scan f32 bytes without allocating Vec<f32>.
             let n = raw_bytes.len() / 4;
-            let mut counts = NonFiniteCounts { nan: 0, pos_inf: 0, neg_inf: 0 };
+            let mut counts = NonFiniteCounts {
+                nan: 0,
+                pos_inf: 0,
+                neg_inf: 0,
+            };
             for i in 0..n {
                 let v = f32::from_bytes(raw_bytes, i * 4, endian);
-                if v.is_nan() { counts.nan += 1; }
-                else if v.is_infinite() {
-                    if v.is_sign_negative() { counts.neg_inf += 1; }
-                    else { counts.pos_inf += 1; }
+                if v.is_nan() {
+                    counts.nan += 1;
+                } else if v.is_infinite() {
+                    if v.is_sign_negative() {
+                        counts.neg_inf += 1;
+                    } else {
+                        counts.pos_inf += 1;
+                    }
                 }
             }
-            Ok(format_finite_issues(&counts, n, ""))
+            format_finite_issues(&counts, n, "")
         }
         Mode::Float16 => {
             #[cfg(feature = "f16")]
             {
                 // Fused: scan f16 bytes without allocating Vec<f32>.
                 let n = raw_bytes.len() / 2;
-                let mut counts = NonFiniteCounts { nan: 0, pos_inf: 0, neg_inf: 0 };
+                let mut counts = NonFiniteCounts {
+                    nan: 0,
+                    pos_inf: 0,
+                    neg_inf: 0,
+                };
                 for i in 0..n {
                     let v = f32::from(crate::f16::from_bytes(raw_bytes, i * 2, endian));
-                    if v.is_nan() { counts.nan += 1; }
-                    else if v.is_infinite() {
-                        if v.is_sign_negative() { counts.neg_inf += 1; }
-                        else { counts.pos_inf += 1; }
+                    if v.is_nan() {
+                        counts.nan += 1;
+                    } else if v.is_infinite() {
+                        if v.is_sign_negative() {
+                            counts.neg_inf += 1;
+                        } else {
+                            counts.pos_inf += 1;
+                        }
                     }
                 }
-                Ok(format_finite_issues(&counts, n, ""))
+                format_finite_issues(&counts, n, "")
             }
             #[cfg(not(feature = "f16"))]
-            Ok(vec!["Float16 scanning unavailable (requires `f16` feature)".into()])
+            vec!["Float16 scanning unavailable (requires `f16` feature)".into()]
         }
-        _ => Ok(Vec::new()),
+        _ => Vec::new(),
     }
 }
 
 /// Scan Float32Complex data for NaN/Inf values in both real and imaginary parts.
-fn complex_float_mode_issues(raw_bytes: &[u8], endian: FileEndian) -> Result<Vec<String>, Error> {
+fn complex_float_mode_issues(raw_bytes: &[u8], endian: FileEndian) -> Vec<String> {
     // Fused: scan complex f32 bytes without allocating Vec<Float32Complex>.
     let n = raw_bytes.len() / 8;
-    let mut counts = NonFiniteCounts { nan: 0, pos_inf: 0, neg_inf: 0 };
+    let mut counts = NonFiniteCounts {
+        nan: 0,
+        pos_inf: 0,
+        neg_inf: 0,
+    };
     for i in 0..n {
         let real = f32::from_bytes(raw_bytes, i * 8, endian);
         let imag = f32::from_bytes(raw_bytes, i * 8 + 4, endian);
         for v in [real, imag] {
-            if v.is_nan() { counts.nan += 1; }
-            else if v.is_infinite() {
-                if v.is_sign_negative() { counts.neg_inf += 1; }
-                else { counts.pos_inf += 1; }
+            if v.is_nan() {
+                counts.nan += 1;
+            } else if v.is_infinite() {
+                if v.is_sign_negative() {
+                    counts.neg_inf += 1;
+                } else {
+                    counts.pos_inf += 1;
+                }
             }
         }
     }
     let total = n * 2;
-    Ok(format_finite_issues(&counts, total, " in complex components"))
+    format_finite_issues(&counts, total, " in complex components")
 }

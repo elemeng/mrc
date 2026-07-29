@@ -56,7 +56,7 @@ The `mrc` API is designed so that **common operations are one-liners** and **com
 
 ```toml
 [dependencies]
-mrc = "0.7"
+mrc = "0.8"
 ```
 
 Enable optional features in `Cargo.toml`:

@@ -32,3 +32,4 @@ mrcs/
 *.mrc
 # RTK tool state
 .rtk/
+/real_data

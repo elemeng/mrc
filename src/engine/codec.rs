@@ -230,7 +230,8 @@ pub fn decode_into<T: EndianCodec + Copy>(
     }
 
     // Non-native endian: byte-swap raw bytes into the output slice.
-    let dst_bytes = unsafe { core::slice::from_raw_parts_mut(values.as_mut_ptr() as *mut u8, bytes.len()) };
+    let dst_bytes =
+        unsafe { core::slice::from_raw_parts_mut(values.as_mut_ptr() as *mut u8, bytes.len()) };
     swap_bytes_by_size::<T>(bytes, dst_bytes);
     Ok(())
 }
@@ -246,7 +247,8 @@ fn swap_bytes_by_size<T: EndianCodec>(src: &[u8], dst: &mut [u8]) {
             crate::engine::simd::swap_2byte_simd(src, dst);
             #[cfg(not(feature = "simd"))]
             for (d, s) in dst.chunks_exact_mut(2).zip(src.chunks_exact(2)) {
-                d[0] = s[1]; d[1] = s[0];
+                d[0] = s[1];
+                d[1] = s[0];
             }
         }
         4 => {
@@ -254,7 +256,10 @@ fn swap_bytes_by_size<T: EndianCodec>(src: &[u8], dst: &mut [u8]) {
             crate::engine::simd::swap_4byte_simd(src, dst);
             #[cfg(not(feature = "simd"))]
             for (d, s) in dst.chunks_exact_mut(4).zip(src.chunks_exact(4)) {
-                d[0] = s[3]; d[1] = s[2]; d[2] = s[1]; d[3] = s[0];
+                d[0] = s[3];
+                d[1] = s[2];
+                d[2] = s[1];
+                d[3] = s[0];
             }
         }
         8 => {
@@ -262,8 +267,14 @@ fn swap_bytes_by_size<T: EndianCodec>(src: &[u8], dst: &mut [u8]) {
             crate::engine::simd::swap_8byte_simd(src, dst);
             #[cfg(not(feature = "simd"))]
             for (d, s) in dst.chunks_exact_mut(8).zip(src.chunks_exact(8)) {
-                d[0] = s[7]; d[1] = s[6]; d[2] = s[5]; d[3] = s[4];
-                d[4] = s[3]; d[5] = s[2]; d[6] = s[1]; d[7] = s[0];
+                d[0] = s[7];
+                d[1] = s[6];
+                d[2] = s[5];
+                d[3] = s[4];
+                d[4] = s[3];
+                d[5] = s[2];
+                d[6] = s[1];
+                d[7] = s[0];
             }
         }
         _ => unreachable!(),
@@ -380,9 +391,7 @@ pub fn encode_slice<T: EndianCodec + Sync>(
     // Non-native endian: swap bytes directly from values into output buffer.
     // SAFETY: values and bytes have the same byte count (checked above) and
     // are non-overlapping (values is from the caller, bytes is a local buffer).
-    let src = unsafe {
-        core::slice::from_raw_parts(values.as_ptr() as *const u8, bytes.len())
-    };
+    let src = unsafe { core::slice::from_raw_parts(values.as_ptr() as *const u8, bytes.len()) };
     swap_bytes_by_size::<T>(src, bytes);
     Ok(())
 }
@@ -397,8 +406,6 @@ pub fn encode_slice<T: EndianCodec + Sync>(
 /// overhead for small requests.
 #[cfg(feature = "parallel")]
 pub(crate) const PAR_MIN_VOXELS: usize = 262_144;
-
-
 
 // ============================================================================
 // In-place byte-order swap (public API)
@@ -465,9 +472,7 @@ pub fn encode_block_parallel<T: EndianCodec + Sync>(
     buffer
         .par_chunks_mut(chunk_voxels * T::BYTE_SIZE)
         .zip(values.par_chunks(chunk_voxels))
-        .try_for_each(|(dst, chunk)| {
-            encode_slice(chunk, dst, endian)
-        })?;
+        .try_for_each(|(dst, chunk)| encode_slice(chunk, dst, endian))?;
 
     Ok(buffer)
 }

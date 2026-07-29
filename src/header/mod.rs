@@ -703,7 +703,10 @@ impl Header {
         }
 
         if let Err(_e) = self.check_nversion() {
-            warnings.push(format!("NVERSION {} is not 20140 or 20141", self.nversion()));
+            warnings.push(format!(
+                "NVERSION {} is not 20140 or 20141",
+                self.nversion()
+            ));
         }
 
         if let Err(_e) = self.check_sampling() {

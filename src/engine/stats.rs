@@ -11,11 +11,37 @@
 //! compute RMS only (dmin/dmax/dmean sentinels are set).
 
 use crate::Error;
-use crate::engine::codec::decode_slice;
 #[cfg(feature = "f16")]
 use crate::engine::codec::EndianCodec;
+use crate::engine::codec::decode_slice;
 use crate::engine::endian::FileEndian;
 use crate::mode::{Float32Complex, Int16Complex, Mode};
+
+/// Decode-or-reinterpret bytes as `&[T]` for native-endian stats.
+///
+/// For native-endian data, uses `align_to` to avoid allocating a new Vec.
+/// For non-native endian or misaligned data, falls back to `decode_slice`.
+fn stats_from_bytes<T>(bytes: &[u8], endian: FileEndian) -> Result<(f32, f32, f32, f32), Error>
+where
+    T: Copy + Into<f64> + 'static + crate::engine::codec::EndianCodec + Send,
+{
+    // Fast path: native-endian — reinterpret bytes directly as T,
+    // avoiding any allocation or memcpy of the entire data.
+    if endian.is_native() && bytes.len() % core::mem::size_of::<T>() == 0 {
+        // SAFETY: T is a primitive type (f32, i16, u16, i8), all of which
+        // have no invalid bit patterns. bytes comes from Vec<u8> or mmap
+        // which is at minimum 1-byte aligned; size_of::<T>() is the divisor.
+        // If alignment is insufficient, align_to falls back to returning
+        // an empty aligned slice and the fallback path is taken.
+        let (prefix, aligned, suffix) = unsafe { bytes.align_to::<T>() };
+        if prefix.is_empty() && suffix.is_empty() {
+            return Ok(stats_real(aligned));
+        }
+    }
+    // Slow path: non-native endian or alignment issue — allocate + decode.
+    let data = decode_slice::<T>(bytes, endian)?;
+    Ok(stats_real(&data))
+}
 
 // ============================================================================
 // RunningStats — online Welford accumulator
@@ -71,9 +97,8 @@ impl RunningStats {
         #[cfg(feature = "simd")]
         {
             if core::any::TypeId::of::<T>() == core::any::TypeId::of::<f32>() {
-                let f32_data: &[f32] = unsafe {
-                    core::slice::from_raw_parts(data.as_ptr() as *const f32, data.len())
-                };
+                let f32_data: &[f32] =
+                    unsafe { core::slice::from_raw_parts(data.as_ptr() as *const f32, data.len()) };
                 return self.update_f32(f32_data);
             }
         }
@@ -157,22 +182,10 @@ pub(crate) fn compute_stats(
     ny: usize,
 ) -> Result<(f32, f32, f32, f32), Error> {
     Ok(match mode {
-        Mode::Float32 => {
-            let data = decode_slice::<f32>(bytes, endian)?;
-            stats_real(&data)
-        }
-        Mode::Int16 => {
-            let data = decode_slice::<i16>(bytes, endian)?;
-            stats_real(&data)
-        }
-        Mode::Uint16 => {
-            let data = decode_slice::<u16>(bytes, endian)?;
-            stats_real(&data)
-        }
-        Mode::Int8 => {
-            let data = decode_slice::<i8>(bytes, endian)?;
-            stats_real(&data)
-        }
+        Mode::Float32 => stats_from_bytes::<f32>(bytes, endian)?,
+        Mode::Int16 => stats_from_bytes::<i16>(bytes, endian)?,
+        Mode::Uint16 => stats_from_bytes::<u16>(bytes, endian)?,
+        Mode::Int8 => stats_from_bytes::<i8>(bytes, endian)?,
         Mode::Float32Complex => {
             let data = decode_slice::<Float32Complex>(bytes, endian)?;
             let rms = rms_complex(&data);

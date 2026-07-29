@@ -1,6 +1,6 @@
 [package]
 name = "mrc"
-version = "0.7.1"
+version = "0.8.0"
 edition = "2024"
 rust-version = "1.85"
 description = "MRC-2014 file format reader/writer for cryo-EM — SIMD-accelerated, mmap-enabled"
@@ -26,6 +26,10 @@ tracing = { version = "0.1", default-features = false, features = ["std"] }
 [dev-dependencies]
 criterion = { version = "0.7", features = ["html_reports"] }
 tempfile = "3.27"
+
+[[bench]]
+name = "bench"
+harness = false
 
 
 [features]

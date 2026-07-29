@@ -36,8 +36,8 @@ unsafe fn reinterpret_vec<S: 'static, T: 'static>(v: Vec<S>) -> Vec<T> {
 #[cfg(feature = "simd")]
 use super::simd;
 
-use super::codec::decode_slice;
 use super::codec::EndianCodec;
+use super::codec::decode_slice;
 use super::endian::FileEndian;
 use crate::Error;
 use crate::mode::{ComplexToRealStrategy, Float32Complex, Int16Complex, Mode};
@@ -504,7 +504,11 @@ where
     // nibble layout makes Z-splitting non-trivial, and it is rarely used with
     // large volumes).
     #[cfg(feature = "parallel")]
-    if sz > 1 && sx * sy > 0 && sx * sy * sz >= crate::engine::codec::PAR_MIN_VOXELS && mode != Mode::Packed4Bit {
+    if sz > 1
+        && sx * sy > 0
+        && sx * sy * sz >= crate::engine::codec::PAR_MIN_VOXELS
+        && mode != Mode::Packed4Bit
+    {
         use rayon::prelude::*;
         let b = mode.byte_size();
         let plane_bytes = sx * sy * b;
@@ -525,8 +529,12 @@ where
                 let chunk_bytes = &bytes[byte_off..byte_off + nplanes * plane_bytes];
                 let chunk_shape = [sx, sy, nplanes];
                 convert_block_seq(
-                    chunk_bytes, mode, endian, chunk_shape,
-                    complex_strategy, m0_interp,
+                    chunk_bytes,
+                    mode,
+                    endian,
+                    chunk_shape,
+                    complex_strategy,
+                    m0_interp,
                 )
             })
             .collect();
@@ -538,7 +546,14 @@ where
         return Ok(output);
     }
 
-    convert_block_seq(bytes, mode, endian, block_shape, complex_strategy, m0_interp)
+    convert_block_seq(
+        bytes,
+        mode,
+        endian,
+        block_shape,
+        complex_strategy,
+        m0_interp,
+    )
 }
 
 /// Sequential implementation of [`convert_block`] (no parallelism).
@@ -672,7 +687,9 @@ fn convert_block_inner(
                 // SAFETY: `bytes` comes from a `Vec<u8>` (heap, ≥8-byte aligned)
                 // or `Mmap` (page-aligned), so it is always 2-byte aligned for `i16`.
                 // The byte representation is identical for native endian.
-                let src = unsafe { std::slice::from_raw_parts(bytes.as_ptr() as *const i16, bytes.len() / 2) };
+                let src = unsafe {
+                    std::slice::from_raw_parts(bytes.as_ptr() as *const i16, bytes.len() / 2)
+                };
                 Ok(convert_i16_slice_to_f32(src))
             } else {
                 let src = decode_slice::<i16>(bytes, endian)?;
@@ -683,7 +700,9 @@ fn convert_block_inner(
             if endian.is_native() {
                 // SAFETY: `bytes` is always heap-or-mmap allocated (≥2-byte aligned),
                 // and the byte representation is identical for native endian.
-                let src = unsafe { std::slice::from_raw_parts(bytes.as_ptr() as *const u16, bytes.len() / 2) };
+                let src = unsafe {
+                    std::slice::from_raw_parts(bytes.as_ptr() as *const u16, bytes.len() / 2)
+                };
                 Ok(convert_u16_slice_to_f32(src))
             } else {
                 let src = decode_slice::<u16>(bytes, endian)?;
@@ -696,7 +715,12 @@ fn convert_block_inner(
             {
                 if endian.is_native() {
                     // SAFETY: `bytes` is always heap-or-mmap allocated (≥2-byte aligned for `f16`).
-                    let src = unsafe { std::slice::from_raw_parts(bytes.as_ptr() as *const crate::f16, bytes.len() / 2) };
+                    let src = unsafe {
+                        std::slice::from_raw_parts(
+                            bytes.as_ptr() as *const crate::f16,
+                            bytes.len() / 2,
+                        )
+                    };
                     Ok(convert_f16_slice_to_f32(src))
                 } else {
                     let src = decode_slice::<crate::f16>(bytes, endian)?;
