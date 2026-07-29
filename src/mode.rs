@@ -30,7 +30,10 @@ use serde::{Deserialize, Serialize};
 /// }
 /// # Ok(()) }
 /// ```
+/// This enum is `#[non_exhaustive]` — new modes may be added in minor
+/// releases. Match with a wildcard arm to stay forward-compatible.
 #[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
 pub enum DataView<'a> {
     /// Signed 8-bit integer (Mode 0).
     Int8(&'a [i8]),
@@ -53,7 +56,10 @@ pub enum DataView<'a> {
 
 /// Owned typed data — returned when a copy is unavoidable (sub-block scatter/gather,
 /// endian mismatch).
+///
+/// This enum is `#[non_exhaustive]` — new modes may be added in minor releases.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum OwnedData {
     /// Signed 8-bit integer (Mode 0).
     Int8(Vec<i8>),
@@ -115,7 +121,12 @@ impl<'a> From<&'a OwnedData> for DataView<'a> {
 /// }
 /// # Ok(()) }
 /// ```
+/// # Ok(()) }
+/// ```
+///
+/// This enum is `#[non_exhaustive]` — new variants may be added in minor releases.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum DataBlock<'a> {
     /// Zero-copy variant: borrows from the reader's internal buffer.
     Borrowed {

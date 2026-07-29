@@ -889,6 +889,7 @@ fn datablock_owned_variant() {
     match &block {
         DataBlock::Borrowed { .. } => {}
         DataBlock::Owned { .. } => {}
+        _ => {}
     }
 }
 
@@ -1088,6 +1089,7 @@ fn mmap_read_subregion() {
     match block {
         DataBlock::Borrowed { .. } => { /* ok, mmap may give Borrowed */ }
         DataBlock::Owned { .. } => { /* ok, some modes give Owned */ }
+        _ => {} /* future variants */
     }
 }
 
