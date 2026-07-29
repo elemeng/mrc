@@ -38,8 +38,9 @@ fn assert_open_ok(name: &str) -> Reader {
     if !p.exists() {
         panic!(
             "real data file not found: {}\n\
-             Clone the full repository or download the file separately.\n\
-             The real_data/ directory is gitignored because files are large.",
+             The real_data/ directory is gitignored (files are too large for GitHub).\n\
+             Place any MRC files here (from EMDB, EMPIAR, or your own microscope)\n\
+             and the tests will exercise every API path against them.",
             p.display()
         );
     }

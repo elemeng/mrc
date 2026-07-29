@@ -406,6 +406,7 @@ This crate is built by and for the cryo-EM community. Whether you're fixing a ty
 - **Submit PRs** — see [AGENTS.md](AGENTS.md) for code organization and conventions
 - **Improve docs** — better examples, clearer explanations, fix typos
 - **Share real files** — MRC files with unusual extended headers or edge cases help us test
+- **Adapt the test suite to your own data** — the [`tests/real_data_tests.rs`](tests/real_data_tests.rs) file is designed to be a template. Place any MRC files (from [EMDB](https://www.ebi.ac.uk/emdb/), [EMPIAR](https://www.ebi.ac.uk/empiar/), or your own microscope) into `real_data/` and the tests exercise every API path against them. The more diverse the files, the more edge cases we catch.
 
 All contributions are subject to the [MIT License](LICENSE).
 

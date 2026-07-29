@@ -249,8 +249,9 @@ fn ensure_real_data_available() {
         if !missing.is_empty() {
             panic!(
                 "real data files not found ({} missing):\n  {}\n\
-                 Clone the full repository or download the files separately.\n\
-                 The real_data/ directory is gitignored because files are large.",
+                 The real_data/ directory is gitignored (files are too large for GitHub).\n\
+                 Place any MRC files here (from EMDB, EMPIAR, or your own microscope)\n\
+                 and the benchmarks will exercise every API path against them.",
                 missing.len(),
                 missing.join("\n  "),
             );
