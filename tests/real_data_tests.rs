@@ -1084,3 +1084,273 @@ fn mmap_read_volume_box320() {
     let block = r.read_volume().unwrap();
     assert!(matches!(block.data(), DataView::Float32(_)));
 }
+
+// ============================================================================
+// Writer roundtrip tests
+// ============================================================================
+
+struct TempMrc(std::path::PathBuf);
+
+impl TempMrc {
+    fn new(suffix: &str) -> Self {
+        let mut p = std::env::temp_dir();
+        p.push(format!("mrc_real_writer_{}_{}.mrc", std::process::id(), suffix));
+        let _ = std::fs::remove_file(&p);
+        Self(p)
+    }
+    fn path(&self) -> &std::path::Path {
+        &self.0
+    }
+}
+
+impl Drop for TempMrc {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
+#[test]
+fn writer_roundtrip_search_as_f32() {
+    // Read Int16 file, write as Float32, read back, verify dimensions and data
+    let r = assert_open_ok(SEARCH);
+    let nx = r.shape().nx;
+    let ny = r.shape().ny;
+    let nz = r.shape().nz;
+    let data_f32: Vec<f32> = r.convert::<f32>().read_volume().unwrap().data;
+
+    let out = TempMrc::new("search_f32");
+    {
+        let mut w = create(out.path())
+            .shape([nx, ny, nz])
+            .mode::<f32>()
+            .finish()
+            .unwrap();
+        w.write_data_block(&DataBlock::Owned {
+            offset: [0, 0, 0],
+            shape: [nx, ny, nz],
+            data: OwnedData::Float32(data_f32.clone()),
+        })
+        .unwrap();
+        w.update_header_stats().unwrap();
+        w.finalize().unwrap();
+    }
+
+    let r2 = Reader::open(out.path()).unwrap();
+    assert_eq!(r2.shape().nx, nx);
+    assert_eq!(r2.shape().ny, ny);
+    assert_eq!(r2.shape().nz, nz);
+    assert_eq!(r2.mode(), Mode::Float32);
+    let block = r2.read_volume().unwrap();
+    let DataView::Float32(back) = block.data() else {
+        panic!("expected Float32")
+    };
+    // Verify header stats are accurate
+    assert!(r2.validate_header_stats().is_ok(), "stats mismatch on written file");
+    // Verify data matches (within f32 precision from i16)
+    for (a, b) in data_f32.iter().zip(back.iter()) {
+        assert!((a - b).abs() < 1.0, "data mismatch: {a} vs {b}");
+    }
+}
+
+#[test]
+fn writer_roundtrip_box320() {
+    // Read Float32 file, write as Float32, read back byte-for-byte
+    let r = assert_open_ok(BOX320);
+    let nx = r.shape().nx;
+    let ny = r.shape().ny;
+    let nz = r.shape().nz;
+    let block = r.read_volume().unwrap();
+    let DataView::Float32(original) = block.data() else {
+        panic!("expected Float32")
+    };
+
+    let out = TempMrc::new("box320_f32");
+    {
+        let mut w = create(out.path())
+            .shape([nx, ny, nz])
+            .mode::<f32>()
+            .finish()
+            .unwrap();
+        w.write_data_block(&DataBlock::Owned {
+            offset: [0, 0, 0],
+            shape: [nx, ny, nz],
+            data: OwnedData::Float32(original.to_vec()),
+        })
+        .unwrap();
+        w.update_header_stats().unwrap();
+        w.finalize().unwrap();
+    }
+
+    let r2 = Reader::open(out.path()).unwrap();
+    let block2 = r2.read_volume().unwrap();
+    let DataView::Float32(back) = block2.data() else {
+        panic!("expected Float32")
+    };
+    assert_eq!(original, back, "data mismatch on box320 roundtrip");
+    assert!(r2.validate_header_stats().is_ok(), "stats mismatch");
+}
+
+#[test]
+fn writer_streaming_slice_by_slice() {
+    // Read slices from search.mrc, write them one by one
+    let r = assert_open_ok(SEARCH);
+    let nx = r.shape().nx;
+    let ny = r.shape().ny;
+    let nz = r.shape().nz;
+
+    let out = TempMrc::new("stream");
+    {
+        let mut w = create(out.path())
+            .shape([nx, ny, nz])
+            .mode::<f32>()
+            .finish()
+            .unwrap();
+        for slice in r.convert::<f32>().slices() {
+            let s = slice.unwrap();
+            w.write_data_block(&DataBlock::Owned {
+                offset: [0, 0, s.offset[2]],
+                shape: [nx, ny, 1],
+                data: OwnedData::Float32(s.data),
+            })
+            .unwrap();
+        }
+        w.update_header_stats().unwrap();
+        w.finalize().unwrap();
+    }
+
+    let r2 = Reader::open(out.path()).unwrap();
+    assert_eq!(r2.shape().nz, nz);
+    assert_eq!(r2.mode(), Mode::Float32);
+    assert!(r2.validate_header_stats().is_ok(), "stats mismatch on streaming write");
+}
+
+#[test]
+fn writer_single_slice_data() {
+    // Read one slice from search.mrc, write as a single-slice file
+    let r = assert_open_ok(SEARCH);
+    let nx = r.shape().nx;
+    let ny = r.shape().ny;
+    let slice = r.subregion([0, 0, 0], [nx, ny, 1]).unwrap();
+    let DataView::Int16(data) = slice.data() else {
+        panic!("expected Int16")
+    };
+
+    let out = TempMrc::new("single");
+    {
+        let mut w = create(out.path())
+            .shape([nx, ny, 1])
+            .mode::<i16>()
+            .finish()
+            .unwrap();
+        w.write_data_block(&DataBlock::Owned {
+            offset: [0, 0, 0],
+            shape: [nx, ny, 1],
+            data: OwnedData::Int16(data.to_vec()),
+        })
+        .unwrap();
+        w.finalize().unwrap();
+    }
+
+    let r2 = Reader::open(out.path()).unwrap();
+    assert_eq!(r2.shape().nx, nx);
+    assert_eq!(r2.shape().ny, ny);
+    assert_eq!(r2.shape().nz, 1);
+    assert!(r2.is_single_image(), "should be a single image");
+}
+
+#[cfg(feature = "gzip")]
+#[test]
+fn writer_roundtrip_gzip() {
+    // Write a small subregion as gzip, read back
+    let r = assert_open_ok(SEARCH);
+    let block = r.convert::<f32>().subregion([0, 0, 0], [32, 32, 4]).unwrap();
+
+    let out = TempMrc::new("real_gzip");
+    {
+        let mut w = create(out.path())
+            .shape([32, 32, 4])
+            .mode::<f32>()
+            .finish_gzip()
+            .unwrap();
+        w.write_data_block(&DataBlock::Owned {
+            offset: [0, 0, 0],
+            shape: [32, 32, 4],
+            data: OwnedData::Float32(block.data),
+        })
+        .unwrap();
+        w.finalize().unwrap();
+    }
+
+    let r2 = Reader::open(out.path()).unwrap();
+    assert_eq!(r2.shape().nz, 4);
+    assert!(r2.validate_header_stats().is_ok());
+}
+
+#[test]
+fn writer_set_data_roundtrip() {
+    // Use set_data convenience
+    let r = assert_open_ok(EMMAP);
+    let nx = r.shape().nx;
+    let ny = r.shape().ny;
+    let nz = r.shape().nz;
+    let block = r.read_volume().unwrap();
+    let DataView::Float32(original) = block.data() else {
+        panic!("expected Float32")
+    };
+
+    let out = TempMrc::new("setdata");
+    {
+        let mut w = create(out.path())
+            .shape([nx, ny, nz])
+            .mode::<f32>()
+            .finish()
+            .unwrap();
+        w.set_data(original).unwrap();
+        w.finalize().unwrap();
+    }
+
+    let r2 = Reader::open(out.path()).unwrap();
+    assert!(r2.validate_header_stats().is_ok());
+    let block2 = r2.read_volume().unwrap();
+    let DataView::Float32(back) = block2.data() else {
+        panic!("expected Float32")
+    };
+    assert_eq!(original.len(), back.len());
+    for (a, b) in original.iter().zip(back.iter()) {
+        assert!((a - b).abs() < 1e-6, "data mismatch in set_data roundtrip");
+    }
+}
+
+#[test]
+fn writer_write_block_as_i16() {
+    // Read Float32 file, write as Int16 via write_block_as
+    let r = assert_open_ok(BOX320);
+    let nx = r.shape().nx;
+    let ny = r.shape().ny;
+    let nz = r.shape().nz;
+    let block = r.convert::<f32>().read_volume().unwrap();
+
+    let out = TempMrc::new("wba_i16");
+    {
+        let mut w = create(out.path())
+            .shape([nx, ny, nz])
+            .mode::<i16>()
+            .finish()
+            .unwrap();
+        w.write_block_as(&mrc::VoxelBlock::new([0, 0, 0], [nx, ny, nz], block.data).unwrap())
+            .unwrap();
+        w.update_header_stats().unwrap();
+        w.finalize().unwrap();
+    }
+
+    let r2 = Reader::open(out.path()).unwrap();
+    assert_eq!(r2.mode(), Mode::Int16);
+    // Values are 0 or 1 from binary mask
+    let block2 = r2.read_volume().unwrap();
+    let DataView::Int16(back) = block2.data() else {
+        panic!("expected Int16")
+    };
+    for &v in back {
+        assert!(v == 0 || v == 1, "unexpected value {v} in converted mask");
+    }
+}

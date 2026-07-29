@@ -702,6 +702,106 @@ fn bench_tomo_validate_header_stats(c: &mut Criterion) {
 }
 
 // ============================================================================
+// Writer benchmarks using real data — read real file, measure write throughput
+// ============================================================================
+
+fn bench_writer_write_volume_search(c: &mut Criterion) {
+    // Read search.mrc once, then benchmark writing it
+    let reader = mrc::Reader::open(REAL_SEARCH).unwrap();
+    let block = reader.convert::<f32>().read_volume().unwrap();
+    let nx = block.shape[0];
+    let ny = block.shape[1];
+    let nz = block.shape[2];
+    let data = block.data;
+
+    let mut p = std::env::temp_dir();
+    p.push("mrc_bench_write_search.mrc");
+    let _ = std::fs::remove_file(&p);
+
+    c.bench_function("writer/write_volume_search_f32", |b| {
+        b.iter(|| {
+            let mut w = mrc::create(black_box(&p))
+                .shape([nx, ny, nz])
+                .mode::<f32>()
+                .finish()
+                .unwrap();
+            w.write_data_block(&DataBlock::Owned {
+                offset: [0, 0, 0],
+                shape: [nx, ny, nz],
+                data: OwnedData::Float32(data.clone()),
+            })
+            .unwrap();
+            w.finalize().unwrap();
+        })
+    });
+    let _ = std::fs::remove_file(&p);
+}
+
+fn bench_writer_streaming_slices_search(c: &mut Criterion) {
+    // Read search.mrc slices, then benchmark writing them one by one
+    let reader = mrc::Reader::open(REAL_SEARCH).unwrap();
+    let nx = reader.shape().nx;
+    let ny = reader.shape().ny;
+    let nz = reader.shape().nz;
+    let slices: Vec<Vec<f32>> = reader
+        .convert::<f32>()
+        .slices()
+        .map(|s| s.unwrap().data)
+        .collect();
+
+    let mut p = std::env::temp_dir();
+    p.push("mrc_bench_write_stream.mrc");
+    let _ = std::fs::remove_file(&p);
+
+    c.bench_function("writer/streaming_slices_search_f32", |b| {
+        b.iter(|| {
+            let mut w = mrc::create(black_box(&p))
+                .shape([nx, ny, nz])
+                .mode::<f32>()
+                .finish()
+                .unwrap();
+            for (z, slice) in slices.iter().enumerate() {
+                w.write_data_block(&DataBlock::Owned {
+                    offset: [0, 0, z],
+                    shape: [nx, ny, 1],
+                    data: OwnedData::Float32(slice.clone()),
+                })
+                .unwrap();
+            }
+            w.update_header_stats().unwrap();
+            w.finalize().unwrap();
+        })
+    });
+    let _ = std::fs::remove_file(&p);
+}
+
+fn bench_writer_write_block_as_search(c: &mut Criterion) {
+    // Read search.mrc as f32, write as i16 via write_block_as
+    let reader = mrc::Reader::open(REAL_SEARCH).unwrap();
+    let block = reader.convert::<f32>().read_volume().unwrap();
+
+    let mut p = std::env::temp_dir();
+    p.push("mrc_bench_write_block_as.mrc");
+    let _ = std::fs::remove_file(&p);
+
+    c.bench_function("writer/write_block_as_search_f32_to_i16", |b| {
+        b.iter(|| {
+            let mut w = mrc::create(black_box(&p))
+                .shape([block.shape[0], block.shape[1], block.shape[2]])
+                .mode::<i16>()
+                .finish()
+                .unwrap();
+            w.write_block_as(
+                &mrc::VoxelBlock::new([0, 0, 0], block.shape, block.data.clone()).unwrap(),
+            )
+            .unwrap();
+            w.finalize().unwrap();
+        })
+    });
+    let _ = std::fs::remove_file(&p);
+}
+
+// ============================================================================
 // Criterion group & main
 // ============================================================================
 
@@ -736,6 +836,9 @@ criterion_group!(
         bench_real_read_as_f32,
         bench_real_open_permissive,
         bench_real_validate_full,
+        bench_writer_write_volume_search,
+        bench_writer_streaming_slices_search,
+        bench_writer_write_block_as_search,
 );
 
 #[cfg(not(feature = "mmap"))]
@@ -766,6 +869,9 @@ criterion_group!(
         bench_real_read_as_f32,
         bench_real_open_permissive,
         bench_real_validate_full,
+        bench_writer_write_volume_search,
+        bench_writer_streaming_slices_search,
+        bench_writer_write_block_as_search,
 );
 
 criterion_group!(
