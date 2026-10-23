@@ -516,7 +516,7 @@ pub(super) unsafe fn convert_f32_to_i16_avx2(src: &[f32]) -> Vec<i16> {
             *dst_ptr.add(j) = if v.is_nan() {
                 0
             } else {
-                v.clamp(i16::MIN as f32, i16::MAX as f32) as i16
+                v.clamp(i16::MIN as f32, i16::MAX as f32).round_ties_even() as i16
             };
         }
 
@@ -556,7 +556,7 @@ pub(super) unsafe fn convert_f32_to_u16_avx2(src: &[f32]) -> Vec<u16> {
             *dst_ptr.add(j) = if v.is_nan() {
                 0
             } else {
-                v.clamp(0.0, u16::MAX as f32) as u16
+                v.clamp(0.0, u16::MAX as f32).round_ties_even() as u16
             };
         }
 
@@ -612,7 +612,7 @@ pub(super) unsafe fn convert_f32_to_i8_avx2(src: &[f32]) -> Vec<i8> {
             *dst_ptr.add(j) = if v.is_nan() {
                 0
             } else {
-                v.clamp(i8::MIN as f32, i8::MAX as f32) as i8
+                v.clamp(i8::MIN as f32, i8::MAX as f32).round_ties_even() as i8
             };
         }
 

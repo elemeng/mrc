@@ -870,7 +870,7 @@ impl Header {
         value.encode(&mut self.extra[start..start + 4], 0, file_endian);
     }
 
-    /// Get the list of non-empty text labels.
+    /// Get the stored text labels (up to `nlabl`, including empty slots).
     ///
     /// Returns up to `nlabl` labels, each trimmed of trailing whitespace.
     ///
@@ -1954,6 +1954,75 @@ impl HeaderBuilder {
     #[must_use]
     pub fn set_volume_stack(mut self, mz: i32) -> Self {
         self.header.set_volume_stack(mz);
+        self
+    }
+
+    /// Configure as a volume stack with the given sub-volume thickness.
+    ///
+    /// Alias for [`set_volume_stack`](Self::set_volume_stack), matching the
+    /// [`WriterBuilder::volume_stack`](crate::WriterBuilder::volume_stack)
+    /// spelling.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use mrc::HeaderBuilder;
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let h = HeaderBuilder::new()
+    ///     .shape([64, 64, 32])
+    ///     .mode::<f32>()
+    ///     .volume_stack(16)
+    ///     .build()?;
+    /// assert!(h.is_volume_stack());
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn volume_stack(self, mz: i32) -> Self {
+        self.set_volume_stack(mz)
+    }
+
+    /// Configure as an image stack (`ispg = 0`, `mz = 1`).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use mrc::HeaderBuilder;
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let h = HeaderBuilder::new()
+    ///     .shape([64, 64, 10])
+    ///     .mode::<f32>()
+    ///     .image_stack()
+    ///     .build()?;
+    /// assert!(h.is_image_stack());
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn image_stack(mut self) -> Self {
+        self.header.set_image_stack();
+        self
+    }
+
+    /// Configure as a single 3D volume (`ispg = 1`, `mz = nz`).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use mrc::HeaderBuilder;
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let h = HeaderBuilder::new()
+    ///     .shape([64, 64, 32])
+    ///     .mode::<f32>()
+    ///     .volume()
+    ///     .build()?;
+    /// assert!(h.is_volume());
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn volume(mut self) -> Self {
+        self.header.set_volume();
         self
     }
 

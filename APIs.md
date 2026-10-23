@@ -173,7 +173,8 @@ let writer = create("out.mrc")
     .finish()?;                    // open the file
 ```
 
-Additional backends: `.finish_buffer()?` (in-memory), `.finish_mmap()?`,
+Additional backends: `.finish_buffer()?` (in-memory; retrieve the bytes with
+`Writer::into_buffer()`), `.finish_mmap()?`,
 `.finish_gzip()?`, `.finish_bzip2()?`.
 
 **Writer methods:**
@@ -244,7 +245,8 @@ let reader = Reader::from_reader(Cursor::new(bytes))?;
 
 | Method | Returns | Description |
 |---|---|---|
-| `Reader::from_reader(r)` | `Result<Reader>` | Read from any `Read` source |
+| `Reader::from_reader(r)` | `Result<Reader>` | Read from any `Read` source (bounded at 256 GiB) |
+| `Reader::from_reader_with_limit(r, max_bytes)` | `Result<Reader>` | Read from a `Read` source with a custom byte limit |
 | `Reader::from_bytes(data)` | `Result<Reader>` | Parse from `Vec<u8>` |
 | `Reader::from_reader_permissive(r)` | `Result<(Reader, Vec<String>)>` | Permissive |
 | `Reader::from_bytes_permissive(data)` | `Result<(Reader, Vec<String>)>` | Permissive |
@@ -459,7 +461,8 @@ NaN/Inf scan, volume type.
 `Io`, `InvalidHeader`, `UnsupportedMode`, `BoundsError`,
 `TypeMismatch`, `ValueOutOfRange`, `BlockShapeMismatch`, `ModeMismatch`,
 `InvalidHeaderDetailed(HeaderValidationError)`, `StatsMismatch`, `Mmap`
-(feature `mmap`), `FileSizeMismatch`, `NotAVolumeStack`.
+(feature `mmap`), `FileSizeMismatch`, `NotAVolumeStack`, `DataTooLarge`,
+`NotInMemory`, `WriterHeaderChanged`, `SizeOverflow`, `MisalignedLength`.
 
 **`HeaderValidationError`** — fine-grained header diagnostics:
 

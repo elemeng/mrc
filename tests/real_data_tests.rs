@@ -342,7 +342,7 @@ fn validate_full_permissive() {
         !report.is_valid(),
         "box320: should still fail permissive due to RMS"
     );
-    assert_eq!(report.path.ends_with(BOX320), true, "wrong path in report");
+    assert!(report.path.ends_with(BOX320), "wrong path in report");
     assert!(
         report.path.ends_with("box320_bin2_mask.mrc"),
         "wrong path in report"
@@ -945,10 +945,10 @@ fn volume_shape_operations() {
     let s = r.shape();
     assert!(!s.is_empty());
     let tv = s.total_voxels();
-    assert_eq!(tv, Some((s.nx * s.ny * s.nz) as usize));
+    assert_eq!(tv, Some(s.nx * s.ny * s.nz));
     // from_header
     let s2 = VolumeShape::from_header(r.header()).unwrap();
-    assert_eq!(s.nx, s2.nx as usize);
+    assert_eq!(s.nx, s2.nx);
     // contains_block
     assert!(s.contains_block([0, 0, 0], [1, 1, 1]));
     assert!(!s.contains_block([10000, 0, 0], [1, 1, 1]));
@@ -1028,10 +1028,10 @@ fn dataview_type_idents() {
 #[test]
 fn owned_data_display() {
     let d = OwnedData::Float32(vec![1.0, 2.0]);
-    assert_eq!(format!("{d:?}").contains("Float32"), true);
+    assert!(format!("{d:?}").contains("Float32"));
 
     let d = OwnedData::Int16(vec![1, 2]);
-    assert_eq!(format!("{d:?}").contains("Int16"), true);
+    assert!(format!("{d:?}").contains("Int16"));
 }
 
 // ============================================================================
@@ -1110,7 +1110,11 @@ struct TempMrc(std::path::PathBuf);
 impl TempMrc {
     fn new(suffix: &str) -> Self {
         let mut p = std::env::temp_dir();
-        p.push(format!("mrc_real_writer_{}_{}.mrc", std::process::id(), suffix));
+        p.push(format!(
+            "mrc_real_writer_{}_{}.mrc",
+            std::process::id(),
+            suffix
+        ));
         let _ = std::fs::remove_file(&p);
         Self(p)
     }
@@ -1161,7 +1165,10 @@ fn writer_roundtrip_search_as_f32() {
         panic!("expected Float32")
     };
     // Verify header stats are accurate
-    assert!(r2.validate_header_stats().is_ok(), "stats mismatch on written file");
+    assert!(
+        r2.validate_header_stats().is_ok(),
+        "stats mismatch on written file"
+    );
     // Verify data matches (within f32 precision from i16)
     for (a, b) in data_f32.iter().zip(back.iter()) {
         assert!((a - b).abs() < 1.0, "data mismatch: {a} vs {b}");
@@ -1237,7 +1244,10 @@ fn writer_streaming_slice_by_slice() {
     let r2 = Reader::open(out.path()).unwrap();
     assert_eq!(r2.shape().nz, nz);
     assert_eq!(r2.mode(), Mode::Float32);
-    assert!(r2.validate_header_stats().is_ok(), "stats mismatch on streaming write");
+    assert!(
+        r2.validate_header_stats().is_ok(),
+        "stats mismatch on streaming write"
+    );
 }
 
 #[test]
@@ -1279,7 +1289,10 @@ fn writer_single_slice_data() {
 fn writer_roundtrip_gzip() {
     // Write a small subregion as gzip, read back
     let r = assert_open_ok(SEARCH);
-    let block = r.convert::<f32>().subregion([0, 0, 0], [32, 32, 4]).unwrap();
+    let block = r
+        .convert::<f32>()
+        .subregion([0, 0, 0], [32, 32, 4])
+        .unwrap();
 
     let out = TempMrc::new("real_gzip");
     {

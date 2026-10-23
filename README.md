@@ -4,7 +4,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Crates.io](https://img.shields.io/crates/v/mrc.svg)](https://crates.io/crates/mrc)
 [![Docs.rs](https://img.shields.io/docsrs/mrc.svg)](https://docs.rs/mrc)
-[![CI](https://github.com/elemeng/mrc/workflows/CI/badge.svg)](https://github.com/elemeng/mrc/actions)
+[![CI](https://github.com/elemeng/mrc/workflows/Rust/badge.svg)](https://github.com/elemeng/mrc/actions)
 
 > **Type-safe MRC-2014 reader/writer for Rust** — SIMD-accelerated, mmap-enabled, with full cryo-EM metadata support.
 
@@ -62,7 +62,7 @@ mrc = "0.8"
 Enable optional features in `Cargo.toml`:
 
 ```toml
-mrc = { version = "0.7", features = ["ndarray", "serde", "bzip2"] }
+mrc = { version = "0.8", features = ["ndarray", "serde", "bzip2"] }
 ```
 
 For the `mrc-cli` binary, install the companion crate:
@@ -76,7 +76,7 @@ cargo install mrc-cli
 | `mmap` | ✅ | Memory-mapped I/O (auto-selected for large files) |
 | `f16` | ✅ | Half-precision float (`half::f16`) support |
 | `simd` | ✅ | AVX2/NEON acceleration |
-| `parallel` | ✅ | Parallel decode/convert/encode via `rayon` — transparent for any block ≥512³ |
+| `parallel` | ✅ | Parallel decode/convert/encode via `rayon` — transparent for large blocks (≥ 262,144 voxels) |
 | `gzip` | ✅ | Gzip auto-detection and compressed writer |
 | `bzip2` | ❌ | Bzip2 auto-detection and compressed writer |
 | `ndarray` | ❌ | Return volumes as `ndarray::Array3<T>` via `to_ndarray()` |

@@ -20,6 +20,12 @@ use crate::mode::{Float32Complex, Int16Complex};
 ///
 /// Provides symmetric encode/decode operations with guaranteed consistency.
 ///
+/// # Implementor contract
+/// Implementations must be plain-old-data numeric types with no padding,
+/// `BYTE_SIZE == size_of::<Self>()`, and a valid bit pattern for every byte
+/// sequence. The default `swap_bytes_value` and the SIMD slice helpers rely on
+/// these properties.
+///
 /// # Example
 /// ```ignore
 /// // EndianCodec is an internal trait; this example is for crate developers.
@@ -52,6 +58,37 @@ pub trait EndianCodec: Sized {
     #[inline]
     fn encode(&self, bytes: &mut [u8], offset: usize, endian: FileEndian) {
         self.to_bytes(bytes, offset, endian)
+    }
+
+    /// Swap the byte order of one value in place.
+    ///
+    /// The default reverses all `BYTE_SIZE` bytes, which is correct for
+    /// primitive numeric types. Composite types whose components have their
+    /// own byte order (the complex pair types) override this.
+    #[doc(hidden)]
+    #[inline]
+    fn swap_bytes_value(&mut self) {
+        debug_assert_eq!(core::mem::size_of::<Self>(), Self::BYTE_SIZE);
+        // SAFETY: every implementor in this crate is a plain-old-data numeric
+        // type with `size_of::<Self>() == BYTE_SIZE` and no padding. The
+        // reference is derived from `&mut self` and covers exactly one value.
+        let bytes = unsafe {
+            core::slice::from_raw_parts_mut(self as *mut Self as *mut u8, Self::BYTE_SIZE)
+        };
+        bytes.reverse();
+    }
+
+    /// Swap the byte order of every element in `src`, writing the result to
+    /// `dst`.
+    ///
+    /// The default reverses each `BYTE_SIZE`-byte group (SIMD-accelerated).
+    /// Composite types whose components have their own byte order (the complex
+    /// pair types) override this so that real and imaginary components keep
+    /// their positions.
+    #[doc(hidden)]
+    #[inline]
+    fn swap_slice(src: &[u8], dst: &mut [u8]) {
+        swap_bytes_by_size::<Self>(src, dst);
     }
 }
 
@@ -129,6 +166,24 @@ impl EndianCodec for Int16Complex {
         self.real.to_bytes(bytes, offset, endian);
         self.imag.to_bytes(bytes, offset + 2, endian);
     }
+
+    #[inline]
+    fn swap_bytes_value(&mut self) {
+        self.real = i16::from_be_bytes(self.real.to_le_bytes());
+        self.imag = i16::from_be_bytes(self.imag.to_le_bytes());
+    }
+
+    fn swap_slice(src: &[u8], dst: &mut [u8]) {
+        debug_assert_eq!(src.len(), dst.len());
+        debug_assert_eq!(src.len() % Self::BYTE_SIZE, 0);
+        // Swap each component independently: [r0,r1,i0,i1] -> [r1,r0,i1,i0].
+        for (s, d) in src
+            .chunks_exact(Self::BYTE_SIZE)
+            .zip(dst.chunks_exact_mut(Self::BYTE_SIZE))
+        {
+            d.copy_from_slice(&[s[1], s[0], s[3], s[2]]);
+        }
+    }
 }
 
 impl EndianCodec for Float32Complex {
@@ -146,6 +201,24 @@ impl EndianCodec for Float32Complex {
     fn to_bytes(&self, bytes: &mut [u8], offset: usize, endian: FileEndian) {
         self.real.to_bytes(bytes, offset, endian);
         self.imag.to_bytes(bytes, offset + 4, endian);
+    }
+
+    #[inline]
+    fn swap_bytes_value(&mut self) {
+        self.real = f32::from_be_bytes(self.real.to_le_bytes());
+        self.imag = f32::from_be_bytes(self.imag.to_le_bytes());
+    }
+
+    fn swap_slice(src: &[u8], dst: &mut [u8]) {
+        debug_assert_eq!(src.len(), dst.len());
+        debug_assert_eq!(src.len() % Self::BYTE_SIZE, 0);
+        // Swap each component independently: [r0..r3, i0..i3] -> [r3..r0, i3..i0].
+        for (s, d) in src
+            .chunks_exact(Self::BYTE_SIZE)
+            .zip(dst.chunks_exact_mut(Self::BYTE_SIZE))
+        {
+            d.copy_from_slice(&[s[3], s[2], s[1], s[0], s[7], s[6], s[5], s[4]]);
+        }
     }
 }
 
@@ -204,10 +277,7 @@ pub fn decode_into<T: EndianCodec + Copy>(
     let expected = values
         .len()
         .checked_mul(T::BYTE_SIZE)
-        .ok_or(crate::Error::TypeMismatch {
-            expected: 0,
-            actual: bytes.len(),
-        })?;
+        .ok_or(crate::Error::SizeOverflow)?;
     if bytes.len() != expected {
         return Err(crate::Error::TypeMismatch {
             expected,
@@ -232,7 +302,7 @@ pub fn decode_into<T: EndianCodec + Copy>(
     // Non-native endian: byte-swap raw bytes into the output slice.
     let dst_bytes =
         unsafe { core::slice::from_raw_parts_mut(values.as_mut_ptr() as *mut u8, bytes.len()) };
-    swap_bytes_by_size::<T>(bytes, dst_bytes);
+    T::swap_slice(bytes, dst_bytes);
     Ok(())
 }
 
@@ -293,9 +363,9 @@ pub fn decode_slice<T: EndianCodec + Send + Copy>(
     endian: FileEndian,
 ) -> Result<Vec<T>, crate::Error> {
     if bytes.len() % T::BYTE_SIZE != 0 {
-        return Err(crate::Error::TypeMismatch {
-            expected: T::BYTE_SIZE,
+        return Err(crate::Error::MisalignedLength {
             actual: bytes.len(),
+            element: T::BYTE_SIZE,
         });
     }
     let n = bytes.len() / T::BYTE_SIZE;
@@ -335,13 +405,13 @@ pub fn decode_slice<T: EndianCodec + Send + Copy>(
         dst_bytes
             .par_chunks_mut(chunk_bytes)
             .zip(bytes.par_chunks(chunk_bytes))
-            .for_each(|(dst, src)| swap_bytes_by_size::<T>(src, dst));
+            .for_each(|(dst, src)| T::swap_slice(src, dst));
     } else {
-        swap_bytes_by_size::<T>(bytes, dst_bytes);
+        T::swap_slice(bytes, dst_bytes);
     }
 
     #[cfg(not(feature = "parallel"))]
-    swap_bytes_by_size::<T>(bytes, dst_bytes);
+    T::swap_slice(bytes, dst_bytes);
 
     // SAFETY: all n elements have been initialized above.
     unsafe {
@@ -366,9 +436,13 @@ pub fn encode_slice<T: EndianCodec + Sync>(
     bytes: &mut [u8],
     endian: FileEndian,
 ) -> Result<(), crate::Error> {
-    if values.len().checked_mul(T::BYTE_SIZE) != Some(bytes.len()) {
+    let expected = values
+        .len()
+        .checked_mul(T::BYTE_SIZE)
+        .ok_or(crate::Error::SizeOverflow)?;
+    if expected != bytes.len() {
         return Err(crate::Error::TypeMismatch {
-            expected: values.len() * T::BYTE_SIZE,
+            expected,
             actual: bytes.len(),
         });
     }
@@ -392,7 +466,7 @@ pub fn encode_slice<T: EndianCodec + Sync>(
     // SAFETY: values and bytes have the same byte count (checked above) and
     // are non-overlapping (values is from the caller, bytes is a local buffer).
     let src = unsafe { core::slice::from_raw_parts(values.as_ptr() as *const u8, bytes.len()) };
-    swap_bytes_by_size::<T>(src, bytes);
+    T::swap_slice(src, bytes);
     Ok(())
 }
 
@@ -417,8 +491,8 @@ pub(crate) const PAR_MIN_VOXELS: usize = 262_144;
 /// each element's bytes in-place.  When `from == FileEndian::native()` this is
 /// a no-op — the data is already in host order.
 ///
-/// Uses SIMD acceleration (AVX2 / NEON) when the `simd` feature is enabled
-/// and the required ISA is detected at runtime.
+/// Primitive types swap all bytes of each value.  Complex pair types swap each
+/// component independently, preserving the real/imaginary layout.
 ///
 /// # Example
 ///
@@ -434,17 +508,8 @@ pub fn swap_bytes_in_place<T: crate::Voxel>(data: &mut [T], from: FileEndian) {
     if from == FileEndian::native() || data.is_empty() {
         return;
     }
-    let byte_len = data.len() * T::BYTE_SIZE;
-    // SAFETY: the byte_len calculation is exact; the pointer casts produce
-    // a valid mutable byte slice of the same length.  T::BYTE_SIZE must equal
-    // core::mem::size_of::<T>() — this holds for all Voxel types (they are
-    // primitives or #[repr(C)] structs without padding).
-    let bytes = unsafe { core::slice::from_raw_parts_mut(data.as_mut_ptr() as *mut u8, byte_len) };
-    // Reverse bytes within each element using in-place chunk reversal.
-    // This is safe for in-place operation because `chunks_exact_mut` produces
-    // non-overlapping sub-slices, and `reverse()` swaps bytes within each chunk.
-    for chunk in bytes.chunks_exact_mut(T::BYTE_SIZE) {
-        chunk.reverse();
+    for value in data {
+        value.swap_bytes_value();
     }
 }
 
@@ -475,4 +540,40 @@ pub fn encode_block_parallel<T: EndianCodec + Sync>(
         .try_for_each(|(dst, chunk)| encode_slice(chunk, dst, endian))?;
 
     Ok(buffer)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn complex_slice_swap_preserves_component_positions() {
+        let src = [0x12, 0x34, 0x56, 0x78];
+        let mut dst = [0u8; 4];
+        Int16Complex::swap_slice(&src, &mut dst);
+        assert_eq!(dst, [0x34, 0x12, 0x78, 0x56]);
+
+        let src = [1u8, 2, 3, 4, 5, 6, 7, 8];
+        let mut dst = [0u8; 8];
+        Float32Complex::swap_slice(&src, &mut dst);
+        assert_eq!(dst, [4, 3, 2, 1, 8, 7, 6, 5]);
+    }
+
+    #[test]
+    fn complex_value_swap_preserves_component_positions() {
+        let mut c = Int16Complex {
+            real: 0x1234,
+            imag: 0x5678,
+        };
+        c.swap_bytes_value();
+        assert_eq!((c.real, c.imag), (0x3412, 0x7856));
+
+        let mut c = Float32Complex {
+            real: 1.0,
+            imag: 2.0,
+        };
+        c.swap_bytes_value();
+        assert_eq!(c.real.to_bits(), 1.0f32.to_bits().swap_bytes());
+        assert_eq!(c.imag.to_bits(), 2.0f32.to_bits().swap_bytes());
+    }
 }

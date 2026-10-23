@@ -35,7 +35,9 @@ cargo doc --all-features       # verify no broken intra-doc links
 cargo bench --all-features     # run all benchmarks (requires [[bench]] harness=false in Cargo.toml)
 ```
 
-Unit tests: inline `#[cfg(test)]` modules. Integration tests: `tests/integration.rs` (~23 roundtrip tests). Comprehensive API tests: `tests/api_comprehensive.rs` (~80 tests covering every public API). Real-data tests: `tests/real_data_tests.rs` (~70 tests on 6 real MRC files from `real_data/`). Benchmarks: `benches/bench.rs` (criterion, ~49 benchmarks including 25 tomogram benchmarks).
+Unit tests: inline `#[cfg(test)]` modules. Integration tests: `tests/integration.rs` (~23 roundtrip tests). Comprehensive API tests: `tests/api_comprehensive.rs` (~67 tests covering every public API). Regression tests: `tests/regressions.rs` (~25 tests for alignment, endianness, write validation, rounding, IMOD Mode 0, and finalize checks). Real-data tests: `tests/real_data_tests.rs` (~77 tests on 6 real MRC files from `real_data/`). Benchmarks: `benches/bench.rs` (criterion, ~49 benchmarks including 25 tomogram benchmarks).
+
+CI additionally runs a feature matrix (`--no-default-features` plus each optional feature), `clippy --all-targets -D warnings`, rustdoc with `-D warnings`, and `cargo miri test --lib`.
 
 All commands should be prefixed with `rtk` when available (e.g. `rtk cargo test`).
 
@@ -69,7 +71,7 @@ src/
 │   └── stats.rs           # Statistics computation and header stats validation
 ├── io/
 │   ├── reader.rs          # Reader (auto-selects mmap/buffered)
-│   ├── reader_common.rs   # Block validation, gather/encode helpers, parse_header, ConvertReader
+│   ├── reader_common.rs   # Block validation, gather helpers, decompression, parse_header, ConvertReader
 │   ├── writer.rs          # Writer, WriterBuilder (single Writer type for all backends)
 │   ├── gzip.rs            # impl Reader { open_gzip* }
 │   └── bzip2.rs           # impl Reader { open_bzip2* }
@@ -91,7 +93,7 @@ The main public entry point is `lib.rs`. Internal modules are `mod` (private) or
 |------------|-------|
 | **Public** | `open`, `create`, `Reader`, `ConvertReader`, `WriterBuilder`, `Writer`, `Header`, `HeaderBuilder`, `Mode`, `Voxel`, `VoxelBlock`, `VolumeShape`, `DataView`, `DataBlock`, `OwnedData`, `FileEndian`, `Error`, `HeaderValidationError`, `CompressionLevel`, validate types, FEI/CCP4/MRCO/SERI/AGAR/IMOD types, ExtHeaderType/Data, conversion utilities, `DEFAULT_MAX_DECOMPRESSED_BYTES`, `raw_bytes`, `read_block_bytes`, `read_block_bytes_cow` |
 | **`#[doc(hidden)]`** | `EndianCodec`, `MachstInfo`, `CompressionType`, `detect_compression`, `EndianFallbackWarning`, `serde_byte_array` |
-| **`pub(crate)` only** | `RegionIter`, `SliceStepper`, `SlabStepper`, `TileStepper`, `validate_block_bounds`, `gather_block_bytes`, `encode_block_to_buf`, `decode_block`, `decode_slice`, `encode_slice`, `convert_block`, `decode_block_to_any`, `parse_header`, `open_compressed`, `compute_stats`, `validate_header_stats`, SIMD wrapper functions, converter functions |
+| **`pub(crate)` only** | `RegionIter`, `SliceStepper`, `SlabStepper`, `TileStepper`, `validate_block_bounds`, `gather_block_bytes`, `decode_block`, `decode_slice`, `encode_slice`, `convert_block`, `decode_block_to_any`, `parse_header`, `open_compressed`, `compute_stats`, `validate_header_stats`, SIMD wrapper functions, converter functions |
 
 - `read_block_bytes_cow` is publicly exposed for advanced users needing zero-copy raw byte access (contiguous XY slabs return `Cow::Borrowed`). Its doc comment warns that bytes are raw on-disk bytes — no endian correction, no type conversion.
 - `read_block_bytes` always copies — includes a performance warning in its doc comment.
@@ -169,6 +171,7 @@ All `unsafe` blocks must have a `// SAFETY:` comment documenting the invariant.
 - **v0.4.x** ✅ — Serde, tracing, dispatch enums, IMOD expansion, Miri CI, clippy, error context
 - **v0.5.x** ✅ — API completeness (`header_mut`, builder setters), `is_truncated` fix, perf cleanup, doc overhaul
 - **v0.6.x** — Robust real-world testing across all public APIs with real MRC files
+- **v0.8.x** — Hardening: alignment-safe typed conversion, writer mode/length validation, per-component complex byte swap, bounded/streaming decompression, Miri + feature-matrix CI
 
 ## When Modifying This File
 

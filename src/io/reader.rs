@@ -67,10 +67,18 @@ pub fn detect_compression<P: AsRef<Path>>(path: P) -> Result<CompressionType, Er
 // ============================================================================
 
 /// How the reader accesses voxel data.
-#[derive(Debug)]
 enum DataSource {
     /// Loaded entirely into memory.
-    Buffered { data: Vec<u8>, truncated: bool },
+    ///
+    /// `data` may include the fixed header and extended header in front of the
+    /// voxel payload; `data_offset` marks the first voxel byte. This lets
+    /// [`Reader::from_bytes`] take ownership of the caller's buffer without
+    /// copying the payload.
+    Buffered {
+        data: Vec<u8>,
+        data_offset: usize,
+        truncated: bool,
+    },
     /// Memory-mapped file (zero-copy).
     #[cfg(feature = "mmap")]
     Mmap {
@@ -78,6 +86,36 @@ enum DataSource {
         data_offset: usize,
         truncated: bool,
     },
+}
+
+// Never format the raw payload: `{:?}` on a multi-gigabyte reader would emit
+// the entire file.
+impl std::fmt::Debug for DataSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DataSource::Buffered {
+                data,
+                data_offset,
+                truncated,
+            } => f
+                .debug_struct("Buffered")
+                .field("len", &data.len())
+                .field("data_offset", data_offset)
+                .field("truncated", truncated)
+                .finish(),
+            #[cfg(feature = "mmap")]
+            DataSource::Mmap {
+                map,
+                data_offset,
+                truncated,
+            } => f
+                .debug_struct("Mmap")
+                .field("len", &map.len())
+                .field("data_offset", data_offset)
+                .field("truncated", truncated)
+                .finish(),
+        }
+    }
 }
 
 /// MRC file reader with automatic backend selection.
@@ -99,6 +137,11 @@ enum DataSource {
 /// [`from_bytes`](Self::from_bytes), [`from_reader`](Self::from_reader),
 /// or compressed-file constructors) when the block is a native-endian
 /// contiguous full-row slab.
+///
+/// Zero-copy borrowing additionally requires the payload to be naturally
+/// aligned for the element type. A file whose extended-header size places the
+/// voxel data at a misaligned offset is decoded into an owned block instead
+/// (correct, but one copy).
 ///
 /// # Example
 /// ```no_run
@@ -186,7 +229,13 @@ impl Reader {
 
     /// Read an MRC file from any [`std::io::Read`] source.
     ///
-    /// The entire source is read into memory, then parsed.
+    /// The entire source is read into memory, then parsed. Input is capped at
+    /// [`crate::DEFAULT_MAX_DECOMPRESSED_BYTES`] to prevent unbounded allocation from
+    /// an untrusted stream; use [`from_reader_with_limit`](Self::from_reader_with_limit)
+    /// to choose a different limit.
+    ///
+    /// # Errors
+    /// Returns [`Error::DataTooLarge`] if the source exceeds the limit.
     ///
     /// # Examples
     ///
@@ -205,13 +254,63 @@ impl Reader {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn from_reader<R: std::io::Read>(mut reader: R) -> Result<Self, Error> {
-        let mut buf = Vec::new();
-        reader.read_to_end(&mut buf)?;
-        Self::_read_from_buf(buf, false).map(|(r, _)| r)
+    pub fn from_reader<R: std::io::Read>(reader: R) -> Result<Self, Error> {
+        Self::from_reader_with_limit(reader, crate::DEFAULT_MAX_DECOMPRESSED_BYTES)
+    }
+
+    /// Read an MRC file from a [`std::io::Read`] source with a custom byte limit.
+    ///
+    /// The source is read into memory, then parsed. If more than `max_bytes`
+    /// bytes are available, [`Error::DataTooLarge`] is returned and the rest of
+    /// the stream is not consumed.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # fn main() -> Result<(), mrc::Error> {
+    /// use std::io::Cursor;
+    /// # let mut h = mrc::Header::new();
+    /// # h.nx = 4; h.ny = 4; h.nz = 1;
+    /// # h.mx = 4; h.my = 4; h.mz = 1;
+    /// # let mut raw = [0u8; 1024];
+    /// # h.encode_to_bytes(&mut raw);
+    /// # let data = vec![0u8; 64];
+    /// # let buf: Vec<u8> = raw.into_iter().chain(data).collect();
+    /// let reader = mrc::Reader::from_reader_with_limit(Cursor::new(buf), 1 << 20)?;
+    /// assert_eq!(reader.shape().nx, 4);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn from_reader_with_limit<R: std::io::Read>(
+        mut reader: R,
+        max_bytes: u64,
+    ) -> Result<Self, Error> {
+        Self::_read_stream(&mut reader, false, max_bytes).map(|(r, _)| r)
+    }
+
+    /// Read any [`std::io::Read`] source into a bounded buffer.
+    fn _read_stream<R: std::io::Read>(
+        reader: &mut R,
+        permissive: bool,
+        max_bytes: u64,
+    ) -> Result<(Self, Vec<String>), Error> {
+        use std::io::Read;
+
+        let limit = max_bytes.saturating_add(1);
+        let initial = usize::try_from(max_bytes)
+            .unwrap_or(usize::MAX)
+            .min(1024 * 1024);
+        let mut buf = Vec::with_capacity(initial);
+        reader.by_ref().take(limit).read_to_end(&mut buf)?;
+        if buf.len() as u64 > max_bytes {
+            return Err(Error::DataTooLarge { limit: max_bytes });
+        }
+        Self::_read_from_buf(buf, permissive)
     }
 
     /// Read from any [`std::io::Read`] source in permissive mode.
+    ///
+    /// The source is capped at [`crate::DEFAULT_MAX_DECOMPRESSED_BYTES`].
     ///
     /// # Examples
     ///
@@ -233,12 +332,18 @@ impl Reader {
     pub fn from_reader_permissive<R: std::io::Read>(
         mut reader: R,
     ) -> Result<(Self, Vec<String>), Error> {
-        let mut buf = Vec::new();
-        reader.read_to_end(&mut buf)?;
-        Self::_read_from_buf(buf, true)
+        Self::_read_stream(
+            &mut reader,
+            true,
+            crate::io::reader_common::DEFAULT_MAX_DECOMPRESSED_BYTES,
+        )
     }
 
     /// Parse an MRC file from an in-memory byte buffer.
+    ///
+    /// Takes ownership of `data` and keeps the voxel payload in place — no
+    /// copy of the voxel bytes is made. The buffer should contain the complete
+    /// file (fixed header, extended header, and voxel data).
     ///
     /// # Examples
     ///
@@ -296,7 +401,15 @@ impl Reader {
 
         let mut file = std::fs::File::open(path)?;
         let mut magic = [0u8; 2];
-        let n = file.read(&mut magic)?;
+        let mut n = 0;
+        while n < magic.len() {
+            match file.read(&mut magic[n..]) {
+                Ok(0) => break,
+                Ok(k) => n += k,
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(e) => return Err(e.into()),
+            }
+        }
 
         if n >= 2 {
             match magic {
@@ -326,16 +439,21 @@ impl Reader {
             }
         }
 
-        // Plain file — try mmap first; fall back to buffered on any error.
+        // Plain file — try mmap first; fall back to buffered I/O only when the
+        // mapping itself is unavailable. Validation errors (bad header, size
+        // mismatch) must be propagated, otherwise the fallback masks the real
+        // cause and re-reads the whole file.
         #[cfg(feature = "mmap")]
         {
             drop(file);
-            if let Ok(result) = Self::_open_mmap_path(path, permissive) {
-                return Ok(result);
+            match Self::_open_mmap_path(path, permissive) {
+                Ok(result) => Ok(result),
+                Err(Error::Mmap) => {
+                    let file = std::fs::File::open(path)?;
+                    Self::_open_plain_file(file, permissive)
+                }
+                Err(e) => Err(e),
             }
-            // mmap failed — re-open for buffered fallback.
-            let file = std::fs::File::open(path)?;
-            Self::_open_plain_file(file, permissive)
         }
 
         #[cfg(not(feature = "mmap"))]
@@ -361,75 +479,103 @@ impl Reader {
     ) -> Result<(Self, Vec<String>), Error> {
         use std::io::Read;
 
+        let file_len = usize::try_from(file.metadata()?.len()).map_err(|_| Error::InvalidHeader)?;
+        if file_len < 1024 {
+            return Err(Error::InvalidHeader);
+        }
+
         let mut header_bytes = [0u8; 1024];
         file.read_exact(&mut header_bytes)?;
 
-        let (header, warnings, _endian, data_size) =
+        let (header, mut warnings, _endian, data_size) =
             crate::io::reader_common::parse_header(&header_bytes, permissive)?;
 
-        let ext_size = header.nsymbt as usize;
-        let mut ext_header = vec![0u8; ext_size];
-        if ext_size > 0 {
+        let ext_size = header.nsymbt.max(0) as usize;
+        let expected_len = header
+            .data_offset()
+            .checked_add(data_size)
+            .ok_or(Error::InvalidHeader)?;
+
+        // Validate the declared size against the actual file *before*
+        // allocating the voxel buffer. A crafted header must not be able to
+        // trigger a multi-gigabyte allocation from a tiny file.
+        if !permissive && file_len != expected_len {
+            return Err(Error::FileSizeMismatch {
+                expected: expected_len,
+                actual: file_len,
+            });
+        }
+
+        let ext_available = file_len.saturating_sub(1024).min(ext_size);
+        let mut ext_header = vec![0u8; ext_available];
+        if ext_available > 0 {
             file.read_exact(&mut ext_header)?;
         }
-
-        let mut data = vec![0u8; data_size];
-        file.read_exact(&mut data)?;
-
-        if !permissive {
-            let file_len = file.metadata()?.len() as usize;
-            let expected_len = header.data_offset() + data_size;
-            if file_len != expected_len {
-                return Err(Error::FileSizeMismatch {
-                    expected: expected_len,
-                    actual: file_len,
-                });
-            }
+        if ext_available < ext_size {
+            warnings.push(format!(
+                "Extended header truncated: expected {ext_size} bytes, got {ext_available}"
+            ));
         }
+
+        let available = file_len.saturating_sub(1024 + ext_available);
+        let read_len = data_size.min(available);
+        let mut data = vec![0u8; read_len];
+        if read_len > 0 {
+            file.read_exact(&mut data)?;
+        }
+        let truncated = read_len < data_size;
 
         Self::_build(
             header,
             ext_header,
             DataSource::Buffered {
                 data,
-                truncated: false,
+                data_offset: 0,
+                truncated,
             },
             warnings,
         )
     }
 
-    fn _read_from_buf(mut data: Vec<u8>, permissive: bool) -> Result<(Self, Vec<String>), Error> {
+    fn _read_from_buf(data: Vec<u8>, permissive: bool) -> Result<(Self, Vec<String>), Error> {
         if data.len() < 1024 {
             return Err(Error::InvalidHeader);
         }
         let (header, mut warnings, _endian, data_size) =
             crate::io::reader_common::parse_header(&data[..1024], permissive)?;
 
-        let ext_size = header.nsymbt as usize;
-        let ext_end = ext_size.min(data.len().saturating_sub(1024));
-        let voxel_data = data.split_off(1024 + ext_end);
-        let ext_header = data.split_off(1024);
+        let ext_size = header.nsymbt.max(0) as usize;
+        let available = data.len() - 1024;
+        let ext_end = ext_size.min(available);
 
+        // Copy only the extended header; the voxel payload stays in the
+        // caller's buffer and is addressed through `data_offset`.
+        let ext_header = data[1024..1024 + ext_end].to_vec();
         if ext_size > 0 && ext_end < ext_size {
             warnings.push(format!(
-                "Extended header truncated: expected {} bytes, got {}",
-                ext_size, ext_end
+                "Extended header truncated: expected {ext_size} bytes, got {ext_end}"
             ));
         }
 
-        if !permissive && voxel_data.len() != data_size {
+        let expected_len = 1024usize
+            .checked_add(ext_size)
+            .and_then(|v| v.checked_add(data_size))
+            .ok_or(Error::InvalidHeader)?;
+        if !permissive && data.len() != expected_len {
             return Err(Error::FileSizeMismatch {
-                expected: header.data_offset() + data_size,
-                actual: 1024 + ext_header.len() + voxel_data.len(),
+                expected: expected_len,
+                actual: data.len(),
             });
         }
 
-        let truncated = voxel_data.len() != data_size;
+        let data_offset = 1024 + ext_end;
+        let truncated = data.len() - data_offset < data_size;
         Self::_build(
             header,
             ext_header,
             DataSource::Buffered {
-                data: voxel_data,
+                data,
+                data_offset,
                 truncated,
             },
             warnings,
@@ -541,7 +687,8 @@ impl Reader {
             d.ext_header,
             DataSource::Buffered {
                 data: d.data,
-                truncated: false,
+                data_offset: 0,
+                truncated: d.truncated,
             },
             d.warnings,
         )
@@ -672,19 +819,34 @@ impl Reader {
     /// ```
     pub fn raw_bytes(&self) -> &[u8] {
         match &self.source {
-            DataSource::Buffered { data, .. } => data,
+            DataSource::Buffered {
+                data, data_offset, ..
+            } => {
+                let rest = data.get(*data_offset..).unwrap_or(&[]);
+                self.clamp_voxel_bytes(rest)
+            }
             #[cfg(feature = "mmap")]
             DataSource::Mmap {
                 map, data_offset, ..
             } => {
-                let data_size = self.header.data_size().unwrap_or(0);
-                let end = data_offset + data_size;
-                if end > map.len() {
-                    &map[*data_offset..]
-                } else {
-                    &map[*data_offset..end]
-                }
+                let Some(rest) = map.get(*data_offset..) else {
+                    return &[];
+                };
+                self.clamp_voxel_bytes(rest)
             }
+        }
+    }
+
+    /// Clamp a raw data slice to the size declared by the header.
+    ///
+    /// Readers opened in permissive mode may hold trailing bytes; the public
+    /// `raw_bytes`/`raw_data` views expose only the declared voxel region.
+    fn clamp_voxel_bytes<'a>(&self, rest: &'a [u8]) -> &'a [u8] {
+        let data_size = self.header.data_size().unwrap_or(0);
+        if data_size > rest.len() {
+            rest
+        } else {
+            &rest[..data_size]
         }
     }
 
@@ -992,20 +1154,23 @@ impl Reader {
         let is_contiguous = ox == 0 && sx == nx && oy == 0 && sy == ny;
 
         match &self.source {
-            DataSource::Buffered { data, .. } => {
+            DataSource::Buffered {
+                data, data_offset, ..
+            } => {
+                let voxel_data = data.get(*data_offset..).unwrap_or(&[]);
                 crate::io::reader_common::validate_block_bounds(
                     self.shape,
                     self.mode(),
-                    data.len(),
+                    voxel_data.len(),
                     offset,
                     shape,
                 )?;
                 if is_contiguous {
                     let (start, byte_len) = self.contiguous_slab_range(offset, shape);
-                    return Ok(Cow::Borrowed(&data[start..start + byte_len]));
+                    return Ok(Cow::Borrowed(&voxel_data[start..start + byte_len]));
                 }
                 Ok(Cow::Owned(crate::io::reader_common::gather_block_bytes(
-                    data,
+                    voxel_data,
                     self.shape,
                     self.mode(),
                     offset,
@@ -1068,11 +1233,19 @@ impl Reader {
     /// Internal: return a `&[u8]` to the full data region regardless of backend.
     fn _source_data(&self) -> &[u8] {
         match &self.source {
-            DataSource::Buffered { data, .. } => data,
+            DataSource::Buffered {
+                data, data_offset, ..
+            } => {
+                let rest = data.get(*data_offset..).unwrap_or(&[]);
+                self.clamp_voxel_bytes(rest)
+            }
             #[cfg(feature = "mmap")]
             DataSource::Mmap {
                 map, data_offset, ..
-            } => &map[*data_offset..],
+            } => {
+                let rest = map.get(*data_offset..).unwrap_or(&[]);
+                self.clamp_voxel_bytes(rest)
+            }
         }
     }
 

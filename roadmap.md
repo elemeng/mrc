@@ -65,7 +65,16 @@ Also see the [README](README.md) for a quick-start guide and feature overview.
 - [x] Cover all read/write/convert/validate/header paths with actual cryo-EM data
 - [x] Ensure edge cases (truncated, compressed, permissive, volume stacks, extended headers) are exercised with real files
 
-**v0.8.x** — Planned
+**v0.8.x** — Hardening ✅
+
+- [x] Alignment-safe typed conversion (no misaligned `&[T]` on mmap data)
+- [x] Writer rejects mode/length mismatches instead of corrupting output
+- [x] Big-endian complex modes preserve real/imag component positions
+- [x] Bounded stream reads and header-first decompression limits
+- [x] Zero-copy `Reader::from_bytes` (no payload copy)
+- [x] `Writer::finish_buffer` + `Writer::into_buffer`
+- [x] Miri, feature-matrix, and `clippy --all-targets` CI jobs
+
 
 
 

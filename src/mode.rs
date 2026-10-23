@@ -80,6 +80,24 @@ pub enum OwnedData {
     Packed4Bit(Vec<u8>),
 }
 
+impl<'a> DataView<'a> {
+    /// The MRC mode represented by this view.
+    #[inline]
+    pub(crate) fn mode(&self) -> Mode {
+        match self {
+            DataView::Int8(_) => Mode::Int8,
+            DataView::Int16(_) => Mode::Int16,
+            DataView::Float32(_) => Mode::Float32,
+            DataView::Int16Complex(_) => Mode::Int16Complex,
+            DataView::Float32Complex(_) => Mode::Float32Complex,
+            DataView::Uint16(_) => Mode::Uint16,
+            #[cfg(feature = "f16")]
+            DataView::Float16(_) => Mode::Float16,
+            DataView::Packed4Bit(_) => Mode::Packed4Bit,
+        }
+    }
+}
+
 impl<'a> From<&'a OwnedData> for DataView<'a> {
     fn from(owned: &'a OwnedData) -> Self {
         match owned {
@@ -119,8 +137,6 @@ impl<'a> From<&'a OwnedData> for DataView<'a> {
 ///         _ => panic!("unhandled mode"),
 ///     }
 /// }
-/// # Ok(()) }
-/// ```
 /// # Ok(()) }
 /// ```
 ///
