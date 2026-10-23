@@ -254,12 +254,10 @@ pub(crate) fn convert_f32_to_i16_simd(src: &[f32]) -> Vec<i16> {
         aarch64::convert_f32_to_i16_neon(src),
         src.iter()
             .map(|&v| {
-                if v >= i16::MAX as f32 {
-                    i16::MAX
-                } else if v <= i16::MIN as f32 {
-                    i16::MIN
+                if v.is_nan() {
+                    0
                 } else {
-                    v as i16
+                    v.clamp(i16::MIN as f32, i16::MAX as f32).round_ties_even() as i16
                 }
             })
             .collect()
@@ -268,7 +266,8 @@ pub(crate) fn convert_f32_to_i16_simd(src: &[f32]) -> Vec<i16> {
 
 /// Convert a slice of f32 values to u16 using SIMD acceleration.
 ///
-/// Values are clamped to [0, u16::MAX] before conversion.
+/// Values are clamped to [0, u16::MAX] before conversion and rounded to the
+/// nearest integer with ties to even.
 #[cfg(feature = "simd")]
 pub(crate) fn convert_f32_to_u16_simd(src: &[f32]) -> Vec<u16> {
     simd_dispatch_avx2_neon!(
@@ -276,12 +275,10 @@ pub(crate) fn convert_f32_to_u16_simd(src: &[f32]) -> Vec<u16> {
         aarch64::convert_f32_to_u16_neon(src),
         src.iter()
             .map(|&v| {
-                if v >= u16::MAX as f32 {
-                    u16::MAX
-                } else if v <= 0.0 {
+                if v.is_nan() {
                     0
                 } else {
-                    v as u16
+                    v.clamp(0.0, u16::MAX as f32).round_ties_even() as u16
                 }
             })
             .collect()
@@ -290,7 +287,8 @@ pub(crate) fn convert_f32_to_u16_simd(src: &[f32]) -> Vec<u16> {
 
 /// Convert a slice of f32 values to i8 using SIMD acceleration.
 ///
-/// Values are clamped to the representable range of i8 before conversion.
+/// Values are clamped to the representable range of i8 before conversion and
+/// rounded to the nearest integer with ties to even.
 #[cfg(feature = "simd")]
 pub(crate) fn convert_f32_to_i8_simd(src: &[f32]) -> Vec<i8> {
     simd_dispatch_avx2_neon!(
@@ -298,12 +296,10 @@ pub(crate) fn convert_f32_to_i8_simd(src: &[f32]) -> Vec<i8> {
         aarch64::convert_f32_to_i8_neon(src),
         src.iter()
             .map(|&v| {
-                if v >= i8::MAX as f32 {
-                    i8::MAX
-                } else if v <= i8::MIN as f32 {
-                    i8::MIN
+                if v.is_nan() {
+                    0
                 } else {
-                    v as i8
+                    v.clamp(i8::MIN as f32, i8::MAX as f32).round_ties_even() as i8
                 }
             })
             .collect()

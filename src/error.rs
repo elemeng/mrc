@@ -82,8 +82,9 @@ pub enum Error {
         /// Dimensions of the volume `[nx, ny, nz]`.
         volume: Option<[usize; 3]>,
     },
-    /// The voxel type does not match the file's mode.
-    #[error("Type mismatch: expected {expected} bytes per voxel, got {actual} bytes")]
+    /// The voxel type does not match the file's mode, or a byte buffer has the
+    /// wrong length.
+    #[error("Type mismatch: expected {expected} bytes, got {actual} bytes")]
     TypeMismatch {
         /// Number of bytes per voxel expected by the decoder.
         expected: usize,
@@ -171,6 +172,43 @@ pub enum Error {
         /// The maximum allowed value for the target type.
         max: u64,
     },
+    /// The input is larger than the configured decompression/stream safety limit.
+    ///
+    /// Returned by compressed readers and by
+    /// [`Reader::from_reader_with_limit`](crate::Reader::from_reader_with_limit)
+    /// before the input is fully materialised in memory.
+    #[error("Input exceeds safety limit of {limit} bytes")]
+    DataTooLarge {
+        /// The limit that was exceeded, in bytes.
+        limit: u64,
+    },
+    /// A [`Writer::into_buffer`](crate::Writer::into_buffer) call was made on a
+    /// writer that is not backed by an in-memory buffer.
+    #[error("Writer is not backed by an in-memory buffer")]
+    NotInMemory,
+    /// The writer's header dimensions or mode were changed after the data
+    /// layout was fixed at writer creation.
+    ///
+    /// Can be triggered through [`Writer::header_mut`](crate::Writer::header_mut).
+    /// Metadata changes (labels, statistics, space group) remain allowed.
+    #[error("Writer header layout changed after creation (dimensions or mode)")]
+    WriterHeaderChanged,
+    /// A size calculation would overflow `usize`.
+    ///
+    /// Raised when volume dimensions or buffer lengths exceed platform limits.
+    #[error("Size calculation overflowed usize")]
+    SizeOverflow,
+    /// A byte length is not a whole number of elements.
+    ///
+    /// Raised by the slice codec when decoding or encoding a buffer whose
+    /// length is not a multiple of the element size.
+    #[error("Invalid data length: {actual} bytes is not a multiple of {element} bytes")]
+    MisalignedLength {
+        /// Actual byte length.
+        actual: usize,
+        /// Size of one element, in bytes.
+        element: usize,
+    },
 }
 
 impl Error {
@@ -213,6 +251,7 @@ impl From<Error> for std::io::Error {
 /// ```
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(thiserror::Error, Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum HeaderValidationError {
     /// One or more volume dimensions are non-positive.
     #[error("Invalid dimensions: nx={nx}, ny={ny}, nz={nz} (must all be positive)")]

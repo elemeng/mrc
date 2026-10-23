@@ -42,6 +42,26 @@ use super::endian::FileEndian;
 use crate::Error;
 use crate::mode::{ComplexToRealStrategy, Float32Complex, Int16Complex, Mode};
 
+/// Reinterpret `bytes` as `&[T]` only when the pointer is properly aligned and
+/// the length is a whole number of elements.
+///
+/// Callers must only use this for primitive numeric types for which every bit
+/// pattern is valid (`i16`, `u16`, `f16`, `f32`, …).
+#[inline]
+fn aligned_slice<T>(bytes: &[u8]) -> Option<&[T]> {
+    let size = core::mem::size_of::<T>();
+    if size == 0
+        || bytes.len() % size != 0
+        || bytes.as_ptr().align_offset(core::mem::align_of::<T>()) != 0
+    {
+        return None;
+    }
+    // SAFETY: the length is a multiple of `size_of::<T>()` and the pointer is
+    // aligned. Every call site passes a primitive numeric type for which every
+    // bit pattern is valid.
+    Some(unsafe { core::slice::from_raw_parts(bytes.as_ptr().cast::<T>(), bytes.len() / size) })
+}
+
 // ============================================================================
 // Generic conversion traits
 // ============================================================================
@@ -294,22 +314,24 @@ pub(crate) fn convert_f32_slice_to_f16(src: &[f32]) -> Vec<crate::f16> {
 // ============================================================================
 
 /// Convert `f32` values to `i16`, clamping to the representable range.
+///
+/// Rounds to nearest with ties to even; NaN becomes 0.
 #[cfg(feature = "simd")]
 pub(crate) fn convert_f32_slice_to_i16(src: &[f32]) -> Vec<i16> {
     simd::convert_f32_to_i16_simd(src)
 }
 
 /// Convert `f32` values to `i16`, clamping to the representable range.
+///
+/// Rounds to nearest with ties to even; NaN becomes 0.
 #[cfg(not(feature = "simd"))]
 pub(crate) fn convert_f32_slice_to_i16(src: &[f32]) -> Vec<i16> {
     src.iter()
         .map(|&v| {
-            if v >= i16::MAX as f32 {
-                i16::MAX
-            } else if v <= i16::MIN as f32 {
-                i16::MIN
+            if v.is_nan() {
+                0
             } else {
-                v as i16
+                v.clamp(i16::MIN as f32, i16::MAX as f32).round_ties_even() as i16
             }
         })
         .collect()
@@ -317,6 +339,8 @@ pub(crate) fn convert_f32_slice_to_i16(src: &[f32]) -> Vec<i16> {
 
 /// Convert `f32` values to `u16`, clamping to the representable range.
 /// Negative values are clamped to 0.
+///
+/// Rounds to nearest with ties to even; NaN becomes 0.
 #[cfg(feature = "simd")]
 pub(crate) fn convert_f32_slice_to_u16(src: &[f32]) -> Vec<u16> {
     simd::convert_f32_to_u16_simd(src)
@@ -324,38 +348,40 @@ pub(crate) fn convert_f32_slice_to_u16(src: &[f32]) -> Vec<u16> {
 
 /// Convert `f32` values to `u16`, clamping to the representable range.
 /// Negative values are clamped to 0.
+///
+/// Rounds to nearest with ties to even; NaN becomes 0.
 #[cfg(not(feature = "simd"))]
 pub(crate) fn convert_f32_slice_to_u16(src: &[f32]) -> Vec<u16> {
     src.iter()
         .map(|&v| {
-            if v >= u16::MAX as f32 {
-                u16::MAX
-            } else if v <= 0.0 {
+            if v.is_nan() {
                 0
             } else {
-                v as u16
+                v.clamp(0.0, u16::MAX as f32).round_ties_even() as u16
             }
         })
         .collect()
 }
 
 /// Convert `f32` values to `i8`, clamping to the representable range.
+///
+/// Rounds to nearest with ties to even; NaN becomes 0.
 #[cfg(feature = "simd")]
 pub(crate) fn convert_f32_slice_to_i8(src: &[f32]) -> Vec<i8> {
     simd::convert_f32_to_i8_simd(src)
 }
 
 /// Convert `f32` values to `i8`, clamping to the representable range.
+///
+/// Rounds to nearest with ties to even; NaN becomes 0.
 #[cfg(not(feature = "simd"))]
 pub(crate) fn convert_f32_slice_to_i8(src: &[f32]) -> Vec<i8> {
     src.iter()
         .map(|&v| {
-            if v >= i8::MAX as f32 {
-                i8::MAX
-            } else if v <= i8::MIN as f32 {
-                i8::MIN
+            if v.is_nan() {
+                0
             } else {
-                v as i8
+                v.clamp(i8::MIN as f32, i8::MAX as f32).round_ties_even() as i8
             }
         })
         .collect()
@@ -572,16 +598,21 @@ fn convert_block_seq<T>(
 where
     T: Voxel + ConvertFrom<f32>,
 {
+    // Mode 0 can be reinterpreted as unsigned (IMOD convention). The identity
+    // and integer-shortcut paths below assume signed i8, so route unsigned
+    // Mode 0 through the f32 hub, which applies `m0_interp`.
+    let unsigned_m0 = mode == Mode::Int8 && m0_interp == M0Interpretation::Unsigned;
+
     // Identity path: file mode matches target type — decode directly,
     // skipping the f32 hub entirely.
-    if mode == T::MODE {
+    if !unsigned_m0 && mode == T::MODE {
         return decode_slice::<T>(bytes, endian);
     }
 
     // Direct integer↔integer shortcuts — avoids the f32 intermediate
     // (which would add 4N bytes of intermediate storage for narrow types).
     // Uses fused decode+convert functions that process raw bytes directly.
-    {
+    if !unsigned_m0 {
         // i16 → i8
         if mode == Mode::Int16 && core::any::TypeId::of::<T>() == core::any::TypeId::of::<i8>() {
             let r = decode_i16_to_i8(bytes, endian)?;
@@ -684,48 +715,33 @@ fn convert_block_inner(
         },
         Mode::Int16 => {
             if endian.is_native() {
-                // SAFETY: `bytes` comes from a `Vec<u8>` (heap, ≥8-byte aligned)
-                // or `Mmap` (page-aligned), so it is always 2-byte aligned for `i16`.
-                // The byte representation is identical for native endian.
-                let src = unsafe {
-                    std::slice::from_raw_parts(bytes.as_ptr() as *const i16, bytes.len() / 2)
-                };
-                Ok(convert_i16_slice_to_f32(src))
-            } else {
-                let src = decode_slice::<i16>(bytes, endian)?;
-                Ok(convert_i16_slice_to_f32(&src))
+                if let Some(src) = aligned_slice::<i16>(bytes) {
+                    return Ok(convert_i16_slice_to_f32(src));
+                }
             }
+            let src = decode_slice::<i16>(bytes, endian)?;
+            Ok(convert_i16_slice_to_f32(&src))
         }
         Mode::Uint16 => {
             if endian.is_native() {
-                // SAFETY: `bytes` is always heap-or-mmap allocated (≥2-byte aligned),
-                // and the byte representation is identical for native endian.
-                let src = unsafe {
-                    std::slice::from_raw_parts(bytes.as_ptr() as *const u16, bytes.len() / 2)
-                };
-                Ok(convert_u16_slice_to_f32(src))
-            } else {
-                let src = decode_slice::<u16>(bytes, endian)?;
-                Ok(convert_u16_slice_to_f32(&src))
+                if let Some(src) = aligned_slice::<u16>(bytes) {
+                    return Ok(convert_u16_slice_to_f32(src));
+                }
             }
+            let src = decode_slice::<u16>(bytes, endian)?;
+            Ok(convert_u16_slice_to_f32(&src))
         }
         Mode::Float32 => decode_slice::<f32>(bytes, endian),
         Mode::Float16 => {
             #[cfg(feature = "f16")]
             {
                 if endian.is_native() {
-                    // SAFETY: `bytes` is always heap-or-mmap allocated (≥2-byte aligned for `f16`).
-                    let src = unsafe {
-                        std::slice::from_raw_parts(
-                            bytes.as_ptr() as *const crate::f16,
-                            bytes.len() / 2,
-                        )
-                    };
-                    Ok(convert_f16_slice_to_f32(src))
-                } else {
-                    let src = decode_slice::<crate::f16>(bytes, endian)?;
-                    Ok(convert_f16_slice_to_f32(&src))
+                    if let Some(src) = aligned_slice::<crate::f16>(bytes) {
+                        return Ok(convert_f16_slice_to_f32(src));
+                    }
                 }
+                let src = decode_slice::<crate::f16>(bytes, endian)?;
+                Ok(convert_f16_slice_to_f32(&src))
             }
             #[cfg(not(feature = "f16"))]
             {
@@ -938,6 +954,35 @@ mod tests {
         let phase = c.to_real(ComplexToRealStrategy::Phase);
         assert!((phase - 0.927_295_2).abs() < 1e-6);
     }
+
+    #[test]
+    fn aligned_slice_rejects_misaligned_pointers() {
+        // A plain byte array is only guaranteed 1-byte alignment.
+        #[repr(align(8))]
+        struct Aligned([u8; 16]);
+        let buf = Aligned([0u8; 16]);
+        assert!(aligned_slice::<i16>(&buf.0[..8]).is_some());
+        assert!(aligned_slice::<i16>(&buf.0[1..7]).is_none());
+        assert!(aligned_slice::<f32>(&buf.0[1..5]).is_none());
+        assert!(aligned_slice::<f32>(&buf.0[..4]).is_some());
+    }
+
+    #[test]
+    fn f32_to_integer_rounds_ties_to_even() {
+        let vals = [1.5f32, 2.5, -1.5, -2.5, 1.9, -1.9, 0.0];
+        assert_eq!(
+            convert_f32_slice_to_i16(&vals),
+            vec![2, 2, -2, -2, 2, -2, 0]
+        );
+        assert_eq!(
+            convert_f32_slice_to_u16(&[1.5, 2.5, 65535.6]),
+            vec![2, 2, 65535]
+        );
+        assert_eq!(
+            convert_f32_slice_to_i8(&[127.6, -128.4, 1.5]),
+            vec![127, -128, 2]
+        );
+    }
 }
 
 // ============================================================================
@@ -1057,15 +1102,12 @@ pub(crate) fn decode_i16_to_u16(bytes: &[u8], endian: FileEndian) -> Result<Vec<
 /// two-step path; no regression).
 pub(crate) fn decode_f32_to_i16(bytes: &[u8], endian: FileEndian) -> Result<Vec<i16>, Error> {
     if endian.is_native() {
-        let n = bytes.len() / 4;
-        // SAFETY: f32 alignment >= u8 alignment, the byte count is a multiple of 4,
-        // and any bit pattern is valid for f32.
-        let src = unsafe { core::slice::from_raw_parts(bytes.as_ptr() as *const f32, n) };
-        Ok(convert_f32_slice_to_i16(src))
-    } else {
-        let src = decode_slice::<f32>(bytes, endian)?;
-        Ok(convert_f32_slice_to_i16(&src))
+        if let Some(src) = aligned_slice::<f32>(bytes) {
+            return Ok(convert_f32_slice_to_i16(src));
+        }
     }
+    let src = decode_slice::<f32>(bytes, endian)?;
+    Ok(convert_f32_slice_to_i16(&src))
 }
 
 /// Fused: decode bytes as f32, clamp to u16, produce Vec<u16> in one pass.
@@ -1074,14 +1116,12 @@ pub(crate) fn decode_f32_to_i16(bytes: &[u8], endian: FileEndian) -> Result<Vec<
 /// For non-native endian, falls back to decode + SIMD clamp.
 pub(crate) fn decode_f32_to_u16(bytes: &[u8], endian: FileEndian) -> Result<Vec<u16>, Error> {
     if endian.is_native() {
-        let n = bytes.len() / 4;
-        // SAFETY: same reasoning as decode_f32_to_i16 above.
-        let src = unsafe { core::slice::from_raw_parts(bytes.as_ptr() as *const f32, n) };
-        Ok(convert_f32_slice_to_u16(src))
-    } else {
-        let src = decode_slice::<f32>(bytes, endian)?;
-        Ok(convert_f32_slice_to_u16(&src))
+        if let Some(src) = aligned_slice::<f32>(bytes) {
+            return Ok(convert_f32_slice_to_u16(src));
+        }
     }
+    let src = decode_slice::<f32>(bytes, endian)?;
+    Ok(convert_f32_slice_to_u16(&src))
 }
 
 // ============================================================================
@@ -1146,15 +1186,16 @@ pub fn convert_u8_slice_to_u16(src: &[u8]) -> Vec<u16> {
 pub(crate) fn convert_u8_to_u16_bytes(src: &[u8], endian: FileEndian) -> Vec<u8> {
     let n = src.len();
     let mut buf = vec![0u8; n * 2];
-    if endian.is_native() {
-        for (i, &v) in src.iter().enumerate() {
-            buf[i * 2] = v;
-            buf[i * 2 + 1] = 0;
+    match endian {
+        FileEndian::LittleEndian => {
+            for (i, &v) in src.iter().enumerate() {
+                buf[i * 2] = v;
+            }
         }
-    } else {
-        for (i, &v) in src.iter().enumerate() {
-            buf[i * 2] = 0;
-            buf[i * 2 + 1] = v;
+        FileEndian::BigEndian => {
+            for (i, &v) in src.iter().enumerate() {
+                buf[i * 2 + 1] = v;
+            }
         }
     }
     buf

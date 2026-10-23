@@ -210,6 +210,14 @@ pub(crate) fn compute_stats(
         #[cfg(not(feature = "f16"))]
         Mode::Float16 => return Err(Error::UnsupportedMode),
         Mode::Packed4Bit => {
+            let row_bytes = nx.div_ceil(2);
+            let needed = row_bytes.checked_mul(ny).ok_or(Error::SizeOverflow)?;
+            if bytes.len() < needed {
+                return Err(Error::FileSizeMismatch {
+                    expected: needed,
+                    actual: bytes.len(),
+                });
+            }
             let unpacked = crate::engine::convert::unpack_u4_bytes_to_u8(bytes, nx, ny);
             stats_real(&unpacked)
         }
@@ -327,23 +335,45 @@ pub(crate) fn is_close(a: f32, b: f32, rtol: f32) -> bool {
     diff <= rtol * scale
 }
 
+/// Compute statistics for a header, honoring IMOD's unsigned Mode 0 flag.
+pub(crate) fn compute_stats_for_header(
+    header: &crate::Header,
+    bytes: &[u8],
+) -> Result<(f32, f32, f32, f32), Error> {
+    let mode = crate::Mode::from_i32(header.mode).ok_or(Error::UnsupportedMode)?;
+    if mode == crate::Mode::Int8 {
+        if let Some(imod) = header.detect_imod() {
+            if !imod.bytes_are_signed {
+                let values = crate::engine::convert::reinterpret_m0(
+                    bytes,
+                    crate::M0Interpretation::Unsigned,
+                );
+                let mut stats = RunningStats::new();
+                stats.update(&values);
+                return Ok(stats.finalize());
+            }
+        }
+    }
+    compute_stats(
+        bytes,
+        mode,
+        header.detect_endian(),
+        header.nx.max(0) as usize,
+        header.ny.max(0) as usize * header.nz.max(0) as usize,
+    )
+}
+
 /// Validate header statistics against actual data bytes.
 pub(crate) fn validate_header_stats(
     header: &crate::Header,
     raw_bytes: &[u8],
 ) -> Result<(), crate::Error> {
-    let endian = header.detect_endian();
     let mode = match crate::Mode::from_i32(header.mode) {
         Some(m) => m,
         None => return Err(crate::Error::UnsupportedMode),
     };
-    let (actual_dmin, actual_dmax, actual_dmean, actual_rms) = compute_stats(
-        raw_bytes,
-        mode,
-        endian,
-        header.nx as usize,
-        header.ny as usize * header.nz as usize,
-    )?;
+    let (actual_dmin, actual_dmax, actual_dmean, actual_rms) =
+        compute_stats_for_header(header, raw_bytes)?;
 
     let rtol = 0.01f32;
     let complex = matches!(

@@ -318,6 +318,7 @@ fn reader_buffered_slab() {
 }
 
 #[test]
+#[cfg(feature = "gzip")]
 fn reader_gzip_open_detect() {
     let f = TempMrc::new("gzip_detect");
     let data: Vec<f32> = vec![1.0, 2.0, 3.0, 4.0];

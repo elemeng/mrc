@@ -3,15 +3,11 @@
 //! This module contains the helper functions used by [`Reader`](crate::Reader)
 //! internally, plus the [`ConvertReader`] wrapper for automatic mode conversion.
 
-use crate::engine::codec::{EndianCodec, encode_slice};
-use crate::engine::endian::FileEndian;
 use crate::iter::{SlabStepper, SliceStepper, Stepper, TileStepper};
 use crate::mode::Voxel;
 use crate::{Error, Mode};
 use crate::{VolumeShape, VoxelBlock};
 use std::borrow::Cow;
-#[cfg(any(feature = "gzip", feature = "bzip2"))]
-use std::io::Read;
 
 /// Internal helper: type-erased voxel block iterator.
 pub(crate) type VoxelIter<'a, T> = Box<dyn Iterator<Item = Result<VoxelBlock<T>, Error>> + 'a>;
@@ -212,13 +208,6 @@ impl<'a, S: Stepper> Iterator for RawConvertIter<'a, S> {
 // Block validation and I/O helpers
 // ============================================================================
 
-/// Cold path helper for bounds errors.
-#[cold]
-#[inline(never)]
-fn cold_bounds_error() -> Error {
-    Error::bounds_err()
-}
-
 /// Validate a block read/write request.
 pub(crate) fn validate_block_bounds(
     volume_shape: VolumeShape,
@@ -345,112 +334,6 @@ pub(crate) fn gather_block_bytes(
     dst
 }
 
-/// Encode a typed voxel block into a mutable byte buffer.
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn encode_block_to_buf<T: EndianCodec + Sync>(
-    data: &[T],
-    offset: [usize; 3],
-    shape: [usize; 3],
-    volume_shape: VolumeShape,
-    bytes_per_voxel: usize,
-    file_endian: FileEndian,
-    data_offset: usize,
-    buf: &mut [u8],
-) -> Result<(), Error> {
-    let [nx, ny, _nz] = [volume_shape.nx, volume_shape.ny, volume_shape.nz];
-    let [ox, oy, oz] = offset;
-    let [sx, sy, sz] = shape;
-    let b = bytes_per_voxel;
-
-    if ox == 0 && sx == nx && oy == 0 && sy == ny {
-        let linear = oz * nx * ny;
-        let start_byte = data_offset + linear * b;
-        let byte_len = sx * sy * sz * b;
-        let end_byte = start_byte + byte_len;
-        if end_byte > buf.len() {
-            return Err(cold_bounds_error());
-        }
-        encode_slice(data, &mut buf[start_byte..end_byte], file_endian)?;
-        return Ok(());
-    }
-
-    for z in 0..sz {
-        for y in 0..sy {
-            let file_linear = ox + (oy + y) * nx + (oz + z) * nx * ny;
-            let file_start = data_offset + file_linear * b;
-            let block_idx = y * sx + z * sx * sy;
-            if block_idx + sx > data.len() {
-                return Err(cold_bounds_error());
-            }
-            let row_values = &data[block_idx..block_idx + sx];
-            let row_end = file_start + sx * b;
-            if row_end > buf.len() {
-                return Err(cold_bounds_error());
-            }
-            encode_slice(row_values, &mut buf[file_start..row_end], file_endian)?;
-        }
-    }
-    Ok(())
-}
-
-/// Write packed bytes for Packed4Bit mode.
-pub(crate) fn write_block_bytes(
-    packed: &[u8],
-    volume_shape: VolumeShape,
-    block_offset: [usize; 3],
-    block_shape: [usize; 3],
-    data_offset: usize,
-    buf: &mut [u8],
-) -> Result<(), Error> {
-    let [nx, ny, _nz] = [volume_shape.nx, volume_shape.ny, volume_shape.nz];
-    let [ox, oy, oz] = block_offset;
-    let [sx, sy, sz] = block_shape;
-    let file_row_bytes = nx.div_ceil(2);
-    let block_row_bytes = sx.div_ceil(2);
-    if ox != 0 {
-        return Err(crate::Error::bounds_err());
-    }
-
-    if sx == nx && oy == 0 && sy == ny {
-        let slice_bytes = ny * file_row_bytes;
-        let start_byte = data_offset + oz * slice_bytes;
-        let byte_len = sz * slice_bytes;
-        if start_byte + byte_len > buf.len() {
-            return Err(cold_bounds_error());
-        }
-        buf[start_byte..start_byte + byte_len].copy_from_slice(&packed[..byte_len]);
-        return Ok(());
-    }
-
-    for z in 0..sz {
-        for y in 0..sy {
-            let vol_row = (oz + z) * ny + (oy + y);
-            let file_start = data_offset + vol_row * file_row_bytes;
-            let file_end = file_start + block_row_bytes;
-            if file_end > buf.len() {
-                return Err(cold_bounds_error());
-            }
-            let packed_start = (y + z * sy) * block_row_bytes;
-            let packed_end = packed_start + block_row_bytes;
-            if packed_end > packed.len() {
-                return Err(cold_bounds_error());
-            }
-            // Preserve high nibble of the last byte when sx is odd:
-            // the high nibble encodes a pixel outside the block.
-            let saved_high = if sx % 2 != 0 {
-                Some(buf[file_end - 1] & 0xF0)
-            } else {
-                None
-            };
-            buf[file_start..file_end].copy_from_slice(&packed[packed_start..packed_end]);
-            if let Some(high) = saved_high {
-                buf[file_end - 1] = high | (buf[file_end - 1] & 0x0F);
-            }
-        }
-    }
-    Ok(())
-}
-
 /// Warning message for IMOD files with unsigned Mode 0 data.
 pub(crate) const IMOD_UNSIGNED_M0_WARNING: &str = "IMOD file with unsigned Mode 0 detected: use slices_mode0() \
      or convert::<f32>() for correct values";
@@ -483,6 +366,12 @@ pub(crate) fn parse_header(
 }
 
 /// Default maximum decompressed bytes for compressed MRC files (256 GiB).
+///
+/// The limit is checked against the **declared** file size in the header
+/// before the voxel payload is allocated. For untrusted input, pass a smaller
+/// limit to [`Reader::open_gzip_with_limit`](crate::Reader::open_gzip_with_limit)
+/// or [`Reader::open_bzip2_with_limit`](crate::Reader::open_bzip2_with_limit)
+/// that reflects the memory you are willing to commit.
 pub const DEFAULT_MAX_DECOMPRESSED_BYTES: u64 = 256 * 1024 * 1024 * 1024;
 
 /// Components of a decompressed MRC file.
@@ -492,57 +381,100 @@ pub(crate) struct DecompressedMrc {
     pub ext_header: Vec<u8>,
     pub data: Vec<u8>,
     pub warnings: Vec<String>,
+    pub truncated: bool,
+}
+
+/// Read until `buf` is full or the source reports EOF.
+#[cfg(any(feature = "gzip", feature = "bzip2"))]
+fn read_up_to<R: std::io::Read>(reader: &mut R, buf: &mut [u8]) -> Result<usize, crate::Error> {
+    let mut n = 0;
+    while n < buf.len() {
+        match reader.read(&mut buf[n..]) {
+            Ok(0) => break,
+            Ok(k) => n += k,
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(e) => return Err(e.into()),
+        }
+    }
+    Ok(n)
 }
 
 /// Open a compressed MRC file from a decoder.
+///
+/// The fixed header is parsed first so the declared file size can be checked
+/// against `max_bytes` **before** the voxel payload is materialised. A stream
+/// that continues past the declared end is probed one byte beyond it rather
+/// than drained.
 #[cfg(any(feature = "gzip", feature = "bzip2"))]
 pub(crate) fn open_compressed<D: std::io::Read>(
     mut decoder: D,
     permissive: bool,
     max_bytes: u64,
 ) -> Result<DecompressedMrc, crate::Error> {
-    let limit = max_bytes.saturating_add(1);
-    let mut buf = Vec::with_capacity(limit.min(1024 * 1024) as usize);
-    decoder.by_ref().take(limit).read_to_end(&mut buf)?;
-
-    if buf.len() > max_bytes as usize {
-        return Err(crate::Error::Io(std::io::Error::other(format!(
-            "Decompressed data exceeds safety limit of {max_bytes} bytes. \
-             Use Reader::open_gzip_with_limit() with a larger max_bytes if you trust this file.",
-        ))));
-    }
-
-    if buf.len() < 1024 {
+    let mut header_bytes = [0u8; 1024];
+    let header_read = read_up_to(&mut decoder, &mut header_bytes)?;
+    if header_read < 1024 {
         return Err(crate::Error::InvalidHeader);
     }
 
-    let (header, mut warnings, _endian, data_size) = parse_header(&buf[..1024], permissive)?;
-    let ext_size = header.nsymbt as usize;
+    let (header, mut warnings, _endian, data_size) = parse_header(&header_bytes, permissive)?;
+    let ext_size = header.nsymbt.max(0) as usize;
+    let expected = 1024usize
+        .checked_add(ext_size)
+        .and_then(|v| v.checked_add(data_size))
+        .ok_or(crate::Error::InvalidHeader)?;
 
-    if !permissive {
-        if buf.len() != 1024 + ext_size + data_size {
+    if expected as u64 > max_bytes {
+        return Err(crate::Error::DataTooLarge { limit: max_bytes });
+    }
+
+    let mut ext_header = vec![0u8; ext_size];
+    let ext_read = read_up_to(&mut decoder, &mut ext_header)?;
+    if ext_read < ext_size {
+        if !permissive {
             return Err(crate::Error::FileSizeMismatch {
-                expected: 1024 + ext_size + data_size,
-                actual: buf.len(),
+                expected,
+                actual: 1024 + ext_read,
             });
         }
-    } else if buf.len() != 1024 + ext_size + data_size {
+        ext_header.truncate(ext_read);
         warnings.push(format!(
-            "File size mismatch: expected {} bytes, got {}",
-            1024 + ext_size + data_size,
-            buf.len(),
+            "Extended header truncated: expected {ext_size} bytes, got {ext_read}"
         ));
     }
 
-    let mut rest = buf.split_off(1024);
-    let ext_end = ext_size.min(rest.len());
-    let data = rest.split_off(ext_end);
-    let ext_header = rest;
+    let mut data = vec![0u8; data_size];
+    let data_read = read_up_to(&mut decoder, &mut data)?;
+    data.truncate(data_read);
+
+    let actual = 1024 + ext_header.len() + data.len();
+    if data_read < data_size {
+        if !permissive {
+            return Err(crate::Error::FileSizeMismatch { expected, actual });
+        }
+        warnings.push(format!(
+            "File size mismatch: expected {expected} bytes, got {actual}"
+        ));
+    } else {
+        // Probe for trailing bytes without draining the rest of the stream.
+        let mut probe = [0u8; 1];
+        let extra = read_up_to(&mut decoder, &mut probe)?;
+        if extra > 0 {
+            if !permissive {
+                return Err(crate::Error::FileSizeMismatch {
+                    expected,
+                    actual: expected.saturating_add(1),
+                });
+            }
+            warnings.push(format!("File has trailing data after {expected} bytes"));
+        }
+    }
 
     Ok(DecompressedMrc {
         header,
         ext_header,
         data,
         warnings,
+        truncated: data_read < data_size,
     })
 }

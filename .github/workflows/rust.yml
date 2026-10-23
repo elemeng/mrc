@@ -40,11 +40,43 @@ jobs:
     - name: Check formatting
       run: cargo fmt --check --all
     - name: Clippy
-      run: cargo clippy --all-features
+      run: cargo clippy --all-features --all-targets -- -D warnings
     - name: Doc build
       run: cargo doc --all-features --no-deps
     - name: Bench compilation
       run: cargo bench --all-features --no-run
+
+  feature-matrix:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        features: [ "", "mmap", "f16", "simd", "parallel", "gzip", "bzip2", "serde", "ndarray" ]
+    steps:
+    - uses: actions/checkout@v4
+    - uses: dtolnay/rust-toolchain@stable
+    - name: Check and test each feature set
+      shell: bash
+      run: |
+        if [ -z "${{ matrix.features }}" ]; then
+          cargo check --no-default-features
+          cargo test --no-default-features
+        else
+          cargo check --no-default-features --features "${{ matrix.features }}"
+          cargo test --no-default-features --features "${{ matrix.features }}" --lib
+        fi
+
+  miri:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: dtolnay/rust-toolchain@nightly
+      with:
+        components: miri
+    - name: Miri (library unit tests)
+      run: cargo miri test --no-default-features --lib
+      env:
+        MIRIFLAGS: -Zmiri-disable-isolation
 
   msrv:
     runs-on: ubuntu-latest
